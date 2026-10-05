@@ -220,3 +220,11 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 | Akku-/Abschaltverhalten geprüft | Offen |
 
 SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Systemupdate und Werkzeuginstallation sind bestätigt. Erneute SSH-Anmeldung und laufender Kernel sind bestätigt. WM8960 wird nach Overlay-Aktivierung als Aufnahme- und Wiedergabegerät erkannt. Lautsprecher-, Mikrofon- und weitere Hardwaretests stehen aus.
+
+## Erster Lautsprechertest — noch ohne hörbaren Ton
+
+Am 05.10.2026 wurden `Speaker 70%` (−32 dB), `Playback 80%` (−25,5 dB) und beide `Output Mixer PCM`-Schalter auf `on` gesetzt. Der Test mit `speaker-test -D plughw:CARD=wm8960soundcard,DEV=0 -c 2 -t wav -l 1` lief bei 48 kHz, S16_LE und zwei Kanälen ohne sichtbaren ALSA-Fehler. Ivan meldet jedoch keinen hörbaren Ton. Der Wiedergabetest ist deshalb noch nicht bestanden.
+
+![Lautsprechertest läuft ohne ALSA-Fehler, laut Nutzer aber ohne hörbaren Ton](images/setup/speaker-test-silent.png)
+
+Die beiden Lautstärkeregler dämpfen zusammen um etwa 57,5 dB. Als nächsten Diagnoseschritt den digitalen Playback-Pegel auf 0 dB setzen und den Speaker-Pegel zunächst bei 70% belassen. Dieser Folgetest ist noch nicht bestätigt; weitere Ursachen wie Routing oder Verdrahtung bleiben möglich.
