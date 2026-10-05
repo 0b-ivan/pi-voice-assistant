@@ -8,7 +8,7 @@ Wir verwenden **Raspberry Pi OS Lite (64-bit) auf Debian 13 / Trixie** auf der 6
 
 | Einstellung | Festlegung |
 |---|---|
-| Hostname | `wgz-voice-01` |
+| Hostname | `pi-assistent` |
 | Benutzer | `ivan` |
 | WLAN-Land | `DE` |
 | Zeitzone | `Europe/Berlin` |
@@ -17,6 +17,8 @@ Wir verwenden **Raspberry Pi OS Lite (64-bit) auf Debian 13 / Trixie** auf der 6
 | Python | Virtuelle Umgebung (`venv`) |
 | Audio | ALSA und WM8960 |
 | Kamera, später | rpicam/libcamera |
+
+Der Hostname wurde bei der Installation tatsächlich als `pi-assistent` gesetzt. Die übrigen Zugriffseinstellungen sind Planwerte; der Abschlussbildschirm bestätigt aktiviertes SSH, aber nicht die Authentifizierungsmethode. Siehe [Installationsprotokoll mit Screenshots](../setup.md#installationsprotokoll--05102026-).
 
 ## Begründung
 
