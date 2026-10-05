@@ -54,17 +54,16 @@ def transcribe(path: str | os.PathLike[str]) -> str:
         "language": os.environ.get("OPENROUTER_STT_LANGUAGE", DEFAULT_LANGUAGE),
     }
 
-    request = urllib.request.Request(
-        os.environ.get("OPENROUTER_STT_URL", DEFAULT_URL),
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
     try:
+        request = urllib.request.Request(
+            os.environ.get("OPENROUTER_STT_URL", DEFAULT_URL),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
         with urllib.request.urlopen(request, timeout=_timeout()) as response:
             result = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
@@ -72,9 +71,11 @@ def transcribe(path: str | os.PathLike[str]) -> str:
         raise TranscriptionError(f"OpenRouter HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise TranscriptionError(f"OpenRouter unavailable: {exc.reason}") from exc
-    except (TimeoutError, json.JSONDecodeError) as exc:
-        raise TranscriptionError(f"invalid OpenRouter response: {exc}") from exc
+    except (TimeoutError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise TranscriptionError(f"invalid OpenRouter response/configuration: {exc}") from exc
 
+    if not isinstance(result, dict):
+        raise TranscriptionError(f"unexpected OpenRouter response: {result!r}")
     text = result.get("text")
     if not isinstance(text, str) or not text.strip():
         raise TranscriptionError(f"no transcript returned: {result}")
