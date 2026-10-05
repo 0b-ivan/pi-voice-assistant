@@ -1,50 +1,30 @@
-# Pi Voice Assistant 🎙️
+# Pi Voice Assistant
 
-Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und PiSugar2. Der Pi dient als mobiler Audio-Client und kann deutsche Sprache mit Vosk lokal erkennen; die eigentliche KI-Antwort erfolgt zunächst über OpenRouter.
+Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mikrofonen, zwei Lautsprechern und vorhandener PTT-Taste sowie PiSugar2.
 
-**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sowie Push-to-Talk über GPIO17 sind bestätigt. Vosk 0.3.45 läuft auf dem Pi Zero 2 W mit Python 3.13/aarch64 und verarbeitet echte WM8960-Aufnahmen lokal. Der integrierte PTT→Vosk-Pfad ist hardwareseitig abgenommen; `pi-assistent` wird aktuell bewusst mit `STT_PROVIDER=vosk` offline betrieben. `auto` ist implementiert, aber der reale OpenRouter→Vosk-Fallback bleibt vorerst ungetestet. LLM-Antwort und deutsche TTS folgen danach.**
+**Stand 05.10.2026:** Taste halten → aufnehmen → loslassen → deutscher Text mit Vosk funktioniert lokal. Der vollständige Frage-Antwort-Assistent ist noch nicht implementiert.
 
-**Betriebssystem:** Raspberry Pi OS Lite 64-bit (Trixie), Headless/SSH; Hostname `pi-assistent`.
+| Bereich | Aktueller Stand |
+|---|---|
+| System | Raspberry Pi OS Lite 64-bit / Debian 13 Trixie, `pi-assistent`, Benutzer `obivan` |
+| Audio | WM8960-Aufnahme und Wiedergabe samt Neustart bestätigt; vorhandenes Kernelmodul/Overlay, kein zusätzlicher Waveshare-Treiber |
+| PTT und STT auf `main` | GPIO17, optional Button SHIM A–E/RGB, OpenRouter- und Vosk-STT implementiert; Pi läuft bewusst mit `STT_PROVIDER=vosk` |
+| Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 / `de_DE-thorsten-low` manuell getestet; TTS-Code noch in offenem [PR #14](https://github.com/0b-ivan/pi-voice-assistant/pull/14) |
+| Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): geladen 1,26–1,67 s statt 20–28 s; neben Vosk deutlicher Speicherdruck/Swap. Status-WAV-Cache als nächster Schritt |
+| Noch offen | LLM-Anbindung und automatische Antwortwiedergabe; reale `auto`-Fallback-Abnahme; Akku/Abschaltung, Kamera und PiTFT |
 
-## Erstes Ziel
+## Einrichten und betreiben
 
-Taste halten → Sprache aufnehmen → beim Loslassen transkribieren → über OpenRouter beantworten → deutsche Antwort über die beiden Lautsprecher ausgeben. Zunächst Halbduplex: Aufnahme, Verarbeitung und Wiedergabe laufen nacheinander.
+1. [Setup](docs/setup.md): OS, funktionierendes WM8960-Audio, Dienst und Offline-STT installieren.
+2. [Betrieb](docs/operation.md): starten, konfigurieren, aktualisieren und Logs prüfen.
+3. [Troubleshooting](docs/troubleshooting.md): GPIO belegt, I²C fehlt, leere Transkripte oder TTS-Probleme.
 
-## Dokumentation
+Vertiefung: [Hardware und Fotos](docs/hardware.md), [Ethernet/USB/SHIM-Test](docs/hardware-bring-up.md), [PTT-Verhalten](docs/push-to-talk.md), [STT und Messwerte](docs/speech-to-text.md), [Button-Bedienung](docs/button-controls.md), [lokale TTS und Performance](docs/local-speech.md), [Architektur](docs/architecture.md), [nächste Aufgaben](docs/roadmap.md), [Projekt-/PR-Prüfung](docs/project-review.md).
 
-- [Hardware und offene Prüfungen](docs/hardware.md)
-- [Ethernet/USB und Button SHIM in Betrieb nehmen](docs/hardware-bring-up.md)
-- [Architektur und MVP-Verhalten](docs/architecture.md)
-- [Betriebssystem und Inbetriebnahme](docs/setup.md)
-- [Roadmap und Aufgaben](docs/roadmap.md)
-- [Push-to-Talk: Installation, Schnittstelle und Abnahme](docs/push-to-talk.md)
-- [Button SHIM: Tasten, RGB und Installation](docs/button-controls.md)
-- [Piper: Laufzeit, CPU, RAM und Swap vergleichen](docs/piper-resources.md)
-- [Speech-to-Text mit OpenRouter](docs/speech-to-text.md)
-- [Entscheidung: Pi als Client](docs/decisions/0001-client-server.md)
-- [Entscheidung: Raspberry Pi OS Lite 64-bit / Trixie](docs/decisions/0002-operating-system.md)\n- [Entscheidung: Hybrides STT mit OpenRouter und Vosk](docs/decisions/0003-hybrid-stt.md)
+Die Installationsvorlage setzt weiterhin `openrouter`, weil der normale Dienstinstaller Vosk nicht mitinstalliert. Für den dokumentierten Offline-Betrieb Vosk separat installieren und **explizit `STT_PROVIDER=vosk` setzen**. Installation und Providerwahl stehen zusammen im Setup.
 
-## Repository
+## Entwicklung
 
-`docs/` enthält Planung und Anleitungen. `config/` enthält Konfigurationsbeispiele. `src/ptt.py` enthält den lokalen PTT-Recorder und die STT-Übergabe; `src/transcribe.py` kapselt OpenRouter- und Vosk-STT einschließlich Hybrid-Fallback. `deploy/` enthält die systemd-Unit, `scripts/` Diagnose- und Installationshilfen und `tests/` Hardware-unabhängige Tests.
+`src/` enthält PTT, STT und Button-Steuerung; `deploy/` die systemd-Unit, `config/` Konfigurationsbeispiele, `scripts/` Installation/Diagnose, `tests/` Tests ohne Hardware. Auf dem Pi kann `bash scripts/inspect-pi.sh` den Bestand lesend erfassen.
 
-```bash
-bash scripts/inspect-pi.sh
-```
-
-Das Bestandsaufnahmeskript auf dem Pi ausführen. Fehlende Diagnoseprogramme werden übersprungen. Es verändert keine Einstellungen.
-
-Für den aktuellen Sprachdienst:
-
-```bash
-sudo apt install python3-smbus i2c-tools
-sudo bash scripts/install-voice-service.sh
-```
-
-Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten. Auf `pi-assistent` ist aktuell `STT_PROVIDER=vosk` gesetzt; dafür wird kein OpenRouter-Key benötigt. Vosk wird mit `sudo bash scripts/install-vosk.sh` installiert. Für `openrouter` bzw. den Online-Pfad von `auto` wäre zusätzlich ein echter `OPENROUTER_API_KEY` erforderlich.
-
-## Arbeitsweise
-
-Konfigurationsdateien bearbeiten wir mit **Vim**; Anleitungen verwenden `vim` als Editor.
-
-`main` enthält nachvollziehbare Projektstände. Änderungen erfolgen über kurze Feature-Branches und Pull Requests. Treiberänderungen werden erst nach Hardwaretests als funktionierend dokumentiert. Keine Zugangsdaten, Sprachaufnahmen oder Kamerabilder committen. Eine Lizenz ist noch nicht festgelegt.
+Konfigurationen mit **Vim** bearbeiten. Änderungen über Branch und PR; Hardware-Abnahmen brauchen eine Rückmeldung vom Pi. Keine Schlüssel, Modelle, Sprachaufnahmen oder Kamerabilder committen. Eine Lizenz ist noch nicht festgelegt.

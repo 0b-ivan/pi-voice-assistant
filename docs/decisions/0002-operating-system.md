@@ -1,39 +1,13 @@
-# ADR 0002: Raspberry Pi OS Lite 64-bit (Trixie) 🐧
+# ADR 0002: Raspberry Pi OS Lite 64-bit / Trixie
 
-Datum: 05.10.2026. Status: angenommen; Hardwarevalidierung ausstehend.
+Datum 05.10.2026. Status: angenommen, Boot/SSH/Audio/PTT/Vosk auf dem Pi bestätigt; weitere Hardware teilweise offen.
 
-## Entscheidung
+Raspberry Pi Zero 2 W mit 64-GB-microSD, **Raspberry Pi OS Lite 64-bit auf Debian 13 Trixie**, ohne Desktop. Hostname `pi-assistent`, Benutzer `obivan`, Verwaltung per SSH, Anwendung per systemd. Land DE / Zeitzone Europe/Berlin sind Planwerte, noch nicht separat ausgelesen bestätigt. Passwort-SSH ist bestätigt; mDNS muss bei Bedarf geprüft werden.
 
-Wir verwenden **Raspberry Pi OS Lite (64-bit) auf Debian 13 / Trixie** auf der 64-GB-microSD des Raspberry Pi Zero 2 W. Das System läuft ohne Desktop und wird per SSH verwaltet.
+Lite spart Desktop-Prozesse; 64-bit passt zu aarch64-Software. Raspberry-Pi-Kernel und vorhandenes WM8960-Overlay funktionieren auf dem getesteten Kernel `6.18.50+rpt-rpi-v8`; kein zusätzlicher Waveshare-Treiber installiert. Kein OS-Wechsel wegen einer bloßen älteren Herstelleranleitung.
 
-| Einstellung | Festlegung |
-|---|---|
-| Hostname | `pi-assistent` |
-| Benutzer | `obivan` |
-| WLAN-Land | `DE` |
-| Zeitzone | `Europe/Berlin` |
-| Zugriff | SSH; Passwortanmeldung bestätigt, Schlüssel als spätere Verbesserung |
-| Clientbetrieb | systemd-Dienst |
-| Python | Virtuelle Umgebung (`venv`) |
-| Audio | ALSA und WM8960 |
-| Kamera, später | rpicam/libcamera |
+Dienst verwendet System-Python 3.13 und APT-libgpiod; Vosk separat im Vendor-Verzeichnis. Piper aus PR #14 nutzt ein eigenes venv. Die frühere pauschale Vorgabe „alles im venv“ beschreibt den implementierten Dienst nicht.
 
-Der Hostname wurde bei der Installation tatsächlich als `pi-assistent` gesetzt. Die erste SSH-Anmeldung bestätigt Benutzer `obivan` und Passwortauthentifizierung. Boot ist bestätigt; Wiederholungsprüfung nach Neustart und Hardwarevalidierung stehen aus. Siehe [Bootprotokoll mit Screenshots](../setup.md#boot-und-erste-ssh-anmeldung--05102026-).
+PiSugar-Abschaltung, Display und Kamera müssen separat geprüft werden; ein OS-Boot bestätigt ihre Integration nicht. Reproduzierbare Schritte: [Setup](../setup.md). Installationsscreenshots und damaliger Bootstand: [Historie](../history/setup-2026-10-05.md#boot-und-erste-ssh-anmeldung--05102026-). Image-Prüfsumme fehlt noch.
 
-## Begründung
-
-Raspberry Pi OS bietet den Raspberry-Pi-spezifischen Kernel und das zugehörige Hardwarewerkzeug. Lite spart Desktop-Prozesse und Arbeitsspeicher auf dem Pi mit 512 MB RAM. 64 Bit passt zum ARMv8-Prozessor und vereinfacht die Verwendung aktueller arm64-Software. Aufwendige Sprachmodelle laufen weiterhin im Homelab.
-
-Trixie ist die vereinbarte Ausgangsbasis. Ein Wechsel auf einen anderen Unterbau erfolgt nur bei einem konkret nachgewiesenen Treiberproblem und wird als neue Entscheidung dokumentiert.
-
-## Folgen und Abnahme
-
-Die Entscheidung ersetzt keinen Kompatibilitätstest: WM8960-Treiber, PiSugar2-Software und Display müssen auf dem tatsächlich installierten Kernel geprüft werden. Image-Datum, Prüfsumme, Kernel und Treibercommit werden bei der Installation festgehalten.
-
-Meilenstein M0: Trixie 64-bit startet auf dem Gerät, WLAN und SSH funktionieren auch nach einem Neustart. Danach Audioaufnahme und Wiedergabe prüfen.
-
-## Quellen
-
-- [Offizielle Raspberry Pi OS Images](https://www.raspberrypi.com/software/operating-systems/)
-- [Raspberry Pi Zero 2 W](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/)
-- [WM8960-Treiber](https://github.com/waveshareteam/WM8960-Audio-HAT)
+Quelle: [Offizielle Raspberry Pi OS Images](https://www.raspberrypi.com/software/operating-systems/).
