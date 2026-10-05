@@ -72,7 +72,7 @@ Sichtprüfung erforderlich; erfolgreiche Ausführung allein beweist keine Farben
 
 ## Boot und Dienst
 
-Fehlt `/dev/i2c-1` nach Boot, mit Vim `/etc/modules-load.d/pi-voice-i2c.conf` öffnen, bestehende Einträge erhalten und `i2c-dev` eintragen. Vorhandenes WM8960-Overlay/I²C-Konfiguration beibehalten. Das Modul ermöglicht Userspace-Zugriff und ersetzt keinen Audiotreiber.
+Fehlt `/dev/i2c-1` nach Boot, in `/etc/modules-load.d/pi-voice-i2c.conf` bestehende Einträge erhalten und `i2c-dev` ergänzen. Vorhandenes WM8960-Overlay/I²C-Konfiguration beibehalten. Das Modul ermöglicht Userspace-Zugriff und ersetzt keinen Audiotreiber.
 
 ```bash
 sudo systemctl start pi-ptt.service

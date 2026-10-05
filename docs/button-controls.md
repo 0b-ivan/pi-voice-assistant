@@ -30,7 +30,7 @@ Die tatsächlichen Dienstfarben/Reaktionszeiten sind noch nicht vollständig auf
 
 ## Aktivieren
 
-Vollständigen [Dienst installieren](setup.md#4-repository-und-dienst-installieren), [SHIM einzeln prüfen](hardware-bring-up.md), `i2c-dev` verfügbar machen. Mit Vim vorhandene `/etc/pi-ptt.env` ergänzen/ändern:
+Vollständigen [Dienst installieren](setup.md#4-repository-und-dienst-installieren), [SHIM einzeln prüfen](hardware-bring-up.md), `i2c-dev` verfügbar machen. In `/etc/pi-ptt.env` folgende Einstellungen setzen:
 
 ```text
 PTT_BUTTON_SHIM=1
