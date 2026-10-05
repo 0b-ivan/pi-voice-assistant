@@ -37,6 +37,10 @@ Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
 - [x] OpenRouter als STT-Ziel auswählen und deutschen Standalone-Test auf dem Pi erfolgreich durchführen.
 - [x] OpenRouter-STT-Adapter ohne zusätzliche Python-Abhängigkeiten implementieren.
 - [x] PTT→STT-Übergabe und Sperre/Resync während Verarbeitung implementieren.
+- [x] Vosk als optionales lokales deutsches STT-Backend implementieren.
+- [x] `STT_PROVIDER=openrouter|vosk|auto` mit OpenRouter→Vosk-Fallback implementieren.
+- [x] Vosk-Installationspfad und kleines deutsches Modell dokumentieren.
+- [ ] Vosk und `auto` mit echter WM8960-Aufnahme auf dem Pi Zero 2 W abnehmen; Qualität, Latenz und RAM messen.
 - [ ] Integrierten PTT→STT-Ablauf nach Deployment auf Hardware abnehmen.
 - [ ] OpenRouter-LLM an den erkannten Text anbinden.
 - [ ] Deutsche TTS-Komponente auswählen und anbinden.
@@ -63,4 +67,4 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 - [ ] Wake Word und Unterbrechen der Wiedergabe evaluieren.
 - [ ] Gehäuse und mobile Bedienung verbessern.
 
-Priorität: Jetzt PTT→STT auf Hardware abnehmen, danach OpenRouter-LLM und deutsche TTS.
+Priorität: Jetzt Vosk und den Auto-Fallback auf dem Pi abnehmen, danach OpenRouter-LLM und deutsche TTS.
