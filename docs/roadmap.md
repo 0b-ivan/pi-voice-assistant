@@ -24,7 +24,8 @@
 - [x] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen; Nutzer bestätigt „passt“.
 - [x] Speaker-Pegel auslesen: beide Kanäle 121 / 127, 95 %, 0,00 dB bestätigt.
 - [x] Tasten-GPIO identifizieren: BCM17 / Pin 11; gpiochip0 (pinctrl-bcm2835), Offset 17 als freier Eingang bestätigt.
-- [ ] Polarität und Entprellung am echten HAT mit Probe prüfen.
+- [x] Aktiv-Low-Polarität und normale Tastenfunktion am HAT bestätigen (19 Probezyklen).
+- [ ] Gezielte Entprellungs-, Kurzdrück- und Grenztests am HAT durchführen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
 
 Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
@@ -34,7 +35,8 @@ Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
 - [ ] Homelab-Ziel und STT/TTS-Komponenten auswählen; LLM-Ziel OpenRouter, deutsche Sprachausgabe.
 - [ ] API-Vertrag, Authentifizierung und Audioformat festlegen.
 - [x] Lokalen PTT-Recorder mit Halten/Loslassen, Entprellung und Zeitlimit implementieren; automatisierte Tests bestanden.
-- [ ] PTT auf dem echten Pi abnehmen; siehe [Prüfplan](push-to-talk.md).
+- [x] Normalen PTT-Aufnahme-/Wiedergabeablauf auf dem Pi inklusive Neustart abnehmen; Nutzer bestätigt „funktioniert“ / „passt“.
+- [ ] Verbleibende Grenz- und Fehlerprüfungen auf Hardware durchführen; siehe [Prüfplan](push-to-talk.md).
 - [ ] Übergabe an Sprachpipeline und Sperre während Verarbeitung/Wiedergabe implementieren.
 - [ ] Timeout- und Fehlerbehandlung implementieren.
 - [ ] Durchgehende deutsche Sprachinteraktion testen; Latenzen messen.
@@ -44,7 +46,7 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 ## Phase 3 — Zuverlässiger Betrieb
 
 - [x] systemd-Unit und Konfiguration für lokalen PTT-Dienst erstellen.
-- [ ] systemd-Start und PTT nach Neustart am Pi prüfen.
+- [x] systemd-Installation, Autostart und PTT nach Neustart am Pi bestätigen.
 - [ ] Speicherverbrauch, Startzeit, Akkulaufzeit und Temperatur messen.
 - [ ] Wiederholte Interaktionen und Dienstneustart testen.
 - [ ] Installationsanleitung mit tatsächlich getesteten Versionen vervollständigen.
