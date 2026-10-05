@@ -213,7 +213,7 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 |---|---|
 | Modell, Image, Architektur, Kernel dokumentiert | Offen |
 | WM8960-Treiber / Overlay | Kernelmodul und vorhandenes Overlay verwendet; ALSA-Erkennung nach Neustart bestätigt |
-| Beide Lautsprecher hörbar | Offen |
+| Lautsprecherwiedergabe | Hörbar, Lautstärke laut Nutzer passend; Test durchläuft beide Kanäle |
 | Mikrofonaufnahme verständlich | Offen |
 | Taste zuverlässig erkannt | Offen |
 | Netzwerkerreichbarkeit und SSH nach Neustart | Bestätigt; konkrete WLAN-Schnittstelle noch nicht erfasst |
@@ -228,3 +228,15 @@ Am 05.10.2026 wurden `Speaker 70%` (−32 dB), `Playback 80%` (−25,5 dB) und b
 ![Lautsprechertest läuft ohne ALSA-Fehler, laut Nutzer aber ohne hörbaren Ton](images/setup/speaker-test-silent.png)
 
 Die beiden Lautstärkeregler dämpfen zusammen um etwa 57,5 dB. Als nächsten Diagnoseschritt den digitalen Playback-Pegel auf 0 dB setzen und den Speaker-Pegel zunächst bei 70% belassen. Dieser Folgetest ist noch nicht bestätigt; weitere Ursachen wie Routing oder Verdrahtung bleiben möglich.
+
+## Lautsprecher bestätigt — 05.10.2026 ✅
+
+Nach Erhöhung des digitalen Playback-Pegels war Ton hörbar. Die zuvor gewählten 70% Speaker und 80% Playback waren zu stark gedämpft. Anschließend wurden Speaker 95% (0 dB) und 100% (+6 dB) getestet. Die zuletzt zurückgemeldete zusätzliche Verstärkung ist **Speaker AC = 5**; Ivan bestätigt die Lautstärke als passend. Der abschließende Test lief bei 48 kHz, S16_LE, zwei Kanälen ohne sichtbaren Fehler.
+
+Der endgültige Speaker-/Playback-Pegel wurde in dieser letzten Ausgabe nicht erneut ausgelesen; für eine reproduzierbare Gesamtkonfiguration noch `amixer -c wm8960soundcard scontents` erfassen. Speaker DC wurde im Verlauf nicht verändert.
+
+```bash
+sudo alsactl store wm8960soundcard
+```
+
+Die Speicherung wurde ohne Fehlermeldung bestätigt. Wiederherstellung nach Neustart und Mikrofonaufnahme sind noch zu testen. Der erfolgreiche Wiedergabetest ersetzt diese Prüfungen nicht.

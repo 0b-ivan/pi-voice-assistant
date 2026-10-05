@@ -19,7 +19,8 @@
 - [ ] WLAN-Schnittstelle und Verbindung explizit erfassen.
 - [x] Laufenden Kernel nach Neustart und ALSA-Bestandsaufnahme dokumentieren.
 - [x] Vorhandenes WM8960-Kernelmodul und Overlay aktivieren; Aufnahme-/Wiedergabegerät nach Neustart bestätigt (kein zusätzlicher Treibercommit).
-- [ ] Lautsprecher und Mikrofone testen.
+- [x] Lautsprecherwiedergabe testen und passende Lautstärke bestätigen; ALSA-Zustand speichern.
+- [ ] Mikrofone testen und gespeicherte Audioeinstellungen nach Neustart prüfen.
 - [ ] Tasten-GPIO, Polarität und Entprellung prüfen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
 
