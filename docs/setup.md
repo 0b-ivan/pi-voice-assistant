@@ -219,7 +219,7 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 | Netzwerkerreichbarkeit und SSH nach Neustart | Bestätigt; konkrete WLAN-Schnittstelle noch nicht erfasst |
 | Akku-/Abschaltverhalten geprüft | Offen |
 
-SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Systemupdate und Werkzeuginstallation sind bestätigt. Erneute SSH-Anmeldung und laufender Kernel sind bestätigt. WM8960 wird nach Overlay-Aktivierung als Aufnahme- und Wiedergabegerät erkannt. Lautsprecher-, Mikrofon- und weitere Hardwaretests stehen aus.
+SD-Karte, erster Boot, SSH, Systemupdate und Werkzeuginstallation sind bestätigt. WM8960 wird mit dem vorhandenen Kernelmodul und Overlay erkannt. Lautsprecherwiedergabe, Mikrofonaufnahme sowie Speicherung und abschließender Audiotest nach Neustart sind laut Nutzer bestätigt. Taste und weitere Hardwaretests stehen aus.
 
 ## Erster Lautsprechertest — noch ohne hörbaren Ton
 
@@ -233,13 +233,13 @@ Die beiden Lautstärkeregler dämpfen zusammen um etwa 57,5 dB. Als nächsten Di
 
 Nach Erhöhung des digitalen Playback-Pegels war Ton hörbar. Die zuvor gewählten 70% Speaker und 80% Playback waren zu stark gedämpft. Anschließend wurden Speaker 95% (0 dB) und 100% (+6 dB) getestet. Die zuletzt zurückgemeldete zusätzliche Verstärkung ist **Speaker AC = 5**; Ivan bestätigt die Lautstärke als passend. Der abschließende Test lief bei 48 kHz, S16_LE, zwei Kanälen ohne sichtbaren Fehler.
 
-Der endgültige Speaker-/Playback-Pegel wurde in dieser letzten Ausgabe nicht erneut ausgelesen; für eine reproduzierbare Gesamtkonfiguration noch `amixer -c wm8960soundcard scontents` erfassen. Speaker DC wurde im Verlauf nicht verändert.
+Laut Nutzerangaben im Folgechat: **Playback 100 %, Speaker AC 5; letzter ausdrücklich gesetzter Speaker-Pegel 100 %**. Danach wurden 95 % empfohlen; eine Empfehlung belegt keine Änderung. Der endgültig wiederhergestellte Speaker-Pegel ist deshalb noch unbekannt und wird mit `amixer -c wm8960soundcard sget 'Speaker'` ausgelesen. Nicht ohne neue Ausgabe als 95 % oder 100 % festschreiben. Speaker DC wurde im Verlauf nicht verändert.
 
 ```bash
 sudo alsactl store wm8960soundcard
 ```
 
-Die Speicherung wurde ohne Fehlermeldung bestätigt. Wiederherstellung nach Neustart und Mikrofonaufnahme sind noch zu testen. Der erfolgreiche Wiedergabetest ersetzt diese Prüfungen nicht.
+Die erste Speicherung wurde ohne Fehlermeldung bestätigt. Die spätere Gesamtspeicherung und Neustartprüfung nach den Mikrofonänderungen sind inzwischen ebenfalls laut Nutzer bestätigt (siehe unten).
 
 ## Mikrofonaufnahme bestätigt — 05.10.2026 ✅
 
@@ -264,13 +264,16 @@ arecord -D plughw:CARD=wm8960soundcard,DEV=0 -f S16_LE -r 48000 -c 2 -d 5 /tmp/m
 aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/mikrofontest.wav
 ```
 
-### Abschließende Speicherung und Neustartprüfung — noch offen
+### Abschließende Speicherung und Neustartprüfung — bestätigt ✅
 
-Die vorherige Speicherung betraf den Lautsprecherstand vor den Mikrofonänderungen. Jetzt den gesamten Zustand speichern und nach Neustart Aufnahme und Wiedergabe erneut testen:
+Im referenzierten Folgechat „Push To Talk Bauen“ bestätigt Ivan: ALSA-Zustand gespeichert, abschließende Neustartprüfung mit **„passt“** abgeschlossen. Damit sind Speicherung und Aufnahme/Wiedergabe nach Neustart als Nutzer-Hörprüfung bestätigt; es liegt keine neue Mixer-Ausgabe vor. Kein gemessener Pegel- oder Clippingnachweis.
+
+Für den noch offenen endgültigen Speaker-Wert bei nächster SSH-Anmeldung ausschließlich auslesen:
 
 ```bash
-sudo alsactl store wm8960soundcard
-sudo reboot
+amixer -c wm8960soundcard sget 'Speaker'
+amixer -c wm8960soundcard sget 'Playback'
+amixer -c wm8960soundcard sget 'Speaker AC'
 ```
 
-Nach erneuter SSH-Anmeldung `amixer -c wm8960soundcard scontents` erfassen und beide Audiotests wiederholen. Erst dann ist die Neustart-Abnahme abgeschlossen. Temporäre Sprachaufnahme anschließend mit `rm /tmp/mikrofontest.wav` entfernen; nicht im Repository ablegen.
+Die ausgegebenen Werte anschließend dokumentieren. Temporäre Sprachaufnahmen entfernen und nicht im Repository ablegen.

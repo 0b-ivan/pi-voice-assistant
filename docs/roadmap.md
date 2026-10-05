@@ -21,7 +21,8 @@
 - [x] Vorhandenes WM8960-Kernelmodul und Overlay aktivieren; Aufnahme-/Wiedergabegerät nach Neustart bestätigt (kein zusätzlicher Treibercommit).
 - [x] Lautsprecherwiedergabe testen und passende Lautstärke bestätigen; ALSA-Zustand speichern.
 - [x] Mikrofonaufnahme und Wiedergabe testen; Aufnahmequalität mit Eingangsboost 3 bestätigt.
-- [ ] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen.
+- [x] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen; Nutzer bestätigt „passt“.
+- [ ] Endgültigen Speaker-Pegel auslesen: zuletzt gesetzt 100 %, danach 95 % empfohlen; endgültiger Wert unbelegt.
 - [ ] Tasten-GPIO, Polarität und Entprellung prüfen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
 
