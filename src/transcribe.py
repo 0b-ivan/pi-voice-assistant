@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import http.client
 import json
 import math
 import os
@@ -67,10 +68,17 @@ def transcribe(path: str | os.PathLike[str]) -> str:
         with urllib.request.urlopen(request, timeout=_timeout()) as response:
             result = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except http.client.HTTPException as body_exc:
+            raise TranscriptionError(
+                f"OpenRouter HTTP {exc.code}; incomplete error response: {body_exc}"
+            ) from body_exc
         raise TranscriptionError(f"OpenRouter HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise TranscriptionError(f"OpenRouter unavailable: {exc.reason}") from exc
+    except http.client.HTTPException as exc:
+        raise TranscriptionError(f"incomplete OpenRouter response: {exc}") from exc
     except (TimeoutError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise TranscriptionError(f"invalid OpenRouter response/configuration: {exc}") from exc
 
