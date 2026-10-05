@@ -2,7 +2,7 @@
 
 Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und PiSugar2. Der Pi dient als mobiler Audio-Client und kann deutsche Sprache mit Vosk lokal erkennen; die eigentliche KI-Antwort erfolgt zunächst über OpenRouter.
 
-**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sind bestätigt. Push-to-Talk über GPIO17 und OpenRouter-STT funktionieren. Zusätzlich ist Vosk als optionales lokales deutsches STT-Backend mit `STT_PROVIDER=openrouter|vosk|auto` implementiert; `auto` bevorzugt OpenRouter und fällt bei Online-STT-Fehlern auf Vosk zurück. Vosk/Auto warten noch auf Hardware-Abnahme am Pi Zero 2 W. LLM-Antwort und deutsche TTS folgen danach.**
+**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sowie Push-to-Talk über GPIO17 sind bestätigt. Vosk 0.3.45 läuft auf dem Pi Zero 2 W mit Python 3.13/aarch64 und verarbeitet echte WM8960-Aufnahmen lokal. Der integrierte PTT→Vosk-Pfad ist hardwareseitig abgenommen; `pi-assistent` wird aktuell bewusst mit `STT_PROVIDER=vosk` offline betrieben. `auto` ist implementiert, aber der reale OpenRouter→Vosk-Fallback bleibt vorerst ungetestet. LLM-Antwort und deutsche TTS folgen danach.**
 
 **Betriebssystem:** Raspberry Pi OS Lite 64-bit (Trixie), Headless/SSH; Hostname `pi-assistent`.
 
@@ -38,7 +38,7 @@ Für den aktuellen Sprachdienst:
 sudo bash scripts/install-voice-service.sh
 ```
 
-Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten. Für `openrouter` bzw. den Online-Pfad von `auto` den echten `OPENROUTER_API_KEY` setzen. Vosk wird optional mit `sudo bash scripts/install-vosk.sh` installiert.
+Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten. Auf `pi-assistent` ist aktuell `STT_PROVIDER=vosk` gesetzt; dafür wird kein OpenRouter-Key benötigt. Vosk wird mit `sudo bash scripts/install-vosk.sh` installiert. Für `openrouter` bzw. den Online-Pfad von `auto` wäre zusätzlich ein echter `OPENROUTER_API_KEY` erforderlich.
 
 ## Arbeitsweise
 
