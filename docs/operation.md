@@ -41,14 +41,14 @@ Nach Konfigurationsänderungen `sudo systemctl restart pi-ptt.service`. Für Ove
 - Dienstcode: `/opt/pi-voice-assistant/src`, root-verwaltet. Der Dienst läuft tatsächlich als **obivan**, mit `audio`, `gpio`, `i2c`; kein dedizierter Dienstbenutzer implementiert.
 - Aufnahme: ein Slot `/run/pi-ptt/capture.wav`, privat, flüchtig. Neue Aufnahme, Dienststop oder Reboot entfernt die vorherige Datei. Vor Ctrl-C/Stop abhören, falls die Testaufnahme benötigt wird.
 - Vosk: root-verwaltete `vendor/`- und `models/`-Verzeichnisse; Modell einmal bei Bedarf laden, im Dienst wiederverwenden.
-- Piper, separat: `.venv/` und `tts/` aus PR #14. Kein rekursives `chown` des gesamten Anwendungsverzeichnisses.
+- Piper, separat: `.venv/` und `tts/`, siehe [TTS-Setup](text-to-speech.md). Kein rekursives `chown` des gesamten Anwendungsverzeichnisses.
 - `ProtectHome=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`: Dienstdateien nicht aus `~/...` laden. Manuelle TTS-WAVs in `/tmp` sind nicht automatisch im privaten Dienst-`/tmp` sichtbar.
 
 Bei anderem Loginbenutzer müssen Unit, Installer und Dateigruppen gemeinsam angepasst werden; nur `User=` zu ändern reicht nicht. Die Isolation eines dedizierten Dienstbenutzers bleibt eine offene Verbesserung.
 
 ## Aktualisieren
 
-Checkout auf sauberen Zustand und gewünschten Branch/Commit prüfen. Dienstinstaller aufrufen; vorhandene Konfigurationen und auf `main` ein lokal vorhandenes `speak.py` bleiben erhalten. Ein vorher laufender Dienst wird gewöhnlich wieder gestartet. Frisch angelegte STT-Konfiguration lässt ihn bis zur Prüfung gestoppt.
+Checkout auf sauberen Zustand und gewünschten Branch/Commit prüfen. Dienstinstaller aufrufen; vorhandene Konfigurationen bleiben erhalten, `speak.py` wird aus dem Checkout aktualisiert. Ein vorher laufender Dienst wird gewöhnlich wieder gestartet. Frisch angelegte STT-Konfiguration lässt ihn bis zur Prüfung gestoppt.
 
 ```bash
 git status --short
