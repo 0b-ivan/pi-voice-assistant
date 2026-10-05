@@ -214,7 +214,7 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 | Modell, Image, Architektur, Kernel dokumentiert | Offen |
 | WM8960-Treiber / Overlay | Kernelmodul und vorhandenes Overlay verwendet; ALSA-Erkennung nach Neustart bestätigt |
 | Lautsprecherwiedergabe | Hörbar, Lautstärke laut Nutzer passend; Test durchläuft beide Kanäle |
-| Mikrofonaufnahme verständlich | Offen |
+| Mikrofonaufnahme verständlich | Nutzer bestätigt gute Aufnahme mit Eingangsboost 3 und ADC-Hochpass |
 | Taste zuverlässig erkannt | Offen |
 | Netzwerkerreichbarkeit und SSH nach Neustart | Bestätigt; konkrete WLAN-Schnittstelle noch nicht erfasst |
 | Akku-/Abschaltverhalten geprüft | Offen |
@@ -240,3 +240,37 @@ sudo alsactl store wm8960soundcard
 ```
 
 Die Speicherung wurde ohne Fehlermeldung bestätigt. Wiederherstellung nach Neustart und Mikrofonaufnahme sind noch zu testen. Der erfolgreiche Wiedergabetest ersetzt diese Prüfungen nicht.
+
+## Mikrofonaufnahme bestätigt — 05.10.2026 ✅
+
+Die erste Aufnahme war leise und verrauscht. Nach Aktivierung der beiden Eingangswege, des ADC-Hochpasses und schrittweiser Erhöhung von LINPUT1/RINPUT1 auf Stufe 3 bestätigt Ivan die Aufnahme als gut. Bei Stufe 2 wurde ausdrücklich keine Verzerrung gemeldet. Es handelt sich um eine Hörprüfung; Signal-Rausch-Abstand und Clipping wurden nicht gemessen.
+
+Bestätigte Einstellungen:
+
+```bash
+amixer -c wm8960soundcard sset 'Left Input Mixer Boost' on
+amixer -c wm8960soundcard sset 'Right Input Mixer Boost' on
+amixer -c wm8960soundcard sset 'Left Input Boost Mixer LINPUT1' 3
+amixer -c wm8960soundcard sset 'Right Input Boost Mixer RINPUT1' 3
+amixer -c wm8960soundcard sset 'ADC High Pass Filter' on
+```
+
+Der zuvor erfasste Capture-Pegel betrug 39 (+12 dB), ADC PCM 195 (0 dB); diese Regler wurden im beschriebenen Verlauf nicht verändert. ALC und Noise Gate wurden nicht aktiviert.
+
+Getestet mit fünf Sekunden Stereoaufnahme bei 48 kHz / S16_LE und anschließender Wiedergabe:
+
+```bash
+arecord -D plughw:CARD=wm8960soundcard,DEV=0 -f S16_LE -r 48000 -c 2 -d 5 /tmp/mikrofontest.wav
+aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/mikrofontest.wav
+```
+
+### Abschließende Speicherung und Neustartprüfung — noch offen
+
+Die vorherige Speicherung betraf den Lautsprecherstand vor den Mikrofonänderungen. Jetzt den gesamten Zustand speichern und nach Neustart Aufnahme und Wiedergabe erneut testen:
+
+```bash
+sudo alsactl store wm8960soundcard
+sudo reboot
+```
+
+Nach erneuter SSH-Anmeldung `amixer -c wm8960soundcard scontents` erfassen und beide Audiotests wiederholen. Erst dann ist die Neustart-Abnahme abgeschlossen. Temporäre Sprachaufnahme anschließend mit `rm /tmp/mikrofontest.wav` entfernen; nicht im Repository ablegen.
