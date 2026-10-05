@@ -89,7 +89,7 @@ git clone https://github.com/0b-ivan/pi-voice-assistant.git
 cd pi-voice-assistant
 ```
 
-Bestehende Checkouts zuerst mit `git status` prüfen; nicht über ungesicherte lokale Änderungen hinweg aktualisieren. Den geprüften Branch/Commit verwenden. `main` enthält noch keinen Piper-Wrapper.
+Bestehende Checkouts zuerst mit `git status` prüfen; nicht über ungesicherte lokale Änderungen hinweg aktualisieren. Den geprüften Branch/Commit verwenden. Der Dienstinstaller liefert den Piper-Wrapper mit; Paket und Stimme werden separat installiert.
 
 Vor Installation:
 
@@ -104,7 +104,7 @@ sudo bash scripts/install-vosk.sh
 
 Nach der Installation `/etc/pi-ptt.env` und `/etc/pi-voice-assistant.env` prüfen und wie unten beschrieben konfigurieren.
 
-Der Dienstinstaller kopiert **alle vier** Dienstmodule und die Unit. Vorhandene Konfigurationen bleiben erhalten. Der Vosk-Installer installiert `vosk==0.3.45` nach `/opt/pi-voice-assistant/vendor` und das kleine deutsche Modell nach `/opt/pi-voice-assistant/models/`; er kann einen laufenden Dienst stoppen und startet ihn bei Erfolg wieder. Bei Installationsfehlern Dienststatus prüfen.
+Der Dienstinstaller kopiert PTT-, STT-, Button- und TTS-Module und die Unit. Vorhandene Konfigurationen bleiben erhalten. Der Vosk-Installer installiert `vosk==0.3.45` nach `/opt/pi-voice-assistant/vendor` und das kleine deutsche Modell nach `/opt/pi-voice-assistant/models/`; er kann einen laufenden Dienst stoppen und startet ihn bei Erfolg wieder. Bei Installationsfehlern Dienststatus prüfen.
 
 In `/etc/pi-voice-assistant.env`:
 
@@ -140,4 +140,4 @@ journalctl -u pi-ptt.service -f
 
 Taste halten, einen Satz sprechen, loslassen: `recording` → `capture_ready` → `processing` → `transcript` mit `provider=vosk`. Erste Transkription ist wegen Modell-Laden langsamer. Ctrl-C beendet nur die Loganzeige. Dies ergibt Text, noch keine automatische KI-Antwort.
 
-Optional: [Button SHIM A–E](button-controls.md), [lokale Piper-TTS aus PR #14](local-speech.md). PiSugar-Abschaltung, PiTFT und Kamera folgen nach der Audio-/Performance-Abnahme.
+Optional: [Button SHIM A–E](button-controls.md), [Piper-Paket und Stimme installieren](text-to-speech.md). PiSugar-Abschaltung, PiTFT und Kamera folgen nach der Audio-/Performance-Abnahme.

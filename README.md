@@ -9,7 +9,7 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 | System | Raspberry Pi OS Lite 64-bit / Debian 13 Trixie, `pi-assistent`, Benutzer `obivan` |
 | Audio | WM8960-Aufnahme und Wiedergabe samt Neustart bestätigt; vorhandenes Kernelmodul/Overlay, kein zusätzlicher Waveshare-Treiber |
 | PTT und STT auf `main` | GPIO17, optional Button SHIM A–E/RGB, OpenRouter- und Vosk-STT implementiert; Pi läuft bewusst mit `STT_PROVIDER=vosk` |
-| Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 / `de_DE-thorsten-low` manuell getestet; TTS-Code noch in offenem [PR #14](https://github.com/0b-ivan/pi-voice-assistant/pull/14) |
+| Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 / `de_DE-thorsten-low` getestet; Wrapper und separater Installer vorhanden |
 | Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): geladen 1,26–1,67 s statt 20–28 s; neben Vosk deutlicher Speicherdruck/Swap. Status-WAV-Cache als nächster Schritt |
 | Noch offen | LLM-Anbindung und automatische Antwortwiedergabe; reale `auto`-Fallback-Abnahme; Akku/Abschaltung, Kamera und PiTFT |
 
@@ -19,6 +19,6 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 2. [Betrieb](docs/operation.md): starten, konfigurieren, aktualisieren und Logs prüfen.
 3. [Troubleshooting](docs/troubleshooting.md): GPIO belegt, I²C fehlt, leere Transkripte oder TTS-Probleme.
 
-Vertiefung: [Hardware und Fotos](docs/hardware.md), [Ethernet/USB/SHIM-Test](docs/hardware-bring-up.md), [PTT-Verhalten](docs/push-to-talk.md), [STT und Messwerte](docs/speech-to-text.md), [Button-Bedienung](docs/button-controls.md), [lokale TTS und Performance](docs/local-speech.md), [Architektur](docs/architecture.md), [nächste Aufgaben](docs/roadmap.md), [Projekt-/PR-Prüfung](docs/project-review.md).
+Vertiefung: [Hardware und Fotos](docs/hardware.md), [Ethernet/USB/SHIM-Test](docs/hardware-bring-up.md), [PTT-Verhalten](docs/push-to-talk.md), [STT und Messwerte](docs/speech-to-text.md), [Button-Bedienung](docs/button-controls.md), [Piper-TTS einrichten](docs/text-to-speech.md), [TTS-Performance](docs/local-speech.md), [Architektur](docs/architecture.md), [nächste Aufgaben](docs/roadmap.md), [Projekt-/PR-Prüfung](docs/project-review.md).
 
 Die Installationsvorlage setzt weiterhin `openrouter`, weil der normale Dienstinstaller Vosk nicht mitinstalliert. Für den dokumentierten Offline-Betrieb Vosk separat installieren und **explizit `STT_PROVIDER=vosk` setzen**. Installation und Providerwahl stehen zusammen im Setup.

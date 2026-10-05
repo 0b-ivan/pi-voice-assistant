@@ -21,7 +21,7 @@ Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten b
 
 SHIM E kann bereits eine **separat installierte** Sprach-CLI für Statusmeldungen starten. PTT stoppt die vom Dienst gestartete Ansage vor Aufnahme; E spricht nicht während Aufnahme. Das ist keine LLM-Antwort. Externe manuelle Playback-Prozesse verwaltet der Dienst nicht.
 
-Piper 1.8.0 mit deutscher Thorsten-Stimme ist auf dem Pi getestet. Wrapper/Installer stehen in offenem PR #14; ein frischer `main`-Checkout enthält sie noch nicht. Ressourcenvergleich in PR #16 ist ebenfalls offen. Siehe [lokale Sprachausgabe](local-speech.md).
+Piper 1.8.0 mit deutscher Thorsten-Stimme ist auf dem Pi getestet. [`src/speak.py`](../src/speak.py) erzeugt ein temporäres WAV und spielt es über WM8960 ab; der Dienstinstaller deployt den Wrapper. Piper-Paket und Stimme werden separat installiert: [TTS-Setup](text-to-speech.md). Der Ressourcenvergleich ist inzwischen implementiert und auf dem Pi gemessen; [Performance und Grenzen](local-speech.md).
 
 Geplant: Transcript → OpenRouter-LLM → Piper → WM8960. **LLM-Aufruf und automatische Antwort-Orchestrierung fehlen.** Der vorhandene Offline-STT-Pfad liefert daher noch keinen vollständig offline antwortenden Assistenten. Lokales LLM, Wake Word, Streaming, Echounterdrückung sowie Kamera/Display sind keine aktuellen Funktionen.
 

@@ -4,26 +4,9 @@
 
 Auf `pi-assistent` ist Piper **1.8.0** mit **`de_DE-thorsten-low`** erfolgreich getestet. Ausgabe: S16_LE, 16 kHz, Mono über `plughw:CARD=wm8960soundcard,DEV=0`; Speaker zuletzt beide Kanäle **80 % / −19 dB**, gespeichert.
 
-Wrapper `src/speak.py` und Installer `scripts/install-piper.sh` befinden sich in **offenem [PR #14](https://github.com/0b-ivan/pi-voice-assistant/pull/14)**, geprüfter Head `ae3c927`. Sie fehlen auf `main`. Der Pi wurde laut Chat aus diesem Feature-Stand aktualisiert. SHIM E meldet danach erfolgreichen Prozessabschluss; automatische LLM-Antworten fehlen weiterhin.
+Wrapper `src/speak.py` und Installer `scripts/install-piper.sh` liegen im Repo. Der Dienstinstaller deployt den Wrapper; Piper und die Stimme werden separat installiert. SHIM E meldet auf dem Pi erfolgreichen Prozessabschluss; automatische LLM-Antworten fehlen weiterhin.
 
-## Feature-Version verwenden
-
-Die folgende Installation gilt ausschließlich für einen Checkout von PR #14, in dem beide Skripte tatsächlich vorhanden sind. Bei bestehendem Checkout erst lokale Änderungen prüfen; keinen fremden oder älteren Checkout übergehen. Noch offener Textübergabe-Befund steht unten.
-
-```bash
-git status --short
-git rev-parse --short HEAD
-ls scripts/install-piper.sh src/speak.py
-sudo bash scripts/install-piper.sh
-sudo bash scripts/install-voice-service.sh
-/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py "Hallo Ivan, ich kann lokal sprechen."
-```
-
-Piper liegt in `/opt/pi-voice-assistant/.venv`, Stimme als `.onnx` plus passende `.onnx.json` unter `/opt/pi-voice-assistant/tts/`. Wrapper startet den venv-Interpreter, erzeugt temporäres WAV und ruft danach `aplay` auf. Wrapper kann mit System-Python gestartet werden; Piper-Unterprozess muss aus dem venv kommen.
-
-Optionale Umgebungswerte des Wrappers: `PIPER_PYTHON`, `PIPER_MODEL`, `TTS_AUDIO_DEVICE`. Unter systemd vorhandene Konfiguration ergänzen und Dienst neu starten. Modelle/venv müssen unter erlaubtem Pfad liegen (`ProtectHome=yes`); `/opt`, `src/` und `scripts/` bleiben root-verwaltet. Nur venv und TTS-Datenverzeichnis gehören im Feature-Installer `obivan`. Historisches rekursives `chown` auf dem Pi ist kein nachgewiesener korrekter aktueller Rechtezustand.
-
-Die Warnungen `Missing phoneme from id map` und `Failed to persist telemetry device ID` waren beim protokollierten Statusaufruf nicht blockierend (Exitcode 0). Das ersetzt keine Qualitätsprüfung verschiedener Texte.
+Installation, Modellpfade und Konfiguration: [Piper-TTS einrichten](text-to-speech.md).
 
 ## Performance
 

@@ -44,7 +44,7 @@ journalctl -u pi-ptt.service -n 30 --no-pager
 
 Erwartet: `shim_ready`, Bus 1, `0x3f`. Der Dienst nutzt die Gruppe `i2c`. Bei I²C-Fehler wird SHIM bis zum Neustart deaktiviert; GPIO17 bleibt nutzbar. Beim späteren Busausfall wird der aktuelle Vorgang verworfen.
 
-Der Sprachbefehl erhält den gesamten Text als ein zusätzliches Argument ohne Shell. Auf `main` wird `speak.py` weder mitgeliefert noch überschrieben; für E ist die [separate TTS aus PR #14](local-speech.md) nötig. Der Wrapper startet Piper mit seinem venv-Interpreter. Ein alter lokaler Wrapper mit System-Python erzeugte `No module named piper`; die später installierte GitHub-Version erreicht `speech_finished` mit Exitcode 0.
+Der Sprachbefehl erhält den gesamten Text als ein zusätzliches Argument ohne Shell. Der Dienstinstaller liefert `speak.py` mit; für E müssen [Piper-Paket und Stimme separat installiert](text-to-speech.md) sein. Der Wrapper startet Piper mit seinem venv-Interpreter. Ein alter lokaler Wrapper mit System-Python erzeugte `No module named piper`; die später installierte GitHub-Version erreicht `speech_finished` mit Exitcode 0.
 
 Keinen zweiten SHIM-/LED-Test parallel starten. Rücknahme: `PTT_BUTTON_SHIM=0`, Dienst neu starten. GPIO17 und STT-Konfiguration bleiben verwendbar.
 
