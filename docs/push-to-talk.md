@@ -11,7 +11,7 @@ Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Installati
 
 Das [Waveshare-Wiki](https://www.waveshare.com/wiki/WM8960_Audio_HAT) ordnet `BUTTON` ausdrücklich **P17 / BCM GPIO17** zu, am Pi physischer Pin 11. Auch die vorhandene [Hardwaredokumentation](hardware.md) nennt diese Belegung. Der [Herstellerschaltplan](https://files.waveshare.com/upload/f/fa/WM8960_Audio_HAT_Schematic.pdf), Seite 1, zeigt K1, P17, R1 4,7 kΩ, 3V3 und GND. Voreinstellung: aktiv Low mit Pull-up; die tatsächliche Polarität des montierten HATs vor Betrieb mit `--probe` bestätigen. Kein Treiberwechsel nötig.
 
-BCM17 ist auf dem Zero 2 W normalerweise Offset 17 am Haupt-GPIO-Chip. `/dev/gpiochip0` ist eine konfigurierbare Vorgabe, kein geprüfter Wert dieses Systems. `gpiodetect`/`gpioinfo` müssen den Chip und die Leitung bestätigen. GPIO17 darf nicht bereits von einem anderen Dienst belegt sein. I²C GPIO2/3 und I²S GPIO18–21 bleiben für das Audio-HAT; Kamera und mini PiTFT liegen derzeit separat.
+BCM17 ist auf dem Zero 2 W normalerweise Offset 17 am Haupt-GPIO-Chip. Am 05.10.2026 bestätigen die vom Nutzer eingereichten Ausgaben `/dev/gpiochip0` als `pinctrl-bcm2835` mit 54 Leitungen und Offset 17 (`GPIO17`) als Eingang ohne Consumer. `python3-libgpiod` und `gpiod` sind in Version `2.2.1-2+deb13u1` installiert. Polarität und physische Tastenfunktion sind damit noch nicht geprüft. GPIO17 darf nicht bereits von einem anderen Dienst belegt sein. I²C GPIO2/3 und I²S GPIO18–21 bleiben für das Audio-HAT; Kamera und mini PiTFT liegen derzeit separat.
 
 ## Verhalten und Grenzen
 
@@ -27,7 +27,7 @@ BCM17 ist auf dem Zero 2 W normalerweise Offset 17 am Haupt-GPIO-Chip. `/dev/gpi
 
 ## Installation auf pi-assistent
 
-Zuerst PR #3 integrieren, dann diesen PTT-Branch; der PTT-PR basiert auf dem Dokumentationsbranch. Im Repository auf dem Pi:
+PR #3 wurde nach main gemergt; PR #4 wurde nach docs/system-update gemergt. Der PTT-Code liegt damit zunächst auf docs/system-update. Der Folge-PR bringt PTT und diese bestätigten Diagnosewerte gemeinsam nach main. Bis zu dessen Merge den PTT-Branch verwenden. Im Repository auf dem Pi:
 
 ```bash
 sudo apt update
@@ -114,4 +114,4 @@ sudo systemctl stop pi-ptt.service
 sudo systemctl start pi-ptt.service
 ```
 
-Beim manuellen Abspielen die Taste nicht drücken. Anschließend Stop/Start entfernt die Testaufnahme. Kein WAV committen. Endgültigen Speaker-Wert mit den lesenden Befehlen aus [setup.md](setup.md) nachtragen; die bereits bestätigte allgemeine Audio-Neustartprüfung ist keine PTT-Abnahme.
+Beim manuellen Abspielen die Taste nicht drücken. Anschließend Stop/Start entfernt die Testaufnahme. Kein WAV committen. Speaker ist mit 95 % / 0,00 dB auf beiden Kanälen ausgelesen (siehe [setup.md](setup.md)); die bereits bestätigte allgemeine Audio-Neustartprüfung ist keine PTT-Abnahme.
