@@ -1,6 +1,6 @@
 # WM8960 Push-to-Talk
 
-Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Aktiv-Low-Polarität und normale Tastenerkennung sind auf dem Pi bestätigt (19 Start-/Release-Paare). PTT-Aufnahme, verständliche manuelle Wiedergabe und automatischer systemd-Start samt erneuter Aufnahme/Wiedergabe nach Neustart sind bestätigt. Gezielte Entprellungs-, Grenz- und Fehlerprüfungen bleiben offen. Die zuvor bestätigte allgemeine Audio-Neustartprüfung steht in [setup.md](setup.md).
+Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Aktiv-Low-Polarität und normale Tastenerkennung sind auf dem Pi bestätigt (19 Start-/Release-Paare). PTT-Aufnahme, verständliche manuelle Wiedergabe und automatischer systemd-Start samt erneuter Aufnahme/Wiedergabe nach Neustart sind bestätigt. Zeitlimit ohne Wiederholung, Dienststart bei gehaltener Taste, Stop während Aufnahme und ALSA-Fehler samt Wiederherstellung sind auf Hardware bestätigt. Gezielte elektrische Prelltests und quantitative Lastmessungen bleiben offen. Die zuvor bestätigte allgemeine Audio-Neustartprüfung steht in [setup.md](setup.md).
 
 ## Plan und Hardwarebeleg
 
@@ -97,12 +97,12 @@ Auf dem Pi folgende Ergebnisse mit Datum, Kernel, `dpkg-query -W python3-libgpio
 |---|---|---|
 | Probe: 20 normale Drück-/Loslasszyklen | Genau ein Start und ein Ende je Zyklus | 19 vollständige Paare in Nutzer-Ausgabe bestätigt; letzter Zyklus noch offen |
 | Probe: kurze/prellende Berührungen | Keine Mehrfachstarts | Offen |
-| Start bei gehaltenem Taster | Aufnahme erst nach Loslassen und erneutem Drücken | Offen |
+| Start bei gehaltenem Taster | Aufnahme erst nach Loslassen und erneutem Drücken | Dienststart getestet und vom Nutzer bestätigt; kein zusätzlicher Boottest mit gehaltener Taste |
 | 2–5 s deutschen Satz halten/loslassen | `capture_ready`, gültiges verständliches Stereo-WAV | Aufnahmeereignisse dokumentiert; manuelle Wiedergabe vom Nutzer mit „funktioniert“ bestätigt |
-| Taste länger als 30 s halten | Eine begrenzte Aufnahme; keine zweite bis erneutes Drücken | Offen |
-| Sehr kurzer Tastendruck | Keine fertige Leeraufnahme | Offen |
-| Dienst während Aufnahme stoppen | arecord beendet; `/run/pi-ptt` bereinigt | Offen |
-| Falsches ALSA-Gerät konfigurieren | `error`, keine fertige Datei; nach Korrektur wieder nutzbar | Offen |
+| Taste länger als 30 s halten | Eine begrenzte Aufnahme; keine zweite bis erneutes Drücken | 40 s durchgehend gehalten, keine Wiederholung; Nutzerbestätigung und Journal mit reason=limit |
+| Sehr kurzer Tastendruck | Keine fertige Leeraufnahme | Elf kurze Aufnahmen mit je 6000 Frames (125 ms); unter 100 ms und Zuordnung zu tatsächlichen Betätigungen nicht belegt |
+| Dienst während Aufnahme stoppen | arecord beendet; `/run/pi-ptt` bereinigt | recording 17:00:12, Stop 17:00:20 ohne capture_ready; inactive, kein arecord, Verzeichnis entfernt |
+| Falsches ALSA-Gerät konfigurieren | `error`, keine fertige Datei; nach Korrektur wieder nutzbar | Sechs einzelne Betätigungen mit je error; Testverzeichnis leer; normaler Dienst danach mit Aufnahme und verständlicher Wiedergabe bestätigt |
 | Neustart mit aktiviertem Dienst | Dienst läuft, GPIO angefordert, Aufnahme/Wiedergabe erneut möglich | Status enabled / active (running) nach Neustart belegt; anschließende Hörprüfung mit „passt“ bestätigt |
 | Speicher/CPU beobachten | Kein Dateiwachstum über einen Slot; Last messen | Offen |
 
@@ -139,4 +139,17 @@ Die Vordergrundaufnahme erzeugte wiederholt capture_ready (WAV, PCM S16_LE, 48 k
 
 Anschließend wurden Code, Beispielkonfiguration und Unit nach /opt, /etc/pi-ptt.env und /etc/systemd/system installiert. systemd-analyze verify zeigte keine Fehlermeldung. enable --now erzeugte den Autostart-Link; erster Dienststart am 05.10.2026 um 16:46:20 CEST, PID 1466, active (running).
 
-Nach dem angeforderten Neustart zeigt die vom Nutzer gelieferte Statusausgabe (auch als Screenshot) den automatischen Start um 16:47:34 CEST, PID 530, enabled und active (running). ExecStart verwendet /usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py. Das Journal enthält waiting_for_release für /dev/gpiochip0, Leitung 17, probe=false. Nach erneutem Tastendruck und manuellem Abspielen von /run/pi-ptt/capture.wav bestätigt der Nutzer „passt“. Damit ist der normale PTT-Ablauf inklusive automatischem Start und Hörprüfung nach Neustart bestanden. Keine quantitative Qualitätsmessung und keine automatische Wiedergabe implementiert; Zeitlimit, Boot bei gehaltenem Taster und gezielte Fehlerfälle auf Hardware bleiben offen.
+Nach dem angeforderten Neustart zeigt die vom Nutzer gelieferte Statusausgabe (auch als Screenshot) den automatischen Start um 16:47:34 CEST, PID 530, enabled und active (running). ExecStart verwendet /usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py. Das Journal enthält waiting_for_release für /dev/gpiochip0, Leitung 17, probe=false. Nach erneutem Tastendruck und manuellem Abspielen von /run/pi-ptt/capture.wav bestätigt der Nutzer „passt“. Damit ist der normale PTT-Ablauf inklusive automatischem Start und Hörprüfung nach Neustart bestanden. Keine quantitative Qualitätsmessung und keine automatische Wiedergabe implementiert; Die anschließenden Grenz- und Fehlerprüfungen sind unten dokumentiert; ein Boot mit gehaltener Taste wurde nicht gesondert getestet.
+
+## Abnahme am 05.10.2026: Grenzen und Fehlerbereinigung
+
+Alle folgenden Prüfungen führte der Nutzer über SSH auf pi-assistent aus; keine direkte SSH-Verbindung des Agenten. Der zuletzt bestätigte Kernel ist 6.18.50+rpt-rpi-v8; für diese Tests wurde kein neuer Kernel-/Paketstand ausgelesen. GPIO-Chip /dev/gpiochip0, Offset 17, aktiv Low und die vorhandene Installation wurden weiterverwendet.
+
+- Zeitlimit: recording um 16:54:44 CEST, capture_ready mit reason=limit um 16:55:14, 1434016 Frames (29,88 s bei 48 kHz). Der Nutzer bestätigt mindestens 40 s durchgehendes Halten ohne zweite Aufnahme. Danach sind erneute Aufnahmen mit reason=release belegt.
+- Dienststart mit gehaltener Taste: waiting_for_release um 16:57:23, erst um 16:57:33 recording und capture_ready mit reason=release. Der Nutzer bestätigt Halten beim Dienststart und Aufnahme erst nach Loslassen und erneutem Drücken. Dies ist ein Dienststarttest, kein gesonderter Neustart des Pi mit gehaltener Taste.
+- Kurzbetätigungen: elf Aufnahme-/Release-Paare zwischen 16:58:04 und 16:58:07, jeweils 6000 Frames (125 ms). Keine error-Ereignisse. Tatsächliche Anzahl der Betätigungen und elektrische Prellimpulse wurden nicht bestätigt; daher keine vollständige Entprellungsabnahme und kein Nachweis der Verwerfung von Aufnahmen unter 100 ms.
+- Stop während Aufnahme: recording um 17:00:12, erfolgreicher Dienststop um 17:00:20 ohne Veröffentlichung dieser Aufnahme. is-active meldet inactive, pgrep für arecord bleibt ohne Ausgabe, /run/pi-ptt existiert nicht mehr.
+- ALSA-Fehler: Vordergrundtest bei gestopptem Dienst, nur temporäre Umgebungswerte PTT_AUDIO_DEVICE=plughw:CARD=absichtlichungueltig,DEV=0 und PTT_RUNTIME_DIR=/tmp/pi-ptt-error-test. Sechs recording/error-Paare mit arecord exit status 1, kein capture_ready. Der Nutzer bestätigt sechs einzelne Tastendrücke, keine automatische Wiederholung bei gehaltenem Taster. Nach Ctrl-C ist das Testverzeichnis leer. Die eingereichte Prozessprüfung ist in der Kopie verunstaltet und zählt nicht als gesonderter Prozessnachweis dieses Tests.
+- Wiederherstellung: normaler Dienst danach mit erfolgreichen release-Aufnahmen um 17:04:16 (222016 Frames) und 17:04:25 (258016 Frames). Manuelle Wiedergabe wird als verständlich bestätigt. Zwischenzeitlich sichtbare Recorder und fehlendes capture.wav waren vom Nutzer durch weitere Tastendrücke ausgelöst; neue Aufnahme löscht den vorherigen Slot. Die letzten Prozessprüfungen zeigen keinen arecord. Im anschließenden 15-s-Ruhetest ohne Tastenbetätigung erscheinen keine neuen Ereignisse.
+
+Offen bleiben der zwanzigste ursprüngliche Probezyklus, gezielte elektrische Prelltests, Aufnahmen unter 100 ms, quantitative Speicher-/CPU-Messungen und ein gesonderter Boottest mit gehaltener Taste. Sprachpipeline und automatische Wiedergabe sind weiterhin nicht implementiert.
