@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local hold-to-talk recorder with OpenRouter STT. Requires libgpiod Python API v2."""
+"""Local hold-to-talk recorder with selectable STT. Requires libgpiod Python API v2."""
 import argparse
 import json
 import math
@@ -11,7 +11,7 @@ import threading
 import time
 import wave
 
-from transcribe import TranscriptionError, transcribe
+from transcribe import TranscriptionError, transcribe_with_provider
 
 
 def event(name, **fields):
@@ -22,11 +22,11 @@ def process_capture(path):
     """Transcribe one published capture; STT failure must not kill PTT."""
     event('processing', path=str(path))
     try:
-        text = transcribe(path)
+        text, provider = transcribe_with_provider(path)
     except (OSError, TranscriptionError) as exc:
         event('stt_error', message=str(exc))
         return None
-    event('transcript', text=text)
+    event('transcript', text=text, provider=provider)
     print(f'ERKANNT: {text}', flush=True)
     return text
 
