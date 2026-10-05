@@ -31,4 +31,6 @@ Das Skript auf dem Pi ausführen. Fehlende Diagnoseprogramme werden übersprunge
 
 ## Arbeitsweise
 
+Konfigurationsdateien bearbeiten wir mit **Vim**; Anleitungen verwenden `vim` als Editor.
+
 `main` enthält nachvollziehbare Projektstände. Änderungen erfolgen über kurze Feature-Branches und Pull Requests. Treiberänderungen werden erst nach Hardwaretests als funktionierend dokumentiert. Keine Zugangsdaten, Sprachaufnahmen oder Kamerabilder committen. Eine Lizenz ist noch nicht festgelegt.

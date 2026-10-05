@@ -10,6 +10,10 @@ Vor dem Flashen konkrete Image-Version, Architektur und Download-Prüfsumme doku
 
 Quelle: [Raspberry Pi OS Downloads](https://www.raspberrypi.com/software/operating-systems/).
 
+## Editor
+
+Für alle Konfigurationsänderungen verwenden wir **Vim**. Falls noch nicht installiert: `sudo apt install vim`. Datei mit `sudo vim <Pfad>` öffnen, mit `i` bearbeiten und mit `Esc`, `:wq`, Enter speichern und schließen.
+
 ## 1. SD-Karte vorbereiten
 
 Mit Raspberry Pi Imager das vereinbarte Lite-Image auf die 64-GB-Karte schreiben. Das überschreibt die Karte; vorher benötigte Daten sichern. Hostname `pi-assistent`, Benutzer `obivan`, SSH (Passwortanmeldung bei der Erstinbetriebnahme bestätigt), 2,4-GHz-WLAN mit Land `DE` und Zeitzone `Europe/Berlin` konfigurieren. Der Zero 2 W benötigt ein 2,4-GHz-WLAN.
@@ -156,10 +160,10 @@ Konfiguration sichern und bearbeiten:
 
 ```bash
 sudo cp /boot/firmware/config.txt /boot/firmware/config.txt.before-wm8960
-sudo nano /boot/firmware/config.txt
+sudo vim /boot/firmware/config.txt
 ```
 
-Unter dem bestehenden `[all]` am Dateiende ergänzen:
+In Vim mit **i** in den Einfügemodus wechseln. Unter dem bestehenden `[all]` am Dateiende ergänzen:
 
 ```ini
 # Waveshare WM8960 Audio HAT
@@ -168,7 +172,7 @@ dtparam=i2s=on
 dtoverlay=wm8960-soundcard
 ```
 
-Speichern, `sudo reboot` ausführen und erneut per SSH anmelden. Anschließend:
+Mit **Esc**, **`:wq`**, **Enter** speichern und schließen. Dann `sudo reboot` ausführen und erneut per SSH anmelden. Anschließend:
 
 ```bash
 aplay -l
