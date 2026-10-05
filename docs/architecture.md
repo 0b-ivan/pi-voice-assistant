@@ -1,59 +1,34 @@
-# Architektur 🧠
+# Architektur
 
-## Verantwortlichkeiten
+Der Pi übernimmt Taste, Audio und lokale STT. **Implementiert auf `main`:**
 
-| Komponente | Aufgabe |
-|---|---|
-| Pi-Client | GPIO17 lesen, Aufnahme begrenzen/validieren, STT auswählen, später LLM/TTS orchestrieren und Audio abspielen |
-| Vosk STT | Optionale lokale deutsche Spracherkennung ohne Internet |
-| OpenRouter STT | Online-STT mit Whisper; im Hybridmodus primärer Provider |
-| OpenRouter LLM | Nächster Schritt: erkannten Text beantworten |
-| Piper TTS | Lokale deutsche Sprachsynthese mit `de_DE-thorsten-low`; Ausgabe über WM8960 |
-| PiSugar2-Integration | Später Akkustatus und kontrolliertes Herunterfahren |
-| Kamera/Display | Spätere optionale Erweiterung |
+```text
+GPIO17 oder optional SHIM A
+  → arecord: 48 kHz / Stereo / S16_LE
+  → validierter WAV-Slot /run/pi-ptt/capture.wav
+  → STT-Hintergrundthread
+      vosk: intern 16 kHz Mono, Modell im Prozess wiederverwendet
+      openrouter: Online-STT
+      auto: Online zuerst, bei Fehler Vosk
+  → transcript / ERKANNT im Journal
+```
 
-Der Pi Zero 2 W übernimmt Geräte-I/O und kann STT lokal mit Vosk ausführen. Auf `pi-assistent` ist derzeit bewusst `STT_PROVIDER=vosk` gesetzt, sodass Aufnahme und Spracherkennung vollständig offline laufen. Die eigentliche LLM-Antwort bleibt im bisherigen Architekturplan zunächst extern bei OpenRouter; sie ist noch nicht angebunden. Die Ausgabe kann bereits lokal mit Piper erfolgen, sodass im Ziel-MVP nur die LLM-Antwort selbst online sein muss.
+[`src/ptt.py`](../src/ptt.py) steuert GPIO und Aufnahme, [`src/voice_controls.py`](../src/voice_controls.py) den STT-Auftrag und eigene Sprachprozesse, [`src/transcribe.py`](../src/transcribe.py) die Provider. Der Hintergrundthread hält die Tasten bedienbar; es gibt weiterhin nur **einen** Aufnahmeslot, keine Warteschlange.
 
-## MVP-Ablauf
+Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Modell-Laden erfolgt bei der ersten lokalen Transkription, nicht beim Dienststart.
 
-1. Client wartet auf Tastendruck.
-2. Gedrückt halten startet die Aufnahme; Loslassen stoppt sie. Zusätzlich gilt ein konfigurierbares Zeitlimit (PTT-Standard 30 Sekunden).
-3. Der Recorder validiert das WAV und veröffentlicht atomar `capture.wav`.
-4. Der STT-Adapter verwendet `STT_PROVIDER=openrouter|vosk|auto`.
-5. `auto` versucht zuerst OpenRouter und verwendet bei STT-/Netzfehler Vosk lokal.
-6. Als nächster Baustein wird der erkannte Text an ein OpenRouter-LLM gesendet.
-7. `src/speak.py` synthetisiert den deutschen Antworttext lokal mit Piper 1.8.0.
-8. ALSA spielt die erzeugte 16-kHz-Mono-WAV über `plughw:CARD=wm8960soundcard,DEV=0` ab; danach kehrt der Client in den Wartezustand zurück.
+## Statusansage und geplanter Antwortpfad
 
-Während der synchronen Verarbeitung startet keine neue Aufnahme. Nach STT wird GPIO17 resynchronisiert; eine während der Verarbeitung gehaltene Taste muss zuerst losgelassen werden. Wake Word, Unterbrechen der Sprachausgabe und Echounterdrückung gehören nicht zum ersten MVP.
+SHIM E kann bereits eine **separat installierte** Sprach-CLI für Statusmeldungen starten. PTT stoppt die vom Dienst gestartete Ansage vor Aufnahme; E spricht nicht während Aufnahme. Das ist keine LLM-Antwort. Externe manuelle Playback-Prozesse verwaltet der Dienst nicht.
 
-## Implementierter Vertrag: PTT → STT
+Piper 1.8.0 mit deutscher Thorsten-Stimme ist auf dem Pi getestet. [`src/speak.py`](../src/speak.py) erzeugt ein temporäres WAV und spielt es über WM8960 ab; der Dienstinstaller deployt den Wrapper. Piper-Paket und Stimme werden separat installiert: [TTS-Setup](text-to-speech.md). Der Ressourcenvergleich ist inzwischen implementiert und auf dem Pi gemessen; [Performance und Grenzen](local-speech.md).
 
-Der lokale [Push-to-Talk-Dienst](push-to-talk.md) liest GPIO17 mit libgpiod v2 und erzeugt geprüftes Stereo-WAV (48 kHz, S16_LE) unter `/run/pi-ptt`. Nach `capture_ready` ruft er [`src/transcribe.py`](speech-to-text.md) synchron auf.
+Geplant: Transcript → OpenRouter-LLM → Piper → WM8960. **LLM-Aufruf und automatische Antwort-Orchestrierung fehlen.** Der vorhandene Offline-STT-Pfad liefert daher noch keinen vollständig offline antwortenden Assistenten. Lokales LLM, Wake Word, Streaming, Echounterdrückung sowie Kamera/Display sind keine aktuellen Funktionen.
 
-Der STT-Adapter unterstützt drei Modi. `openrouter` entspricht dem bisherigen Verhalten. `vosk` verarbeitet das WAV lokal; dafür wird das bestätigte 48-kHz-Stereoformat intern in 16-kHz-Mono überführt. `auto` bevorzugt OpenRouter und fällt bei einem fehlgeschlagenen Online-STT-Aufruf auf Vosk zurück.
+## Betrieb und Grenzen
 
-Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`; das Transcript-Ereignis nennt den tatsächlich verwendeten Provider. Erwartete Provider-, Netzwerk- und API-Fehler werden als `stt_error` gemeldet und beenden PTT nicht.
+Die [Unit](../deploy/pi-ptt.service) läuft als `obivan` mit `audio/gpio/i2c`, ohne root. Runtime-Verzeichnis ist `/run/pi-ptt`; Code unter `/opt`, Home gesperrt. Ein dedizierter Dienstbenutzer ist eine offene Verbesserung, keine bereits implementierte Isolation.
 
-## Implementierter Vertrag: Text → Piper → WM8960
+Aufnahme hat standardmäßig 30 s Limit; Provider-/Aufnahmefehler werden protokolliert. Vosk braucht kein Netzwerk, die Unit wartet nicht auf `network-online.target`. `auto` ist implementiert, aber der reale Ausfalltest steht aus. WAVs sind flüchtig, Transkripte stehen im Journal.
 
-[`src/speak.py`](../src/speak.py) verwendet standardmäßig das lokale Modell `de_DE-thorsten-low.onnx`. Der Wrapper erzeugt eine temporäre WAV-Datei, spielt sie mit `aplay` über das WM8960 ab und entfernt sie anschließend wieder. Der am 05.10.2026 bestätigte Speaker-Pegel beträgt 80 % / −19 dB auf beiden Kanälen und wurde mit `alsactl store` gespeichert.
-
-## Betrieb und Fehler
-
-- Begrenzte Aufnahme und HTTP-Timeout; keine unbegrenzten Audio-Uploads.
-- Der lokale Vosk-Pfad benötigt kein Netzwerk.
-- Der Dienst wartet beim Start nicht auf `network-online.target`.
-- Das Vosk-Modell wird lazy geladen und innerhalb des Prozesses wiederverwendet.
-- Nach STT-Fehlern Rückkehr in den Wartezustand, keine Endlosschleife.
-- Zustände: bereit, Aufnahme, Verarbeitung; lokale Wiedergabe ist separat bestätigt, die vollständige LLM/TTS-Orchestrierung folgt.
-- Zugangsdaten ausschließlich außerhalb von Git in `/etc/pi-voice-assistant.env`.
-- Audio bleibt im flüchtigen Runtime-Verzeichnis; keine dauerhafte Speicherung als Standard.
-- Der OpenRouter-Schlüssel wird nicht im Journal ausgegeben.
-- Hardware-unabhängige Tests mocken externe STT-Aufrufe und benötigen keinen Schlüssel bzw. kein Vosk-Modell.
-
-## Erfolgskriterien
-
-Bereits bestätigt: GPIO17 startet zuverlässig eine Aufnahme; WM8960-WAV ist verständlich; OpenRouter-STT und Vosk-STT transkribieren echte Aufnahmen. Der integrierte PTT→Vosk-Pfad läuft auf dem Pi Zero 2 W. Im Hardwaretest benötigte Vosk für einen 6-Sekunden-Clip nach geladenem Modell rund 6,75–6,78 s; der laufende Dienst belegte rund 142 MiB RSS. Ein Vergleich mit beiden Mikrofonkanälen und hochwertigem SoX-Resampling zeigte keinen wesentlichen Qualitätsgewinn, sodass das kleine deutsche Vosk-Modell derzeit als Hauptlimit der Erkennungsqualität gilt.
-
-Noch offen: den `auto`-Fallback als realen OpenRouter→Vosk-Ausfalltest abnehmen, Offline-Erkennungsqualität für kurze Kommandos verbessern, OpenRouter-LLM anbinden, Playback-Sperre integrieren und danach die durchgehende Sprachinteraktion testen. Piper-TTS und WM8960-Wiedergabe sind standalone bereits bestätigt.
+Messwerte stehen ausschließlich unter [STT](speech-to-text.md) und [TTS](local-speech.md); Hardware-Abnahmen unter [PTT](push-to-talk.md), [Button SHIM](button-controls.md) und [Erweiterungen](hardware-bring-up.md). Entscheidungen: [Pi-Client](decisions/0001-client-server.md), [OS](decisions/0002-operating-system.md), [STT-Modi](decisions/0003-hybrid-stt.md).

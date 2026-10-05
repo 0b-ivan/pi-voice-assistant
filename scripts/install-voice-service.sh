@@ -38,7 +38,7 @@ created_voice_env=0
 if [[ ! -e /etc/pi-voice-assistant.env ]]; then
   install -o root -g obivan -m 0640 "${repo_root}/config/openrouter.env.example" /etc/pi-voice-assistant.env
   created_voice_env=1
-  echo "Created /etc/pi-voice-assistant.env (root:obivan, 0640); review STT_PROVIDER and credentials with Vim before starting."
+  echo "Created /etc/pi-voice-assistant.env (root:obivan, 0640); review STT_PROVIDER and credentials before starting."
 fi
 
 systemctl daemon-reload

@@ -1,97 +1,22 @@
-# Text-to-Speech mit Piper 🔊
+# Piper-TTS einrichten
 
-Stand 05.10.2026: Lokale deutsche Sprachausgabe ist auf dem Raspberry Pi Zero 2 W erfolgreich getestet. Verwendet wird Piper 1.8.0 mit der Stimme `de_DE-thorsten-low`. Die Ausgabe erfolgt lokal über ALSA und das WM8960 Audio-HAT.
-
-## Getesteter Pfad
-
-```text
-Antworttext
-    ↓
-Piper 1.8.0
-    ↓
-de_DE-thorsten-low
-    ↓
-16 kHz / Mono WAV
-    ↓
-aplay
-    ↓
-plughw:CARD=wm8960soundcard,DEV=0
-    ↓
-WM8960 / Lautsprecher
-```
-
-Die TTS-Kette benötigt für die Sprachsynthese kein Netzwerk. Im geplanten MVP bleibt nur die eigentliche LLM-Antwort über OpenRouter online.
+Lokale deutsche Sprachausgabe auf Pi Zero 2 W / Trixie ist mit **Piper 1.8.0** und **`de_DE-thorsten-low`** getestet. Ausgabe: S16_LE, 16 kHz, Mono über WM8960. Das ist Standalone-TTS bzw. SHIM-Statusausgabe; LLM und automatische Antwortwiedergabe fehlen weiterhin.
 
 ## Installation
 
-Piper läuft in einer eigenen virtuellen Umgebung unter `/opt/pi-voice-assistant/.venv`.
-
-Manuell:
+Im aktuellen Repo-Checkout auf dem Pi:
 
 ```bash
-sudo apt update
-sudo apt install -y python3-venv alsa-utils
-
-sudo install -d -o root -g root -m 0755 \
-  /opt/pi-voice-assistant \
-  /opt/pi-voice-assistant/src \
-  /opt/pi-voice-assistant/scripts
-sudo install -d -o obivan -g obivan -m 0755 \
-  /opt/pi-voice-assistant/.venv \
-  /opt/pi-voice-assistant/tts
-
-python3 -m venv /opt/pi-voice-assistant/.venv
-/opt/pi-voice-assistant/.venv/bin/pip install --upgrade pip
-/opt/pi-voice-assistant/.venv/bin/pip install piper-tts==1.8.0
-
-/opt/pi-voice-assistant/.venv/bin/python \
-  -m piper.download_voices \
-  --data-dir /opt/pi-voice-assistant/tts \
-  de_DE-thorsten-low
+sudo bash scripts/install-piper.sh
+sudo bash scripts/install-voice-service.sh
+/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py "Hallo Ivan, ich kann lokal sprechen."
 ```
 
-Der Anwendungs-Root sowie die deployten `src/`- und `scripts/`-Verzeichnisse bleiben `root:root`. Nur `.venv/` und `tts/` sind für den Dienstbenutzer `obivan` beschreibbar. Damit kann die TTS-Installation keine root-verwalteten Programmdateien ersetzen.
+Der erste Installer richtet Piper in `/opt/pi-voice-assistant/.venv` ein und lädt Modell plus passende `.onnx.json` nach `/opt/pi-voice-assistant/tts/`. Der Dienstinstaller deployt `speak.py` und aktualisiert die übrigen Dienstmodule; vorhandene Konfigurationen bleiben erhalten. Paket-/Modelldownload benötigt Netzwerk, spätere Synthese nicht.
 
-Das Modell liegt danach außerhalb des Git-Repositories:
+`/opt/pi-voice-assistant`, `src/` und `scripts/` bleiben root-verwaltet; nur `.venv/` und `tts/` sind im Piper-Installer für `obivan` beschreibbar. Kein rekursives `chown` des gesamten Anwendungsverzeichnisses. Dienst läuft mit `ProtectHome=yes`, daher Modell/Programme nicht unter `~/...` ablegen.
 
-```text
-/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx
-/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx.json
-```
-
-Das getestete ONNX-Modell ist ungefähr 61 MB groß. Modell- und Audiodateien werden nicht eingecheckt.
-
-## Standalone-Test
-
-```bash
-/opt/pi-voice-assistant/.venv/bin/python \
-  -m piper \
-  -m /opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx \
-  -f /tmp/tts-test.wav \
-  -- "Hallo Ivan. Ich bin dein lokaler Sprachassistent auf dem Raspberry Pi."
-
-aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/tts-test.wav
-```
-
-Bestätigtes Ausgabeformat:
-
-```text
-Signed 16 bit Little Endian
-16000 Hz
-Mono
-```
-
-## `src/speak.py`
-
-Der Wrapper erzeugt eine temporäre WAV-Datei, spielt sie über das WM8960 ab und entfernt sie anschließend wieder.
-
-Nach Installation über das Projekt:
-
-```bash
-/opt/pi-voice-assistant/src/speak.py "Hallo Ivan, ich kann jetzt komplett lokal sprechen."
-```
-
-Optionale Umgebungsvariablen:
+## Konfiguration und SHIM E
 
 | Variable | Standard |
 |---|---|
@@ -99,35 +24,20 @@ Optionale Umgebungsvariablen:
 | `PIPER_PYTHON` | `/opt/pi-voice-assistant/.venv/bin/python` |
 | `TTS_AUDIO_DEVICE` | `plughw:CARD=wm8960soundcard,DEV=0` |
 
-## Lautstärke
-
-Der zuvor dokumentierte Speaker-Wert von 95 % ist nicht mehr aktuell. Für die TTS-Wiedergabe wurde am 05.10.2026 folgender Pegel als angenehm bestätigt:
+Der Wrapper kann mit System-Python gestartet werden; sein Piper-Unterprozess nutzt den venv-Interpreter. Eigene Werte in `/etc/pi-voice-assistant.env` eintragen und Dienst neu starten. SHIM-Statusansagen verwenden in `/etc/pi-ptt.env`:
 
 ```text
-Front Left:  Playback 102 [80%] [-19.00dB]
-Front Right: Playback 102 [80%] [-19.00dB]
+PTT_SPEAK_COMMAND="/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py"
 ```
 
-Gesetzt und gespeichert mit:
+[Button-Steuerung](button-controls.md) beschreibt die Aktivierung und Abnahme. Ohne installiertes Piper/Modell meldet E `speech_error`.
 
-```bash
-amixer -c wm8960soundcard sset 'Speaker' 80%
-sudo alsactl store wm8960soundcard
-```
+## Wiedergabe und Grenzen
 
-## Bekannte Beobachtung
+Wrapper erzeugt ein temporäres WAV, spielt es mit `aplay` ab und entfernt es anschließend. Letzter bestätigter analoger Speaker-Pegel: beide Kanäle **80 % / −19 dB**; C/D ändern den separaten digitalen Playback-Pegel. [Audio-Setup](setup.md#3-audio-testen).
 
-Bei einzelnen deutschen Texten meldet Piper:
+Fehlendes Phonem und ONNX-Telemetrie-Warnung waren beim protokollierten Aufruf nicht blockierend (Exitcode 0). [Troubleshooting](troubleshooting.md#sprachausgabe).
 
-```text
-WARNING:piper.phoneme_ids:Missing phoneme from id map: ̧
-```
+Bekannter offener Wrapper-Befund: `--` wird derzeit als Teil des Sprachtexts an Piper übergeben. Die entsprechende Benchmarkkorrektur hat diesen Wrapper nicht geändert. [Textpfad und Performance](local-speech.md#performance).
 
-Die Synthese und Wiedergabe wurden trotzdem erfolgreich abgeschlossen. Der Hinweis ist aktuell nicht blockierend, sollte aber bei späteren Stimmen- oder Qualitätsvergleichen erneut geprüft werden.
-
-## Noch offen
-
-- Piper-Latenz und RAM-Verbrauch auf dem Zero 2 W messen.
-- TTS in den vollständigen PTT → STT → LLM → TTS-Ablauf integrieren.
-- Während der Wiedergabe neue Aufnahme zuverlässig sperren.
-- Weitere deutsche Piper-Stimmen bei Bedarf gegen `de_DE-thorsten-low` vergleichen.
+Pi-Messungen und Speichergrenzen stehen unter [TTS-Performance](local-speech.md) und [Ressourcenbericht](piper-resources.md). Cache, Streaming und dauerhafter Piper-Prozess sind noch nicht implementiert.

@@ -1,314 +1,143 @@
-# Betriebssystem und erste Inbetriebnahme 🐧
+# Setup: Pi, Audio und Offline-Sprachdienst
 
-## Basis und Entscheidungsstand
+Alle Befehle außer SSH-Verbindung und SD-Vorbereitung laufen auf dem Pi. Ziel: Raspberry Pi Zero 2 W, Raspberry Pi OS Lite **64-bit / Debian 13 Trixie**, Benutzer `obivan`, Hostname `pi-assistent`.
 
-Festgelegt am 05.10.2026: **Raspberry Pi OS Lite (64-bit), Debian 13 / Trixie**, ohne Desktop. Die Begründung steht in [ADR 0002](decisions/0002-operating-system.md).
+## 1. System vorbereiten
 
-Betrieb: Headless über SSH, systemd für den Client, Python mit virtueller Umgebung, ALSA für WM8960 und später rpicam/libcamera für die Kamera.
+Mit Raspberry Pi Imager das Lite-64-bit-Image auf die SD-Karte schreiben. Benutzer, SSH, 2,4-GHz-WLAN, Land DE und Zeitzone Europe/Berlin setzen. Flashen überschreibt die Karte. Der vorhandene Pi ist bereits installiert; für ihn diesen Schritt überspringen.
 
-Vor dem Flashen konkrete Image-Version, Architektur und Download-Prüfsumme dokumentieren. Boot und SSH sind bestätigt; die Kompatibilität der Hardwaretreiber bleibt zu prüfen.
-
-Quelle: [Raspberry Pi OS Downloads](https://www.raspberrypi.com/software/operating-systems/).
-
-## Editor
-
-Für alle Konfigurationsänderungen verwenden wir **Vim**. Falls noch nicht installiert: `sudo apt install vim`. Datei mit `sudo vim <Pfad>` öffnen, mit `i` bearbeiten und mit `Esc`, `:wq`, Enter speichern und schließen.
-
-## 1. SD-Karte vorbereiten
-
-Mit Raspberry Pi Imager das vereinbarte Lite-Image auf die 64-GB-Karte schreiben. Das überschreibt die Karte; vorher benötigte Daten sichern. Hostname `pi-assistent`, Benutzer `obivan`, SSH (Passwortanmeldung bei der Erstinbetriebnahme bestätigt), 2,4-GHz-WLAN mit Land `DE` und Zeitzone `Europe/Berlin` konfigurieren. Der Zero 2 W benötigt ein 2,4-GHz-WLAN.
-
-## Installationsprotokoll — 05.10.2026 📸
-
-Raspberry Pi Imager **v2.0.11.1** auf macOS. Der Abschlussbildschirm bestätigt **Raspberry Pi Zero 2 W**, **Raspberry Pi OS Lite (64-bit)** sowie angewendete Anpassungen für Hostname, Lokalisierung, Benutzerkonto, WLAN und aktiviertes SSH. Das Image wird im Imager als **Debian Trixie**, veröffentlicht **2026-09-15**, angezeigt. Die Image-Prüfsumme wurde noch nicht erfasst; der laufende Kernel ist im folgenden Bootprotokoll dokumentiert.
-
-Tatsächlicher Hostname: **`pi-assistent`** (ersetzt die ursprüngliche Planung `wgz-voice-01`). WLAN wurde eingerichtet. Die spätere SSH-Anmeldung bestätigt Benutzer `obivan` und Passwortauthentifizierung. WLAN-Land `DE` und Zeitzone `Europe/Berlin` bleiben zu überprüfende Planwerte.
-
-**Bestätigt:** Schreibvorgang abgeschlossen und Karte automatisch ausgeworfen. Der Pi ist gestartet, im Netzwerk erreichbar und die SSH-Anmeldung funktioniert. **Noch offen:** Hardwaretests.
-
-### Modell auswählen
-
-![Raspberry Pi Zero 2 W im Imager ausgewählt](images/setup/03-image.png)
-
-### Betriebssystem auswählen
-
-![Raspberry Pi OS Lite 64-bit, Debian Trixie, Image vom 15.09.2026](images/setup/05-image.png)
-
-### Hostname konfigurieren
-
-![Tatsächlicher Hostname pi-assistent](images/setup/06-image.png)
-
-### WLAN konfigurieren
-
-![WLAN im Imager eingerichtet; Passwort ist verborgen](images/setup/07-image.png)
-
-### SD-Karte schreiben
-
-![Beginn des Schreibvorgangs](images/setup/08-image.png)
-
-![Schreibvorgang bei 62 Prozent](images/setup/01-image.png)
-
-### Erfolgreicher Abschluss
-
-![Schreibvorgang abgeschlossen, Anpassungen angewendet, SSH aktiviert](images/setup/02-image.png)
-
-Alle acht Originalscreenshots liegen unter `docs/images/setup/`. [Screenshot 04](images/setup/04-image.png) ist identisch mit Screenshot 03 und wird deshalb nur einmal eingebettet.
-
-## Boot und erste SSH-Anmeldung — 05.10.2026 ✅
-
-| Beobachtung | Bestätigter Wert |
-|---|---|
-| Hostname | `pi-assistent` |
-| IPv4 beim ersten Start | `172.22.9.128` (kann sich ohne Reservierung ändern) |
-| Benutzer | `obivan` |
-| SSH | Anmeldung mit Passwort erfolgreich |
-| Architektur | `aarch64` |
-| Kernel | `6.18.50+rpt-rpi-v8` |
-| Kernelpaket laut Loginbanner | `Debian 1:6.18.50-1+rpt1 (2026-09-11)` |
-
-![Netzwerkscan zeigt pi-assistent unter 172.22.9.128](images/setup/first-boot-01.png)
-
-![Erfolgreiche SSH-Anmeldung als obivan, Kernelbanner und Shellprompt](images/setup/first-boot-02.png)
-
-Der Login belegt einen erfolgreichen Boot und SSH-Zugriff über die IP-Adresse. Erneute SSH-Anmeldung nach dem Update ist inzwischen bestätigt (siehe Audio-Bestandsaufnahme). mDNS (`pi-assistent.local`) wurde noch nicht bestätigt.
-
-## 2. Erster Start
-
-Per SSH mit `ssh obivan@pi-assistent.local` verbinden (alternativ die IP-Adresse verwenden) und Modell/OS erfassen:
+Vom Mac verbinden:
 
 ```bash
-cat /proc/device-tree/model
-cat /etc/os-release
-uname -a
-free -h
-lsblk
+ssh obivan@pi-assistent.local
 ```
 
-Betriebssystem aktualisieren und Diagnosewerkzeuge installieren:
+Falls mDNS nicht funktioniert, die **aktuelle** IP aus dem Router verwenden. Frühere IP-Adressen sind keine festen Zugangsdaten.
+
+Auf dem Pi:
 
 ```bash
+cat /etc/os-release
+uname -r
+uname -m
 sudo apt update
 sudo apt full-upgrade
-sudo apt install git alsa-utils i2c-tools
+sudo apt install git alsa-utils python3 python3-libgpiod gpiod python3-smbus i2c-tools
 sudo reboot
 ```
 
-Bei `[sudo] password for obivan:` das Benutzerpasswort eingeben; dabei werden keine Zeichen angezeigt. Bei `Continue? [Y/n]` bestätigt Enter die Vorgabe Ja. Wenn Paket-Hinweise mit `(press q to quit)` erscheinen, mit **q** den Betrachter schließen und die Aktualisierung fortsetzen lassen.
+Danach erneut anmelden. Bestätigter Teststand: Kernel `6.18.50+rpt-rpi-v8`, `aarch64`, Python 3.13, libgpiod 2.2.1. Diese Werte beschreiben die Abnahme und sind keine Versionsvorgaben für spätere Updates. [OS-Entscheidung](decisions/0002-operating-system.md), [historisches Installationsprotokoll mit Screenshots](history/setup-2026-10-05.md).
 
-Nach `sudo reboot` wird die SSH-Verbindung getrennt. Danach erneut verbinden:
+## 2. WM8960 mit vorhandenem Overlay
 
-```bash
-ssh obivan@pi-assistent.local  # alternativ die aktuell ermittelte IP-Adresse verwenden
-```
-
-Nach erfolgreicher Anmeldung den tatsächlich gestarteten Kernel und die Audioerkennung erfassen:
+Auf dem getesteten Kernel funktionieren vorhandener Codec-Treiber und `wm8960-soundcard`-Overlay. **Kein zusätzlicher Waveshare-Treiber/DKMS-Installer nötig.** Wenn Audio bereits funktioniert, Konfiguration und Mixer zunächst nur auslesen.
 
 ```bash
-uname -r
+ls /boot/firmware/overlays/wm8960-soundcard.dtbo
+modinfo snd_soc_wm8960
 aplay -l
 arecord -l
-lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS
 ```
 
-### Updateprotokoll — 05.10.2026
-
-Die sieben eingereichten Screenshots wurden geprüft. Drei Bilder belegen die relevanten Schritte; Downloadfortschritt und überlappende Zwischenstände wurden weggelassen.
-
-| Schritt | Nachweis / Status |
-|---|---|
-| Paketquellen aktualisieren | Debian Trixie, Updates, Security und Raspberry-Pi-Archiv abgerufen; anschließendes Upgrade zeigt 14 aktualisierbare Pakete |
-| `apt full-upgrade` | 14 Aktualisierungen angekündigt, keine Neuinstallationen oder Entfernungen; spätere Ausgabe zeigt Paketkonfiguration und abgeschlossene Trigger vor Beginn der Werkzeuginstallation |
-| Paket-Hinweise | rsync-Hinweise im Betrachter; mit **q** verlassen |
-| `alsa-utils` | Bereits aktuell: `1.2.14-1+rpt1` |
-| Git | Installation abgeschlossen: `1:2.47.3-0+deb13u1` |
-| I²C-Werkzeuge | Installation abgeschlossen: `i2c-tools 4.4-2` |
-| Neustart | Verbindung nach `sudo reboot` geschlossen; anschließender Login und Diagnosebefehle bestätigt |
-| Erneute SSH-Anmeldung | Erfolgreich; Loginbanner und Shellprompt im folgenden Screenshot |
-| Audioerkennung | Nur HDMI-Wiedergabe; kein Aufnahmegerät; WM8960 noch nicht erkannt |
-
-![Paket-Hinweise während des Updates; q schließt den Betrachter](images/setup/update-package-notes.png)
-
-![Upgrade abgeschlossen und Werkzeuginstallation wartet auf Bestätigung](images/setup/update-complete-install-confirmation.png)
-
-![Git und i2c-tools eingerichtet; SSH getrennt und erneute Verbindung gestartet](images/setup/tools-installed-reconnect.png)
-
-Die Updateausgabe referenziert Kerneldateien für `6.18.50+rpt-rpi-v8`. Der nachfolgende Screenshot bestätigt diesen Kernel mit `uname -r`. APT zeigt **27,1 GB verfügbaren Platz** an. Dieser Wert ist die freie Kapazität des Dateisystems und bestätigt nicht die Größe der eingelegten SD-Karte; die geplanten 64 GB werden mit `lsblk` geprüft.
-
-### Audio-Bestandsaufnahme nach Neustart — 05.10.2026
-
-![SSH-Anmeldung nach Neustart, Kernel und ALSA-Gerätelisten](images/setup/audio-baseline.png)
-
-| Diagnose | Ergebnis |
-|---|---|
-| `uname -r` | `6.18.50+rpt-rpi-v8` |
-| `aplay -l` | Nur Karte 0 `vc4hdmi`, Gerät 0 `MAI PCM i2s-hifi-0` |
-| `arecord -l` | Leere Liste der Aufnahmegeräte |
-| WM8960 | Noch nicht als ALSA-Karte erkannt |
-| Audiofunktion | Noch nicht getestet |
-
-Die leere Aufnahmegeräteliste belegt keine defekten Mikrofone. Zunächst müssen Treiber und Device-Tree-Konfiguration geprüft werden. Der nächste Schritt ist die WM8960-Einrichtung für den bestätigten Kernel.
-
-## 3. Audio zuerst
-
-### Vorhandenes Kernel-Overlay aktivieren
-
-Am 05.10.2026 wurden `/boot/firmware/overlays/wm8960-soundcard.dtbo` und der im Kernel enthaltene Codec-Treiber `snd_soc_wm8960` für `6.18.50+rpt-rpi-v8` nachgewiesen. Die lokale Overlay-Dokumentation beschreibt ausdrücklich das Waveshare-HAT mit 12,288 MHz MCLK. Es war keine zusätzliche Waveshare-Treiberinstallation erforderlich.
-
-Vorher waren I²C/I²S auskommentiert, kein WM8960-Overlay gesetzt und nur HDMI als ALSA-Wiedergabegerät sichtbar.
-
-Konfiguration sichern und bearbeiten:
-
-```bash
-sudo cp /boot/firmware/config.txt /boot/firmware/config.txt.before-wm8960
-sudo vim /boot/firmware/config.txt
-```
-
-In Vim mit **i** in den Einfügemodus wechseln. Unter dem bestehenden `[all]` am Dateiende ergänzen:
+Wenn WM8960 noch fehlt, `/boot/firmware/config.txt` sichern und bearbeiten. Unter dem wirksamen `[all]` folgende Einträge ergänzen, sofern nicht vorhanden:
 
 ```ini
-# Waveshare WM8960 Audio HAT
 dtparam=i2c_arm=on
 dtparam=i2s=on
 dtoverlay=wm8960-soundcard
 ```
 
-Mit **Esc**, **`:wq`**, **Enter** speichern und schließen. Dann `sudo reboot` ausführen und erneut per SSH anmelden. Anschließend:
-
 ```bash
-aplay -l
-arecord -l
+sudo reboot
 ```
 
-### Ergebnis nach Neustart — 05.10.2026 ✅
+Nach dem Login müssen `aplay -l` und `arecord -l` die Karte `wm8960soundcard` zeigen. Kartennummern können wechseln; deshalb in Befehlen den Namen verwenden.
 
-![WM8960 als Wiedergabe- und Aufnahmegerät nach Neustart erkannt](images/setup/wm8960-detected.png)
+## 3. Audio testen
 
-Beide Listen zeigen Karte 0 **`wm8960soundcard`**, Gerät 0, mit `bcm2835-i2s-wm8960-hifi`. HDMI ist zusätzlich als Karte 1 verfügbar. Damit ist die Geräteerkennung bestätigt; hörbare Wiedergabe und verständliche Mikrofonaufnahme sind noch nicht geprüft.
-
-Zunächst Mixerzustand erfassen, bevor Pegel oder Signalwege verändert werden:
+Bei vorhandenem Dienst vor manuellen Audiotests stoppen und anschließend wieder starten. Zunächst Pegel/Routing auslesen; leise beginnen:
 
 ```bash
+sudo systemctl stop pi-ptt.service  # nur wenn bereits installiert
 amixer -c wm8960soundcard scontents
-```
-
-Erkannten Kartenbezeichner in `AUDIO_CARD` einsetzen. Leise beginnen:
-
-```bash
-AUDIO_CARD=wm8960soundcard # Durch den erkannten Kartenbezeichner ersetzen
-speaker-test -D "plughw:CARD=${AUDIO_CARD},DEV=0" -c 2 -t wav -l 1
-arecord -D "plughw:CARD=${AUDIO_CARD},DEV=0" -f S16_LE -r 16000 -c 2 -d 5 /tmp/pi-voice-test.wav
-aplay -D "plughw:CARD=${AUDIO_CARD},DEV=0" /tmp/pi-voice-test.wav
-rm /tmp/pi-voice-test.wav
-```
-
-Das Aufnahmeformat ist ein Testvorschlag. Bei Formatfehlern unterstützte Hardwareparameter ermitteln und anpassen. Aufnahmepegel und Mikrofonrouting in `alsamixer` prüfen.
-
-## 4. Weitere Komponenten
-
-Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2-Variante bestimmen, Herstelleranleitung anwenden und kontrolliertes Herunterfahren prüfen. Kamera und Display folgen später.
-
-## Abnahmeprotokoll
-
-| Prüfung | Ergebnis |
-|---|---|
-| Modell, Image, Architektur, Kernel dokumentiert | Offen |
-| WM8960-Treiber / Overlay | Kernelmodul und vorhandenes Overlay verwendet; ALSA-Erkennung nach Neustart bestätigt |
-| Lautsprecherwiedergabe | Hörbar, Lautstärke laut Nutzer passend; Test durchläuft beide Kanäle |
-| Mikrofonaufnahme verständlich | Nutzer bestätigt gute Aufnahme mit Eingangsboost 3 und ADC-Hochpass |
-| Taste zuverlässig erkannt | Offen |
-| Netzwerkerreichbarkeit und SSH nach Neustart | Bestätigt; konkrete WLAN-Schnittstelle noch nicht erfasst |
-| Akku-/Abschaltverhalten geprüft | Offen |
-
-SD-Karte, erster Boot, SSH, Systemupdate und Werkzeuginstallation sind bestätigt. WM8960 wird mit dem vorhandenen Kernelmodul und Overlay erkannt. Lautsprecherwiedergabe, Mikrofonaufnahme sowie Speicherung und abschließender Audiotest nach Neustart sind laut Nutzer bestätigt. Taste und weitere Hardwaretests stehen aus.
-
-## Erster Lautsprechertest — noch ohne hörbaren Ton
-
-Am 05.10.2026 wurden `Speaker 70%` (−32 dB), `Playback 80%` (−25,5 dB) und beide `Output Mixer PCM`-Schalter auf `on` gesetzt. Der Test mit `speaker-test -D plughw:CARD=wm8960soundcard,DEV=0 -c 2 -t wav -l 1` lief bei 48 kHz, S16_LE und zwei Kanälen ohne sichtbaren ALSA-Fehler. Ivan meldet jedoch keinen hörbaren Ton. Der Wiedergabetest ist deshalb noch nicht bestanden.
-
-![Lautsprechertest läuft ohne ALSA-Fehler, laut Nutzer aber ohne hörbaren Ton](images/setup/speaker-test-silent.png)
-
-Die beiden Lautstärkeregler dämpfen zusammen um etwa 57,5 dB. Als nächsten Diagnoseschritt den digitalen Playback-Pegel auf 0 dB setzen und den Speaker-Pegel zunächst bei 70% belassen. Dieser Folgetest ist noch nicht bestätigt; weitere Ursachen wie Routing oder Verdrahtung bleiben möglich.
-
-## Lautsprecher bestätigt — 05.10.2026 ✅
-
-Nach Erhöhung des digitalen Playback-Pegels war Ton hörbar. Die zuvor gewählten 70% Speaker und 80% Playback waren zu stark gedämpft. Anschließend wurden Speaker 95% (0 dB) und 100% (+6 dB) getestet. Die zuletzt zurückgemeldete zusätzliche Verstärkung ist **Speaker AC = 5**; Ivan bestätigt die Lautstärke als passend. Der abschließende Test lief bei 48 kHz, S16_LE, zwei Kanälen ohne sichtbaren Fehler.
-
-Laut Nutzerangaben im Folgechat: **Playback 100 %, Speaker AC 5; letzter ausdrücklich gesetzter Speaker-Pegel 100 %**. Danach wurden 95 % empfohlen; eine Empfehlung belegt keine Änderung. Die anschließende Ausgabe von `amixer -c wm8960soundcard sget 'Speaker'` am 05.10.2026 bestätigt jetzt **beide Kanäle: Playback 121 / 127, 95 %, 0,00 dB**. Damit ist der tatsächlich ausgelesene Speaker-Pegel 95 %. Speaker DC wurde im Verlauf nicht verändert.
-
-```bash
-sudo alsactl store wm8960soundcard
-```
-
-Die erste Speicherung wurde ohne Fehlermeldung bestätigt. Die spätere Gesamtspeicherung und Neustartprüfung nach den Mikrofonänderungen sind inzwischen ebenfalls laut Nutzer bestätigt (siehe unten).
-
-## Mikrofonaufnahme bestätigt — 05.10.2026 ✅
-
-Die erste Aufnahme war leise und verrauscht. Nach Aktivierung der beiden Eingangswege, des ADC-Hochpasses und schrittweiser Erhöhung von LINPUT1/RINPUT1 auf Stufe 3 bestätigt Ivan die Aufnahme als gut. Bei Stufe 2 wurde ausdrücklich keine Verzerrung gemeldet. Es handelt sich um eine Hörprüfung; Signal-Rausch-Abstand und Clipping wurden nicht gemessen.
-
-Bestätigte Einstellungen:
-
-```bash
-amixer -c wm8960soundcard sset 'Left Input Mixer Boost' on
-amixer -c wm8960soundcard sset 'Right Input Mixer Boost' on
-amixer -c wm8960soundcard sset 'Left Input Boost Mixer LINPUT1' 3
-amixer -c wm8960soundcard sset 'Right Input Boost Mixer RINPUT1' 3
-amixer -c wm8960soundcard sset 'ADC High Pass Filter' on
-```
-
-Der zuvor erfasste Capture-Pegel betrug 39 (+12 dB), ADC PCM 195 (0 dB); diese Regler wurden im beschriebenen Verlauf nicht verändert. ALC und Noise Gate wurden nicht aktiviert.
-
-Getestet mit fünf Sekunden Stereoaufnahme bei 48 kHz / S16_LE und anschließender Wiedergabe:
-
-```bash
+speaker-test -D plughw:CARD=wm8960soundcard,DEV=0 -c 2 -t wav -l 1
 arecord -D plughw:CARD=wm8960soundcard,DEV=0 -f S16_LE -r 48000 -c 2 -d 5 /tmp/mikrofontest.wav
 aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/mikrofontest.wav
+rm /tmp/mikrofontest.wav
 ```
 
-### Abschließende Speicherung und Neustartprüfung — bestätigt ✅
+Bestätigtes Aufnahmeformat: S16_LE, **48 kHz, Stereo**. Vosk konvertiert intern; das funktionierende Aufnahmeformat nicht für STT ändern.
 
-Im referenzierten Folgechat „Push To Talk Bauen“ bestätigt Ivan: ALSA-Zustand gespeichert, abschließende Neustartprüfung mit **„passt“** abgeschlossen. Damit sind Speicherung und Aufnahme/Wiedergabe nach Neustart als Nutzer-Hörprüfung bestätigt; es liegt keine neue Mixer-Ausgabe vor. Kein gemessener Pegel- oder Clippingnachweis.
+Auf dem vorhandenen Pi wurden beide `Output Mixer PCM`-Wege und beide `Input Mixer Boost`-Wege aktiviert, LINPUT1/RINPUT1-Boost auf 3 und `ADC High Pass Filter` auf `on` gesetzt. Capture 39 (+12 dB), ADC PCM 195 (0 dB), Playback 100 % und Speaker AC 5 stammen aus früheren Rückmeldungen; sie sind kein universelles Mixerprofil. ALC/Noise Gate wurden nicht aktiviert. Aufnahme wurde als gut gehört; Clipping/SNR wurden nicht gemessen.
 
-Zu diesem Zeitpunkt war Speaker mit 95 % / 0,00 dB auf beiden Kanälen ausgelesen und bestätigt. Dieser Wert wurde später beim Piper-TTS-Test bewusst auf 80 % reduziert; der aktuelle Stand steht im folgenden Abschnitt. Playback 100 % und Speaker AC 5 stammen weiterhin aus dem früheren Audio-Test. Bei Bedarf ausschließlich auslesen:
+**Letzte Speaker-Ausgabe:** beide Kanäle 102/127, **80 %, −19 dB**, danach `alsactl store` bestätigt. Frühere 95 % / 0 dB sind überholt. C/D ändern den separaten digitalen `Playback`-Regler, nicht `Speaker`.
 
 ```bash
-amixer -c wm8960soundcard sget 'Speaker'
-amixer -c wm8960soundcard sget 'Playback'
-amixer -c wm8960soundcard sget 'Speaker AC'
+amixer -c wm8960soundcard sget Speaker
+amixer -c wm8960soundcard sget Playback
+sudo alsactl store wm8960soundcard  # erst nach erfolgreicher Hörprüfung
 ```
 
-Die ausgegebenen Werte anschließend dokumentieren. Temporäre Sprachaufnahmen entfernen und nicht im Repository ablegen.
+Aufnahme und Wiedergabe sind nach Neustart bestätigt. Bei fehlendem Ton siehe [Troubleshooting](troubleshooting.md#audio).
 
+## 4. Repository und Dienst installieren
 
-## Lokale TTS-Abnahme und aktueller Speaker-Pegel — 05.10.2026 ✅
+Falls noch kein Checkout vorhanden ist:
 
-Für die lokale deutsche Sprachausgabe wurde Piper 1.8.0 in `/opt/pi-voice-assistant/.venv` installiert und die Stimme `de_DE-thorsten-low` nach `/opt/pi-voice-assistant/tts/` geladen. Das ONNX-Modell ist ungefähr 61 MB groß.
+```bash
+git clone https://github.com/0b-ivan/pi-voice-assistant.git
+cd pi-voice-assistant
+```
 
-Die Synthese eines deutschen Testsatzes erzeugte erfolgreich eine WAV-Datei. `aplay` meldete:
+Bestehende Checkouts zuerst mit `git status` prüfen; nicht über ungesicherte lokale Änderungen hinweg aktualisieren. Den geprüften Branch/Commit verwenden. Der Dienstinstaller liefert den Piper-Wrapper mit; Paket und Stimme werden separat installiert.
+
+Vor Installation:
+
+```bash
+id obivan
+getent group audio gpio i2c
+command -v i2cdetect
+/usr/bin/python3 -c 'import smbus, gpiod; assert hasattr(gpiod, "request_lines")'
+sudo bash scripts/install-voice-service.sh
+sudo bash scripts/install-vosk.sh
+```
+
+Nach der Installation `/etc/pi-ptt.env` und `/etc/pi-voice-assistant.env` prüfen und wie unten beschrieben konfigurieren.
+
+Der Dienstinstaller kopiert PTT-, STT-, Button- und TTS-Module und die Unit. Vorhandene Konfigurationen bleiben erhalten. Der Vosk-Installer installiert `vosk==0.3.45` nach `/opt/pi-voice-assistant/vendor` und das kleine deutsche Modell nach `/opt/pi-voice-assistant/models/`; er kann einen laufenden Dienst stoppen und startet ihn bei Erfolg wieder. Bei Installationsfehlern Dienststatus prüfen.
+
+In `/etc/pi-voice-assistant.env`:
 
 ```text
-Signed 16 bit Little Endian, Rate 16000 Hz, Mono
+STT_PROVIDER=vosk
+VOSK_MODEL_PATH=/opt/pi-voice-assistant/models/vosk-model-small-de-0.15
+VOSK_PYTHON_PATH=/opt/pi-voice-assistant/vendor
 ```
 
-Die Datei wurde erfolgreich über `plughw:CARD=wm8960soundcard,DEV=0` wiedergegeben. Da 95 % für TTS zu laut war, wurde der Speaker-Regler schrittweise reduziert. Der aktuell bestätigte Stand ist:
+Für `vosk` ist kein API-Key erforderlich; den Platzhalter-Key entfernen oder leer lassen. Die Vorlage bleibt aus Kompatibilitätsgründen `openrouter`. `/etc/pi-voice-assistant.env` hat `root:obivan`, Modus 0640; nicht öffentlich lesbar machen.
 
-```text
-Front Left:  Playback 102 [80%] [-19.00dB]
-Front Right: Playback 102 [80%] [-19.00dB]
-```
+In `/etc/pi-ptt.env`: GPIO17 aktiv Low, `PTT_RUNTIME_DIR=/run/pi-ptt`. Unter der mitgelieferten Unit den Runtime-Pfad beibehalten. `PTT_BUTTON_SHIM=0` ist die Voreinstellung; SHIM erst nach [Einzeltest](hardware-bring-up.md) auf 1 setzen. Details zu Dienstrechten: [Betrieb](operation.md).
 
-Anschließend wurde der ALSA-Zustand erneut gespeichert:
+## 5. Taste prüfen und starten
+
+Bei gestopptem Dienst Konfiguration laden und GPIO17 ohne Aufnahme prüfen:
 
 ```bash
-sudo alsactl store wm8960soundcard
+sudo systemctl stop pi-ptt.service
+set -a
+. /etc/pi-ptt.env
+set +a
+/usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py --probe
 ```
 
-Der lokale Wrapper wurde erfolgreich getestet:
+Alle Tasten zunächst loslassen, dann drücken/loslassen. Erwartet: je ein `button`-Start/Release. Ctrl-C beendet die Probe. Danach den normalen Dienst starten:
 
 ```bash
-/opt/pi-voice-assistant/src/speak.py \
-  "Hallo Ivan, ich kann jetzt komplett lokal sprechen."
+sudo systemctl enable --now pi-ptt.service
+systemctl status pi-ptt.service --no-pager
+journalctl -u pi-ptt.service -f
 ```
 
-Details stehen unter [Text-to-Speech mit Piper](text-to-speech.md).
+Taste halten, einen Satz sprechen, loslassen: `recording` → `capture_ready` → `processing` → `transcript` mit `provider=vosk`. Erste Transkription ist wegen Modell-Laden langsamer. Ctrl-C beendet nur die Loganzeige. Dies ergibt Text, noch keine automatische KI-Antwort.
 
-Piper meldet bei einzelnen deutschen Sätzen aktuell `WARNING:piper.phoneme_ids:Missing phoneme from id map: ̧`. Die Synthese und Wiedergabe funktionieren trotzdem; der Hinweis ist derzeit nicht blockierend.
+Optional: [Button SHIM A–E](button-controls.md), [Piper-Paket und Stimme installieren](text-to-speech.md). PiSugar-Abschaltung, PiTFT und Kamera folgen nach der Audio-/Performance-Abnahme.

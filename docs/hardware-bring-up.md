@@ -1,263 +1,100 @@
-# Ethernet, USB und Button SHIM in Betrieb nehmen 🔧
+# Ethernet, USB und Button SHIM testen
 
-Stand: 05.10.2026. Zielgerät: Pi Zero 2 W, Raspberry Pi OS Lite 64-bit / Trixie, Benutzer **obivan**, Hostname **pi-assistent**.
+Pi Zero 2 W / Trixie, Benutzer `obivan`. [Hardware/Fotos](hardware.md), [Dienstintegration](button-controls.md). Für Umbauten herunterfahren, PiSugar ausschalten und Versorgung trennen. Der Hub braucht USB-Daten am Anschluss **USB**, nicht **PWR IN**.
 
-Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Tasten A–E sind in zwei Testläufen bestätigt. Die RGB-LED und die angeleitete Neustartprüfung sind durch den Nutzer bestätigt; einzelne Diagnosewerte nach Neustart liegen noch nicht als Ausgabe vor. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
+## Netzwerk und USB
 
-## 1. Bestandsaufnahme
-
-LAN-Kabel zum Router/Switch anschließen. WLAN für die bestehende SSH-Verbindung zunächst beibehalten. Der Waveshare-Hub benötigt eine USB-Datenverbindung zum Datenanschluss des Pi, beschriftet **USB**; **PWR IN** ist kein Datenanschluss. Eine USB-Brücke ist im Seitenfoto sichtbar. Wenn Umbau nötig ist: herunterfahren, PiSugar ausschalten und Stromversorgung trennen, bevor Platinen oder GPIO-Verbindungen verändert werden.
-
-~~~bash
+```bash
+sudo apt install usbutils ethtool i2c-tools python3-smbus python3-venv
 lsusb
 lsusb -t
 ip -br link
 ip -br addr
-i2cdetect -l
-aplay -l
-arecord -l
-~~~
+```
 
-Fehlende Diagnoseprogramme installieren:
+Bestätigt am 05.10.2026: Terminus-Hub `1a40:0101`, Realtek `0bda:8152`, `eth0`, Treiber `r8152 v1.12.13`, Link **100 Mb/s Full Duplex**. Das ist ausgehandelte Linkgeschwindigkeit, kein gemessener Durchsatz. Frühere LAN-IP `172.22.9.108/24` und WLAN-IP `172.22.9.128/24` sind Momentaufnahmen.
 
-~~~bash
-sudo apt update
-sudo apt install usbutils ethtool i2c-tools python3-smbus python3-venv
-~~~
+Tatsächlichen Interface-Namen einsetzen:
 
-Erwartung: USB-Hub und Realtek-Ethernet-Gerät in lsusb, zusätzliche Netzwerkschnittstelle in ip, I²C-Bus 1 und weiterhin wm8960soundcard als Aufnahme-/Wiedergabegerät. Der Interface-Name kann eth0 oder enx… lauten; tatsächlichen Namen verwenden.
-
-## 2. Ethernet prüfen
-
-Das HAT bietet laut Hersteller RTL8152B und 10/100-Mbit/s-Ethernet. Zuerst den vorhandenen Linux-Treiber prüfen; keinen externen Treiber und kein zusätzliches Audio-Overlay installieren.
-
-~~~bash
-nmcli device status
-nmcli connection show
-ip route
-sudo journalctl -k -b --no-pager | grep -Ei 'usb|r8152|rtl8152|under.voltage'
-~~~
-
-Wenn NetworkManager nicht vorhanden ist, dessen Installation nicht automatisch nachholen; zuerst die vorhandene Netzwerkverwaltung bestimmen.
-
-Im folgenden Beispiel eth0 durch den tatsächlich erkannten Interface-Namen ersetzen:
-
-~~~bash
+```bash
 ETH_IFACE=eth0
 sudo ethtool -i "$ETH_IFACE"
 sudo ethtool "$ETH_IFACE"
 ip -4 addr show dev "$ETH_IFACE"
 ip route show dev "$ETH_IFACE"
-~~~
+```
 
-Abnahme: Treiber erkannt (üblicherweise r8152), Link detected: yes, ausgehandelte Geschwindigkeit und IPv4-Adresse dokumentieren. 10 Mbit/s ist möglich; 100 Mbit/s ist bei passender Gegenstelle zu erwarten.
+Fehlt die IP trotz Link, vorhandene Netzwerkverwaltung bestimmen. Bei bereits vorhandenem NetworkManager `nmcli device status` prüfen; nur für dessen verwaltetes Interface gegebenenfalls `sudo nmcli device connect "$ETH_IFACE"`. Dies kann Profile aktivieren und die Route ändern. WLAN für den bestehenden SSH-Zugang beibehalten.
 
-Ist eine Ethernet-Schnittstelle erkannt, aber trotz LAN-Kabel ohne IPv4-Adresse, zunächst den NetworkManager-Zustand prüfen. Nur bei vorhandenem NetworkManager und verwaltetem Interface:
+Router über das LAN-Interface testen (echte Gateway-IP aus der Route einsetzen) und vom Mac eine zweite SSH-Verbindung zur **aktuellen LAN-IP** öffnen. Allgemeiner Internetzugang könnte weiterhin über WLAN laufen. Diese beiden LAN-Tests sind noch offen.
 
-~~~bash
-sudo nmcli device connect "$ETH_IFACE"
-~~~
+Eine bekannte sparsame USB-Tastatur nacheinander an die drei externen USB-A-Buchsen anschließen. Jeweils `lsusb`, `lsusb -t` und Kerneljournal prüfen. Hub-Erkennung bestätigt nicht alle Ports. Alle drei Einzelprüfungen sowie Laufzeit/Unterspannung unter Zusatzlast bleiben offen.
 
-Das kann ein Verbindungsprofil aktivieren oder erstellen und die Standardroute ändern. WLAN bleibt eingeschaltet. Keine bestehenden Profile löschen.
+## I²C / SHIM-Einzeltest
 
-Die Routeradresse aus der LAN-Route einsetzen und explizit über LAN testen:
+Button SHIM: TCA9554A an Bus 1 / `0x3f`, A–E als aktive Low-Eingänge; LED über Expander, keine fünf zusätzlichen Pi-GPIOs. GPIO17 bleibt die WM8960-Taste.
 
-~~~bash
-LAN_GATEWAY=192.168.1.1  # tatsächliche Adresse aus ip route verwenden
-ping -I "$ETH_IFACE" -c 3 "$LAN_GATEWAY"
-~~~
+**Vor Test Dienst stoppen; anschließend wieder starten.** Keine zweite LED-/SHIM-Anwendung parallel betreiben.
 
-Vom Mac eine zweite SSH-Verbindung zur ermittelten LAN-IP öffnen:
-
-~~~bash
-ssh obivan@<LAN-IP>
-~~~
-
-Die LAN-IP kann von der bisherigen WLAN-IP 172.22.9.128 abweichen. Erst der zweite Login bestätigt SSH über LAN. Ein allgemeiner Internettest ohne Interface-Bindung könnte weiterhin über WLAN laufen.
-
-## 3. Drei USB-Anschlüsse prüfen
-
-Eine bekannte USB-Tastatur nacheinander in jede der drei USB-A-Buchsen stecken und jeweils die Erkennung prüfen:
-
-~~~bash
-lsusb
-lsusb -t
-sudo journalctl -k -b -n 40 --no-pager
-~~~
-
-Für jeden Port dokumentieren, dass das zusätzliche Gerät erscheint und nach dem Abziehen wieder verschwindet. Die Hub-/Ethernet-Erkennung allein bestätigt nicht alle externen USB-Buchsen. Für den ersten Test ein Gerät mit geringem Strombedarf verwenden. Zusatzlast, Akkulaufzeit und mögliche Unterspannungsmeldungen später unter realem Betrieb prüfen.
-
-## 4. Button SHIM gezielt erkennen
-
-Button SHIM verwendet TCA9554A an 0x3f, I²C GPIO2/3 und Versorgung. Tasten A–E sind aktive Low-Eingänge am Expander. Sie entsprechen keinen fünf BCM-GPIO-Nummern. Der WM8960-Taster bleibt auf GPIO17.
-
-Nur die bekannte Adresse prüfen, kein pauschaler Scan über Audio-Codec und Akkucontroller:
-
-~~~bash
+```bash
+sudo systemctl stop pi-ptt.service
+sudo modprobe i2c-dev
+i2cdetect -l
 sudo i2cdetect -y 1 0x3f 0x3f
-~~~
-
-- **3f:** Gerät antwortet; Identität und Tastenfunktion anschließend prüfen.
-- **--:** Kontakt, Ausrichtung, Versorgung oder Bus prüfen.
-- **UU:** Adresse bereits durch Kernel-Treiber belegt. Nicht mit Force-Optionen zugreifen; zuerst die Treiberbindung ermitteln.
-
-Der WM8960-Treiber oder das Audio-Overlay wird für diesen Test nicht entfernt. Ein antwortendes Gerät schließt einen Adresskonflikt nicht allein aus.
-
-## 5. Tasten A–E testen
-
-Das Diagnoseprogramm liest ausschließlich Register des Expanders; es ändert weder dessen Konfiguration noch die LED. Es prüft alle fünf vollständigen Drücken-/Loslassen-Zyklen, entprellt für 30 ms und endet spätestens nach 60 Sekunden.
-
-Im Repository-Checkout (Testskript seit PR #10 auf main):
-
-~~~bash
 python3 scripts/test-button-shim.py --seconds 60
-~~~
+```
 
-Bei fehlenden Zugriffsrechten für den ersten Test:
+Nur erwartete SHIM-Adresse prüfen, kein pauschaler Scan über Codec und Akkucontroller. `3f` bedeutet Antwort; `--` keine Antwort; `UU` Kernelbindung, nicht mit Force zugreifen. Bei Rechten zuerst Gruppe/udev prüfen; für die Einzelprobe notfalls `sudo python3 scripts/test-button-shim.py --seconds 60`.
 
-~~~bash
-sudo python3 scripts/test-button-shim.py --seconds 60
-~~~
+Alle Tasten vor Test loslassen, danach A–E einzeln drücken/loslassen. Erwartet alle fünf PASS, Exitcode 0; 1 bedeutet unvollständig, 2 Bus-/Konfigurationsfehler. Der Test liest Register, initialisiert weder Expander noch LED. Auf dem Pi sind zwei vollständige A–E-Testläufe bestätigt; Langzeit-/Prelltest offen.
 
-Alle Tasten vor dem Start loslassen, dann A, B, C, D und E einzeln drücken und loslassen. Erwartung:
+## RGB-Einzeltest, optional
 
-~~~text
-A: GEDRÜCKT
-A: LOSGELASSEN
-...
-A: PASS
-B: PASS
-C: PASS
-D: PASS
-E: PASS
-~~~
+Bereits per Nutzer-Sichtprüfung als Rot → Grün → Blau → aus dokumentiert. Für erneuten unabhängigen Test bei weiterhin gestopptem Dienst:
 
-Exitcode 0 bedeutet fünf erkannte Zyklen; 1 bedeutet unvollständigen Test; 2 bedeutet Bus-/Konfigurationsfehler oder fehlende Abhängigkeit. Nach einem I²C-Fehler zuerst Ursache prüfen. Kein zweites Programm gleichzeitig auf denselben Button-SHIM-Expander zugreifen lassen.
-
-## 6. RGB-LED mit Herstellerbibliothek testen
-
-Die APA102-LED hängt am I²C-Expander, nicht an den SPI-Pins des Pi. Dafür verwenden wir Pimoronis bestehende Bibliothek. Der Test läuft in einer separaten virtuellen Umgebung und verändert die Sprachdienst-Installation nicht.
-
-~~~bash
+```bash
 python3 -m venv --system-site-packages ~/button-shim-test-venv
 ~/button-shim-test-venv/bin/python -m pip install buttonshim==0.0.2
-~~~
-
---system-site-packages macht das über APT installierte python3-smbus in dieser Testumgebung verfügbar. Kompatibilität von Bibliothek 0.0.2 mit Python/Trixie muss am Pi geprüft werden.
-
-~~~bash
-sudo ~/button-shim-test-venv/bin/python - <<'PY'
+sudo ~/button-shim-test-venv/bin/python - <<'PYCODE'
 import time
 import buttonshim
-
 buttonshim.set_brightness(0.2)
 try:
-    for name, rgb in [
-        ("Rot", (255, 0, 0)),
-        ("Grün", (0, 255, 0)),
-        ("Blau", (0, 0, 255)),
-    ]:
-        print(name, flush=True)
+    for rgb in ((255, 0, 0), (0, 255, 0), (0, 0, 255)):
         buttonshim.set_pixel(*rgb)
         time.sleep(2)
 finally:
     buttonshim.set_pixel(0, 0, 0)
-    time.sleep(0.2)
-PY
-~~~
+PYCODE
+```
 
-Abnahme durch Sichtprüfung: Rot → Grün → Blau, danach aus. Eine erfolgreiche Python-Ausführung allein bestätigt weder die Farben noch die LED-Funktion.
+Sichtprüfung erforderlich; erfolgreiche Ausführung allein beweist keine Farben. Diese separate Testumgebung wird vom Sprachdienst nicht gebraucht, dessen Expander-Treiber liegt im Repo.
 
-## 7. I²C beim Start verfügbar machen
+## Boot und Dienst
 
-Nach erfolgreichem Tasten- und LED-Test i2c-dev über systemd beim Boot laden. Der Nutzer hat die anschließende Neustartprüfung mit „geht gut“ bestätigt. Der konkrete Dateiinhalt wurde nicht separat zurückgemeldet.
+Fehlt `/dev/i2c-1` nach Boot, in `/etc/modules-load.d/pi-voice-i2c.conf` bestehende Einträge erhalten und `i2c-dev` ergänzen. Vorhandenes WM8960-Overlay/I²C-Konfiguration beibehalten. Das Modul ermöglicht Userspace-Zugriff und ersetzt keinen Audiotreiber.
 
-~~~bash
-sudo vim /etc/modules-load.d/pi-voice-i2c.conf
-~~~
-
-In der Datei folgende Modulzeile eintragen (bei vorhandener Datei bestehende Einträge beachten):
-
-~~~text
-i2c-dev
-~~~
-
-Mit Esc, :wq, Enter speichern. Das vorhandene WM8960-Overlay bleibt bestehen. Die Datei sorgt für die Userspace-Geräteschnittstelle; die bereits aktivierte I²C-Hardware-Konfiguration bleibt weiterhin nötig.
-
-## 8. Gemeinsamer Betrieb und Neustart
-
-Nach Hub-/Button-Test weiterhin Audio-Karte und bestehenden Dienst prüfen:
-
-~~~bash
+```bash
+sudo systemctl start pi-ptt.service
 aplay -l
 arecord -l
 systemctl status pi-ptt.service --no-pager
-sudo journalctl -u pi-ptt.service -n 20 --no-pager
-~~~
+```
 
-Die WM8960-Taste einmal wie bisher zur Aufnahme verwenden und das Ergebnis prüfen. Für einen Lautsprechertest den bekannten Audio-Test verwenden. Danach kontrolliert neu starten und Ethernet-Erkennung, LAN-IP, SSH und Tasten nochmals prüfen:
+Für integrierte Steuerung `PTT_BUTTON_SHIM=1` wie unter [Button-Bedienung](button-controls.md) aktivieren. Nach aktuellem Deployment bei Reboot I²C, SHIM, GPIO17, Audio und Dienst nochmals prüfen.
 
-~~~bash
-sudo reboot
-~~~
+## Belege und offene Abnahme
 
-Bis zur Abnahme entsteht kein neuer Autostartdienst. Die Belegung A=PTT, B=Abbruch, C=leiser, D=lauter, E=Status ist ein Vorschlag; Tasten und LED sind noch nicht in den Sprachdienst integriert.
-
-## Rückmeldung vom Pi — 05.10.2026
-
-Linux erkennt den USB-Hub als **1a40:0101 Terminus Technology Inc. Hub** und Ethernet als **0bda:8152 Realtek RTL8152 Fast Ethernet Adapter**. Zunächst meldete eth0 NO-CARRIER und hatte keine Adresse. Die anschließende Ausgabe bestätigt eth0 UP mit IPv4 **172.22.9.108/24**. WLAN bleibt UP unter **172.22.9.128/24**. Herkunft der Adresse (DHCP/Profil) und SSH über LAN sind noch nicht separat geprüft. Treibername und Geschwindigkeit sind inzwischen durch die ethtool-Ausgabe bestätigt (siehe unten).
-
-Zunächst war die I²C-Busliste leer. Nach sudo modprobe i2c-dev bestätigt die Nutzer-Ausgabe **i2c-1 (bcm2835, i2c@7e804000)** und **i2c-2 (bcm2835, i2c@7e805000)**. Die gezielte Prüfung auf Bus 1 zeigt **3f**: Ein Gerät an der erwarteten Button-SHIM-Adresse antwortet. Tastenfunktion, RGB-LED und ein möglicher Adresskonflikt sind damit noch nicht geprüft.
-
-Bei einer leeren Busliste wurden diese Befehle erfolgreich verwendet:
-
-~~~bash
-sudo modprobe i2c-dev
-i2cdetect -l
-sudo i2cdetect -y 1 0x3f 0x3f
-~~~
-
-Das lädt die I²C-Geräteschnittstelle für Userspace in der laufenden Sitzung. Es ersetzt weder den WM8960-Treiber noch das bestehende Overlay. Erst nach erfolgreichem Zugriff prüfen, ob i2c-dev auch nach Neustart verfügbar ist; die dauerhafte Einrichtung folgt bei Bedarf.
-
-### Tasten A–E — zwei erfolgreiche Durchläufe ✅
-
-Der Nutzer hat den lesenden Tastentest zweimal ausgeführt. In beiden Durchläufen wurden für **A, B, C, D und E** vollständige Drücken-/Loslassen-Zyklen erkannt und alle fünf Tasten mit **PASS** gemeldet. Mehrfaches Drücken wurde ebenfalls als mehrere Zyklen ausgegeben. Damit ist die Bedienung der fünf Tasten in der laufenden Sitzung bestätigt; ein Langzeit-/Entprellungs-Stresstest sowie der Test nach Neustart stehen noch aus.
-
-### RGB-LED — Sichtprüfung bestätigt ✅
-
-Nach Installation von python3-venv und der Pimoroni-Bibliothek buttonshim 0.0.2 in einer separaten Testumgebung hat der Nutzer die zuvor angeleitete Farbsequenz **Rot → Grün → Blau → aus** mit „geht gut“ bestätigt. Damit ist der LED-Test als Nutzer-Sichtprüfung bestanden. Keine Farb-/Helligkeitsmessung und noch keine LED-Integration in den Sprachdienst.
-
-### Neustartprüfung — Nutzerbestätigung ✅
-
-Nach der Anleitung zum dauerhaften Laden von i2c-dev und dem Neustart hat der Nutzer die angeforderten Prüfungen (I²C-Busliste, Antwort an 0x3f, Netzwerkadressen, ALSA-Aufnahme/-Wiedergabegeräte und Status von pi-ptt.service) mit **„geht gut“** bestätigt. Dies ist eine zusammenfassende Nutzerbestätigung, keine neu eingereichte Terminalausgabe. Aktuelle IP-Adressen und genaue Dienst-/Gerätedetails nach Neustart wurden nicht erneut ausgelesen dokumentiert. Physische Tasten-/LED- und Aufnahme-/Wiedergabetests nach Neustart bleiben gesonderte Prüfungen.
-
-### Ethernet-Treiber und Link — 05.10.2026 ✅
-
-Die zurückgemeldete ethtool-Ausgabe bestätigt **eth0** mit **r8152 v1.12.13**, Bus **usb-3f980000.usb-1.4**, **100 Mb/s**, **Full Duplex**, **Auto-negotiation on** und **Link detected: yes**. Verwendetes Diagnosepaket: ethtool **1:6.14.2-1**. Damit sind Treiberbindung und ausgehandelter Ethernet-Link bestätigt. Die Geschwindigkeit ist der Link-Modus, kein gemessener Datendurchsatz; Router-/SSH-Test über LAN und die drei externen USB-Buchsen bleiben getrennte Prüfungen.
-
-## Abnahmeprotokoll
-
-| Prüfung | Status / Ergebnis |
+| Bereich | Beleg / Grenze |
 |---|---|
-| Erweiterter Aufbau montiert, Fotos abgelegt | Foto-Nachweis 05.10.2026 |
-| Hub und RTL8152B von Linux erkannt | Bestätigt: Terminus 1a40:0101, Realtek 0bda:8152 |
-| LAN-Interface und Treiber | eth0, r8152 v1.12.13, USB-Bus usb-3f980000.usb-1.4 |
-| Link/Geschwindigkeit | Link detected: yes; 100 Mb/s; Full Duplex; Auto-negotiation on |
-| LAN-IP und Router über LAN erreichbar | 172.22.9.108/24, eth0 UP; Router-Test offen |
-| SSH über LAN | Offen |
-| USB-A Port 1 / 2 / 3 | Offen / offen / offen |
-| I²C 0x3f erreichbar, keine konkurrierende Nutzung | Antwort 3f auf Bus 1 bestätigt; konkurrierende Nutzung noch nicht geprüft |
-| A / B / C / D / E drücken und loslassen | Alle fünf PASS, in zwei Hardware-Testläufen bestätigt |
-| RGB Rot / Grün / Blau / aus | Nutzer-Sichtprüfung bestätigt: „geht gut“ |
-| WM8960 und vorhandene PTT-Taste im neuen Stapel | Offen |
-| i2c-dev dauerhaft beim Boot laden | Neustartprüfung laut Nutzer erfolgreich; Dateiinhalt nicht separat zurückgemeldet |
-| Neustart: I²C, LAN, ALSA und PTT-Dienst | Nutzer bestätigt zusammenfassend „geht gut“; keine neue Terminalausgabe |
-| Physische Tasten-/LED- und Audiotests nach Neustart | Noch nicht separat bestätigt |
-| Leistungsaufnahme/Akkulaufzeit unter Zusatzlast | Offen |
+| Hub / Ethernet / Link | Linux-Ausgaben und ethtool wie oben bestätigt |
+| I²C | Bus 1/2 nach modprobe, Gerät 0x3f; Dienst später shim_ready |
+| A–E-Einzeltest | Zwei vollständige PASS-Durchläufe im bisherigen Protokoll |
+| Hersteller-LED-Test | Nutzer-Sichtprüfung „geht gut“ im bisherigen Protokoll; keine Dienstfarben-Abnahme |
+| Früherer Neustart | Frühere zusammenfassende Nutzerbestätigung „geht gut“ im Protokoll; keine erneuten Einzelwerte und kein Nachweis aller physischen Tasten-/Audiotests |
+| Aktuelle Dienstversion | SHIM-Initialisierung und Release→Vosk bestätigt; aktuelle Reboot-/Abbruch-/LED-Abnahme offen |
+| Weiter offen | Router/SSH über LAN, alle drei USB-Buchsen, Akkulaufzeit/Unterspannung |
 
-## Quellen
+PR #11 hat trotz Merge einen offenen Review zur damals widersprüchlichen Beschreibung der Abnahme. Einzeltest-/Nutzerbestätigung und neue Dienstabnahme werden hier getrennt; daraus wird keine Vollabnahme des aktuellen Stacks abgeleitet. [Projektprüfung](project-review.md).
 
-- [Waveshare ETH/USB HUB HAT](https://www.waveshare.com/product/raspberry-pi/hats/interface-power/eth-usb-hub-hat.htm)
-- [Waveshare Anschlussanleitung](https://www.waveshare.com/wiki/ETH/USB_HUB_HAT)
-- [Pimoroni Button SHIM](https://shop.pimoroni.com/products/button-shim)
-- [Pimoroni Python-Bibliothek und Registerbelegung](https://github.com/pimoroni/button-shim/blob/master/library/buttonshim/__init__.py)
+Quellen: [Waveshare Anschlussanleitung](https://www.waveshare.com/wiki/ETH/USB_HUB_HAT), [Pimoroni Bibliothek/Registerbelegung](https://github.com/pimoroni/button-shim/blob/master/library/buttonshim/__init__.py).
