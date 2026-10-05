@@ -12,7 +12,7 @@
 ## MVP-Ablauf
 
 1. Client wartet auf Tastendruck.
-2. Tastendruck startet Aufnahme; erneuter Tastendruck stoppt sie. Zusätzlich gilt ein konfigurierbares Zeitlimit.
+2. Gedrückt halten startet die Aufnahme; Loslassen stoppt sie. Zusätzlich gilt ein konfigurierbares Zeitlimit (PTT-Standard 30 Sekunden).
 3. Client sendet die Aufnahme an den Homelab-Dienst.
 4. Dienst transkribiert, erzeugt Antwort und synthetisiert Sprache.
 5. Client spielt die Antwort ab und kehrt in den Wartezustand zurück.
@@ -37,3 +37,10 @@ ALSA-Geräte werden anhand der erkannten Karten ausgewählt, nicht anhand einer 
 ## Erfolgskriterien
 
 Ein Tastendruck startet zuverlässig eine Aufnahme. Ein deutscher Testsatz wird transkribiert, beantwortet und verständlich abgespielt. Nach Netzwerkausfall oder Dienstfehler lässt sich eine neue Anfrage starten. Start nach Neustart funktioniert ohne manuellen Eingriff. Latenz und Speicherverbrauch werden gemessen; Zielwerte folgen nach dem ersten Durchlauf.
+
+## Implementierter erster Baustein
+
+Der lokale [Push-to-Talk-Dienst](push-to-talk.md) liest GPIO17 mit libgpiod v2 und erzeugt geprüftes Stereo-WAV (48 kHz, S16_LE) im flüchtigen Verzeichnis `/run/pi-ptt`. `capture_ready` bezeichnet den Übergabepunkt für einen späteren STT-Adapter. Das Halten/Loslassen ersetzt den früheren Toggle-Entwurf. Hardware-Abnahme steht aus.
+
+OpenRouter ist laut Nutzer das Ziel für die spätere KI-API, deutsche TTS das Ziel für die Sprachausgabe. STT-Auswahl und Verarbeitung im Homelab bleiben offen. Dieser Schritt führt ausschließlich lokale Audioaufnahme aus. Vor Anschluss der Sprachpipeline werden Verarbeitung/Wiedergabe verriegelt, Timeouts festgelegt und Audioformate für STT/TTS angepasst; OpenRouter erhält später transkribierten Text. Noch keine Netzwerk- oder TTS-Implementierung.
+
