@@ -19,6 +19,7 @@ Taste halten → Sprache aufnehmen → beim Loslassen transkribieren → über O
 - [Roadmap und Aufgaben](docs/roadmap.md)
 - [Push-to-Talk: Installation, Schnittstelle und Abnahme](docs/push-to-talk.md)
 - [Button SHIM: Tasten, RGB und Installation](docs/button-controls.md)
+- [Piper: Laufzeit, CPU, RAM und Swap vergleichen](docs/piper-resources.md)
 - [Speech-to-Text mit OpenRouter](docs/speech-to-text.md)
 - [Entscheidung: Pi als Client](docs/decisions/0001-client-server.md)
 - [Entscheidung: Raspberry Pi OS Lite 64-bit / Trixie](docs/decisions/0002-operating-system.md)\n- [Entscheidung: Hybrides STT mit OpenRouter und Vosk](docs/decisions/0003-hybrid-stt.md)
