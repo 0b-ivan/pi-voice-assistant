@@ -12,7 +12,7 @@ import time
 import wave
 
 from transcribe import TranscriptionError, transcribe_with_provider
-from voice_controls import SpeechOutput, TranscriptionJob, change_volume
+from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
 
 
 def event(name, **fields):
@@ -273,14 +273,38 @@ def main():
     shim_enabled = os.environ.get('PTT_BUTTON_SHIM', '0')
     if shim_enabled not in ('0', '1'):
         parser.error('PTT_BUTTON_SHIM must be 0 or 1')
-    recorder = Recorder(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt'),
+    runtime_dir = os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')
+    recorder = Recorder(runtime_dir,
                         os.environ.get('PTT_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'), limit)
     settings = gpiod.LineSettings(direction=Direction.INPUT,
                                   active_low=active_low == '1',
                                   bias=Bias.PULL_UP if active_low == '1' else Bias.PULL_DOWN)
 
-    speech = SpeechOutput(os.environ.get('PTT_SPEAK_COMMAND',
-        '/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py'))
+    fallback_command = os.environ.get(
+        'PTT_SPEAK_COMMAND',
+        '/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py')
+    if args.probe:
+        # Probe mode must never load a TTS model or touch the audio device.
+        speech = SpeechOutput('/usr/bin/true')
+    else:
+        model = os.environ.get(
+            'PIPER_MODEL',
+            '/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx')
+        event('tts_loading', mode='resident', model=model)
+        try:
+            speech = ResidentSpeechOutput(
+                model,
+                os.environ.get(
+                    'TTS_AUDIO_DEVICE',
+                    'plughw:CARD=wm8960soundcard,DEV=0'),
+                runtime_dir)
+        except Exception as exc:
+            # TTS must not take PTT/STT down. Keep the old command path as a
+            # compatibility fallback if the in-process Piper import/load fails.
+            event('tts_error', message=str(exc), fallback='command')
+            speech = SpeechOutput(fallback_command)
+        else:
+            event('tts_ready', mode='resident', model=model)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe)
     shim = None
     if shim_enabled == '1':

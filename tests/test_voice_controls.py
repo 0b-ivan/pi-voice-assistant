@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from button_shim import ButtonShim
 from ptt import VoiceController
-from voice_controls import SpeechOutput, TranscriptionJob, change_volume
+from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
 
 
 class ShimTests(unittest.TestCase):
@@ -203,6 +203,107 @@ class ControllerTests(unittest.TestCase):
         job.cancel.assert_called_once()
         self.speech.stop.assert_called_once()
         self.recorder.close.assert_called_once()
+
+
+class ResidentSpeechTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    @staticmethod
+    def _write_audio(_text, audio):
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(b"\0\0" * 160)
+
+    @staticmethod
+    def _wait_result(speech, timeout=2):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = speech.poll()
+            if result is not None:
+                return result
+            time.sleep(.01)
+        raise AssertionError("speech job did not finish")
+
+    def test_resident_piper_loads_once_and_reuses_voice(self):
+        voice = Mock()
+        voice.synthesize_wav.side_effect = self._write_audio
+        loader = Mock(return_value=voice)
+        processes = []
+        def popen(*_args, **_kwargs):
+            proc = Mock()
+            proc.wait.return_value = 0
+            proc.poll.return_value = 0
+            proc.pid = 1234 + len(processes)
+            processes.append(proc)
+            return proc
+        speech = ResidentSpeechOutput(
+            "/models/test.onnx", "test-device", self.tmp.name,
+            loader=loader, popen=popen)
+
+        speech.start("  Eins  ")
+        self.assertEqual(self._wait_result(speech), 0)
+        speech.start("Zwei")
+        self.assertEqual(self._wait_result(speech), 0)
+
+        loader.assert_called_once_with("/models/test.onnx")
+        self.assertEqual(
+            [call.args[0] for call in voice.synthesize_wav.call_args_list],
+            ["Eins", "Zwei"])
+        self.assertEqual(len(processes), 2)
+        self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
+
+    def test_cancelled_synthesis_never_starts_playback(self):
+        started, release = threading.Event(), threading.Event()
+        voice = Mock()
+        def synthesize(text, audio):
+            started.set()
+            self.assertTrue(release.wait(2))
+            self._write_audio(text, audio)
+        voice.synthesize_wav.side_effect = synthesize
+        popen = Mock()
+        speech = ResidentSpeechOutput(
+            "/models/test.onnx", "test-device", self.tmp.name,
+            loader=Mock(return_value=voice), popen=popen)
+
+        speech.start("Abbrechen")
+        job = speech._job
+        self.assertTrue(started.wait(1))
+        speech.stop()
+        self.assertFalse(speech.active)
+        release.set()
+        job.thread.join(2)
+
+        popen.assert_not_called()
+        self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
+
+    def test_stop_terminates_only_resident_playback_group(self):
+        voice = Mock()
+        voice.synthesize_wav.side_effect = self._write_audio
+        playback_started, release = threading.Event(), threading.Event()
+        proc = Mock()
+        proc.pid = 4321
+        proc.poll.return_value = None
+        def wait(*_args, **_kwargs):
+            playback_started.set()
+            self.assertTrue(release.wait(2))
+            return -signal.SIGTERM
+        proc.wait.side_effect = wait
+        speech = ResidentSpeechOutput(
+            "/models/test.onnx", "test-device", self.tmp.name,
+            loader=Mock(return_value=voice), popen=Mock(return_value=proc))
+
+        speech.start("Status")
+        job = speech._job
+        self.assertTrue(playback_started.wait(1))
+        with patch("voice_controls._terminate_process_group") as terminate:
+            speech.stop()
+        terminate.assert_called_once_with(proc)
+        self.assertFalse(speech.active)
+        release.set()
+        job.thread.join(2)
 
 
 class ProcessTests(unittest.TestCase):

@@ -22,12 +22,15 @@ verwendet denselben Text über CLI-stdin und API, speichert Teilberichte auch be
 frühen Signalen und spielt keinen Ton ab. Die ursprünglichen Reviewbefunde wurden
 mit `d056897` behoben; 56 Tests bestanden unter Python 3.13 auf GitHub.
 
-Neben Vosk lagert das System während des gesamten Vergleichs 318,74 MiB aus.
-Der PTT-Dienst fällt von 198,65 auf 7,48 MiB RSS und liegt nachher mit 185,80 MiB
-im Swap. Deshalb vorerst kein dauerhaft geladenes Piper aktivieren. Feste
-Statusansagen als WAV-Cache sind der nächste Schritt; Cache, Streaming und
-permanente TTS-Komponente sind weiterhin nicht implementiert. Die detaillierten
-Werte und Grenzen stehen ausschließlich im [Messbericht](piper-resources.md).
+Der frühere Paralleltest mit getrenntem PTT- und Piper-Prozess erzeugte starken
+Speicherdruck und war deshalb noch keine Freigabe für resident Piper. Der
+anschließende kontrollierte Wechseltest in **einem** Prozess ändert diese
+Einordnung: Vosk + Piper erreichten 254,7 MiB Peak-RSS. Nach dem Warm-up lagen
+Vosk bei 5,89 s und Piper bei 1,26 s; Swap und zram blieben im dritten Wechsel
+nahezu konstant. zram belegte dabei physisch rund 57 MiB und die Writeback-Zähler
+blieben null. Damit ist resident Piper für den dedizierten Pi Zero 2 W vertretbar,
+muss aber nach späteren Display-/Kamera-Erweiterungen erneut gemessen werden.
+Die detaillierten Werte und Grenzen stehen im [Messbericht](piper-resources.md).
 
 Der gleiche `--`-Textbefund betraf den geprüften Wrapperstand `ae3c927` aus PR #14:
 [Piper 1.8.0](https://github.com/OHF-Voice/piper1-gpl/blob/v1.8.0/src/piper/__main__.py)
