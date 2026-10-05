@@ -14,9 +14,15 @@
 
 - [x] Trixie 64-bit mit Imager auf SD-Karte schreiben; [Screenshots dokumentiert](setup.md).
 - [x] Ersten Boot, Netzwerkerreichbarkeit und SSH-Anmeldung bestätigen.
-- [ ] M0: SSH und WLAN nach einem weiteren Neustart prüfen.
-- [ ] OS-/Kernelstand und WM8960-Treibercommit dokumentieren.
-- [ ] Lautsprecher und Mikrofone testen.
+- [x] Systemupdate durchführen; Git, ALSA- und I²C-Werkzeuge bereitstellen.
+- [x] SSH und Netzwerkerreichbarkeit nach dem angestoßenen Neustart bestätigen.
+- [ ] WLAN-Schnittstelle und Verbindung explizit erfassen.
+- [x] Laufenden Kernel nach Neustart und ALSA-Bestandsaufnahme dokumentieren.
+- [x] Vorhandenes WM8960-Kernelmodul und Overlay aktivieren; Aufnahme-/Wiedergabegerät nach Neustart bestätigt (kein zusätzlicher Treibercommit).
+- [x] Lautsprecherwiedergabe testen und passende Lautstärke bestätigen; ALSA-Zustand speichern.
+- [x] Mikrofonaufnahme und Wiedergabe testen; Aufnahmequalität mit Eingangsboost 3 bestätigt.
+- [x] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen; Nutzer bestätigt „passt“.
+- [ ] Endgültigen Speaker-Pegel auslesen: zuletzt gesetzt 100 %, danach 95 % empfohlen; endgültiger Wert unbelegt.
 - [ ] Tasten-GPIO, Polarität und Entprellung prüfen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
 

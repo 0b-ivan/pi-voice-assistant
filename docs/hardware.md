@@ -1,6 +1,16 @@
 # Hardwarebestand und Fotodokumentation 🔧
 
-Stand: 05.10.2026. Grundlage: Ivans Angaben und vier Originalfotos. Sichtbare Beschriftungen sind von noch nicht geprüften technischen Details getrennt.
+Stand: 05.10.2026. Grundlage: Ivans Angaben und fünf Originalfotos. Sichtbare Beschriftungen sind von noch nicht geprüften technischen Details getrennt.
+
+## Aktueller Aufbau — 05.10.2026 📸
+
+![Aktueller Aufbau mit Audio-HAT auf dem Pi, zwei Lautsprechern und separat abgelegtem Display und Kamera](images/hardware-assembly-2026-10-05.jpg)
+
+In der Mitte ist das WM8960-HAT auf dem Pi-Stapel montiert. Links und rechts liegen die beiden Lautsprecher mit Anschlussleitungen; am HAT ist der weiße Lautsprecherstecker belegt. Die Leitungen verlaufen teilweise außerhalb des Bildes, daher lässt sich die vollständige Kanalverdrahtung aus diesem Foto nicht prüfen.
+
+Das Adafruit mini PiTFT und die Kamera mit Aufdruck `Frank-S01-V1.0` liegen separat unterhalb des Stapels. Sie sind in dieser Aufnahme nicht montiert; die Kamera ist anders als auf den früheren Fotos nicht am Pi angeschlossen. PiSugar2 und Akku sind im Stapel nicht ausreichend sichtbar, um Revision oder Anschlusszustand erneut zu bestimmen.
+
+Dies ist der Aufbau für die Audio-Inbetriebnahme. ALSA erkennt das WM8960 bereits als Aufnahme- und Wiedergabegerät; beim ersten Lautsprechertest wurde noch kein Ton gehört.
 
 ## Bestand
 
@@ -8,12 +18,12 @@ Stand: 05.10.2026. Grundlage: Ivans Angaben und vier Originalfotos. Sichtbare Be
 |---|---|---|
 | Raspberry Pi Zero 2 W | Projektbasis; im montierten Stapel nicht vollständig lesbar; 512 MB RAM laut Hersteller | Audio-Client |
 | WM8960 Audio-HAT | Foto zeigt zwei Mikrofone, Taste, Lautsprecheranschlüsse und Kopfhörerbuchse | Audioaufnahme und Wiedergabe |
-| Zwei Lautsprecher | Laut Ivan angeschlossen; nicht separat auf den Fotos dargestellt | Sprachausgabe |
+| Zwei Lautsprecher | Laut Ivan angeschlossen; im aktuellen Übersichtsfoto separat links und rechts dargestellt | Sprachausgabe |
 | Integrierte Mikrofone | Zwei Mikrofone am HAT sichtbar; separates Mikrofon für MVP nicht nötig | Spracheingabe |
 | HAT-Taste | Aufdruck `BUTTON`; Herstellerbelegung GPIO17, physischer Pin 11 | Aufnahme auslösen |
 | PiSugar2 | Von Ivan benannt; Foto zeigt Stromversorgungsplatine, Akku und Status-LEDs | Akkubetrieb |
 | Li-Ion-Akku | Aufdruck `PiSugar`, Modell `803052`; Kapazitätszeile nicht zuverlässig lesbar | Energiespeicher |
-| Kamera | Angeschlossen; Flexplatine trägt `Frank-S01-V1.0`; daraus kein sicherer Sensorname ableitbar | Spätere Bildanfragen |
+| Kamera | Zuvor angeschlossen, im aktuellen Übersichtsfoto separat abgelegt; Flexplatine trägt `Frank-S01-V1.0`; daraus kein sicherer Sensorname ableitbar | Spätere Bildanfragen |
 | 64-GB-microSD | Von Ivan bestätigt; kein separates Foto | Betriebssystem |
 | Adafruit mini PiTFT 1,3″ | Aufdruck `Adafruit miniPiTFT 1.3" 240x240`, zwei Taster | Optionale Statusanzeige |
 
@@ -33,7 +43,7 @@ Sichtbar sind Akku, Anschlussleitungen, Stromversorgungsplatine und leuchtende L
 
 ![Kamera mit Flexplatinenaufdruck Frank-S01-V1.0](images/camera-flex.jpg)
 
-Die Kamera ist über ein Flexkabel angeschlossen. Der lesbare Platinenaufdruck wird dokumentiert; das Sensormodell wird später mit rpicam/libcamera und gegebenenfalls weiteren Typenangaben ermittelt.
+Die früheren Fotos zeigen die Kamera über ein Flexkabel angeschlossen; im aktuellen Aufbau liegt sie separat neben dem Pi. Der lesbare Platinenaufdruck wird dokumentiert; das Sensormodell wird später mit rpicam/libcamera und gegebenenfalls weiteren Typenangaben ermittelt.
 
 ## Display
 
@@ -66,7 +76,7 @@ Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. Das i
 
 ## Quellen
 
-Die vier Fotos stammen von Ivan und sind hier als Projektfotos abgelegt.
+Die fünf Fotos stammen von Ivan und sind hier als Projektfotos abgelegt.
 
 - [Pi Zero 2 W](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/)
 - [WM8960 Wiki und Pinbelegung](https://www.waveshare.com/wiki/WM8960_Audio_HAT)
