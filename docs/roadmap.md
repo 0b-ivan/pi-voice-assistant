@@ -12,7 +12,8 @@
 
 ## Phase 1 — Hardware in Betrieb nehmen
 
-- [ ] M0: Trixie 64-bit installieren; SSH und WLAN nach Neustart prüfen.
+- [x] Trixie 64-bit mit Imager auf SD-Karte schreiben; [Screenshots dokumentiert](setup.md).
+- [ ] M0: Erfolgreichen Boot sowie SSH und WLAN nach Neustart bestätigen.
 - [ ] OS-/Kernelstand und WM8960-Treibercommit dokumentieren.
 - [ ] Lautsprecher und Mikrofone testen.
 - [ ] Tasten-GPIO, Polarität und Entprellung prüfen.
