@@ -1,5 +1,5 @@
 [Unit]
-Description=WM8960 hold-to-talk recorder with selectable STT
+Description=WM8960 voice controls with optional Button SHIM
 After=sound.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
@@ -7,7 +7,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=obivan
-SupplementaryGroups=audio gpio
+SupplementaryGroups=audio gpio i2c
 EnvironmentFile=/etc/pi-ptt.env
 EnvironmentFile=/etc/pi-voice-assistant.env
 ExecStart=/usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py
