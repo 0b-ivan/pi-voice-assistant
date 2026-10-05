@@ -1,6 +1,7 @@
 [Unit]
-Description=WM8960 hold-to-talk recorder
-After=sound.target
+Description=WM8960 hold-to-talk recorder with OpenRouter STT
+Wants=network-online.target
+After=sound.target network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -9,6 +10,7 @@ Type=simple
 User=obivan
 SupplementaryGroups=audio gpio
 EnvironmentFile=/etc/pi-ptt.env
+EnvironmentFile=/etc/pi-voice-assistant.env
 ExecStart=/usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py
 Restart=on-failure
 RestartSec=5
