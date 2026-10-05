@@ -1,6 +1,7 @@
 import base64
 import http.client
 import json
+import urllib.error
 import tempfile
 import unittest
 from pathlib import Path
@@ -95,7 +96,7 @@ class TranscribeTests(unittest.TestCase):
                 transcribe(self.audio)
 
     def test_incomplete_http_error_body_is_normalized(self):
-        error = __import__("urllib.error").error.HTTPError(
+        error = urllib.error.HTTPError(
             url="https://openrouter.ai/api/v1/audio/transcriptions",
             code=502,
             msg="Bad Gateway",
