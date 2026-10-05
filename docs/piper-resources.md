@@ -418,3 +418,39 @@ Eine hohe logische Swap-Belegung allein disqualifiziert deshalb keinen
 dauerhaften Piper-Prozess. Vor dessen Aktivierung den tatsächlichen zram-RAM
 und Antwortzeiten bei wechselnden STT-/TTS-Aufrufen messen. Feste Status-WAVs
 bleiben der nächste einfache Schritt, der wiederholtes Modellladen vermeidet.
+
+
+## Kontrollierter Vosk/Piper-Wechsel vom 5. Oktober 2026
+
+Auf `pi-assistent` wurde anschließend der explizite `--vosk-audio`-Modus mit
+einer fünfsekündigen PCM16-/48-kHz-Stereoaufnahme ausgeführt. Der PTT-Dienst war
+dabei gestoppt; Vosk und Piper liefen im selben Messprozess und blieben zwischen
+den Phasen geladen.
+
+| Phase | Zeit | Peak-RSS |
+|---|---:|---:|
+| Vosk laden | 8,79 s | 202,1 MiB |
+| Vosk Basis 1 / 2 / 3 | 5,98 / 5,79 / 5,86 s | bis 223,1 MiB |
+| Piper zusätzlich laden | 22,96 s | 254,7 MiB |
+| Vosk Wechsel 1 / 2 / 3 | 7,58 / 7,58 / 5,89 s | 254,7 MiB |
+| Piper resident 1 / 2 / 3 | 3,47 / 2,09 / 1,26 s | 254,7 MiB |
+| Beide Modelle 10 s idle | 10,00 s | 254,7 MiB |
+
+Der große Speicherumbau passiert beim zusätzlichen Piper-Laden: Swap steigt
+dort von 14,5 auf 228,8 MiB und zram physisch von 3,1 auf 89,6 MiB. In den ersten
+beiden Wechseln werden Seiten noch sichtbar zwischen RAM und zram bewegt. Im
+dritten Wechsel stabilisiert sich das System dagegen: Vosk 181,5 → 181,0 MiB
+Swap, Piper 181,0 → 180,1 MiB; zram 57,2 → 56,8 MiB. Während der anschließenden
+Ruhe bleiben rund 179,8 MiB logischer Swap und 56,8 MiB physischer zram-RAM
+nahezu konstant.
+
+Systemweit fiel `MemAvailable` im Lauf bis auf 46,9 MiB. Der zram-Höchstwert
+betrug etwa 105,2 MiB physischen RAM; die Writeback-Zähler des Backing-Geräts
+blieben null. Temperatur stieg von 45,1 auf 51,5 °C, `throttled=0x0` vor und
+nach dem Lauf.
+
+**Entscheidung:** Auf dem dedizierten Pi Zero 2 W ist ein gemeinsamer residenter
+Vosk-/Piper-Betrieb vertretbar, weil nach dem Warm-up kein fortlaufendes
+Swap-Thrashing mehr sichtbar war und die TTS-Zeit auf 1,26 s zurückkehrte.
+Die RAM-Reserve bleibt knapp. Nach Aktivierung zusätzlicher dauerhafter Last wie
+PiTFT oder Kamera ist derselbe Ressourcencheck erneut erforderlich.
