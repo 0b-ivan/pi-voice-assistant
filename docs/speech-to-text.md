@@ -20,10 +20,10 @@ deutscher Text
     ↓
 OpenRouter LLM
     ↓
-deutsche TTS
+Piper TTS lokal
 ```
 
-Damit bleiben Aufnahme und Spracherkennung im `vosk`-Modus vollständig offline. Für die eigentliche KI-Antwort ist im aktuellen Projektstand weiterhin OpenRouter vorgesehen.
+Damit bleiben Aufnahme und Spracherkennung im `vosk`-Modus vollständig offline. Auch die Sprachausgabe ist inzwischen lokal mit [Piper](text-to-speech.md) bestätigt. Für die eigentliche KI-Antwort ist im aktuellen Projektstand weiterhin OpenRouter vorgesehen.
 
 ## Provider
 

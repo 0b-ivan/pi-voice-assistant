@@ -2,7 +2,7 @@
 
 Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und PiSugar2. Der Pi dient als mobiler Audio-Client und kann deutsche Sprache mit Vosk lokal erkennen; die eigentliche KI-Antwort erfolgt zunächst über OpenRouter.
 
-**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sowie Push-to-Talk über GPIO17 sind bestätigt. Vosk 0.3.45 läuft auf dem Pi Zero 2 W mit Python 3.13/aarch64 und verarbeitet echte WM8960-Aufnahmen lokal. Der integrierte PTT→Vosk-Pfad ist hardwareseitig abgenommen; `pi-assistent` wird aktuell bewusst mit `STT_PROVIDER=vosk` offline betrieben. `auto` ist implementiert, aber der reale OpenRouter→Vosk-Fallback bleibt vorerst ungetestet. LLM-Antwort und deutsche TTS folgen danach.**
+**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sowie Push-to-Talk über GPIO17 sind bestätigt. Vosk 0.3.45 läuft auf dem Pi Zero 2 W mit Python 3.13/aarch64 und verarbeitet echte WM8960-Aufnahmen lokal. Der integrierte PTT→Vosk-Pfad ist hardwareseitig abgenommen; `pi-assistent` wird aktuell bewusst mit `STT_PROVIDER=vosk` offline betrieben. `auto` ist implementiert, aber der reale OpenRouter→Vosk-Fallback bleibt vorerst ungetestet. Die lokale deutsche Sprachausgabe ist inzwischen ebenfalls bestätigt: Piper 1.8.0 mit `de_DE-thorsten-low` erzeugt 16-kHz-Mono-Audio und gibt es über das WM8960 aus; der aktuelle Speaker-Pegel ist mit 80 % / −19 dB gespeichert. Als nächster großer Schritt folgt die OpenRouter-LLM-Anbindung und danach der vollständige PTT → STT → LLM → TTS-Loop.**
 
 **Betriebssystem:** Raspberry Pi OS Lite 64-bit (Trixie), Headless/SSH; Hostname `pi-assistent`.
 
@@ -19,13 +19,15 @@ Taste halten → Sprache aufnehmen → beim Loslassen transkribieren → über O
 - [Roadmap und Aufgaben](docs/roadmap.md)
 - [Push-to-Talk: Installation, Schnittstelle und Abnahme](docs/push-to-talk.md)
 - [Button SHIM: Tasten, RGB und Installation](docs/button-controls.md)
-- [Speech-to-Text mit OpenRouter](docs/speech-to-text.md)
+- [Speech-to-Text mit OpenRouter und Vosk](docs/speech-to-text.md)
+- [Text-to-Speech mit Piper](docs/text-to-speech.md)
 - [Entscheidung: Pi als Client](docs/decisions/0001-client-server.md)
-- [Entscheidung: Raspberry Pi OS Lite 64-bit / Trixie](docs/decisions/0002-operating-system.md)\n- [Entscheidung: Hybrides STT mit OpenRouter und Vosk](docs/decisions/0003-hybrid-stt.md)
+- [Entscheidung: Raspberry Pi OS Lite 64-bit / Trixie](docs/decisions/0002-operating-system.md)
+- [Entscheidung: Hybrides STT mit OpenRouter und Vosk](docs/decisions/0003-hybrid-stt.md)
 
 ## Repository
 
-`docs/` enthält Planung und Anleitungen. `config/` enthält Konfigurationsbeispiele. `src/ptt.py` enthält den lokalen PTT-Recorder und die STT-Übergabe; `src/transcribe.py` kapselt OpenRouter- und Vosk-STT einschließlich Hybrid-Fallback. `deploy/` enthält die systemd-Unit, `scripts/` Diagnose- und Installationshilfen und `tests/` Hardware-unabhängige Tests.
+`docs/` enthält Planung und Anleitungen. `config/` enthält Konfigurationsbeispiele. `src/ptt.py` enthält den lokalen PTT-Recorder und die STT-Übergabe; `src/transcribe.py` kapselt OpenRouter- und Vosk-STT einschließlich Hybrid-Fallback; `src/speak.py` kapselt lokale Piper-Synthese und WM8960-Wiedergabe. `deploy/` enthält die systemd-Unit, `scripts/` Diagnose- und Installationshilfen und `tests/` Hardware-unabhängige Tests.
 
 ```bash
 bash scripts/inspect-pi.sh
@@ -40,7 +42,7 @@ sudo apt install python3-smbus i2c-tools
 sudo bash scripts/install-voice-service.sh
 ```
 
-Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten. Auf `pi-assistent` ist aktuell `STT_PROVIDER=vosk` gesetzt; dafür wird kein OpenRouter-Key benötigt. Vosk wird mit `sudo bash scripts/install-vosk.sh` installiert. Für `openrouter` bzw. den Online-Pfad von `auto` wäre zusätzlich ein echter `OPENROUTER_API_KEY` erforderlich.
+Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten. Auf `pi-assistent` ist aktuell `STT_PROVIDER=vosk` gesetzt; dafür wird kein OpenRouter-Key benötigt. Vosk wird mit `sudo bash scripts/install-vosk.sh` installiert. Für `openrouter` bzw. den Online-Pfad von `auto` wäre zusätzlich ein echter `OPENROUTER_API_KEY` erforderlich. Piper TTS und die getestete deutsche Stimme werden mit `sudo bash scripts/install-piper.sh` installiert.
 
 ## Arbeitsweise
 

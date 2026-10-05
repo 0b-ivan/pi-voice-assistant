@@ -268,7 +268,7 @@ aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/mikrofontest.wav
 
 Im referenzierten Folgechat „Push To Talk Bauen“ bestätigt Ivan: ALSA-Zustand gespeichert, abschließende Neustartprüfung mit **„passt“** abgeschlossen. Damit sind Speicherung und Aufnahme/Wiedergabe nach Neustart als Nutzer-Hörprüfung bestätigt; es liegt keine neue Mixer-Ausgabe vor. Kein gemessener Pegel- oder Clippingnachweis.
 
-Speaker ist inzwischen mit 95 % / 0,00 dB auf beiden Kanälen ausgelesen und bestätigt. Playback 100 % und Speaker AC 5 stammen weiterhin aus dem Folgechat; sie wurden in dieser neuen Ausgabe nicht erneut ausgelesen. Bei Bedarf ausschließlich auslesen:
+Zu diesem Zeitpunkt war Speaker mit 95 % / 0,00 dB auf beiden Kanälen ausgelesen und bestätigt. Dieser Wert wurde später beim Piper-TTS-Test bewusst auf 80 % reduziert; der aktuelle Stand steht im folgenden Abschnitt. Playback 100 % und Speaker AC 5 stammen weiterhin aus dem früheren Audio-Test. Bei Bedarf ausschließlich auslesen:
 
 ```bash
 amixer -c wm8960soundcard sget 'Speaker'
@@ -277,3 +277,38 @@ amixer -c wm8960soundcard sget 'Speaker AC'
 ```
 
 Die ausgegebenen Werte anschließend dokumentieren. Temporäre Sprachaufnahmen entfernen und nicht im Repository ablegen.
+
+
+## Lokale TTS-Abnahme und aktueller Speaker-Pegel — 05.10.2026 ✅
+
+Für die lokale deutsche Sprachausgabe wurde Piper 1.8.0 in `/opt/pi-voice-assistant/.venv` installiert und die Stimme `de_DE-thorsten-low` nach `/opt/pi-voice-assistant/tts/` geladen. Das ONNX-Modell ist ungefähr 61 MB groß.
+
+Die Synthese eines deutschen Testsatzes erzeugte erfolgreich eine WAV-Datei. `aplay` meldete:
+
+```text
+Signed 16 bit Little Endian, Rate 16000 Hz, Mono
+```
+
+Die Datei wurde erfolgreich über `plughw:CARD=wm8960soundcard,DEV=0` wiedergegeben. Da 95 % für TTS zu laut war, wurde der Speaker-Regler schrittweise reduziert. Der aktuell bestätigte Stand ist:
+
+```text
+Front Left:  Playback 102 [80%] [-19.00dB]
+Front Right: Playback 102 [80%] [-19.00dB]
+```
+
+Anschließend wurde der ALSA-Zustand erneut gespeichert:
+
+```bash
+sudo alsactl store wm8960soundcard
+```
+
+Der lokale Wrapper wurde erfolgreich getestet:
+
+```bash
+/opt/pi-voice-assistant/src/speak.py \
+  "Hallo Ivan, ich kann jetzt komplett lokal sprechen."
+```
+
+Details stehen unter [Text-to-Speech mit Piper](text-to-speech.md).
+
+Piper meldet bei einzelnen deutschen Sätzen aktuell `WARNING:piper.phoneme_ids:Missing phoneme from id map: ̧`. Die Synthese und Wiedergabe funktionieren trotzdem; der Hinweis ist derzeit nicht blockierend.

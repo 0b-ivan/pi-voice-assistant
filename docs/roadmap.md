@@ -22,7 +22,7 @@
 - [x] Lautsprecherwiedergabe testen und passende Lautstärke bestätigen; ALSA-Zustand speichern.
 - [x] Mikrofonaufnahme und Wiedergabe testen; Aufnahmequalität mit Eingangsboost 3 bestätigt.
 - [x] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen; Nutzer bestätigt „passt“.
-- [x] Speaker-Pegel auslesen: beide Kanäle 121 / 127, 95 %, 0,00 dB bestätigt.
+- [x] Speaker-Pegel nach TTS-Test final auf beide Kanäle 102 / 127, 80 %, −19,00 dB einstellen und mit `alsactl store` speichern.
 - [x] Tasten-GPIO identifizieren: BCM17 / Pin 11; gpiochip0 (pinctrl-bcm2835), Offset 17 als freier Eingang bestätigt.
 - [x] Aktiv-Low-Polarität und normale Tastenfunktion am HAT bestätigen (19 Probezyklen).
 - [ ] Gezielte Entprellungs-, Kurzdrück- und Grenztests am HAT durchführen.
@@ -44,8 +44,9 @@ Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
 - [ ] `auto` mit realem OpenRouter→Vosk-Ausfall auf dem Pi Zero 2 W abnehmen.
 - [x] Integrierten PTT→Vosk-Ablauf nach Deployment auf Hardware abnehmen.
 - [ ] OpenRouter-LLM an den erkannten Text anbinden.
-- [ ] Deutsche TTS-Komponente auswählen und anbinden.
-- [ ] Antwort über WM8960 ausgeben und Playback-Sperre implementieren.
+- [x] Deutsche TTS-Komponente auswählen: Piper 1.8.0 mit `de_DE-thorsten-low`.
+- [x] Lokale Piper-TTS standalone über WM8960 ausgeben; 16 kHz Mono bestätigt.
+- [ ] TTS in den vollständigen Sprachloop integrieren und Playback-Sperre implementieren.
 - [ ] Verbleibende Grenz- und Fehlerprüfungen auf Hardware durchführen; siehe [Prüfplan](push-to-talk.md).
 - [ ] Durchgehende deutsche Sprachinteraktion testen; Latenzen messen.
 
@@ -69,4 +70,4 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 - [ ] Wake Word und Unterbrechen der Wiedergabe evaluieren.
 - [ ] Gehäuse und mobile Bedienung verbessern.
 
-Priorität: Offline-STT mit Vosk stabilisieren und die Erkennungsqualität verbessern; insbesondere optionale Command-Grammar für kurze Befehle evaluieren. Der `auto`-Fallback wird später abgenommen. Danach LLM-Anbindung und deutsche TTS fortsetzen.
+Priorität: OpenRouter-LLM anbinden und anschließend PTT → Vosk/OpenRouter-STT → LLM → Piper → WM8960 zum vollständigen Halbduplex-Loop verbinden. Parallel kann die Offline-STT-Qualität weiter verbessert werden; `auto`-Fallback und Playback-Sperre werden danach hardwareseitig abgenommen.
