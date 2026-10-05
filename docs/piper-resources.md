@@ -276,18 +276,50 @@ stehen die ersten drei Werte von `/sys/block/zram0/mm_stat` für
 und `mem_used_total` (tatsächlich zugewiesener Gerätespeicher einschließlich
 Allocator-Fragmentierung und Metadaten), jeweils in Bytes.
 
-Lesend prüfen, ohne Swap oder Dienste neu zu konfigurieren:
+Am 05.10.2026 anschließend zurückgemeldete Momentaufnahme, nach den Benchmarks:
+
+| zram-Wert | Bytes / Zustand | MiB |
+|---|---:|---:|
+| Algorithmus | `zstd` | — |
+| Unkomprimierte Daten (`orig_data_size`) | 174.915.584 | 166,81 |
+| Komprimierte Daten (`compr_data_size`) | 53.557.438 | 51,08 |
+| Tatsächlich zugewiesener RAM (`mem_used_total`) | 62.042.112 | 59,17 |
+| Bisheriger RAM-Höchstwert (`mem_used_max`) | 132.694.016 | 126,55 |
+| Writeback-Gerät (`backing_dev`) | `/dev/loop0` | — |
+
+Die gespeicherten Daten schrumpfen auf etwa ein Drittel; einschließlich
+Verwaltungsaufwand beträgt das Verhältnis 166,81 / 59,17 = 2,82. Der Höchstwert
+gilt seit Geräteinitialisierung bzw. letztem Zurücksetzen des Zählers und ist
+nicht als Spitze eines einzelnen Benchmarks zuzuordnen. Die Momentaufnahme
+belegt auch nicht den zram-Verbrauch bei gleichzeitig residenten Modellen.
+
+Lesend den tatsächlichen Writeback-Speicher und seine Nutzung prüfen:
 
 ```bash
-zramctl
-cat /sys/block/zram0/mm_stat
-cat /sys/block/zram0/backing_dev
+cat /sys/class/block/loop0/loop/backing_file
+cat /sys/block/zram0/bd_stat
 ```
 
-Die Swap-in/out-Differenzen der Benchmarks beweisen **keine SD-Karten-I/O**.
-zram kann optional ein Writeback-Gerät nutzen; dessen Einrichtung oder Nutzung
-ist hier nicht belegt. `backing_dev` zeigt, ob eines eingerichtet ist;
-bei vorhandener Einrichtung enthält `bd_stat` die Writeback-Zähler.
+Zurückgemeldete Ausgaben vom 05.10.2026:
+
+```text
+backing_file: /var/swap
+bd_stat:      0 0 0
+```
+
+Das Loop-Gerät verweist damit auf `/var/swap`. Die drei `bd_stat`-Zähler stehen für
+aktuell auf dem Backing-Gerät gespeicherte Daten sowie kumulative Lese- und
+Schreibmengen, jeweils in Einheiten von 4 KiB. Werte vor/nach einem neuen Test
+vergleichen, um dessen zusätzliche Writeback-I/O zu ermitteln.
+
+**Abschließende Einordnung:** Writeback nach `/var/swap` ist eingerichtet,
+aber alle drei Geräte-Zähler stehen auf null. Seit Geräteinitialisierung wurden
+laut diesen Zählern keine Seiten auf das Backing-Gerät geschrieben oder von dort
+gelesen. Die beobachtete Swap-Aktivität ist daher als zram-Verarbeitung im RAM
+einzuordnen, nicht als Writeback-I/O nach `/var/swap`. Das sagt nichts über
+anderweitige Dateisystem-I/O des Systems aus. Das Dateisystem von `/var/swap`
+ist für eine spätere Writeback-Prüfung mit `findmnt -T /var/swap` bestimmbar;
+für die Einordnung dieses ungenutzten Writeback-Geräts ist es nicht erforderlich.
 
 Das Auslagern des PTT-Dienstes bleibt beobachtet, betrifft hier zunächst
 komprimierte Swap-Seiten. Kompression und Dekompression können CPU kosten;
