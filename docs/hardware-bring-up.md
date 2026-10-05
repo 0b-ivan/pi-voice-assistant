@@ -2,7 +2,7 @@
 
 Stand: 05.10.2026. Zielgerät: Pi Zero 2 W, Raspberry Pi OS Lite 64-bit / Trixie, Benutzer **obivan**, Hostname **pi-assistent**.
 
-Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert; Erkennung und Funktion stehen noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
+Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Vollständige Funktionstests stehen noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
 
 ## 1. Bestandsaufnahme
 
@@ -107,7 +107,7 @@ Der WM8960-Treiber oder das Audio-Overlay wird für diesen Test nicht entfernt. 
 
 Das Diagnoseprogramm liest ausschließlich Register des Expanders; es ändert weder dessen Konfiguration noch die LED. Es prüft alle fünf vollständigen Drücken-/Loslassen-Zyklen, entprellt für 30 ms und endet spätestens nach 60 Sekunden.
 
-Im Checkout dieses Hardware-Branches:
+Im Repository-Checkout (Testskript seit PR #10 auf main):
 
 ~~~bash
 python3 scripts/test-button-shim.py --seconds 60
@@ -191,7 +191,9 @@ Bis zur Abnahme entsteht kein neuer Autostartdienst. Die Belegung A=PTT, B=Abbru
 
 Linux erkennt den USB-Hub als **1a40:0101 Terminus Technology Inc. Hub** und Ethernet als **0bda:8152 Realtek RTL8152 Fast Ethernet Adapter**. Zunächst meldete eth0 NO-CARRIER und hatte keine Adresse. Die anschließende Ausgabe bestätigt eth0 UP mit IPv4 **172.22.9.108/24**. WLAN bleibt UP unter **172.22.9.128/24**. Herkunft der Adresse (DHCP/Profil), Treibername, Geschwindigkeit und SSH über LAN sind noch nicht ausgelesen bzw. getestet.
 
-Für i2cdetect -l liegt noch keine Buszeile vor. Wenn die Liste leer bleibt, zuerst die Userspace-Schnittstelle laden und erneut prüfen:
+Zunächst war die I²C-Busliste leer. Nach sudo modprobe i2c-dev bestätigt die Nutzer-Ausgabe **i2c-1 (bcm2835, i2c@7e804000)** und **i2c-2 (bcm2835, i2c@7e805000)**. Die gezielte Prüfung auf Bus 1 zeigt **3f**: Ein Gerät an der erwarteten Button-SHIM-Adresse antwortet. Tastenfunktion, RGB-LED und ein möglicher Adresskonflikt sind damit noch nicht geprüft.
+
+Bei einer leeren Busliste wurden diese Befehle erfolgreich verwendet:
 
 ~~~bash
 sudo modprobe i2c-dev
@@ -212,7 +214,7 @@ Das lädt die I²C-Geräteschnittstelle für Userspace in der laufenden Sitzung.
 | LAN-IP und Router über LAN erreichbar | 172.22.9.108/24, eth0 UP; Router-Test offen |
 | SSH über LAN | Offen |
 | USB-A Port 1 / 2 / 3 | Offen / offen / offen |
-| I²C 0x3f erreichbar, keine konkurrierende Nutzung | Offen |
+| I²C 0x3f erreichbar, keine konkurrierende Nutzung | Antwort 3f auf Bus 1 bestätigt; konkurrierende Nutzung noch nicht geprüft |
 | A / B / C / D / E drücken und loslassen | Offen |
 | RGB Rot / Grün / Blau / aus | Offen |
 | WM8960 und vorhandene PTT-Taste im neuen Stapel | Offen |
