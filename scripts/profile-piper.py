@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Bounded Linux benchmark: fresh Piper CLI processes versus one loaded voice.
+"""Bounded Linux benchmark: Piper cold/warm, or alternating loaded Vosk/Piper.
 
 Standard-library coordinator, Piper only in the existing venv worker. No playback,
 downloads, mixer changes or service restarts. Temporary generated audio is removed.
 """
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import math
@@ -13,6 +14,7 @@ from pathlib import Path
 import platform
 import resource
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
@@ -23,6 +25,36 @@ import wave
 DEFAULT_MODEL = '/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx'
 DEFAULT_PYTHON = '/opt/pi-voice-assistant/.venv/bin/python'
 MIB = 1024 * 1024
+DEFAULT_VOSK_MODEL = '/opt/pi-voice-assistant/models/vosk-model-small-de-0.15'
+
+
+def zram_snapshot(root='/sys/block'):
+    """Bytes from mm_stat; bd_stat uses fixed 4 KiB units, not host page size."""
+    devices = {}
+    for device in sorted(Path(root).glob('zram*')):
+        entry = {}
+        try:
+            values = [int(x) for x in (device / 'mm_stat').read_text().split()]
+            for index, name in [(0, 'data_mib'), (1, 'compressed_mib'),
+                                (2, 'physical_mib'), (4, 'lifetime_peak_physical_mib')]:
+                entry[name] = values[index] / MIB
+        except (OSError, ValueError, IndexError):
+            pass
+        try:
+            values = [int(x) for x in (device / 'bd_stat').read_text().split()]
+            for index, name in enumerate(('backing_stored_mib', 'backing_read_mib',
+                                           'backing_written_mib')):
+                entry[name] = values[index] * 4096 / MIB
+        except (OSError, ValueError, IndexError):
+            pass
+        try:
+            entry['backing_device'] = (device / 'backing_dev').read_text().strip()
+        except OSError:
+            entry['backing_device'] = None
+        devices[device.name] = entry
+    physical = [x['physical_mib'] for x in devices.values() if 'physical_mib' in x]
+    return dict(devices=devices,
+                physical_mib=sum(physical) if physical and len(physical) == len(devices) else None)
 
 
 def proc_memory(path='/proc/self/status'):
@@ -60,6 +92,7 @@ def system_memory():
         result['swap_out_mib'] = int(counters['pswpout']) * page_mib
     except (OSError, ValueError, KeyError):
         pass
+    result['zram'] = zram_snapshot()
     return result
 
 
@@ -110,11 +143,13 @@ def emit(record):
     print(json.dumps(record, ensure_ascii=False), flush=True)
 
 
-def measured_phase(label, operation, audio=None, child=False):
+def measured_phase(label, operation, audio=None, child=False, snapshots=False,
+                   combined=False):
+    system_before = system_memory() if snapshots else None
     who = resource.RUSAGE_CHILDREN if child else resource.RUSAGE_SELF
     before = resource.getrusage(who)
     start = time.monotonic()
-    operation()
+    result = operation()
     elapsed = time.monotonic() - start
     after = resource.getrusage(who)
     cpu = after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime
@@ -126,10 +161,17 @@ def measured_phase(label, operation, audio=None, child=False):
         # mark belongs to that single CLI, not earlier benchmark processes.
         record['memory_scope'] = 'Piper CLI child; lifetime high-water RSS'
     else:
-        record['memory_scope'] = 'loaded-voice worker; cumulative lifetime high-water RSS'
+        record['memory_scope'] = ('combined Vosk/Piper worker; cumulative lifetime high-water RSS'
+                                  if combined else
+                                  'loaded-voice worker; cumulative lifetime high-water RSS')
         memory = proc_memory()
         record['rss_mib'] = memory['rss_mib']
         record['swap_mib'] = memory['swap_mib']
+    if snapshots:
+        record['system_before'] = system_before
+        record['system_after'] = system_memory()
+    if isinstance(result, str):
+        record['transcript'] = result
     if audio is not None:
         duration = audio_duration(audio)
         record['audio_seconds'] = duration
@@ -158,14 +200,33 @@ def worker(args):
         version = None
     emit(dict(phase='environment', piper_version=version, python=sys.version,
               cpu_count=os.cpu_count()))
-    measured_phase('load_once', load)
+    alternating = args.worker == 'alternating'
+    transcribe_vosk = None
+    if alternating:
+        # Use the exact repository adapter and vendor package used by PTT;
+        # never select an online provider from the environment.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+        os.environ['VOSK_MODEL_PATH'] = args.vosk_model
+        from transcribe import _load_vosk_model, transcribe_vosk
+        measured_phase('vosk_load_once', _load_vosk_model, snapshots=True, combined=True)
+        for index in range(args.repeats):
+            measured_phase(f'vosk_baseline_{index + 1}',
+                           lambda: transcribe_vosk(args.vosk_audio),
+                           audio=args.vosk_audio, snapshots=True, combined=True)
+    measured_phase('load_once', load, snapshots=alternating, combined=alternating)
     for index in range(args.repeats):
+        if alternating:
+            measured_phase(f'vosk_alternating_{index + 1}',
+                           lambda: transcribe_vosk(args.vosk_audio),
+                           audio=args.vosk_audio, snapshots=True, combined=True)
         output = Path(args.directory) / 'warm.wav'
         def synthesize():
             with wave.open(str(output), 'wb') as audio:
                 voice.synthesize_wav(args.text, audio)
-        measured_phase(f'resident_{index + 1}', synthesize, audio=output)
-    measured_phase('resident_idle', lambda: time.sleep(args.idle_seconds))
+        measured_phase(f'resident_{index + 1}', synthesize, audio=output,
+                       snapshots=alternating, combined=alternating)
+    measured_phase('resident_idle', lambda: time.sleep(args.idle_seconds),
+                   snapshots=alternating, combined=alternating)
 
 
 def stop_group(proc):
@@ -187,14 +248,21 @@ def stop_group(proc):
 def summarize_samples(samples):
     available = [x['available_mib'] for x in samples if x.get('available_mib') is not None]
     swap = [x['swap_used_mib'] for x in samples if x.get('swap_used_mib') is not None]
-    return dict(min_available_mib=min(available) if available else None,
-                max_swap_used_mib=max(swap) if swap else None)
+    summary = dict(min_available_mib=min(available) if available else None,
+                   max_swap_used_mib=max(swap) if swap else None)
+    if any('zram' in x for x in samples):
+        physical = [x['zram']['physical_mib'] for x in samples
+                    if x.get('zram', {}).get('physical_mib') is not None]
+        summary['max_zram_physical_mib'] = max(physical) if physical else None
+    return summary
 
 
 def run_worker(args, mode, directory, records, samples):
     command = [args.piper_python, str(Path(__file__).resolve()), '--worker', mode,
                '--directory', str(directory), '--model', args.model, '--text=' + args.text,
                '--repeats', str(args.repeats), '--idle-seconds', str(args.idle_seconds)]
+    if mode == 'alternating':
+        command.extend(['--vosk-audio', args.vosk_audio, '--vosk-model', args.vosk_model])
     with (directory / f'{mode}.stderr').open('wb') as errors:
         proc = None
         selector = selectors.DefaultSelector()
@@ -266,7 +334,9 @@ def main():
     parser.add_argument('--timeout', type=float, default=180,
                         help='maximum seconds per fresh CLI run / complete resident worker')
     parser.add_argument('--output', default='/tmp/pi-piper-resources.json')
-    parser.add_argument('--worker', choices=['cli', 'resident'], help=argparse.SUPPRESS)
+    parser.add_argument('--vosk-audio', help='alternate loaded Vosk/Piper using this existing PCM WAV; PTT must be stopped')
+    parser.add_argument('--vosk-model', default=os.environ.get('VOSK_MODEL_PATH', DEFAULT_VOSK_MODEL))
+    parser.add_argument('--worker', choices=['cli', 'resident', 'alternating'], help=argparse.SUPPRESS)
     parser.add_argument('--directory', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.repeats <= 5:
@@ -289,10 +359,13 @@ def main():
         parser.error(f'Piper interpreter missing: {args.piper_python}')
     if not Path(args.model).is_file() or not Path(args.model + '.json').is_file():
         parser.error('Model and matching .onnx.json must already exist')
+    if args.vosk_audio and Path(args.vosk_audio).expanduser().resolve() == Path(args.output).expanduser().resolve():
+        parser.error('Report output must differ from input WAV')
     report = dict(schema_version=1, model=args.model,
                   text=args.text, repeats=args.repeats, idle_seconds=args.idle_seconds,
                   timeout_per_worker_seconds=args.timeout,
                   system_before=None, pi_before=None, voice_service_before=None, records=[])
+    report['mode'] = 'alternating' if args.vosk_audio else 'piper_comparison'
     samples = []
     code = 0
     finalizing = False
@@ -316,15 +389,46 @@ def main():
         print('Keine Wiedergabe. Bitte während des Tests keine Tasten drücken.', flush=True)
         with tempfile.TemporaryDirectory(prefix='pi-piper-profile-') as temporary:
             directory = Path(temporary)
-            for index in range(args.repeats):
-                print(f'Frischer Piper-Prozess {index + 1}/{args.repeats} …', flush=True)
-                run_worker(args, 'cli', directory, report['records'], samples)
-            print('Modell einmal laden, mehrfach erzeugen, anschließend in Ruhe halten …', flush=True)
-            run_worker(args, 'resident', directory, report['records'], samples)
+            if args.vosk_audio:
+                # Fail closed if systemd cannot confirm the service is stopped.
+                status = subprocess.run(['systemctl', 'show', 'pi-ptt.service',
+                                         '--property=ActiveState', '--value'],
+                                        capture_output=True, text=True, timeout=2, check=True)
+                if status.stdout.strip() != 'inactive':
+                    raise RuntimeError('PTT must be inactive. Stop pi-ptt.service for this isolated test, then restore it afterwards.')
+                if not Path(args.vosk_model).is_dir():
+                    raise RuntimeError('Installed Vosk model directory missing')
+                source = Path(args.vosk_audio).expanduser().resolve()
+                # Bound the copy, validate format/duration, then use one immutable
+                # snapshot for every recognition. Nothing is recorded by the test.
+                if source.stat().st_size > 6 * MIB:
+                    raise RuntimeError('Vosk WAV must be at most 6 MiB')
+                copied = directory / 'input.wav'
+                shutil.copyfile(source, copied)
+                with wave.open(str(copied), 'rb') as audio:
+                    duration = audio.getnframes() / audio.getframerate()
+                    if (audio.getcomptype() != 'NONE' or audio.getsampwidth() != 2
+                            or audio.getnchannels() not in (1, 2)
+                            or audio.getframerate() not in (16000, 48000)
+                            or not 0 < duration <= 30):
+                        raise RuntimeError('Vosk WAV needs PCM16, 16/48 kHz, mono/stereo, up to 30 seconds')
+                    if len(audio.readframes(audio.getnframes())) != audio.getnframes() * audio.getnchannels() * 2:
+                        raise RuntimeError('Vosk WAV is truncated')
+                report['vosk_input'] = dict(source=str(source), sha256=hashlib.sha256(copied.read_bytes()).hexdigest(),
+                                            audio_seconds=duration, model=args.vosk_model)
+                args.vosk_audio = str(copied)
+                print('Vosk-Basis messen, Piper laden, dann Vosk → Piper im Wechsel …', flush=True)
+                run_worker(args, 'alternating', directory, report['records'], samples)
+            else:
+                for index in range(args.repeats):
+                    print(f'Frischer Piper-Prozess {index + 1}/{args.repeats} …', flush=True)
+                    run_worker(args, 'cli', directory, report['records'], samples)
+                print('Modell einmal laden, mehrfach erzeugen, anschließend in Ruhe halten …', flush=True)
+                run_worker(args, 'resident', directory, report['records'], samples)
     except KeyboardInterrupt:
         report['error'] = 'Interrupted'
         code = 130
-    except (OSError, RuntimeError, TimeoutError, ValueError, subprocess.SubprocessError) as exc:
+    except (OSError, RuntimeError, TimeoutError, ValueError, EOFError, wave.Error, subprocess.SubprocessError) as exc:
         report['error'] = str(exc)
         print(f'Fehler: {exc}', file=sys.stderr)
         code = 1

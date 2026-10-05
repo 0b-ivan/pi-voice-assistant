@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+import wave
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/profile-piper.py'
@@ -17,6 +18,32 @@ spec.loader.exec_module(profile)
 
 
 class ResourceTests(unittest.TestCase):
+    def test_zram_reads_physical_bytes_and_fixed_4k_backing_units(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            device = Path(tmp) / 'zram0'
+            device.mkdir()
+            (device / 'mm_stat').write_text('174915584 53557438 62042112 0 132694016 35 4845 4488 32454')
+            (device / 'bd_stat').write_text('256 512 768')
+            (device / 'backing_dev').write_text('/dev/loop0\n')
+            snapshot = profile.zram_snapshot(tmp)
+            entry = snapshot['devices']['zram0']
+            self.assertEqual(snapshot['physical_mib'], 62042112 / 1024**2)
+            self.assertEqual(entry['compressed_mib'], 53557438 / 1024**2)
+            self.assertEqual(entry['lifetime_peak_physical_mib'], 132694016 / 1024**2)
+            self.assertEqual(entry['backing_read_mib'], 2)
+            self.assertEqual(entry['backing_written_mib'], 3)
+            self.assertEqual(entry['backing_device'], '/dev/loop0')
+            (device / 'mm_stat').unlink()
+            self.assertIsNone(profile.zram_snapshot(tmp)['physical_mib'])
+            self.assertIsNone(profile.zram_snapshot(Path(tmp) / 'missing')['physical_mib'])
+
+    def test_summary_reports_sampled_physical_peak_separately(self):
+        samples = [dict(available_mib=40, swap_used_mib=200,
+                        zram=dict(physical_mib=59)),
+                   dict(available_mib=80, swap_used_mib=150,
+                        zram=dict(physical_mib=50))]
+        self.assertEqual(profile.summarize_samples(samples)['max_zram_physical_mib'], 59)
+
     def test_memory_parser_and_missing_proc(self):
         with patch.object(Path, 'read_text', return_value='VmRSS:\t2048 kB\nVmHWM:\t4096 kB\nVmSwap:\t1024 kB\n'):
             self.assertEqual(profile.proc_memory(), dict(rss_mib=2, peak_rss_mib=4, swap_mib=1))
@@ -55,12 +82,18 @@ from pathlib import Path
 class PiperVoice:
     @classmethod
     def load(cls, model):
+        if os.environ.get('TEST_ORDER'):
+            with Path(os.environ['TEST_ORDER']).open('a') as log:
+                log.write('piper_load\\n')
         with Path(model + '.loads').open('a') as log:
             log.write('load\\n')
         voice = cls()
         voice.model = model
         return voice
     def synthesize_wav(self, text, audio):
+        if os.environ.get('TEST_ORDER'):
+            with Path(os.environ['TEST_ORDER']).open('a') as log:
+                log.write('speak\\n')
         with Path(self.model + '.texts').open('a') as log:
             log.write(json.dumps(text, ensure_ascii=False) + '\\n')
         audio.setnchannels(1)
@@ -98,6 +131,115 @@ with wave.open(args.f, 'wb') as audio:
                 '--model', str(self.model), '--output', str(self.report),
                 '--repeats', str(repeats), '--idle-seconds', '1',
                 '--timeout', str(timeout)]
+
+    def alternating_command(self, timeout=20):
+        self.vosk_model = self.root / 'vosk-model'
+        self.vosk_model.mkdir(exist_ok=True)
+        self.input = self.root / 'capture.wav'
+        with wave.open(str(self.input), 'wb') as audio:
+            audio.setnchannels(2)
+            audio.setsampwidth(2)
+            audio.setframerate(48000)
+            audio.writeframes(b'\x10\x00\x10\x00' * 48000)
+        self.env['VOSK_PYTHON_PATH'] = str(self.root)
+        self.env['TEST_ORDER'] = str(self.root / 'order')
+        self.env['STT_PROVIDER'] = 'openrouter'  # benchmark must stay offline
+        (self.root / 'vosk.py').write_text('''
+import json, os, signal, time
+from pathlib import Path
+def log(text):
+    with Path(os.environ['TEST_ORDER']).open('a') as output:
+        output.write(text + '\\n')
+def SetLogLevel(level):
+    pass
+class Model:
+    def __init__(self, path):
+        log('vosk_load')
+        if os.environ.get('TEST_VOSK_HANG'):
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            while True:
+                Path(path + '/heartbeat').write_text(str(time.monotonic_ns()))
+                time.sleep(.01)
+class KaldiRecognizer:
+    def __init__(self, model, rate):
+        assert rate == 16000
+        self.size = 0
+    def AcceptWaveform(self, pcm):
+        self.size += len(pcm)
+        return False
+    def FinalResult(self):
+        log('recognize:' + str(self.size))
+        return json.dumps({'text': 'hallo ivan'})
+''')
+        binary = self.root / 'bin'
+        binary.mkdir(exist_ok=True)
+        systemctl = binary / 'systemctl'
+        systemctl.write_text('#!' + sys.executable + '\nimport os, sys\n'
+                            'print("0" if "--property=MainPID" in sys.argv else os.environ.get("TEST_SERVICE", "inactive"))\n')
+        systemctl.chmod(0o755)
+        self.env['PATH'] = str(binary) + os.pathsep + os.environ.get('PATH', '')
+        return self.command(timeout=timeout) + ['--vosk-audio', str(self.input),
+                                               '--vosk-model', str(self.vosk_model)]
+
+    def test_alternation_keeps_models_and_reuses_the_same_pcm_input(self):
+        command = self.alternating_command()
+        original = self.input.read_bytes()
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        report = json.loads(self.report.read_text())
+        self.assertEqual(report['mode'], 'alternating')
+        self.assertNotIn('error', report)
+        self.assertEqual((self.root / 'order').read_text().splitlines(),
+                         ['vosk_load', 'recognize:32000', 'recognize:32000', 'piper_load',
+                          'recognize:32000', 'speak', 'recognize:32000', 'speak'])
+        self.assertEqual(Path(str(self.model) + '.loads').read_text().splitlines(), ['load'])
+        records = [r for r in report['records'] if r['phase'] != 'environment']
+        self.assertEqual([r['phase'] for r in records],
+                         ['vosk_load_once', 'vosk_baseline_1', 'vosk_baseline_2', 'load_once',
+                          'vosk_alternating_1', 'resident_1', 'vosk_alternating_2', 'resident_2', 'resident_idle'])
+        for record in records:
+            self.assertIn('zram', record['system_before'])
+            self.assertIn('zram', record['system_after'])
+        self.assertEqual([r['transcript'] for r in records if 'transcript' in r], ['hallo ivan'] * 4)
+        self.assertEqual(self.input.read_bytes(), original)
+        self.assertEqual(list(self.root.rglob('*.wav')), [self.input])
+
+    def test_active_or_unknown_service_prevents_loading_models(self):
+        command = self.alternating_command()
+        for state in ('active', 'activating', 'unknown'):
+            self.env['TEST_SERVICE'] = state
+            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            self.assertIn('PTT must be inactive', json.loads(self.report.read_text())['error'])
+            self.assertFalse((self.root / 'order').exists())
+
+    def test_input_cannot_be_overwritten_by_report(self):
+        command = self.alternating_command() + ['--output', str(self.input)]
+        original = self.input.read_bytes()
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.input.read_bytes(), original)
+
+    def test_invalid_or_truncated_wav_rejected_before_model_load(self):
+        command = self.alternating_command()
+        for audio in (b'not wav', self.input.read_bytes()[:-100]):
+            self.input.write_bytes(audio)
+            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            self.assertIn('error', json.loads(self.report.read_text()))
+            self.assertFalse((self.root / 'order').exists())
+
+    def test_alternating_timeout_kills_native_worker_and_preserves_report(self):
+        command = self.alternating_command(timeout=2)
+        self.env['TEST_VOSK_HANG'] = '1'
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        self.assertIn('exceeded', json.loads(self.report.read_text())['error'])
+        heartbeat = self.vosk_model / 'heartbeat'
+        self.assertTrue(heartbeat.exists())
+        stamp = heartbeat.stat().st_mtime_ns
+        time.sleep(.1)
+        self.assertEqual(heartbeat.stat().st_mtime_ns, stamp)
 
     def test_comparison_loads_once_in_resident_worker_and_cleans_audio(self):
         text = '-- Grüße Ivan, ich bin bereit.'
