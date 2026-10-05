@@ -16,7 +16,9 @@ fi
 install -d -m 0755 /opt/pi-voice-assistant/src /opt/pi-voice-assistant/scripts
 install -m 0644 "${repo_root}/src/ptt.py" /opt/pi-voice-assistant/src/ptt.py
 install -m 0644 "${repo_root}/src/transcribe.py" /opt/pi-voice-assistant/src/transcribe.py
+install -m 0755 "${repo_root}/src/speak.py" /opt/pi-voice-assistant/src/speak.py
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
+install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
 
 if [[ ! -e /etc/pi-ptt.env ]]; then
