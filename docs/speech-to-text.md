@@ -1,6 +1,6 @@
 # Speech-to-Text: OpenRouter + Vosk
 
-Stand 05.10.2026: OpenRouter-STT ist auf `pi-assistent` mit einer echten WM8960-WAV-Datei bestätigt. Zusätzlich ist Vosk als optionales lokales deutsches STT-Backend implementiert. Die Vosk- und Auto-Modi müssen nach Deployment noch auf dem Raspberry Pi Zero 2 W hardwareseitig abgenommen werden.
+Stand 05.10.2026: OpenRouter-STT und Vosk-STT sind auf `pi-assistent` mit echten WM8960-WAV-Dateien bestätigt. Vosk 0.3.45 läuft unter Python 3.13 auf aarch64; der integrierte PTT→Vosk-Pfad ist auf dem Raspberry Pi Zero 2 W hardwareseitig abgenommen. `pi-assistent` wird aktuell bewusst mit `STT_PROVIDER=vosk` offline betrieben. Der `auto`-Fallback ist implementiert, aber noch nicht als realer OpenRouter→Vosk-Ausfalltest abgenommen.
 
 ## Zielarchitektur
 
@@ -106,6 +106,22 @@ sudo vim /etc/pi-voice-assistant.env
 sudo systemctl restart pi-ptt.service
 ```
 
+## Hardware-Abnahme auf dem Pi Zero 2 W
+
+Getestet am 05.10.2026 auf `pi-assistent` mit Raspberry Pi OS Lite 64-bit / Trixie und WM8960-HAT:
+
+- `vosk==0.3.45` ließ sich als `manylinux2014_aarch64`-Wheel unter Python 3.13 installieren und importieren.
+- `vosk-model-small-de-0.15` wurde erfolgreich geladen und wiederholt im laufenden PTT-Dienst verwendet.
+- Ein 6-Sekunden-Testclip benötigte beim ersten Modell-Load 15,59 s; weitere Durchläufe im selben Prozess benötigten 6,75 s bzw. 6,78 s.
+- Der laufende `pi-ptt.service` belegte nach geladenem Vosk-Modell 145728 kB RSS (rund 142 MiB).
+- Zum Messzeitpunkt zeigte das Gesamtsystem 415 MiB RAM, 120 MiB verfügbar und 105 MiB belegten Swap. Der Swap-Wert beschreibt den beobachteten Systemzustand und wird nicht allein Vosk zugerechnet.
+- Die Erkennungsqualität des kleinen deutschen Modells ist brauchbar, aber deutlich schwächer als OpenRouter Whisper bei freier Sprache und teilweise schwach bei kurzen Kommandos.
+- Ein identischer WM8960-Clip wurde von OpenRouter nahezu vollständig erkannt; damit ist das Mikrofon kein Hauptverdächtiger für die Vosk-Fehler.
+- Linker und rechter Mikrofonkanal lieferten mit Vosk sehr ähnliche Ergebnisse; der rechte Kanal war nur geringfügig besser.
+- Eine hochwertige 48-kHz→16-kHz-Konvertierung mit SoX lieferte praktisch dasselbe Vosk-Ergebnis wie die interne Konvertierung. Es gibt daher aktuell keinen Hinweis, dass der einfache interne Resampler die Hauptursache der Erkennungsfehler ist.
+
+Fazit: Vosk ist auf dem Pi Zero 2 W als vollständig lokale STT funktionsfähig. Für den aktuellen Offline-Betrieb bleibt `STT_PROVIDER=vosk` gesetzt. Die nächsten Qualitätsverbesserungen sollten beim Erkennungsmodell bzw. bei einer optionalen Command-Grammar ansetzen, nicht bei Mikrofon oder Resampling.
+
 ## Standalone-Test
 
 Eine vorhandene WM8960-WAV kann direkt getestet werden:
@@ -165,4 +181,4 @@ Die Tests prüfen unter anderem:
 - kombinierten Fehler, wenn beide Backends scheitern
 - 48-kHz-Stereo → 16-kHz-Mono-Konvertierung
 
-CI benötigt weder einen OpenRouter-Key noch ein installiertes Vosk-Modell. Der reale Vosk-Test bleibt eine Integrationsprüfung auf dem Pi Zero 2 W.
+CI benötigt weder einen OpenRouter-Key noch ein installiertes Vosk-Modell. Die reale Vosk-Integration ist auf dem Pi Zero 2 W bestätigt; offen bleibt insbesondere die Hardware-Abnahme des `auto`-Fallbacks.
