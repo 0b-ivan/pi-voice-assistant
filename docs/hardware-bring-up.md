@@ -2,7 +2,7 @@
 
 Stand: 05.10.2026. Zielgerät: Pi Zero 2 W, Raspberry Pi OS Lite 64-bit / Trixie, Benutzer **obivan**, Hostname **pi-assistent**.
 
-Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert; Erkennung und Funktion stehen noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
+Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Tasten A–E sind in zwei Testläufen bestätigt. Die RGB-LED und die angeleitete Neustartprüfung sind durch den Nutzer bestätigt; einzelne Diagnosewerte nach Neustart liegen noch nicht als Ausgabe vor. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
 
 ## 1. Bestandsaufnahme
 
@@ -107,7 +107,7 @@ Der WM8960-Treiber oder das Audio-Overlay wird für diesen Test nicht entfernt. 
 
 Das Diagnoseprogramm liest ausschließlich Register des Expanders; es ändert weder dessen Konfiguration noch die LED. Es prüft alle fünf vollständigen Drücken-/Loslassen-Zyklen, entprellt für 30 ms und endet spätestens nach 60 Sekunden.
 
-Im Checkout dieses Hardware-Branches:
+Im Repository-Checkout (Testskript seit PR #10 auf main):
 
 ~~~bash
 python3 scripts/test-button-shim.py --seconds 60
@@ -168,7 +168,23 @@ PY
 
 Abnahme durch Sichtprüfung: Rot → Grün → Blau, danach aus. Eine erfolgreiche Python-Ausführung allein bestätigt weder die Farben noch die LED-Funktion.
 
-## 7. Gemeinsamer Betrieb und Neustart
+## 7. I²C beim Start verfügbar machen
+
+Nach erfolgreichem Tasten- und LED-Test i2c-dev über systemd beim Boot laden. Der Nutzer hat die anschließende Neustartprüfung mit „geht gut“ bestätigt. Der konkrete Dateiinhalt wurde nicht separat zurückgemeldet.
+
+~~~bash
+sudo vim /etc/modules-load.d/pi-voice-i2c.conf
+~~~
+
+In der Datei folgende Modulzeile eintragen (bei vorhandener Datei bestehende Einträge beachten):
+
+~~~text
+i2c-dev
+~~~
+
+Mit Esc, :wq, Enter speichern. Das vorhandene WM8960-Overlay bleibt bestehen. Die Datei sorgt für die Userspace-Geräteschnittstelle; die bereits aktivierte I²C-Hardware-Konfiguration bleibt weiterhin nötig.
+
+## 8. Gemeinsamer Betrieb und Neustart
 
 Nach Hub-/Button-Test weiterhin Audio-Karte und bestehenden Dienst prüfen:
 
@@ -189,9 +205,11 @@ Bis zur Abnahme entsteht kein neuer Autostartdienst. Die Belegung A=PTT, B=Abbru
 
 ## Rückmeldung vom Pi — 05.10.2026
 
-Linux erkennt den USB-Hub als **1a40:0101 Terminus Technology Inc. Hub** und Ethernet als **0bda:8152 Realtek RTL8152 Fast Ethernet Adapter**. Zunächst meldete eth0 NO-CARRIER und hatte keine Adresse. Die anschließende Ausgabe bestätigt eth0 UP mit IPv4 **172.22.9.108/24**. WLAN bleibt UP unter **172.22.9.128/24**. Herkunft der Adresse (DHCP/Profil), Treibername, Geschwindigkeit und SSH über LAN sind noch nicht ausgelesen bzw. getestet.
+Linux erkennt den USB-Hub als **1a40:0101 Terminus Technology Inc. Hub** und Ethernet als **0bda:8152 Realtek RTL8152 Fast Ethernet Adapter**. Zunächst meldete eth0 NO-CARRIER und hatte keine Adresse. Die anschließende Ausgabe bestätigt eth0 UP mit IPv4 **172.22.9.108/24**. WLAN bleibt UP unter **172.22.9.128/24**. Herkunft der Adresse (DHCP/Profil) und SSH über LAN sind noch nicht separat geprüft. Treibername und Geschwindigkeit sind inzwischen durch die ethtool-Ausgabe bestätigt (siehe unten).
 
-Für i2cdetect -l liegt noch keine Buszeile vor. Wenn die Liste leer bleibt, zuerst die Userspace-Schnittstelle laden und erneut prüfen:
+Zunächst war die I²C-Busliste leer. Nach sudo modprobe i2c-dev bestätigt die Nutzer-Ausgabe **i2c-1 (bcm2835, i2c@7e804000)** und **i2c-2 (bcm2835, i2c@7e805000)**. Die gezielte Prüfung auf Bus 1 zeigt **3f**: Ein Gerät an der erwarteten Button-SHIM-Adresse antwortet. Tastenfunktion, RGB-LED und ein möglicher Adresskonflikt sind damit noch nicht geprüft.
+
+Bei einer leeren Busliste wurden diese Befehle erfolgreich verwendet:
 
 ~~~bash
 sudo modprobe i2c-dev
@@ -201,22 +219,40 @@ sudo i2cdetect -y 1 0x3f 0x3f
 
 Das lädt die I²C-Geräteschnittstelle für Userspace in der laufenden Sitzung. Es ersetzt weder den WM8960-Treiber noch das bestehende Overlay. Erst nach erfolgreichem Zugriff prüfen, ob i2c-dev auch nach Neustart verfügbar ist; die dauerhafte Einrichtung folgt bei Bedarf.
 
+### Tasten A–E — zwei erfolgreiche Durchläufe ✅
+
+Der Nutzer hat den lesenden Tastentest zweimal ausgeführt. In beiden Durchläufen wurden für **A, B, C, D und E** vollständige Drücken-/Loslassen-Zyklen erkannt und alle fünf Tasten mit **PASS** gemeldet. Mehrfaches Drücken wurde ebenfalls als mehrere Zyklen ausgegeben. Damit ist die Bedienung der fünf Tasten in der laufenden Sitzung bestätigt; ein Langzeit-/Entprellungs-Stresstest sowie der Test nach Neustart stehen noch aus.
+
+### RGB-LED — Sichtprüfung bestätigt ✅
+
+Nach Installation von python3-venv und der Pimoroni-Bibliothek buttonshim 0.0.2 in einer separaten Testumgebung hat der Nutzer die zuvor angeleitete Farbsequenz **Rot → Grün → Blau → aus** mit „geht gut“ bestätigt. Damit ist der LED-Test als Nutzer-Sichtprüfung bestanden. Keine Farb-/Helligkeitsmessung und noch keine LED-Integration in den Sprachdienst.
+
+### Neustartprüfung — Nutzerbestätigung ✅
+
+Nach der Anleitung zum dauerhaften Laden von i2c-dev und dem Neustart hat der Nutzer die angeforderten Prüfungen (I²C-Busliste, Antwort an 0x3f, Netzwerkadressen, ALSA-Aufnahme/-Wiedergabegeräte und Status von pi-ptt.service) mit **„geht gut“** bestätigt. Dies ist eine zusammenfassende Nutzerbestätigung, keine neu eingereichte Terminalausgabe. Aktuelle IP-Adressen und genaue Dienst-/Gerätedetails nach Neustart wurden nicht erneut ausgelesen dokumentiert. Physische Tasten-/LED- und Aufnahme-/Wiedergabetests nach Neustart bleiben gesonderte Prüfungen.
+
+### Ethernet-Treiber und Link — 05.10.2026 ✅
+
+Die zurückgemeldete ethtool-Ausgabe bestätigt **eth0** mit **r8152 v1.12.13**, Bus **usb-3f980000.usb-1.4**, **100 Mb/s**, **Full Duplex**, **Auto-negotiation on** und **Link detected: yes**. Verwendetes Diagnosepaket: ethtool **1:6.14.2-1**. Damit sind Treiberbindung und ausgehandelter Ethernet-Link bestätigt. Die Geschwindigkeit ist der Link-Modus, kein gemessener Datendurchsatz; Router-/SSH-Test über LAN und die drei externen USB-Buchsen bleiben getrennte Prüfungen.
+
 ## Abnahmeprotokoll
 
 | Prüfung | Status / Ergebnis |
 |---|---|
 | Erweiterter Aufbau montiert, Fotos abgelegt | Foto-Nachweis 05.10.2026 |
 | Hub und RTL8152B von Linux erkannt | Bestätigt: Terminus 1a40:0101, Realtek 0bda:8152 |
-| LAN-Interface und Treiber | eth0 erkannt; Treibername noch offen |
-| Link/Geschwindigkeit | Offen |
+| LAN-Interface und Treiber | eth0, r8152 v1.12.13, USB-Bus usb-3f980000.usb-1.4 |
+| Link/Geschwindigkeit | Link detected: yes; 100 Mb/s; Full Duplex; Auto-negotiation on |
 | LAN-IP und Router über LAN erreichbar | 172.22.9.108/24, eth0 UP; Router-Test offen |
 | SSH über LAN | Offen |
 | USB-A Port 1 / 2 / 3 | Offen / offen / offen |
-| I²C 0x3f erreichbar, keine konkurrierende Nutzung | Offen |
-| A / B / C / D / E drücken und loslassen | Offen |
-| RGB Rot / Grün / Blau / aus | Offen |
+| I²C 0x3f erreichbar, keine konkurrierende Nutzung | Antwort 3f auf Bus 1 bestätigt; konkurrierende Nutzung noch nicht geprüft |
+| A / B / C / D / E drücken und loslassen | Alle fünf PASS, in zwei Hardware-Testläufen bestätigt |
+| RGB Rot / Grün / Blau / aus | Nutzer-Sichtprüfung bestätigt: „geht gut“ |
 | WM8960 und vorhandene PTT-Taste im neuen Stapel | Offen |
-| LAN und Button SHIM nach Neustart | Offen |
+| i2c-dev dauerhaft beim Boot laden | Neustartprüfung laut Nutzer erfolgreich; Dateiinhalt nicht separat zurückgemeldet |
+| Neustart: I²C, LAN, ALSA und PTT-Dienst | Nutzer bestätigt zusammenfassend „geht gut“; keine neue Terminalausgabe |
+| Physische Tasten-/LED- und Audiotests nach Neustart | Noch nicht separat bestätigt |
 | Leistungsaufnahme/Akkulaufzeit unter Zusatzlast | Offen |
 
 ## Quellen
