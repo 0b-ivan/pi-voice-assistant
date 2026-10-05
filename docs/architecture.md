@@ -4,43 +4,45 @@
 
 | Komponente | Aufgabe |
 |---|---|
-| Pi-Client | Taste lesen, Aufnahme begrenzen, Audio übertragen, Antwort abspielen, Fehler anzeigen |
-| Homelab-Dienst | STT, Anfrage an Sprachmodell, TTS und Rückgabe der Audiodatei |
+| Pi-Client | GPIO17 lesen, Aufnahme begrenzen/validieren, STT anstoßen, später LLM/TTS orchestrieren und Audio abspielen |
+| OpenRouter STT | Begrenzte WAV-Aufnahme in deutschen Text transkribieren |
+| OpenRouter LLM | Nächster Schritt: erkannten Text beantworten |
+| TTS | Danach: deutschen Antworttext in Wiedergabeaudio umwandeln; Provider noch offen |
 | PiSugar2-Integration | Später Akkustatus und kontrolliertes Herunterfahren |
 | Kamera/Display | Spätere optionale Erweiterung |
+
+Auf dem Pi Zero 2 W findet für das MVP keine lokale Modellinferenz statt. Der Client bleibt dünn; Audioaufnahme und Geräte-I/O laufen lokal, rechenintensive Verarbeitung extern.
 
 ## MVP-Ablauf
 
 1. Client wartet auf Tastendruck.
 2. Gedrückt halten startet die Aufnahme; Loslassen stoppt sie. Zusätzlich gilt ein konfigurierbares Zeitlimit (PTT-Standard 30 Sekunden).
-3. Client sendet die Aufnahme an den Homelab-Dienst.
-4. Dienst transkribiert, erzeugt Antwort und synthetisiert Sprache.
-5. Client spielt die Antwort ab und kehrt in den Wartezustand zurück.
+3. Der Recorder validiert das WAV und veröffentlicht atomar `capture.wav`.
+4. Der STT-Adapter sendet die Aufnahme an OpenRouter und liefert deutschen Text.
+5. Als nächster Baustein wird der Text an ein OpenRouter-LLM gesendet.
+6. Danach synthetisiert TTS eine deutsche Antwort.
+7. Client spielt die Antwort ab und kehrt in den Wartezustand zurück.
 
-Während Verarbeitung und Wiedergabe startet keine neue Aufnahme. Wake Word, Unterbrechen der Sprachausgabe und Echounterdrückung gehören nicht zum ersten MVP.
+Während der synchronen Verarbeitung startet keine neue Aufnahme. Nach STT wird GPIO17 resynchronisiert; eine während der Verarbeitung gehaltene Taste muss zuerst losgelassen werden. Wake Word, Unterbrechen der Sprachausgabe und Echounterdrückung gehören nicht zum ersten MVP.
 
-## Geplanter Vertrag
+## Implementierter Vertrag: PTT → STT
 
-HTTP-Upload einer begrenzten Audiodatei, Rückgabe einer begrenzten Audiodatei. Route, Authentifizierung, Fehlerformat, Codec, Samplingrate und maximale Größen werden vor Implementierung festgelegt. Noch keine existierende API.
+Der lokale [Push-to-Talk-Dienst](push-to-talk.md) liest GPIO17 mit libgpiod v2 und erzeugt geprüftes Stereo-WAV (48 kHz, S16_LE) unter `/run/pi-ptt`. Nach `capture_ready` ruft er [`src/transcribe.py`](speech-to-text.md) synchron auf.
 
-ALSA-Geräte werden anhand der erkannten Karten ausgewählt, nicht anhand einer fest angenommenen Kartennummer. Audioformat erst nach einem Aufnahme- und Wiedergabetest festlegen.
+Der STT-Adapter benötigt `OPENROUTER_API_KEY`, verwendet standardmäßig `openai/whisper-large-v3-turbo`, Sprachhinweis `de` und einen 30-Sekunden-HTTP-Timeout. Er verwendet keine zusätzliche Python-Abhängigkeit. Erfolgreiche Verarbeitung erzeugt die Ereignisse `processing` und `transcript`; erwartete Netzwerk-/API-Fehler werden als `stt_error` gemeldet und beenden PTT nicht.
 
 ## Betrieb und Fehler
 
-- Verbindungs- und Antwort-Timeouts; begrenzte Wiederholungen und verständliche Fehlerrückmeldung.
-- Nach Fehlern Rückkehr in den Wartezustand, keine Endlosschleife.
-- Zustände: bereit, Aufnahme, Verarbeitung, Wiedergabe, Fehler.
-- Client später als systemd-Dienst mit dediziertem Benutzer und erforderlichen Audio/GPIO-Rechten.
-- Zugangsdaten außerhalb von Git; Homelab-Endpunkt zunächst nur intern erreichbar.
-- Audio nur für die Anfrage verarbeiten; keine dauerhafte Speicherung als Standard.
+- Begrenzte Aufnahme und HTTP-Timeout; keine unbegrenzten Audio-Uploads.
+- Nach STT-Fehlern Rückkehr in den Wartezustand, keine Endlosschleife.
+- Zustände: bereit, Aufnahme, Verarbeitung; Wiedergabe und LLM-Antwort folgen.
+- Zugangsdaten ausschließlich außerhalb von Git in `/etc/pi-voice-assistant.env`.
+- Audio bleibt im flüchtigen Runtime-Verzeichnis; keine dauerhafte Speicherung als Standard.
+- Der OpenRouter-Schlüssel wird nicht im Journal ausgegeben.
+- Hardware-unabhängige Tests mocken den HTTP-Aufruf und benötigen keinen Schlüssel.
 
 ## Erfolgskriterien
 
-Ein Tastendruck startet zuverlässig eine Aufnahme. Ein deutscher Testsatz wird transkribiert, beantwortet und verständlich abgespielt. Nach Netzwerkausfall oder Dienstfehler lässt sich eine neue Anfrage starten. Start nach Neustart funktioniert ohne manuellen Eingriff. Latenz und Speicherverbrauch werden gemessen; Zielwerte folgen nach dem ersten Durchlauf.
+Bereits bestätigt: GPIO17 startet zuverlässig eine Aufnahme; WM8960-WAV ist verständlich; ein deutscher Test wurde über OpenRouter-STT korrekt transkribiert.
 
-## Implementierter erster Baustein
-
-Der lokale [Push-to-Talk-Dienst](push-to-talk.md) liest GPIO17 mit libgpiod v2 und erzeugt geprüftes Stereo-WAV (48 kHz, S16_LE) im flüchtigen Verzeichnis `/run/pi-ptt`. `capture_ready` bezeichnet den Übergabepunkt für einen späteren STT-Adapter. Das Halten/Loslassen ersetzt den früheren Toggle-Entwurf. Hardware-Abnahme steht aus.
-
-OpenRouter ist laut Nutzer das Ziel für die spätere KI-API, deutsche TTS das Ziel für die Sprachausgabe. STT-Auswahl und Verarbeitung im Homelab bleiben offen. Dieser Schritt führt ausschließlich lokale Audioaufnahme aus. Vor Anschluss der Sprachpipeline werden Verarbeitung/Wiedergabe verriegelt, Timeouts festgelegt und Audioformate für STT/TTS angepasst; OpenRouter erhält später transkribierten Text. Noch keine Netzwerk- oder TTS-Implementierung.
-
+Noch offen für den vollständigen MVP: integrierten PTT→STT-Ablauf auf Hardware abnehmen, LLM-Antwort anbinden, deutsche TTS anbinden, hörbare Antwort ausgeben und Wiederherstellung nach Netzwerkausfall prüfen. Latenz und Speicherverbrauch werden anschließend gemessen.

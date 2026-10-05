@@ -1,14 +1,14 @@
 # Pi Voice Assistant 🎙️
 
-Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und PiSugar2. Der Pi dient als mobiler Audio-Client; Sprachverarbeitung läuft auf einem stärkeren Gerät im Homelab.
+Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und PiSugar2. Der Pi dient als mobiler Audio-Client; rechenintensive Sprach- und KI-Verarbeitung erfolgt über APIs statt lokal auf dem Zero 2 W.
 
-**Stand: 05.10.2026 — SD-Karte erfolgreich geschrieben, erster Boot und SSH-Anmeldung als `obivan` bestätigt. Systemupdate und Diagnosewerkzeuge installiert; SSH nach Neustart bestätigt. WM8960 als Aufnahme- und Wiedergabegerät erkannt; Lautsprecherwiedergabe und gute Mikrofonaufnahme bestätigt; Gesamtspeicherung und Audiotest nach Neustart laut Nutzer bestätigt; lokaler Push-to-Talk-Dienst installiert; Tastenerkennung, Aufnahme, manuelle Wiedergabe und Autostart nach Neustart bestätigt; Grenz-/Fehlerprüfungen offen; Sprachverarbeitung noch nicht implementiert.**
+**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sind bestätigt. Push-to-Talk über GPIO17, systemd-Autostart und Hardware-Fehlerfälle wurden getestet. OpenRouter-STT wurde separat auf dem Pi erfolgreich mit deutschem WAV getestet („Hallo, das ist ein Test.“). Die direkte PTT→STT-Integration ist implementiert und wartet auf Hardware-Abnahme nach Deployment. LLM-Antwort und deutsche TTS folgen danach.**
 
 **Betriebssystem:** Raspberry Pi OS Lite 64-bit (Trixie), Headless/SSH; Hostname `pi-assistent`.
 
 ## Erstes Ziel
 
-Taste drücken → Sprache aufnehmen → im Homelab transkribieren und beantworten → Antwort über die beiden Lautsprecher ausgeben. Zunächst Halbduplex: Aufnahme und Wiedergabe laufen nacheinander.
+Taste halten → Sprache aufnehmen → beim Loslassen transkribieren → über OpenRouter beantworten → deutsche Antwort über die beiden Lautsprecher ausgeben. Zunächst Halbduplex: Aufnahme, Verarbeitung und Wiedergabe laufen nacheinander.
 
 ## Dokumentation
 
@@ -17,22 +17,30 @@ Taste drücken → Sprache aufnehmen → im Homelab transkribieren und beantwort
 - [Betriebssystem und Inbetriebnahme](docs/setup.md)
 - [Roadmap und Aufgaben](docs/roadmap.md)
 - [Push-to-Talk: Installation, Schnittstelle und Abnahme](docs/push-to-talk.md)
+- [Speech-to-Text mit OpenRouter](docs/speech-to-text.md)
 - [Entscheidung: Pi als Client](docs/decisions/0001-client-server.md)
 - [Entscheidung: Raspberry Pi OS Lite 64-bit / Trixie](docs/decisions/0002-operating-system.md)
 
 ## Repository
 
-`docs/` enthält Planung und Anleitungen. `config/` enthält Konfigurationsbeispiele. `scripts/` enthält eine lesende Bestandsaufnahme. `src/ptt.py` enthält den lokalen PTT-Recorder, `deploy/` die systemd-Unit und `tests/` Hardware-unabhängige Tests.
+`docs/` enthält Planung und Anleitungen. `config/` enthält Konfigurationsbeispiele. `src/ptt.py` enthält den lokalen PTT-Recorder und die STT-Übergabe; `src/transcribe.py` kapselt OpenRouter-STT. `deploy/` enthält die systemd-Unit, `scripts/` Diagnose- und Installationshilfen und `tests/` Hardware-unabhängige Tests.
 
 ```bash
 bash scripts/inspect-pi.sh
 ```
 
-Das Skript auf dem Pi ausführen. Fehlende Diagnoseprogramme werden übersprungen. Es verändert keine Einstellungen.
+Das Bestandsaufnahmeskript auf dem Pi ausführen. Fehlende Diagnoseprogramme werden übersprungen. Es verändert keine Einstellungen.
+
+Für den aktuellen Sprachdienst:
+
+```bash
+sudo bash scripts/install-voice-service.sh
+```
+
+Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten und den echten `OPENROUTER_API_KEY` setzen.
 
 ## Arbeitsweise
 
 Konfigurationsdateien bearbeiten wir mit **Vim**; Anleitungen verwenden `vim` als Editor.
 
 `main` enthält nachvollziehbare Projektstände. Änderungen erfolgen über kurze Feature-Branches und Pull Requests. Treiberänderungen werden erst nach Hardwaretests als funktionierend dokumentiert. Keine Zugangsdaten, Sprachaufnahmen oder Kamerabilder committen. Eine Lizenz ist noch nicht festgelegt.
-

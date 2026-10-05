@@ -32,13 +32,16 @@ Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
 
 ## Phase 2 — Sprach-MVP
 
-- [ ] Homelab-Ziel und STT/TTS-Komponenten auswählen; LLM-Ziel OpenRouter, deutsche Sprachausgabe.
-- [ ] API-Vertrag, Authentifizierung und Audioformat festlegen.
 - [x] Lokalen PTT-Recorder mit Halten/Loslassen, Entprellung und Zeitlimit implementieren; automatisierte Tests bestanden.
 - [x] Normalen PTT-Aufnahme-/Wiedergabeablauf auf dem Pi inklusive Neustart abnehmen; Nutzer bestätigt „funktioniert“ / „passt“.
+- [x] OpenRouter als STT-Ziel auswählen und deutschen Standalone-Test auf dem Pi erfolgreich durchführen.
+- [x] OpenRouter-STT-Adapter ohne zusätzliche Python-Abhängigkeiten implementieren.
+- [x] PTT→STT-Übergabe und Sperre/Resync während Verarbeitung implementieren.
+- [ ] Integrierten PTT→STT-Ablauf nach Deployment auf Hardware abnehmen.
+- [ ] OpenRouter-LLM an den erkannten Text anbinden.
+- [ ] Deutsche TTS-Komponente auswählen und anbinden.
+- [ ] Antwort über WM8960 ausgeben und Playback-Sperre implementieren.
 - [ ] Verbleibende Grenz- und Fehlerprüfungen auf Hardware durchführen; siehe [Prüfplan](push-to-talk.md).
-- [ ] Übergabe an Sprachpipeline und Sperre während Verarbeitung/Wiedergabe implementieren.
-- [ ] Timeout- und Fehlerbehandlung implementieren.
 - [ ] Durchgehende deutsche Sprachinteraktion testen; Latenzen messen.
 
 Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkausfall.
@@ -47,6 +50,8 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 
 - [x] systemd-Unit und Konfiguration für lokalen PTT-Dienst erstellen.
 - [x] systemd-Installation, Autostart und PTT nach Neustart am Pi bestätigen.
+- [x] Installationsskript für PTT + OpenRouter-STT bereitstellen.
+- [ ] systemd-Autostart mit integrierter STT-Konfiguration nach Merge erneut abnehmen.
 - [ ] Speicherverbrauch, Startzeit, Akkulaufzeit und Temperatur messen.
 - [ ] Wiederholte Interaktionen und Dienstneustart testen.
 - [ ] Installationsanleitung mit tatsächlich getesteten Versionen vervollständigen.
@@ -58,5 +63,4 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 - [ ] Wake Word und Unterbrechen der Wiedergabe evaluieren.
 - [ ] Gehäuse und mobile Bedienung verbessern.
 
-Priorität: Erst Audio auf echter Hardware, dann ein vollständiger Sprachdurchlauf.
-
+Priorität: Jetzt PTT→STT auf Hardware abnehmen, danach OpenRouter-LLM und deutsche TTS.

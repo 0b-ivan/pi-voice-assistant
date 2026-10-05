@@ -10,7 +10,8 @@ from unittest.mock import patch
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from ptt import Button, Recorder
+from ptt import Button, Recorder, process_capture
+from transcribe import TranscriptionError
 
 
 class ButtonTests(unittest.TestCase):
@@ -64,6 +65,21 @@ class ButtonTests(unittest.TestCase):
         b.update(True, 3)
         self.assertEqual(b.update(True, 3.1), 'start')
 
+    def test_resync_after_processing_requires_release_if_held(self):
+        b = Button()
+        b.resync(True, 10)
+        self.assertIsNone(b.update(True, 11))
+        b.update(False, 12)
+        b.update(False, 12.1)
+        b.update(True, 13)
+        self.assertEqual(b.update(True, 13.1), 'start')
+
+    def test_resync_after_processing_arms_when_released(self):
+        b = Button()
+        b.resync(False, 10)
+        b.update(True, 11)
+        self.assertEqual(b.update(True, 11.1), 'start')
+
 
 class FakeProcess:
     def __init__(self, code=0, stuck=False):
@@ -114,12 +130,13 @@ class RecorderTests(unittest.TestCase):
         proc = self.r.process = FakeProcess()
         self.wav()
         with redirect_stdout(self.output):
-            self.r.finish('release')
+            capture = self.r.finish('release')
         result = json.loads(self.output.getvalue())
         self.assertEqual(result['event'], 'capture_ready')
         self.assertEqual(result['frames'], 9600)
         self.assertEqual(result['channels'], 2)
         self.assertEqual(proc.signals, [signal.SIGINT])
+        self.assertEqual(capture, self.r.ready)
         self.assertTrue(self.r.ready.exists())
         self.assertFalse(self.r.partial.exists())
 
@@ -162,9 +179,10 @@ class RecorderTests(unittest.TestCase):
         proc.running = False
         self.wav()
         with redirect_stdout(self.output):
-            self.r.finish('process_exit')
+            capture = self.r.finish('process_exit')
         self.assertEqual(proc.signals, [])
         self.assertEqual(json.loads(self.output.getvalue())['reason'], 'process_exit')
+        self.assertEqual(capture, self.r.ready)
 
     def test_requested_stop_with_alsa_interrupted_read_builds_wav(self):
         self.r.process = FakeProcess(code=1)
@@ -174,6 +192,31 @@ class RecorderTests(unittest.TestCase):
         with wave.open(str(self.r.ready), 'rb') as audio:
             self.assertEqual(audio.getnframes(), 9600)
         self.assertFalse(self.r.raw.exists())
+
+
+class ProcessingTests(unittest.TestCase):
+    def test_success_emits_transcript(self):
+        output = StringIO()
+        with patch('ptt.transcribe', return_value='Hallo Welt'), redirect_stdout(output):
+            self.assertEqual(process_capture('/tmp/capture.wav'), 'Hallo Welt')
+        lines = output.getvalue().splitlines()
+        self.assertEqual(json.loads(lines[0])['event'], 'processing')
+        self.assertEqual(json.loads(lines[1]), {
+            'version': 1,
+            'event': 'transcript',
+            'text': 'Hallo Welt',
+        })
+        self.assertEqual(lines[2], 'ERKANNT: Hallo Welt')
+
+    def test_stt_error_is_recoverable(self):
+        output = StringIO()
+        with patch('ptt.transcribe', side_effect=TranscriptionError('offline')), redirect_stdout(output):
+            self.assertIsNone(process_capture('/tmp/capture.wav'))
+        lines = output.getvalue().splitlines()
+        self.assertEqual(json.loads(lines[0])['event'], 'processing')
+        error = json.loads(lines[1])
+        self.assertEqual(error['event'], 'stt_error')
+        self.assertIn('offline', error['message'])
 
 
 if __name__ == '__main__':

@@ -7,7 +7,7 @@ Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Aktiv-Low-
 1. GPIO-Chip, Leitung und Polarität zunächst ohne Audio prüfen.
 2. Gedrückt halten startet eine Aufnahme; Loslassen beendet sie. Das ersetzt den früheren Toggle-Entwurf.
 3. Danach systemd installieren und Aufnahme, Fehlerfälle und Neustart prüfen.
-4. Später STT und OpenRouter sowie deutsche TTS anschließen; in diesem Schritt keine Netzwerkanfrage, Schlüssel oder Sprachausgabe implementieren.
+4. OpenRouter-STT an den validierten `capture_ready`-Übergabepunkt anschließen; LLM-Antwort und deutsche TTS folgen danach.
 
 Das [Waveshare-Wiki](https://www.waveshare.com/wiki/WM8960_Audio_HAT) ordnet `BUTTON` ausdrücklich **P17 / BCM GPIO17** zu, am Pi physischer Pin 11. Auch die vorhandene [Hardwaredokumentation](hardware.md) nennt diese Belegung. Der [Herstellerschaltplan](https://files.waveshare.com/upload/f/fa/WM8960_Audio_HAT_Schematic.pdf), Seite 1, zeigt K1, P17, R1 4,7 kΩ, 3V3 und GND. Voreinstellung: aktiv Low mit Pull-up; die tatsächliche Polarität des montierten HATs vor Betrieb mit `--probe` bestätigen. Kein Treiberwechsel nötig.
 
@@ -44,8 +44,16 @@ Chip mit den BCM-Leitungen auswählen und Offset 17 prüfen. Erwartet ist ein fr
 ```bash
 sudo install -d -m 0755 /opt/pi-voice-assistant/src
 sudo install -m 0644 src/ptt.py /opt/pi-voice-assistant/src/ptt.py
+sudo install -m 0644 src/transcribe.py /opt/pi-voice-assistant/src/transcribe.py
 sudo install -m 0644 config/ptt.env.example /etc/pi-ptt.env
+if [ ! -e /etc/pi-voice-assistant.env ]; then
+  sudo install -o root -g obivan -m 0640 \
+    config/openrouter.env.example /etc/pi-voice-assistant.env
+fi
+sudo chown root:obivan /etc/pi-voice-assistant.env
+sudo chmod 0640 /etc/pi-voice-assistant.env
 sudo vim /etc/pi-ptt.env
+sudo vim /etc/pi-voice-assistant.env
 ```
 
 `PTT_GPIO_CHIP` und `PTT_GPIO_LINE` anhand der Diagnose setzen. Alle Änderungen mit **Vim**: `i`, bearbeiten, Esc, `:wq`, Enter. Den PTT-Dienst für Probe und manuelle Audiotests gestoppt lassen; GPIO und Aufnahmegerät werden exklusiv benutzt.
@@ -85,11 +93,11 @@ Rohe Daten liegen während der Aufnahme in `capture.part.pcm`; beim Verpacken en
 
 `reason` ist `release`, `limit` oder `process_exit` (natürliches arecord-Zeitlimit). `frames` bestimmt die Dauer. Ereignisse `waiting_for_release`, `recording`, `button` (Probe) und `error` dienen der Diagnose. Kein Audioinhalt wird ins Journal geschrieben.
 
-Es gibt **einen** lokalen Aufnahmeslot. Die Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar; keine unbegrenzte Warteschlange und keine dauerhafte Speicherung. Ein künftiger Adapter wird direkt nach erfolgreichem `finish` aufgerufen und übernimmt das WAV vor der nächsten Aufnahme. Vor dem Anschluss muss eine Processing-/Playback-Sperre samt konsumiertem Dateiinhalt ergänzt werden; Journal-Tailing ist keine verlässliche Transport-API. STT erhält Audio, danach OpenRouter Text; deutsche TTS liefert später Wiedergabeaudio. Netzwerkvertrag, Authentifizierung, Timeouts und Downmix/Resampling gehören in diesen Adapter. Gegenwärtig existieren weder STT, OpenRouter, TTS noch automatische Wiedergabe.
+Es gibt **einen** lokalen Aufnahmeslot. Die Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar; keine unbegrenzte Warteschlange und keine dauerhafte Speicherung. Der aktuelle STT-Adapter wird direkt nach erfolgreichem `finish` aufgerufen und übernimmt das WAV vor der nächsten Aufnahme; Journal-Tailing ist keine Transport-API. Während der synchronen STT-Anfrage startet keine neue Aufnahme. Danach wird GPIO17 resynchronisiert; ist die Taste noch gedrückt, muss sie zuerst losgelassen werden. Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`, erwartete API-/Netzfehler `stt_error`. LLM-Antwort, deutsche TTS und automatische Wiedergabe sind noch nicht implementiert.
 
 ## Validierung
 
-Automatisiert lokal am 05.10.2026: `python3 -m unittest discover -s tests -v` — 12 Tests bestanden. Prüft Entprellung, Start mit gehaltenem Taster, Zeitlimit ohne Wiederholung, Wiederfreigabe nach Fehler, arecord-Aufruf, SIGINT/WAV-Übergabe einschließlich unterbrochenem ALSA-Leseaufruf, Fehler/Leeraufnahme, unvollständige PCM-Frames, natürliches Aufnahmeende, Stop-Bereinigung und erzwungenes Beenden eines hängenden Recorders. Prozess und Audio sind im Test simuliert; dies bestätigt weder libgpiod-Geräterechte noch reale ALSA-Signalbehandlung. CI führt dieselben Tests bei Pull Requests aus. Python-Syntaxprüfung bestanden. systemd-analyze verify auf dem Ziel-Pi wurde ohne sichtbare Fehlermeldung ausgeführt; Installation und Aktivierung sind bestätigt.
+Automatisierte Tests laufen mit `python3 -m unittest discover -s tests -v`. Sie prüfen weiterhin Entprellung, Start mit gehaltenem Taster, Zeitlimit, Recorder-/WAV-Fehlerfälle und zusätzlich PTT→STT-Übergabe, GPIO-Resync sowie gemockte OpenRouter-Antworten einschließlich abgeschnittener HTTP-Antworten. Netzwerkzugriff und API-Key sind für CI nicht erforderlich. Prozess und Audio sind im Test simuliert; dies bestätigt weder libgpiod-Geräterechte noch reale ALSA-Signalbehandlung.
 
 Auf dem Pi folgende Ergebnisse mit Datum, Kernel, `dpkg-query -W python3-libgpiod gpiod alsa-utils`, GPIO-Chip/Offset, Polarität und Konfiguration protokollieren:
 
@@ -152,4 +160,4 @@ Alle folgenden Prüfungen führte der Nutzer über SSH auf pi-assistent aus; kei
 - ALSA-Fehler: Vordergrundtest bei gestopptem Dienst, nur temporäre Umgebungswerte PTT_AUDIO_DEVICE=plughw:CARD=absichtlichungueltig,DEV=0 und PTT_RUNTIME_DIR=/tmp/pi-ptt-error-test. Sechs recording/error-Paare mit arecord exit status 1, kein capture_ready. Der Nutzer bestätigt sechs einzelne Tastendrücke, keine automatische Wiederholung bei gehaltenem Taster. Nach Ctrl-C ist das Testverzeichnis leer. Die eingereichte Prozessprüfung ist in der Kopie verunstaltet und zählt nicht als gesonderter Prozessnachweis dieses Tests.
 - Wiederherstellung: normaler Dienst danach mit erfolgreichen release-Aufnahmen um 17:04:16 (222016 Frames) und 17:04:25 (258016 Frames). Manuelle Wiedergabe wird als verständlich bestätigt. Zwischenzeitlich sichtbare Recorder und fehlendes capture.wav waren vom Nutzer durch weitere Tastendrücke ausgelöst; neue Aufnahme löscht den vorherigen Slot. Die letzten Prozessprüfungen zeigen keinen arecord. Im anschließenden 15-s-Ruhetest ohne Tastenbetätigung erscheinen keine neuen Ereignisse.
 
-Offen bleiben der zwanzigste ursprüngliche Probezyklus, gezielte elektrische Prelltests, Aufnahmen unter 100 ms, quantitative Speicher-/CPU-Messungen und ein gesonderter Boottest mit gehaltener Taste. Sprachpipeline und automatische Wiedergabe sind weiterhin nicht implementiert.
+Offen bleiben der zwanzigste ursprüngliche Probezyklus, gezielte elektrische Prelltests, Aufnahmen unter 100 ms, quantitative Speicher-/CPU-Messungen und ein gesonderter Boottest mit gehaltener Taste. OpenRouter-STT ist implementiert und separat erfolgreich getestet; die integrierte PTT→STT-Hardwareabnahme sowie LLM/TTS/Wiedergabe stehen noch aus.
