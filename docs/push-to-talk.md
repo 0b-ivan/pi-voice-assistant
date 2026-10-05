@@ -1,6 +1,6 @@
 # WM8960 Push-to-Talk
 
-Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Installation, Polarität, Entprellung und PTT-Audio auf dem echten Pi **noch nicht abgenommen**. Die zuvor bestätigte allgemeine Audio-Neustartprüfung steht in [setup.md](setup.md).
+Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Aktiv-Low-Polarität und normale Tastenerkennung sind auf dem Pi bestätigt (19 Start-/Release-Paare). Installation als Dienst, gezielte Entprellungsprüfung und PTT-Audio **noch nicht abgenommen**. Die zuvor bestätigte allgemeine Audio-Neustartprüfung steht in [setup.md](setup.md).
 
 ## Plan und Hardwarebeleg
 
@@ -11,7 +11,7 @@ Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Installati
 
 Das [Waveshare-Wiki](https://www.waveshare.com/wiki/WM8960_Audio_HAT) ordnet `BUTTON` ausdrücklich **P17 / BCM GPIO17** zu, am Pi physischer Pin 11. Auch die vorhandene [Hardwaredokumentation](hardware.md) nennt diese Belegung. Der [Herstellerschaltplan](https://files.waveshare.com/upload/f/fa/WM8960_Audio_HAT_Schematic.pdf), Seite 1, zeigt K1, P17, R1 4,7 kΩ, 3V3 und GND. Voreinstellung: aktiv Low mit Pull-up; die tatsächliche Polarität des montierten HATs vor Betrieb mit `--probe` bestätigen. Kein Treiberwechsel nötig.
 
-BCM17 ist auf dem Zero 2 W normalerweise Offset 17 am Haupt-GPIO-Chip. Am 05.10.2026 bestätigen die vom Nutzer eingereichten Ausgaben `/dev/gpiochip0` als `pinctrl-bcm2835` mit 54 Leitungen und Offset 17 (`GPIO17`) als Eingang ohne Consumer. `python3-libgpiod` und `gpiod` sind in Version `2.2.1-2+deb13u1` installiert. Polarität und physische Tastenfunktion sind damit noch nicht geprüft. GPIO17 darf nicht bereits von einem anderen Dienst belegt sein. I²C GPIO2/3 und I²S GPIO18–21 bleiben für das Audio-HAT; Kamera und mini PiTFT liegen derzeit separat.
+BCM17 ist auf dem Zero 2 W normalerweise Offset 17 am Haupt-GPIO-Chip. Am 05.10.2026 bestätigen die vom Nutzer eingereichten Ausgaben `/dev/gpiochip0` als `pinctrl-bcm2835` mit 54 Leitungen und Offset 17 (`GPIO17`) als Eingang ohne Consumer. `python3-libgpiod` und `gpiod` sind in Version `2.2.1-2+deb13u1` installiert. Die anschließende Probe mit den Voreinstellungen (`PTT_ACTIVE_LOW=1`, 40 ms Entprellung) zeigt 19 vollständige Start-/Release-Paare ohne Fehlermeldung. Der Nutzer führte dazu Tastendrücke aus; normale Tastenfunktion und Aktiv-Low-Polarität sind bestätigt. Die geplanten 20 Zyklen sowie gezielte Prell-/Kurzdrücktests sind noch nicht vollständig nachgewiesen. GPIO17 darf nicht bereits von einem anderen Dienst belegt sein. I²C GPIO2/3 und I²S GPIO18–21 bleiben für das Audio-HAT; Kamera und mini PiTFT liegen derzeit separat.
 
 ## Verhalten und Grenzen
 
@@ -95,7 +95,7 @@ Auf dem Pi folgende Ergebnisse mit Datum, Kernel, `dpkg-query -W python3-libgpio
 
 | Prüfung | Erwartung | Status |
 |---|---|---|
-| Probe: 20 normale Drück-/Loslasszyklen | Genau ein Start und ein Ende je Zyklus | Offen |
+| Probe: 20 normale Drück-/Loslasszyklen | Genau ein Start und ein Ende je Zyklus | 19 vollständige Paare in Nutzer-Ausgabe bestätigt; letzter Zyklus noch offen |
 | Probe: kurze/prellende Berührungen | Keine Mehrfachstarts | Offen |
 | Start bei gehaltenem Taster | Aufnahme erst nach Loslassen und erneutem Drücken | Offen |
 | 2–5 s deutschen Satz halten/loslassen | `capture_ready`, gültiges verständliches Stereo-WAV | Offen |
@@ -115,3 +115,20 @@ sudo systemctl start pi-ptt.service
 ```
 
 Beim manuellen Abspielen die Taste nicht drücken. Anschließend Stop/Start entfernt die Testaufnahme. Kein WAV committen. Speaker ist mit 95 % / 0,00 dB auf beiden Kanälen ausgelesen (siehe [setup.md](setup.md)); die bereits bestätigte allgemeine Audio-Neustartprüfung ist keine PTT-Abnahme.
+
+## Nächster Test: Aufnahme im Vordergrund
+
+Probe mit Ctrl-C beenden. Im Checkout als obivan starten:
+
+```bash
+cd ~/pi-voice-ptt-test
+PTT_RUNTIME_DIR=/tmp/pi-ptt-obivan /usr/bin/python3 src/ptt.py
+```
+
+Taste für einen 3–5 Sekunden langen Testsatz halten und loslassen. Erwartet: recording, danach capture_ready. Solange der Recorder läuft, in einer zweiten SSH-Sitzung als obivan abhören:
+
+```bash
+aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/pi-ptt-obivan/capture.wav
+```
+
+Während der Wiedergabe nicht erneut drücken. Erst nach dem Abhören den Recorder mit Ctrl-C beenden: Dabei wird die Testaufnahme gelöscht. Diese Reihenfolge ist erforderlich, weil der Dienst beim Beenden auch fertige Aufnahmen entfernt. Ergebnis und etwaige Fehler zurückmelden; Aufnahme nicht ins Repository übernehmen. Der Testpfad unter /tmp ist nur für diese manuelle Probe, der systemd-Dienst verwendet weiterhin /run/pi-ptt.
