@@ -25,7 +25,12 @@ Auf dem Pi läuft kein lokales Whisper-Modell. `src/transcribe.py` verwendet aus
 Der echte Schlüssel bleibt außerhalb von Git:
 
 ```bash
-sudo install -m 0640 config/openrouter.env.example /etc/pi-voice-assistant.env
+if [ ! -e /etc/pi-voice-assistant.env ]; then
+  sudo install -o root -g obivan -m 0640 \
+    config/openrouter.env.example /etc/pi-voice-assistant.env
+fi
+sudo chown root:obivan /etc/pi-voice-assistant.env
+sudo chmod 0640 /etc/pi-voice-assistant.env
 sudo vim /etc/pi-voice-assistant.env
 ```
 
@@ -43,7 +48,7 @@ OPENROUTER_STT_LANGUAGE=de
 OPENROUTER_STT_TIMEOUT_SECONDS=30
 ```
 
-Die systemd-Unit lädt `/etc/pi-ptt.env` und `/etc/pi-voice-assistant.env`. Schlüssel, WAV-Dateien und Transkripte werden nicht ins Repository geschrieben.
+Die systemd-Unit lädt `/etc/pi-ptt.env` und `/etc/pi-voice-assistant.env`. Die Secret-Datei gehört `root:obivan` und hat Modus `0640`: root kann sie verwalten, der Dienstbenutzer `obivan` kann sie für manuelle Tests lesen, andere Benutzer nicht. Schlüssel, WAV-Dateien und Transkripte werden nicht ins Repository geschrieben.
 
 ## Standalone-Test
 
