@@ -2,7 +2,7 @@
 
 Stand: 05.10.2026. Zielgerät: Pi Zero 2 W, Raspberry Pi OS Lite 64-bit / Trixie, Benutzer **obivan**, Hostname **pi-assistent**.
 
-Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Tasten A–E sind in zwei Testläufen bestätigt. Die RGB-LED ist durch Nutzer-Sichtprüfung bestätigt; die Neustartprüfung steht noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
+Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Tasten A–E sind in zwei Testläufen bestätigt. Die RGB-LED und die angeleitete Neustartprüfung sind durch den Nutzer bestätigt; einzelne Diagnosewerte nach Neustart liegen noch nicht als Ausgabe vor. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
 
 ## 1. Bestandsaufnahme
 
@@ -170,7 +170,7 @@ Abnahme durch Sichtprüfung: Rot → Grün → Blau, danach aus. Eine erfolgreic
 
 ## 7. I²C beim Start verfügbar machen
 
-Nach erfolgreichem Tasten- und LED-Test i2c-dev über systemd beim Boot laden. Dieser Schritt ist als Anleitung ergänzt; Einrichtung und Neustart-Abnahme sind noch nicht bestätigt.
+Nach erfolgreichem Tasten- und LED-Test i2c-dev über systemd beim Boot laden. Der Nutzer hat die anschließende Neustartprüfung mit „geht gut“ bestätigt. Der konkrete Dateiinhalt wurde nicht separat zurückgemeldet.
 
 ~~~bash
 sudo vim /etc/modules-load.d/pi-voice-i2c.conf
@@ -227,6 +227,10 @@ Der Nutzer hat den lesenden Tastentest zweimal ausgeführt. In beiden Durchläuf
 
 Nach Installation von python3-venv und der Pimoroni-Bibliothek buttonshim 0.0.2 in einer separaten Testumgebung hat der Nutzer die zuvor angeleitete Farbsequenz **Rot → Grün → Blau → aus** mit „geht gut“ bestätigt. Damit ist der LED-Test als Nutzer-Sichtprüfung bestanden. Keine Farb-/Helligkeitsmessung und noch keine LED-Integration in den Sprachdienst.
 
+### Neustartprüfung — Nutzerbestätigung ✅
+
+Nach der Anleitung zum dauerhaften Laden von i2c-dev und dem Neustart hat der Nutzer die angeforderten Prüfungen (I²C-Busliste, Antwort an 0x3f, Netzwerkadressen, ALSA-Aufnahme/-Wiedergabegeräte und Status von pi-ptt.service) mit **„geht gut“** bestätigt. Dies ist eine zusammenfassende Nutzerbestätigung, keine neu eingereichte Terminalausgabe. Aktuelle IP-Adressen und genaue Dienst-/Gerätedetails nach Neustart wurden nicht erneut ausgelesen dokumentiert. Physische Tasten-/LED- und Aufnahme-/Wiedergabetests nach Neustart bleiben gesonderte Prüfungen.
+
 ## Abnahmeprotokoll
 
 | Prüfung | Status / Ergebnis |
@@ -242,8 +246,9 @@ Nach Installation von python3-venv und der Pimoroni-Bibliothek buttonshim 0.0.2 
 | A / B / C / D / E drücken und loslassen | Alle fünf PASS, in zwei Hardware-Testläufen bestätigt |
 | RGB Rot / Grün / Blau / aus | Nutzer-Sichtprüfung bestätigt: „geht gut“ |
 | WM8960 und vorhandene PTT-Taste im neuen Stapel | Offen |
-| i2c-dev dauerhaft beim Boot laden | Anleitung ergänzt; Ausführung offen |
-| LAN und Button SHIM nach Neustart | Offen |
+| i2c-dev dauerhaft beim Boot laden | Neustartprüfung laut Nutzer erfolgreich; Dateiinhalt nicht separat zurückgemeldet |
+| Neustart: I²C, LAN, ALSA und PTT-Dienst | Nutzer bestätigt zusammenfassend „geht gut“; keine neue Terminalausgabe |
+| Physische Tasten-/LED- und Audiotests nach Neustart | Noch nicht separat bestätigt |
 | Leistungsaufnahme/Akkulaufzeit unter Zusatzlast | Offen |
 
 ## Quellen
