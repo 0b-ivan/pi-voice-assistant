@@ -6,12 +6,13 @@
 - [x] Bestätigten Hardwarebestand und offene Punkte festhalten.
 - [x] Client/Server-Entscheidung dokumentieren.
 - [x] GitHub-Repository anlegen und initiale Dokumentation hochladen.
-- [ ] OS-Release und Architektur aus vorheriger Entscheidung bestätigen.
-- [ ] Display, Kamera und PiSugar2-Variante identifizieren.
+- [x] OS-Entscheidung dokumentieren: Raspberry Pi OS Lite 64-bit / Trixie.
+- [x] Display anhand des Fotos identifizieren: Adafruit mini PiTFT 1,3″, 240 × 240.
+- [ ] Kamerasensor und PiSugar2-Revision feststellen.
 
 ## Phase 1 — Hardware in Betrieb nehmen
 
-- [ ] SD-Karte vorbereiten; SSH und WLAN prüfen.
+- [ ] M0: Trixie 64-bit installieren; SSH und WLAN nach Neustart prüfen.
 - [ ] OS-/Kernelstand und WM8960-Treibercommit dokumentieren.
 - [ ] Lautsprecher und Mikrofone testen.
 - [ ] Tasten-GPIO, Polarität und Entprellung prüfen.

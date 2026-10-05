@@ -4,6 +4,8 @@ Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und 
 
 **Stand: 05.10.2026 — Planung und Dokumentation. Es ist noch keine Assistenten-Software implementiert oder auf der Hardware getestet.**
 
+**Betriebssystem:** Raspberry Pi OS Lite 64-bit (Trixie), Headless/SSH; Hostname `wgz-voice-01`.
+
 ## Erstes Ziel
 
 Taste drücken → Sprache aufnehmen → im Homelab transkribieren und beantworten → Antwort über die beiden Lautsprecher ausgeben. Zunächst Halbduplex: Aufnahme und Wiedergabe laufen nacheinander.
@@ -15,6 +17,7 @@ Taste drücken → Sprache aufnehmen → im Homelab transkribieren und beantwort
 - [Betriebssystem und Inbetriebnahme](docs/setup.md)
 - [Roadmap und Aufgaben](docs/roadmap.md)
 - [Entscheidung: Pi als Client](docs/decisions/0001-client-server.md)
+- [Entscheidung: Raspberry Pi OS Lite 64-bit / Trixie](docs/decisions/0002-operating-system.md)
 
 ## Repository
 

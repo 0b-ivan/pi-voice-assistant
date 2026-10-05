@@ -1,40 +1,74 @@
-# Hardwarebestand 🔧
+# Hardwarebestand und Fotodokumentation 🔧
 
-## Bestätigter Bestand
+Stand: 05.10.2026. Grundlage: Ivans Angaben und vier Originalfotos. Sichtbare Beschriftungen sind von noch nicht geprüften technischen Details getrennt.
 
-| Teil | Aufgabe | Stand |
+## Bestand
+
+| Teil | Details und Beleg | Aufgabe |
 |---|---|---|
-| Raspberry Pi Zero 2 W | Audio-Client und Steuerung | Projektbasis; Modell vor Inbetriebnahme auslesen |
-| WM8960 Audio-HAT | Aufnahme und Wiedergabe | Vorhanden |
-| Zwei angeschlossene Lautsprecher | Sprachausgabe | Vorhanden; Funktion noch testen |
-| Mikrofone auf dem WM8960-HAT | Spracheingabe | Bereits integriert; kein separates Mikrofon für den MVP nötig |
-| Taste auf dem Audio-HAT | Aufnahme auslösen | Vorhanden; GPIO/Polarität am konkreten Board prüfen |
-| PiSugar2 | Mobile Stromversorgung | Vorhanden; Variante, Akkukapazität und Software noch erfassen |
-| Angeschlossene Kamera | Spätere Bildverarbeitung | Modell und Funktion offen |
-| 64-GB-microSD | Betriebssystem und Client | Vorhanden |
+| Raspberry Pi Zero 2 W | Projektbasis; im montierten Stapel nicht vollständig lesbar; 512 MB RAM laut Hersteller | Audio-Client |
+| WM8960 Audio-HAT | Foto zeigt zwei Mikrofone, Taste, Lautsprecheranschlüsse und Kopfhörerbuchse | Audioaufnahme und Wiedergabe |
+| Zwei Lautsprecher | Laut Ivan angeschlossen; nicht separat auf den Fotos dargestellt | Sprachausgabe |
+| Integrierte Mikrofone | Zwei Mikrofone am HAT sichtbar; separates Mikrofon für MVP nicht nötig | Spracheingabe |
+| HAT-Taste | Aufdruck `BUTTON`; Herstellerbelegung GPIO17, physischer Pin 11 | Aufnahme auslösen |
+| PiSugar2 | Von Ivan benannt; Foto zeigt Stromversorgungsplatine, Akku und Status-LEDs | Akkubetrieb |
+| Li-Ion-Akku | Aufdruck `PiSugar`, Modell `803052`; Kapazitätszeile nicht zuverlässig lesbar | Energiespeicher |
+| Kamera | Angeschlossen; Flexplatine trägt `Frank-S01-V1.0`; daraus kein sicherer Sensorname ableitbar | Spätere Bildanfragen |
+| 64-GB-microSD | Von Ivan bestätigt; kein separates Foto | Betriebssystem |
+| Adafruit mini PiTFT 1,3″ | Aufdruck `Adafruit miniPiTFT 1.3" 240x240`, zwei Taster | Optionale Statusanzeige |
 
-## Zusätzliches Display
+## Audio-HAT
 
-Das zusätzliche fotografierte Teil wurde bisher als **Waveshare Pico-LCD-1.3 (240 × 240)** eingeordnet. Diese Identifikation ist vor Anschluss anhand der Beschriftung zu bestätigen. Ein Pico-Modul ist nicht automatisch ein Raspberry-Pi-HAT. Anschluss, Pegel, Pinbelegung und gegebenenfalls Pico als Steuergerät müssen geklärt werden. Das Display ist für den MVP optional.
+![WM8960 Audio-HAT mit Mikrofonen und Taste](images/wm8960-audio-hat.jpg)
 
-## Schnittstellen prüfen
+Am Board sichtbar: zwei Mikrofone, die zentrale Taste, weißer Lautsprecherstecker, grüne Schraubklemme und 3,5-mm-Kopfhörerbuchse. Ob ein Stecker und eine Klemme gleichzeitig belegt sind, sagt noch nichts über das tatsächliche Audiorouting aus. Die beiden Lautsprecher sind als vorhandene Hardware erfasst; Impedanz, Leistung und Wiedergabe müssen noch geprüft werden.
 
-Für das WM8960-HAT nennt die Herstellerdokumentation I²C und I²S. Die erwarteten BCM-GPIOs sind I²C 2/3 und I²S 18/19/20/21. GPIO17 für die Taste stammt aus der bisherigen Planung und muss am Schaltplan der konkreten Revision bestätigt werden. BCM-Nummern sind keine physischen Header-Pinnummern.
+## Stromversorgung
 
-PiSugar2 verwendet ebenfalls I²C. Gemeinsamer Bus ist möglich, wenn Adressen, Pegel und Versorgung zusammenpassen. Vor weiteren Modulen eine vollständige Pin- und Adressliste erstellen. Noch keine verbindliche Displayverdrahtung festgelegt.
+![PiSugar-Stromversorgung und Akku](images/pisugar-power.jpg)
 
-## Noch erfassen
+Sichtbar sind Akku, Anschlussleitungen, Stromversorgungsplatine und leuchtende LEDs. Das Foto belegt keinen getesteten Ladezustand oder eine bestimmte Laufzeit. Die genaue PiSugar2-Revision und die Akkukapazität bleiben bis zum Ablesen offen.
 
-- Boardrevisionen und Fotos der Typenbezeichnungen.
-- Kameramodell und passendes Kabel.
-- Lautsprecherimpedanz und Nennleistung.
-- Akkukapazität, Ladezustand und Abschaltverhalten.
-- Gehäuse, Abstandshalter, Belüftung und Zugentlastung.
+## Kamera
+
+![Kamera mit Flexplatinenaufdruck Frank-S01-V1.0](images/camera-flex.jpg)
+
+Die Kamera ist über ein Flexkabel angeschlossen. Der lesbare Platinenaufdruck wird dokumentiert; das Sensormodell wird später mit rpicam/libcamera und gegebenenfalls weiteren Typenangaben ermittelt.
+
+## Display
+
+![Adafruit mini PiTFT 1,3 Zoll 240x240 mit zwei Tastern](images/adafruit-mini-pitft.jpg)
+
+Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240**. Die frühere Einordnung als Waveshare Pico-LCD war falsch. Es ist ein Raspberry-Pi-Zusatzdisplay und benötigt für seinen vorgesehenen Einsatz keinen Raspberry Pi Pico. Es wird erst nach dem Audio-MVP angeschlossen und getestet. Laut Adafruit erlaubt die 1,3″-Variante kein einfaches Durchstecken eines Stacking-Headers durch die Platine. Montage oberhalb des Audio-HATs oder Anschluss per geeigneter Verlängerung separat planen.
+
+## Schnittstellen und Planung
+
+Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegungen; der gemeinsame Aufbau ist noch nicht getestet.
+
+| Bauteil | Schnittstelle / GPIOs | Prüfung |
+|---|---|---|
+| WM8960 Steuerung | I²C: GPIO2/3 | Bus zusammen mit PiSugar prüfen |
+| WM8960 Audio | I²S: GPIO18/19/20/21 | Overlay und Treiber prüfen |
+| HAT-Taste | GPIO17, physischer Pin 11 | Polarität und Entprellung prüfen |
+| mini PiTFT | SPI: GPIO10/11, CS GPIO8, DC GPIO25; Backlight GPIO22 | Pinbelegung und Montage vor Anschluss abgleichen |
+| Displaytaster | GPIO23/24 | Optional zusätzliche Bedienung |
+| PiSugar2 | I²C; weitere Details revisionsabhängig | Adresse und Versorgung prüfen |
+| Kamera | Kameraanschluss/Flexkabel | Sensor und Treiber prüfen |
+
+Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. Das ist eine Planungsgrundlage; mechanische Stapelbarkeit, Versorgung und weitere Funktionen der konkreten PiSugar-Revision werden gesondert geprüft.
+
+## Noch offen
+
+- PiSugar2-Revision, Akkukapazität und sauberes Abschaltverhalten.
+- Kamerasensor und Testbild.
+- Lautsprecherimpedanz, Leistung und Aufnahme-/Wiedergabetest.
+- Endgültige Montage, Abstandshalter und Gehäuse.
 
 ## Quellen
 
-- [Pi Zero 2 W](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/)
-- [WM8960 Audio-HAT Wiki](https://www.waveshare.com/wiki/WM8960_Audio_HAT)
-- [WM8960 Herstellertreiber](https://github.com/waveshareteam/WM8960-Audio-HAT)
+Die vier Fotos stammen von Ivan und sind hier als Projektfotos abgelegt.
 
-Die Quellen beschreiben die Produkte; Kompatibilität der konkreten Kombination ist noch zu testen.
+- [Pi Zero 2 W](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/)
+- [WM8960 Wiki und Pinbelegung](https://www.waveshare.com/wiki/WM8960_Audio_HAT)
+- [Adafruit mini PiTFT 1,3″, Produkt 4484](https://www.adafruit.com/product/4484)
+- [Adafruit Pinbelegung](https://learn.adafruit.com/adafruit-mini-pitft-135x240-color-tft-add-on-for-raspberry-pi/pinouts)

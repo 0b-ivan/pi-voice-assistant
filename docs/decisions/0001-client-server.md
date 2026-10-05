@@ -12,4 +12,4 @@ Der Pi übernimmt Aufnahme, Taste, Wiedergabe und Gerätezustand. STT, LLM und T
 
 ## Folgen
 
-WLAN und ein verfügbarer Homelab-Dienst sind für Sprachantworten erforderlich. Netzwerkausfälle müssen behandelt werden. Lokale Verarbeitung größerer Modelle ist kein MVP-Ziel. Kamera und Display werden nach dem Audio-MVP integriert. Das konkrete Backend und die OS-Version bleiben gesonderte Entscheidungen.
+WLAN und ein verfügbarer Homelab-Dienst sind für Sprachantworten erforderlich. Netzwerkausfälle müssen behandelt werden. Lokale Verarbeitung größerer Modelle ist kein MVP-Ziel. Kamera und Display werden nach dem Audio-MVP integriert. Das konkrete Backend bleibt offen. Die OS-Basis ist in [ADR 0002](0002-operating-system.md) festgelegt.

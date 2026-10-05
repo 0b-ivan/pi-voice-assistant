@@ -2,7 +2,9 @@
 
 ## Basis und Entscheidungsstand
 
-Raspberry Pi OS Lite ohne Desktop ist die vorgeschlagene Basis. Die genaue zuvor besprochene Version war beim Schreiben nicht verfügbar; **Release und 32/64-Bit-Auswahl sind daher noch offen**. Der Zero 2 W unterstützt 64 Bit, aber die Entscheidung muss insbesondere mit dem WM8960-Treiber und dem knappen RAM abgeglichen werden.
+Festgelegt am 05.10.2026: **Raspberry Pi OS Lite (64-bit), Debian 13 / Trixie**, ohne Desktop. Die Begründung steht in [ADR 0002](decisions/0002-operating-system.md).
+
+Betrieb: Headless über SSH, systemd für den Client, Python mit virtueller Umgebung, ALSA für WM8960 und später rpicam/libcamera für die Kamera.
 
 Vor dem Flashen konkrete Image-Version, Architektur und Download-Prüfsumme dokumentieren. Es gibt noch keinen nachgewiesen funktionierenden OS-/Kernel-/Treiberstand für dieses Gerät.
 
@@ -10,11 +12,11 @@ Quelle: [Raspberry Pi OS Downloads](https://www.raspberrypi.com/software/operati
 
 ## 1. SD-Karte vorbereiten
 
-Mit Raspberry Pi Imager das vereinbarte Lite-Image auf die 64-GB-Karte schreiben. Das überschreibt die Karte; vorher benötigte Daten sichern. Hostname `pi-voice`, eigenen Benutzer, SSH mit Schlüssel, WLAN und Zeitzone `Europe/Berlin` konfigurieren. Der Zero 2 W benötigt ein 2,4-GHz-WLAN.
+Mit Raspberry Pi Imager das vereinbarte Lite-Image auf die 64-GB-Karte schreiben. Das überschreibt die Karte; vorher benötigte Daten sichern. Hostname `wgz-voice-01`, Benutzer `ivan`, SSH mit Schlüssel, 2,4-GHz-WLAN mit Land `DE` und Zeitzone `Europe/Berlin` konfigurieren. Der Zero 2 W benötigt ein 2,4-GHz-WLAN.
 
 ## 2. Erster Start
 
-Per SSH verbinden und Modell/OS erfassen:
+Per SSH mit `ssh ivan@wgz-voice-01.local` verbinden (alternativ die IP-Adresse verwenden) und Modell/OS erfassen:
 
 ```bash
 cat /proc/device-tree/model
@@ -47,7 +49,7 @@ arecord -l
 alsamixer
 ```
 
-Erkannte Karte in den folgenden Beispielen einsetzen; `<KARTE>` ist ein Platzhalter. Leise beginnen:
+Erkannten Kartenbezeichner in `AUDIO_CARD` einsetzen. Leise beginnen:
 
 ```bash
 AUDIO_CARD=wm8960soundcard # Durch den erkannten Kartenbezeichner ersetzen
