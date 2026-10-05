@@ -29,12 +29,18 @@ Abschnitt. Standard: drei neue Piper-CLI-Prozesse, dann einmal Modell laden,
 drei Erzeugungen mit demselben geladenen Modell und zehn Sekunden Ruhe mit
 dem weiterhin geladenen Modell. Testtext: `Hallo Ivan, ich bin bereit.`
 Erzeugte WAV-Dateien werden nicht abgespielt und am Ende gelöscht.
+Die CLI erhält den Text über stdin; die API erhält denselben Text direkt.
+Eigener `--text` muss eine einzelne Zeile sein. Führende und abschließende
+Leerzeichen werden für beide Wege entfernt und der verwendete Text steht im Bericht.
 Die JSON-Auswertung bleibt am angegebenen Pfad; bitte zurückmelden, nicht committen.
 
 Ctrl-C beendet den Test und seine Piper-Kindprozesse. Ein Zeitlimit von 180 s
 gilt je frischem CLI-Durchlauf bzw. für den gesamten Modell-im-Speicher-Worker;
-bei Abbruch bleibt ein Teilbericht mit `error` erhalten. Modell und venv müssen
-vorhanden sein. Die Limits lassen sich beispielsweise für einen kürzeren Test
+bei Abbruch bleibt ein Teilbericht mit `error` erhalten. Das gilt auch für
+SIGTERM/SIGHUP während der ersten Snapshots;
+noch nicht erfasste Vorherwerte bleiben `null`. Weitere Signale während der
+Bereinigung und Berichtsspeicherung lösen keinen zweiten Abbruch aus.
+Modell und venv müssen vorhanden sein. Die Limits lassen sich für einen kürzeren Test
 mit `--repeats 2 --idle-seconds 5` ändern. Der produktive Dienst läuft weiter.
 
 ## Welche Werte wir vergleichen

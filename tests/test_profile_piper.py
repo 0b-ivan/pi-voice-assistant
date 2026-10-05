@@ -50,29 +50,32 @@ class BenchmarkTests(unittest.TestCase):
         package = self.root / 'piper'
         package.mkdir()
         (package / '__init__.py').write_text('''
-import os
+import json, os
 from pathlib import Path
 class PiperVoice:
     @classmethod
     def load(cls, model):
         with Path(model + '.loads').open('a') as log:
             log.write('load\\n')
-        return cls()
+        voice = cls()
+        voice.model = model
+        return voice
     def synthesize_wav(self, text, audio):
+        with Path(self.model + '.texts').open('a') as log:
+            log.write(json.dumps(text, ensure_ascii=False) + '\\n')
         audio.setnchannels(1)
         audio.setsampwidth(2)
         audio.setframerate(16000)
         audio.writeframes(b'\\0\\0' * 16000)
 ''')
         (package / '__main__.py').write_text('''
-import argparse, os, signal, time, wave
+import argparse, os, signal, sys, time, wave
 from pathlib import Path
 from piper import PiperVoice
 p = argparse.ArgumentParser()
 p.add_argument('-m', required=True)
 p.add_argument('-f', required=True)
-p.add_argument('text', nargs='*')
-args = p.parse_args()
+args, unknown = p.parse_known_args()
 if os.environ.get('TEST_HANG'):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     while True:
@@ -80,7 +83,12 @@ if os.environ.get('TEST_HANG'):
         time.sleep(.01)
 voice = PiperVoice.load(args.m)
 with wave.open(args.f, 'wb') as audio:
-    voice.synthesize_wav(' '.join(args.text), audio)
+    # Match Piper 1.8.0's argument/stdin selection and line stripping.
+    texts = [' '.join(unknown)] if unknown else sys.stdin
+    for text in texts:
+        text = text.strip()
+        if text:
+            voice.synthesize_wav(text, audio)
 ''')
         self.report = self.root / 'report.json'
         self.env = dict(os.environ, PYTHONPATH=str(self.root))
@@ -92,11 +100,16 @@ with wave.open(args.f, 'wb') as audio:
                 '--timeout', str(timeout)]
 
     def test_comparison_loads_once_in_resident_worker_and_cleans_audio(self):
-        result = subprocess.run(self.command(), env=self.env,
+        text = '-- Grüße Ivan, ich bin bereit.'
+        result = subprocess.run(self.command() + ['--text=  ' + text + '  '], env=self.env,
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         report = json.loads(self.report.read_text())
         self.assertNotIn('error', report)
+        self.assertEqual(report['text'], text)
+        actual_texts = [json.loads(line) for line in
+                        Path(str(self.model) + '.texts').read_text().splitlines()]
+        self.assertEqual(actual_texts, [text] * 4)
         records = report['records']
         phases = [r['phase'] for r in records]
         self.assertEqual(phases.count('fresh_process'), 2)
@@ -134,6 +147,44 @@ with wave.open(args.f, 'wb') as audio:
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 2)
         self.assertFalse(self.report.exists())
+
+    def test_multiline_text_is_rejected_before_workers_start(self):
+        result = subprocess.run(self.command() + ['--text', 'Hallo\nIvan'], env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('single line', result.stderr)
+        self.assertFalse(self.report.exists())
+
+    def test_startup_signals_save_partial_report_and_finalization_resists_signals(self):
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=sig):
+                original = {s: signal.getsignal(s) for s in
+                            (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+                calls = 0
+                def snapshot():
+                    nonlocal calls
+                    calls += 1
+                    os.kill(os.getpid(), sig)
+                    # Only finalization reaches this point. Repeated signals
+                    # must not discard the report or interrupt child cleanup.
+                    for extra in original:
+                        os.kill(os.getpid(), extra)
+                    return {'snapshot': 'finished'}
+                with (patch.object(sys, 'argv', self.command()[1:]),
+                      patch.object(profile, 'system_memory', return_value={}),
+                      patch.object(profile, 'pi_snapshot', side_effect=snapshot),
+                      patch.object(profile, 'service_snapshot', return_value=None),
+                      patch.object(profile, 'run_worker') as worker):
+                    self.assertEqual(profile.main(), 130)
+                worker.assert_not_called()
+                report = json.loads(self.report.read_text())
+                self.assertEqual(report['error'], 'Interrupted')
+                self.assertIsNone(report['pi_before'])
+                self.assertEqual(report['pi_after'], {'snapshot': 'finished'})
+                self.assertEqual(report['records'], [])
+                self.assertEqual(calls, 2)
+                for s, handler in original.items():
+                    self.assertEqual(signal.getsignal(s), handler)
 
     def test_sigterm_cleans_worker_and_saves_report(self):
         self.env['TEST_HANG'] = '1'

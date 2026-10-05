@@ -142,8 +142,8 @@ def worker(args):
         output = Path(args.directory) / 'cli.wav'
         def synthesize():
             subprocess.run([sys.executable, '-m', 'piper', '-m', args.model,
-                            '-f', str(output), '--', args.text],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            '-f', str(output)],
+                           input=args.text, text=True, stdout=subprocess.DEVNULL,
                            check=True)
         measured_phase('fresh_process', synthesize, audio=output, child=True)
         return
@@ -193,16 +193,17 @@ def summarize_samples(samples):
 
 def run_worker(args, mode, directory, records, samples):
     command = [args.piper_python, str(Path(__file__).resolve()), '--worker', mode,
-               '--directory', str(directory), '--model', args.model, '--text', args.text,
+               '--directory', str(directory), '--model', args.model, '--text=' + args.text,
                '--repeats', str(args.repeats), '--idle-seconds', str(args.idle_seconds)]
     with (directory / f'{mode}.stderr').open('wb') as errors:
-        proc = subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=errors, start_new_session=True)
+        proc = None
         selector = selectors.DefaultSelector()
-        selector.register(proc.stdout, selectors.EVENT_READ)
-        deadline = time.monotonic() + args.timeout
-        pending = b''
         try:
+            proc = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=errors, start_new_session=True)
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            deadline = time.monotonic() + args.timeout
+            pending = b''
             while selector.get_map():
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f'{mode} worker exceeded {args.timeout:g} seconds')
@@ -232,9 +233,13 @@ def run_worker(args, mode, directory, records, samples):
                 raise RuntimeError(f'{mode} failed ({proc.returncode}): {detail}')
         finally:
             # Also clean up Piper descendants if a timeout/interrupt occurred.
-            stop_group(proc)
-            selector.close()
-            proc.stdout.close()
+            try:
+                if proc is not None:
+                    stop_group(proc)
+            finally:
+                selector.close()
+                if proc is not None:
+                    proc.stdout.close()
 
 
 def save_report(path, report):
@@ -272,30 +277,43 @@ def main():
         parser.error('--timeout must be between 1 and 600')
     if not args.text.strip() or len(args.text) > 500:
         parser.error('--text must have 1–500 characters')
+    if '\n' in args.text or '\r' in args.text:
+        parser.error('--text must be a single line for matching CLI/API input')
+    args.text = args.text.strip()
     if args.worker:
         if not args.directory:
             parser.error('worker requires --directory')
         worker(args)
         return 0
-    def interrupted(*_):
-        raise KeyboardInterrupt
-    for sig in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, interrupted)
     if not Path(args.piper_python).is_file() or not os.access(args.piper_python, os.X_OK):
         parser.error(f'Piper interpreter missing: {args.piper_python}')
     if not Path(args.model).is_file() or not Path(args.model + '.json').is_file():
         parser.error('Model and matching .onnx.json must already exist')
-    report = dict(schema_version=1, time_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                  platform=platform.platform(), cpu_count=os.cpu_count(),
-                  model=args.model, model_bytes=Path(args.model).stat().st_size,
+    report = dict(schema_version=1, model=args.model,
                   text=args.text, repeats=args.repeats, idle_seconds=args.idle_seconds,
                   timeout_per_worker_seconds=args.timeout,
-                  system_before=system_memory(), pi_before=pi_snapshot(),
-                  voice_service_before=service_snapshot(), records=[])
+                  system_before=None, pi_before=None, voice_service_before=None, records=[])
     samples = []
     code = 0
-    print('Keine Wiedergabe. Bitte während des Tests keine Tasten drücken.', flush=True)
+    finalizing = False
+    interruption_seen = False
+    previous_handlers = {}
+    def interrupted(*_):
+        nonlocal interruption_seen
+        # A second signal must not interrupt child cleanup or report saving.
+        if not finalizing and not interruption_seen:
+            interruption_seen = True
+            raise KeyboardInterrupt
     try:
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            previous_handlers[sig] = signal.signal(sig, interrupted)
+        report.update(time_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                      platform=platform.platform(), cpu_count=os.cpu_count(),
+                      model_bytes=Path(args.model).stat().st_size)
+        report['system_before'] = system_memory()
+        report['pi_before'] = pi_snapshot()
+        report['voice_service_before'] = service_snapshot()
+        print('Keine Wiedergabe. Bitte während des Tests keine Tasten drücken.', flush=True)
         with tempfile.TemporaryDirectory(prefix='pi-piper-profile-') as temporary:
             directory = Path(temporary)
             for index in range(args.repeats):
@@ -311,12 +329,17 @@ def main():
         print(f'Fehler: {exc}', file=sys.stderr)
         code = 1
     finally:
-        report['system_during'] = summarize_samples(samples)
-        report['system_after'] = system_memory()
-        report['pi_after'] = pi_snapshot()
-        report['voice_service_after'] = service_snapshot()
-        save_report(args.output, report)
-        print(f'Bericht: {args.output}', flush=True)
+        finalizing = True
+        try:
+            report['system_during'] = summarize_samples(samples)
+            report['system_after'] = system_memory()
+            report['pi_after'] = pi_snapshot()
+            report['voice_service_after'] = service_snapshot()
+            save_report(args.output, report)
+            print(f'Bericht: {args.output}', flush=True)
+        finally:
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
     return code
 
 
