@@ -2,7 +2,7 @@
 
 Stand: 05.10.2026. Zielgerät: Pi Zero 2 W, Raspberry Pi OS Lite 64-bit / Trixie, Benutzer **obivan**, Hostname **pi-assistent**.
 
-Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Vollständige Funktionstests stehen noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
+Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Tasten A–E sind in zwei Testläufen bestätigt. RGB-LED und Neustartprüfung stehen noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
 
 ## 1. Bestandsaufnahme
 
@@ -203,6 +203,10 @@ sudo i2cdetect -y 1 0x3f 0x3f
 
 Das lädt die I²C-Geräteschnittstelle für Userspace in der laufenden Sitzung. Es ersetzt weder den WM8960-Treiber noch das bestehende Overlay. Erst nach erfolgreichem Zugriff prüfen, ob i2c-dev auch nach Neustart verfügbar ist; die dauerhafte Einrichtung folgt bei Bedarf.
 
+### Tasten A–E — zwei erfolgreiche Durchläufe ✅
+
+Der Nutzer hat den lesenden Tastentest zweimal ausgeführt. In beiden Durchläufen wurden für **A, B, C, D und E** vollständige Drücken-/Loslassen-Zyklen erkannt und alle fünf Tasten mit **PASS** gemeldet. Mehrfaches Drücken wurde ebenfalls als mehrere Zyklen ausgegeben. Damit ist die Bedienung der fünf Tasten in der laufenden Sitzung bestätigt; ein Langzeit-/Entprellungs-Stresstest sowie der Test nach Neustart stehen noch aus.
+
 ## Abnahmeprotokoll
 
 | Prüfung | Status / Ergebnis |
@@ -215,7 +219,7 @@ Das lädt die I²C-Geräteschnittstelle für Userspace in der laufenden Sitzung.
 | SSH über LAN | Offen |
 | USB-A Port 1 / 2 / 3 | Offen / offen / offen |
 | I²C 0x3f erreichbar, keine konkurrierende Nutzung | Antwort 3f auf Bus 1 bestätigt; konkurrierende Nutzung noch nicht geprüft |
-| A / B / C / D / E drücken und loslassen | Offen |
+| A / B / C / D / E drücken und loslassen | Alle fünf PASS, in zwei Hardware-Testläufen bestätigt |
 | RGB Rot / Grün / Blau / aus | Offen |
 | WM8960 und vorhandene PTT-Taste im neuen Stapel | Offen |
 | LAN und Button SHIM nach Neustart | Offen |
