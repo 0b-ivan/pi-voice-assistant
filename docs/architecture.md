@@ -12,7 +12,7 @@
 | PiSugar2-Integration | Später Akkustatus und kontrolliertes Herunterfahren |
 | Kamera/Display | Spätere optionale Erweiterung |
 
-Der Pi Zero 2 W übernimmt Geräte-I/O und kann STT lokal mit Vosk ausführen. Die eigentliche LLM-Antwort bleibt zunächst extern bei OpenRouter. Damit ist die Aufnahme- und Erkennungskette offline nutzbar, ohne bereits ein lokales LLM auf dem Zero 2 W betreiben zu müssen.
+Der Pi Zero 2 W übernimmt Geräte-I/O und kann STT lokal mit Vosk ausführen. Auf `pi-assistent` ist derzeit bewusst `STT_PROVIDER=vosk` gesetzt, sodass Aufnahme und Spracherkennung vollständig offline laufen. Die eigentliche LLM-Antwort bleibt im bisherigen Architekturplan zunächst extern bei OpenRouter; sie ist noch nicht angebunden.
 
 ## MVP-Ablauf
 
@@ -50,6 +50,6 @@ Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`; das Transcript-
 
 ## Erfolgskriterien
 
-Bereits bestätigt: GPIO17 startet zuverlässig eine Aufnahme; WM8960-WAV ist verständlich; ein deutscher Test wurde über OpenRouter-STT korrekt transkribiert.
+Bereits bestätigt: GPIO17 startet zuverlässig eine Aufnahme; WM8960-WAV ist verständlich; OpenRouter-STT und Vosk-STT transkribieren echte Aufnahmen. Der integrierte PTT→Vosk-Pfad läuft auf dem Pi Zero 2 W. Im Hardwaretest benötigte Vosk für einen 6-Sekunden-Clip nach geladenem Modell rund 6,75–6,78 s; der laufende Dienst belegte rund 142 MiB RSS. Ein Vergleich mit beiden Mikrofonkanälen und hochwertigem SoX-Resampling zeigte keinen wesentlichen Qualitätsgewinn, sodass das kleine deutsche Vosk-Modell derzeit als Hauptlimit der Erkennungsqualität gilt.
 
-Noch offen: Vosk und `auto` auf dem Pi Zero 2 W mit echter WM8960-Aufnahme abnehmen, Erkennungsqualität/Latenz/RAM messen, danach OpenRouter-LLM und deutsche TTS anbinden und die durchgehende Sprachinteraktion testen.
+Noch offen: den `auto`-Fallback als realen OpenRouter→Vosk-Ausfalltest abnehmen, Offline-Erkennungsqualität für kurze Kommandos verbessern und danach LLM/TTS sowie die durchgehende Sprachinteraktion testen.
