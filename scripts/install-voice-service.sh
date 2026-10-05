@@ -23,15 +23,19 @@ if [[ ! -e /etc/pi-ptt.env ]]; then
   echo "Created /etc/pi-ptt.env; review it before starting the service."
 fi
 
+created_openrouter_env=0
 if [[ ! -e /etc/pi-voice-assistant.env ]]; then
   install -m 0640 "${repo_root}/config/openrouter.env.example" /etc/pi-voice-assistant.env
+  created_openrouter_env=1
   echo "Created /etc/pi-voice-assistant.env; set OPENROUTER_API_KEY with Vim before starting."
 fi
 
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/pi-ptt.service
 
-if [[ ${service_was_active} -eq 1 ]]; then
+if [[ ${created_openrouter_env} -eq 1 ]]; then
+  echo "Service left stopped until OPENROUTER_API_KEY is configured."
+elif [[ ${service_was_active} -eq 1 ]]; then
   systemctl start pi-ptt.service
   echo "pi-ptt.service restarted."
 else
