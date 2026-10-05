@@ -233,7 +233,7 @@ Die beiden Lautstärkeregler dämpfen zusammen um etwa 57,5 dB. Als nächsten Di
 
 Nach Erhöhung des digitalen Playback-Pegels war Ton hörbar. Die zuvor gewählten 70% Speaker und 80% Playback waren zu stark gedämpft. Anschließend wurden Speaker 95% (0 dB) und 100% (+6 dB) getestet. Die zuletzt zurückgemeldete zusätzliche Verstärkung ist **Speaker AC = 5**; Ivan bestätigt die Lautstärke als passend. Der abschließende Test lief bei 48 kHz, S16_LE, zwei Kanälen ohne sichtbaren Fehler.
 
-Laut Nutzerangaben im Folgechat: **Playback 100 %, Speaker AC 5; letzter ausdrücklich gesetzter Speaker-Pegel 100 %**. Danach wurden 95 % empfohlen; eine Empfehlung belegt keine Änderung. Der endgültig wiederhergestellte Speaker-Pegel ist deshalb noch unbekannt und wird mit `amixer -c wm8960soundcard sget 'Speaker'` ausgelesen. Nicht ohne neue Ausgabe als 95 % oder 100 % festschreiben. Speaker DC wurde im Verlauf nicht verändert.
+Laut Nutzerangaben im Folgechat: **Playback 100 %, Speaker AC 5; letzter ausdrücklich gesetzter Speaker-Pegel 100 %**. Danach wurden 95 % empfohlen; eine Empfehlung belegt keine Änderung. Die anschließende Ausgabe von `amixer -c wm8960soundcard sget 'Speaker'` am 05.10.2026 bestätigt jetzt **beide Kanäle: Playback 121 / 127, 95 %, 0,00 dB**. Damit ist der tatsächlich ausgelesene Speaker-Pegel 95 %. Speaker DC wurde im Verlauf nicht verändert.
 
 ```bash
 sudo alsactl store wm8960soundcard
@@ -268,7 +268,7 @@ aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/mikrofontest.wav
 
 Im referenzierten Folgechat „Push To Talk Bauen“ bestätigt Ivan: ALSA-Zustand gespeichert, abschließende Neustartprüfung mit **„passt“** abgeschlossen. Damit sind Speicherung und Aufnahme/Wiedergabe nach Neustart als Nutzer-Hörprüfung bestätigt; es liegt keine neue Mixer-Ausgabe vor. Kein gemessener Pegel- oder Clippingnachweis.
 
-Für den noch offenen endgültigen Speaker-Wert bei nächster SSH-Anmeldung ausschließlich auslesen:
+Speaker ist inzwischen mit 95 % / 0,00 dB auf beiden Kanälen ausgelesen und bestätigt. Playback 100 % und Speaker AC 5 stammen weiterhin aus dem Folgechat; sie wurden in dieser neuen Ausgabe nicht erneut ausgelesen. Bei Bedarf ausschließlich auslesen:
 
 ```bash
 amixer -c wm8960soundcard sget 'Speaker'
