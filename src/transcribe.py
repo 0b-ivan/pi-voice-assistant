@@ -197,7 +197,7 @@ def _load_vosk_model():
     try:
         vosk.SetLogLevel(-1)
         model = vosk.Model(str(model_path))
-    except (OSError, RuntimeError, ValueError) as exc:
+    except Exception as exc:
         raise TranscriptionError(f"failed to load Vosk model {model_path}: {exc}") from exc
 
     _VOSK_MODEL = model
@@ -236,7 +236,7 @@ def transcribe_vosk(path: str | os.PathLike[str]) -> str:
             parts.append(final_text)
     except TranscriptionError:
         raise
-    except (OSError, RuntimeError, ValueError) as exc:
+    except Exception as exc:
         raise TranscriptionError(f"Vosk transcription failed: {exc}") from exc
 
     text = " ".join(parts).strip()
