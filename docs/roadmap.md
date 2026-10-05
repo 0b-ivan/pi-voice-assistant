@@ -22,7 +22,7 @@
 - [x] Lautsprecherwiedergabe testen und passende Lautstärke bestätigen; ALSA-Zustand speichern.
 - [x] Mikrofonaufnahme und Wiedergabe testen; Aufnahmequalität mit Eingangsboost 3 bestätigt.
 - [x] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen; Nutzer bestätigt „passt“.
-- [x] Speaker-Pegel auslesen: beide Kanäle 121 / 127, 95 %, 0,00 dB bestätigt.
+- [x] Speaker-Pegel nach TTS-Test final auf beide Kanäle 102 / 127, 80 %, −19,00 dB einstellen und mit `alsactl store` speichern.
 - [x] Tasten-GPIO identifizieren: BCM17 / Pin 11; gpiochip0 (pinctrl-bcm2835), Offset 17 als freier Eingang bestätigt.
 - [x] Aktiv-Low-Polarität und normale Tastenfunktion am HAT bestätigen (19 Probezyklen).
 - [ ] Gezielte Entprellungs-, Kurzdrück- und Grenztests am HAT durchführen.
@@ -40,11 +40,13 @@ Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
 - [x] Vosk als optionales lokales deutsches STT-Backend implementieren.
 - [x] `STT_PROVIDER=openrouter|vosk|auto` mit OpenRouter→Vosk-Fallback implementieren.
 - [x] Vosk-Installationspfad und kleines deutsches Modell dokumentieren.
-- [ ] Vosk und `auto` mit echter WM8960-Aufnahme auf dem Pi Zero 2 W abnehmen; Qualität, Latenz und RAM messen.
+- [x] Vosk mit echter WM8960-Aufnahme auf dem Pi Zero 2 W abnehmen; beide Kanäle lokal verständlich transkribiert.
+- [ ] `auto` als realen OpenRouter→Vosk-Fallback auf Hardware abnehmen; STT-Latenz und RAM messen.
 - [ ] Integrierten PTT→STT-Ablauf nach Deployment auf Hardware abnehmen.
 - [ ] OpenRouter-LLM an den erkannten Text anbinden.
-- [ ] Deutsche TTS-Komponente auswählen und anbinden.
-- [ ] Antwort über WM8960 ausgeben und Playback-Sperre implementieren.
+- [x] Deutsche TTS-Komponente auswählen: Piper 1.8.0 mit `de_DE-thorsten-low`.
+- [x] Lokale Piper-TTS standalone über WM8960 ausgeben; 16 kHz Mono bestätigt.
+- [ ] TTS in den vollständigen Sprachloop integrieren und Playback-Sperre implementieren.
 - [ ] Verbleibende Grenz- und Fehlerprüfungen auf Hardware durchführen; siehe [Prüfplan](push-to-talk.md).
 - [ ] Durchgehende deutsche Sprachinteraktion testen; Latenzen messen.
 
@@ -67,4 +69,4 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 - [ ] Wake Word und Unterbrechen der Wiedergabe evaluieren.
 - [ ] Gehäuse und mobile Bedienung verbessern.
 
-Priorität: Jetzt Vosk und den Auto-Fallback auf dem Pi abnehmen, danach OpenRouter-LLM und deutsche TTS.
+Priorität: Jetzt OpenRouter-LLM anbinden, danach PTT → Vosk/OpenRouter-STT → LLM → Piper → WM8960 zum vollständigen Halbduplex-Loop verbinden. Anschließend `auto`-Fallback, Playback-Sperre, Latenz und RAM abnehmen.
