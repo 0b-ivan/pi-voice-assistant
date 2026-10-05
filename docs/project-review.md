@@ -2,6 +2,16 @@
 
 Geprüft: GitHub `main` **55bf5df**, alle PRs **#1–#16** mit Diskussionen und Review-Threadzuständen; offene Heads #14 **ae3c927**, #16 **87ca1ba**; verfügbare Projekt-Chats und die PTT-Codex-Chats. Dies ist ein Dokumentations-/Codeabgleich, keine neue Hardware-Abnahme. Offene PRs werden durch diese Doku nicht gemergt oder verändert.
 
+## Nachtrag: PR #16 und Pi-Messungen
+
+Die folgende ursprüngliche Prüfung beschreibt den Stand vor `d056897`. Beide
+Benchmarkbefunde wurden inzwischen mit diesem Commit behoben; 56 Tests bestanden
+unter Python 3.13 auf GitHub. Die [zwei Pi-Messungen](piper-resources.md) zeigen
+schnelle Synthese mit geladenem Modell, aber deutlichen Speicherdruck neben Vosk.
+Vorerst keinen dauerhaften Piper-Prozess aktivieren; Status-WAV-Cache als nächsten
+Schritt prüfen. Die historischen Review-Threadzustände unten wurden nicht erneut
+erhoben. Die Benchmarkkorrektur behebt nicht automatisch den Wrapper aus PR #14.
+
 ## Auffällige Aussagen und Korrekturen
 
 - **Kein vollständiger Assistent:** main endet am Transcript. LLM und automatische Antwortwiedergabe fehlen. Lokales STT/TTS bedeutet nicht automatisch lokale KI-Antworten.

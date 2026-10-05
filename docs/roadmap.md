@@ -4,9 +4,9 @@ Stand 05.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md
 
 ## Jetzt: lokale Sprache zuverlässig betreiben
 
-1. Offene Piper-Benchmarkfehler aus PR #16 beheben: identischer Eingabetext und Teilbericht bei frühem Signal. Dasselbe `--`-Textproblem betrifft auch `speak.py` aus PR #14; siehe [Projektprüfung](project-review.md).
-2. Piper mit frischem und einmal geladenem Modell neben bereits geladenem Vosk messen: Synthesezeit, CPU, RSS, verfügbares RAM, Swap-Aktivität, Temperatur/Throttling. Noch keine Ergebnisse für diesen Vergleich vorhanden.
-3. Danach entscheiden, ob ein geladener Piper-Prozess oder vorbereitete Status-WAVs helfen und in den RAM passen. Keine zusätzliche permanente Komponente vor Messung einführen.
+1. Textübergabe im geprüften Wrapperstand aus PR #14 prüfen/korrigieren: `--` darf nicht Teil des Sprachtexts sein. Die entsprechenden Benchmarkfehler sind seit `d056897` behoben.
+2. Feste Piper-Statusansagen einmal erzeugen und als WAV cachen. [Pi-Messungen](piper-resources.md) zeigen schnelle geladene Synthese, aber deutlichen Speicherdruck neben Vosk; vorerst keinen dauerhaften Piper-Prozess aktivieren.
+3. Wechsel zwischen STT und TTS auf dem Pi testen: nächste Vosk-Erkennung nach dem Swapping, Cache-Treffer ohne Synthese und variable Ansagen. Deren Latenz ist noch nicht gemessen.
 4. SHIM-Dienstabnahme vervollständigen: A gegenüber GPIO17, beide gemeinsam, B während Aufnahme/STT/Ansage, C/D mit ausgelesenen Pegeln, LED-Farben und Reboot mit der aktuellen Version.
 5. Offline-Vosk anhand mehrerer bekannter Sätze bewerten; optionale Command-Grammar nur für feste Kommandos evaluieren. Kein Versprechen, dass sie freie Sprache verbessert.
 

@@ -29,15 +29,25 @@ Die Warnungen `Missing phoneme from id map` und `Failed to persist telemetry dev
 
 Das Journal zeigt am 05.10.2026 CEST `status` 21:43:32 und den nächsten Piper-Prozess um 21:43:34; für den vorherigen Statusaufruf 21:43:05 → `speech_finished` 21:43:29 etwa 24 s Gesamtdauer. Dies umfasst Prozessstart, Modell-Laden, Synthese **und Wiedergabe**; eine isolierte Synthesezeit oder RSS-Messung ist daraus nicht ableitbar.
 
-Der Wrapper startet pro Satz einen neuen Piper-Prozess und wartet auf das gesamte WAV, bevor er abspielt. Modell-Laden ist deshalb ein plausibler Teil der Verzögerung. Wie viel es ausmacht, muss gemessen werden. Vosk bleibt im PTT-Prozess geladen; Piper dauerhaft zusätzlich zu laden ist noch keine beschlossene Optimierung auf dem 512-MB-Pi.
+Der Wrapper startet pro Satz einen neuen Piper-Prozess und wartet auf das gesamte
+WAV. Die [Pi-Messungen](piper-resources.md) mit Version `d056897` bestätigen den
+Ladeaufwand: neben Vosk 18,01 s zum Modellladen, 20,10–27,92 s für neue Prozesse,
+aber nur 1,26–1,67 s für Erzeugungen mit geladenem Modell.
 
-[PR #16](https://github.com/0b-ivan/pi-voice-assistant/pull/16), Head `87ca1ba`, ergänzt einen Vergleich frischer CLI-Aufrufe mit einer einmal geladenen Stimme. **Noch keine realen Vergleichsergebnisse und zwei offene Reviewfehler:**
+Der korrigierte Benchmark aus [PR #16](https://github.com/0b-ivan/pi-voice-assistant/pull/16)
+verwendet denselben Text über CLI-stdin und API, speichert Teilberichte auch bei
+frühen Signalen und spielt keinen Ton ab. Die ursprünglichen Reviewbefunde wurden
+mit `d056897` behoben; 56 Tests bestanden unter Python 3.13 auf GitHub.
 
-1. CLI erhält `--` als Teil des Texts, API nicht. Der Vergleich nutzt somit verschiedene Eingaben.
-2. Signalhandler sind vor dem geschützten Report-Block aktiv; frühes SIGTERM/SIGHUP/Ctrl-C kann ohne versprochenen Teilbericht abbrechen.
+Neben Vosk lagert das System während des gesamten Vergleichs 318,74 MiB aus.
+Der PTT-Dienst fällt von 198,65 auf 7,48 MiB RSS und liegt nachher mit 185,80 MiB
+im Swap. Deshalb vorerst kein dauerhaft geladenes Piper aktivieren. Feste
+Statusansagen als WAV-Cache sind der nächste Schritt; Cache, Streaming und
+permanente TTS-Komponente sind weiterhin nicht implementiert. Die detaillierten
+Werte und Grenzen stehen ausschließlich im [Messbericht](piper-resources.md).
 
-Daher vor Auswertung diese Fehler beheben. Derselbe CLI-Textfehler steckt auch im Wrapper aus PR #14: `parse_known_args()` in [Piper 1.8.0](https://github.com/OHF-Voice/piper1-gpl/blob/v1.8.0/src/piper/__main__.py) übernimmt unbekannte Argumente inklusive `--` in den Sprachtext. Unterstützte stdin-Übergabe ist die geeignete Korrektur; Argumenttests allein beweisen nicht die gesprochene Eingabe.
-
-Nach Korrektur: im PTT-Dienst einmal mit Vosk transkribieren (Modell laden), Abschluss abwarten. Im Benchmark-Checkout `python3 scripts/profile-piper.py --output /tmp/pi-piper-resources.json` ausführen; währenddessen keine Tasten drücken. Vergleich erzeugt WAVs ohne Wiedergabe, startet keine permanente TTS-Komponente und ändert keine Mixerwerte. Das in einem Chat genannte `/opt/pi-voice-assistant/scripts/speak.sh` existiert in den geprüften Repo-Ständen nicht.
-
-Auswerten: Ladezeit, warme Synthesezeit, CPU-Zeit, Audiolänge/RTF, aktueller und maximaler RSS, verfügbares System-RAM, Swap-Zähler und Temperatur/Throttling. Belegter Swap des Gesamtsystems ist nicht automatisch Piper-Verbrauch. Erst danach geladenes Modell, vorbereitete Status-WAVs oder Streaming beurteilen. Aktuell gibt es keinen dauerhaften Piper-Dienst, Audio-Cache oder Streaming-Pfad.
+Der gleiche `--`-Textbefund betraf den geprüften Wrapperstand `ae3c927` aus PR #14:
+[Piper 1.8.0](https://github.com/OHF-Voice/piper1-gpl/blob/v1.8.0/src/piper/__main__.py)
+übernimmt unbekannte Argumente inklusive `--` in den Sprachtext. Die Korrektur
+des Benchmarks ändert den installierten Wrapper nicht; dessen Textpfad separat
+prüfen/korrigieren. Das in einem Chat genannte `speak.sh` ist kein Repo-Skript.
