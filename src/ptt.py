@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local hold-to-talk recorder. Requires libgpiod Python API v2 on the Pi."""
+"""Local hold-to-talk recorder with OpenRouter STT. Requires libgpiod Python API v2."""
 import argparse
 import json
 import math
@@ -11,9 +11,24 @@ import threading
 import time
 import wave
 
+from transcribe import TranscriptionError, transcribe
+
 
 def event(name, **fields):
     print(json.dumps(dict(version=1, event=name, **fields)), flush=True)
+
+
+def process_capture(path):
+    """Transcribe one published capture; STT failure must not kill PTT."""
+    event('processing', path=str(path))
+    try:
+        text = transcribe(path)
+    except (OSError, TranscriptionError) as exc:
+        event('stt_error', message=str(exc))
+        return None
+    event('transcript', text=text)
+    print(f'ERKANNT: {text}', flush=True)
+    return text
 
 
 class Button:
@@ -51,6 +66,14 @@ class Button:
         self.started = None
         self.armed = self.stable is False
 
+    def resync(self, pressed, now):
+        """Resync GPIO after blocking processing; held buttons require release."""
+        self.raw = pressed
+        self.stable = pressed
+        self.changed = now
+        self.started = None
+        self.armed = not pressed
+
 
 class Recorder:
     def __init__(self, directory, device, limit):
@@ -77,7 +100,7 @@ class Recorder:
     def finish(self, reason, publish=True):
         proc, self.process = self.process, None
         if proc is None:
-            return
+            return None
         try:
             interrupted = proc.poll() is None
             if interrupted:
@@ -89,7 +112,7 @@ class Recorder:
                 proc.wait(timeout=2)
                 raise RuntimeError('arecord did not stop within two seconds')
             if not publish:
-                return
+                return None
             # ALSA may return 1 when SIGINT interrupts a blocking PCM read.
             # Accept that only when we requested the stop; WAV is built here.
             if code != 0 and not (interrupted and code in (1, -signal.SIGINT)):
@@ -111,10 +134,10 @@ class Recorder:
                 if len(audio.readframes(frames)) != frames * 4:
                     raise RuntimeError('truncated WAV payload')
             os.replace(self.partial, self.ready)
-            # Future STT adapter consumes this bounded local WAV; no network here.
             event('capture_ready', path=str(self.ready), reason=reason,
                   format='wav', encoding='PCM_S16_LE', sample_rate=48000,
                   channels=2, frames=frames)
+            return self.ready
         finally:
             self.raw.unlink(missing_ok=True)
             self.partial.unlink(missing_ok=True)
@@ -126,7 +149,7 @@ class Recorder:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--probe', action='store_true', help='button events only; no audio')
+    parser.add_argument('--probe', action='store_true', help='button events only; no audio/STT')
     args = parser.parse_args()
     import gpiod
     from gpiod.line import Bias, Direction, Value
@@ -152,6 +175,13 @@ def main():
     settings = gpiod.LineSettings(direction=Direction.INPUT,
                                   active_low=active_low == '1',
                                   bias=Bias.PULL_UP if active_low == '1' else Bias.PULL_DOWN)
+
+    def process_and_resync(capture, request):
+        if capture is None:
+            return
+        process_capture(capture)
+        button.resync(request.get_value(line) == Value.ACTIVE, time.monotonic())
+
     try:
         with gpiod.request_lines(chip, consumer='pi-ptt', config={line: settings}) as request:
             event('waiting_for_release', chip=chip, line=line, probe=args.probe)
@@ -164,11 +194,10 @@ def main():
                         elif action == 'start':
                             recorder.start()
                         else:
-                            recorder.finish(action)
+                            process_and_resync(recorder.finish(action), request)
                     if recorder.process is not None and recorder.process.poll() is not None:
                         # Natural duration expiry or early device failure.
-                        recorder.finish('process_exit')
-                        button.failed()
+                        process_and_resync(recorder.finish('process_exit'), request)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
                     button.failed()
                     recorder.close()
