@@ -10,7 +10,7 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 | Audio | WM8960-Aufnahme und Wiedergabe samt Neustart bestätigt; vorhandenes Kernelmodul/Overlay, kein zusätzlicher Waveshare-Treiber |
 | PTT und STT auf `main` | GPIO17, optional Button SHIM A–E/RGB, OpenRouter- und Vosk-STT implementiert; Pi läuft bewusst mit `STT_PROVIDER=vosk` |
 | Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 / `de_DE-thorsten-low` getestet; Wrapper und separater Installer vorhanden |
-| Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): geladen 1,26–1,67 s statt 20–28 s; neben Vosk deutlicher Speicherdruck/Swap. Status-WAV-Cache als nächster Schritt |
+| Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): geladen 1,26–1,67 s statt 20–28 s; zram aktiv ohne bisherige Writeback-I/O. Kontrollierter Vosk/Piper-Wechseltest mit physischem zram-RAM vorbereitet; Pi-Messung steht aus |
 | Noch offen | LLM-Anbindung und automatische Antwortwiedergabe; reale `auto`-Fallback-Abnahme; Akku/Abschaltung, Kamera und PiTFT |
 
 ## Einrichten und betreiben

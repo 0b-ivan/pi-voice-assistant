@@ -4,6 +4,8 @@ Der aktuelle speak.py-Wrapper startet für jede Ansage einen neuen Piper-Prozess
 und wartet auf das vollständige WAV vor der Wiedergabe. Dieser Test vergleicht
 frische CLI-Prozesse mit einer einmal geladenen PiperVoice im selben Prozess.
 Er startet keinen dauerhaften Dienst und ändert weder PTT noch Mixer oder Modelle.
+Mit `--vosk-audio` gibt es zusätzlich den unten beschriebenen kontrollierten
+Wechseltest. Dabei muss der PTT-Dienst vorübergehend gestoppt sein.
 
 ## Voraussetzung und Ablauf
 
@@ -100,14 +102,102 @@ sind Momentaufnahmen und keine vollständige Messung von Throttling unter Last.
 
 ## Entscheidung nach dem Test
 
-Die beiden Pi-Läufe unten zeigen: Ein geladenes Piper-Modell beschleunigt kurze
-Ansagen erheblich, aber neben Vosk entsteht deutlicher Speicherdruck. Auf diesem
-Pi Zero 2 W vorerst keinen dauerhaften Piper-Dienst aktivieren. Als nächsten
-Schritt feste Statusansagen einmal erzeugen und als WAV abspielen; bei einem
-Cache-Treffer ist keine Piper-Synthese nötig. Variable Texte und der Wechsel
-zwischen STT/TTS benötigen einen eigenen Praxistest. Der Cache ist noch nicht
-implementiert. Lokale Tests validieren Messablauf, Modell-Wiederverwendung,
-Fehlerbehandlung und Prozessbereinigung mit einem Stub.
+Die Pi-Läufe unten zeigen: Ein geladenes Piper-Modell beschleunigt kurze Ansagen
+erheblich, neben Vosk werden aber viele Seiten ausgelagert. Die anschließende
+zram-Prüfung bestätigt Kompression im RAM ohne bisherige Writeback-I/O.
+Die logische Swap-Belegung allein entscheidet daher nicht über einen dauerhaften
+Piper-Prozess. Vor dessen Aktivierung messen wir beide geladenen Modelle im
+Wechsel. Feste Status-WAVs bleiben eine einfache weitere Option; der Cache ist
+noch nicht implementiert. Lokale Tests prüfen den Messablauf mit Stubs,
+reale Ressourcenwerte und Reaktionszeiten erfordern den Pi.
+
+## Kontrollierter Wechseltest: Vosk und Piper geladen
+
+`--vosk-audio` ersetzt den CLI-Vergleich durch diesen Ablauf:
+
+1. Vosk einmal laden und dieselbe Aufnahme dreimal transkribieren (`vosk_baseline_*`).
+2. Piper zusätzlich einmal laden (`load_once`); Vosk bleibt geladen.
+3. Dreimal dieselbe Aufnahme mit Vosk erkennen (`vosk_alternating_*`), anschließend
+   den festen Testtext mit Piper erzeugen (`resident_*`). Beide Modelle bleiben geladen.
+4. Beide Modelle zehn Sekunden halten (`resident_idle`), dann den Messprozess beenden.
+
+Der Worker benutzt `src/transcribe.py` samt dessen Downmix/Resampling und dem
+installierten Vosk-Paket. Er ruft ausschließlich `transcribe_vosk` auf, unabhängig
+von `STT_PROVIDER`; kein API-Aufruf. Die Aufnahme wird einmal kopiert, validiert
+und in allen Phasen wiederverwendet. Erlaubt: PCM16, 16/48 kHz, ein oder zwei
+Kanäle, höchstens 30 Sekunden und 6 MiB. Der Bericht enthält Dauer, SHA-256 und
+erkannte Texte. Eingabe und Modelle werden nicht verändert.
+
+**Wichtig für den Vergleich:** Beide Modelle liegen in einem gemeinsamen
+Messprozess. Das ist ein Prototyp für gemeinsamen Modellbetrieb, keine Messung
+des aktuellen PTT-Dienstes mit separat gestarteter Piper-CLI. RSS/Swap beziehen
+sich auf den ganzen Worker und sind nicht pro Modell aufteilbar. Die Vosk-Basis
+läuft zuerst; Dateicaches und Decoder-Initialisierung können Unterschiede
+mitverursachen. Das ist kein gleichzeitig rechnendes STT/TTS, sondern ein
+Halbduplex-Wechsel ohne Aufnahme, Audioausgabe, LLM oder Dienstintegration.
+
+### Ausführen auf dem Pi
+
+Vorher mit A/GPIO17 einen kurzen, deutlich gesprochenen Satz aufnehmen und das
+Vosk-Transkript abwarten. Die Aufnahme **vor dem Stoppen** nach `/tmp` sichern:
+systemd kann `/run/pi-ptt` beim Stoppen entfernen. Eine laufende Ansage ebenfalls
+abwarten. Für Vergleichsläufe dieselbe gesicherte Aufnahme verwenden.
+
+Im Checkout der neuen Messversion, ohne Installation:
+
+```bash
+cp /run/pi-ptt/capture.wav /tmp/pi-speech-input.wav &&
+(
+  sudo -v || exit 1
+  trap 'sudo systemctl start pi-ptt.service' EXIT
+  trap 'exit 130' INT TERM HUP
+  sudo systemctl stop pi-ptt.service || exit 1
+  python3 scripts/profile-piper.py \
+    --vosk-audio /tmp/pi-speech-input.wav \
+    --output /tmp/pi-speech-alternating.json
+)
+cat /tmp/pi-speech-alternating.json
+systemctl is-active pi-ptt.service
+```
+
+Der PTT-Dienst ist währenddessen pausiert; dadurch läuft kein zusätzliches
+Vosk-Modell parallel. Die Subshell startet ihn auch nach Fehler oder Ctrl-C
+wieder. Der Benchmark selbst startet/stoppt keinen Dienst und lehnt den
+Wechselmodus ab, solange `pi-ptt.service` nicht `inactive` ist oder dieser Zustand
+nicht festgestellt werden kann. Diese Befehle sind für den zuvor laufenden
+PTT-Dienst auf `pi-assistent` gedacht. Nach einem harten Verbindungs-/Systemabbruch
+den Dienstzustand prüfen und gegebenenfalls `sudo systemctl start pi-ptt.service` ausführen.
+
+`--timeout 180` begrenzt den **gesamten** Wechsel-Worker einschließlich beider
+Modellladungen, aller Erkennungen, Synthesen und Ruhephase; bei Bedarf bis 600 s.
+`--repeats 2 --idle-seconds 5` verkürzt den Versuch. Timeout und Signale verwenden
+dieselbe Prozessgruppen-Bereinigung und Teilberichterstellung wie der CLI-Test.
+
+### Auswertung und zram
+
+Jede Wechselphase enthält `system_before` und `system_after`. Die Zeit-/CPU-
+Messung selbst schließt diese Snapshots nicht ein. Jeder Systemsnapshot enthält
+nun `zram.devices` sowie die Summe lesbarer `physical_mib` über alle zram-Geräte.
+Fehlende/unlesbare Werte fehlen im Gerät oder sind `null`, nicht fälschlich null Bytes.
+
+| Feld | Auswertung |
+|---|---|
+| `vosk_baseline_*` / `vosk_alternating_*` | STT-Dauer derselben Aufnahme ohne/mit zusätzlich geladenem Piper vergleichen; ersten Lauf getrennt ansehen. |
+| `resident_*` | TTS-Zeit nach der jeweiligen Vosk-Erkennung; enthält keine Wiedergabe. |
+| `transcript` | Konsistenz der Erkennung prüfen; keine automatische Qualitätsbewertung ohne Referenztext. |
+| `zram.devices.zram0.physical_mib` | Aktuell tatsächlich zugewiesener zram-RAM inklusive Metadaten/Fragmentierung aus `mm_stat`. |
+| `data_mib` / `compressed_mib` | Unkomprimierte Seitenmenge und komprimierte Nutzdaten; keine zusätzlichen additiven RAM-Kosten. |
+| `lifetime_peak_physical_mib` | Geräte-Höchstwert seit Initialisierung/Reset, keine Testspitze. |
+| `system_during.max_zram_physical_mib` | Größter während dieses Workers etwa alle 0,2 s beobachteter physischer zram-Verbrauch; kurze Spitzen können fehlen. |
+| `backing_read_mib` / `backing_written_mib` | Kumulative `bd_stat`-Zähler in MiB (Kernel-Einheit 4 KiB); Differenzen je Phase zeigen zusätzliche Writeback-I/O. |
+| `swap_in_mib` / `swap_out_mib` | Systemweite logische Seitenmengen; bei zram nicht gleich Datenträger-I/O. |
+
+Diese Definitionen folgen der
+[Linux-zram-Dokumentation](https://docs.kernel.org/admin-guide/blockdev/zram.html).
+Alle System-/zram-Werte enthalten andere Programme. Ein einzelner Lauf kann
+keinen Kompressions-CPU-Anteil isolieren und noch keine Dauerbetriebsfreigabe
+begründen. Nach dem Wechseltest bleiben reale PTT-Reaktion, Abbruch und
+Audio-Halbduplex bei integrierter TTS zu prüfen.
 
 ## Erste Pi-Messung vom 5. Oktober 2026
 
