@@ -94,7 +94,7 @@ Bei `[sudo] password for obivan:` das Benutzerpasswort eingeben; dabei werden ke
 Nach `sudo reboot` wird die SSH-Verbindung getrennt. Danach erneut verbinden:
 
 ```bash
-ssh obivan@172.22.9.128
+ssh obivan@pi-assistent.local  # alternativ die aktuell ermittelte IP-Adresse verwenden
 ```
 
 Nach erfolgreicher Anmeldung den tatsächlich gestarteten Kernel und die Audioerkennung erfassen:
