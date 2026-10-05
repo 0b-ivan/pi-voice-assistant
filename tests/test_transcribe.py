@@ -1,4 +1,5 @@
 import base64
+import http.client
 import json
 import tempfile
 import unittest
@@ -12,8 +13,9 @@ from transcribe import TranscriptionError, transcribe
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload=None, error=None):
         self.payload = payload
+        self.error = error
 
     def __enter__(self):
         return self
@@ -22,7 +24,14 @@ class FakeResponse:
         return False
 
     def read(self):
+        if self.error is not None:
+            raise self.error
         return json.dumps(self.payload).encode("utf-8")
+
+
+class BrokenErrorBody:
+    def read(self):
+        raise http.client.IncompleteRead(b'{"error":')
 
 
 class TranscribeTests(unittest.TestCase):
@@ -75,6 +84,29 @@ class TranscribeTests(unittest.TestCase):
             return_value=FakeResponse({"text": "   "}),
         ):
             with self.assertRaisesRegex(TranscriptionError, "no transcript"):
+                transcribe(self.audio)
+
+    def test_incomplete_success_response_is_normalized(self):
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}, clear=True), patch(
+            "transcribe.urllib.request.urlopen",
+            return_value=FakeResponse(error=http.client.IncompleteRead(b'{"text":')),
+        ):
+            with self.assertRaisesRegex(TranscriptionError, "incomplete OpenRouter response"):
+                transcribe(self.audio)
+
+    def test_incomplete_http_error_body_is_normalized(self):
+        error = __import__("urllib.error").error.HTTPError(
+            url="https://openrouter.ai/api/v1/audio/transcriptions",
+            code=502,
+            msg="Bad Gateway",
+            hdrs=None,
+            fp=BrokenErrorBody(),
+        )
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}, clear=True), patch(
+            "transcribe.urllib.request.urlopen",
+            side_effect=error,
+        ):
+            with self.assertRaisesRegex(TranscriptionError, "incomplete error response"):
                 transcribe(self.audio)
 
 
