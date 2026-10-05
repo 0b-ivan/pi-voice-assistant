@@ -89,7 +89,46 @@ sudo apt install git alsa-utils i2c-tools
 sudo reboot
 ```
 
-Nach Updates den tatsächlich gestarteten Kernel notieren.
+Bei `[sudo] password for obivan:` das Benutzerpasswort eingeben; dabei werden keine Zeichen angezeigt. Bei `Continue? [Y/n]` bestätigt Enter die Vorgabe Ja. Wenn Paket-Hinweise mit `(press q to quit)` erscheinen, mit **q** den Betrachter schließen und die Aktualisierung fortsetzen lassen.
+
+Nach `sudo reboot` wird die SSH-Verbindung getrennt. Danach erneut verbinden:
+
+```bash
+ssh obivan@172.22.9.128
+```
+
+Nach erfolgreicher Anmeldung den tatsächlich gestarteten Kernel und die Audioerkennung erfassen:
+
+```bash
+uname -r
+aplay -l
+arecord -l
+lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS
+```
+
+### Updateprotokoll — 05.10.2026
+
+Die sieben eingereichten Screenshots wurden geprüft. Drei Bilder belegen die relevanten Schritte; Downloadfortschritt und überlappende Zwischenstände wurden weggelassen.
+
+| Schritt | Nachweis / Status |
+|---|---|
+| Paketquellen aktualisieren | Debian Trixie, Updates, Security und Raspberry-Pi-Archiv abgerufen; anschließendes Upgrade zeigt 14 aktualisierbare Pakete |
+| `apt full-upgrade` | 14 Aktualisierungen angekündigt, keine Neuinstallationen oder Entfernungen; spätere Ausgabe zeigt Paketkonfiguration und abgeschlossene Trigger vor Beginn der Werkzeuginstallation |
+| Paket-Hinweise | rsync-Hinweise im Betrachter; mit **q** verlassen |
+| `alsa-utils` | Bereits aktuell: `1.2.14-1+rpt1` |
+| Git | Installation abgeschlossen: `1:2.47.3-0+deb13u1` |
+| I²C-Werkzeuge | Installation abgeschlossen: `i2c-tools 4.4-2` |
+| Neustart | SSH-Verbindung vom Pi geschlossen, passend zum zuvor eingegebenen `sudo reboot`; Bootabschluss noch nicht nachgewiesen |
+| Erneute SSH-Anmeldung | Befehl eingegeben, aber noch kein Loginbanner oder Shellprompt sichtbar |
+| Audioerkennung | Ausgaben von `aplay -l` und `arecord -l` stehen aus |
+
+![Paket-Hinweise während des Updates; q schließt den Betrachter](images/setup/update-package-notes.png)
+
+![Upgrade abgeschlossen und Werkzeuginstallation wartet auf Bestätigung](images/setup/update-complete-install-confirmation.png)
+
+![Git und i2c-tools eingerichtet; SSH getrennt und erneute Verbindung gestartet](images/setup/tools-installed-reconnect.png)
+
+Die Updateausgabe referenziert Kerneldateien für `6.18.50+rpt-rpi-v8`. Das belegt noch nicht den nach dem Neustart laufenden Kernel; dafür ist `uname -r` erforderlich. APT zeigt **27,1 GB verfügbaren Platz** an. Dieser Wert ist die freie Kapazität des Dateisystems und bestätigt nicht die Größe der eingelegten SD-Karte; die geplanten 64 GB werden mit `lsblk` geprüft.
 
 ## 3. Audio zuerst
 
@@ -131,4 +170,4 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 | WLAN/SSH nach Neustart verfügbar | Offen |
 | Akku-/Abschaltverhalten geprüft | Offen |
 
-SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Hardwaretests und erneuter Neustart stehen aus.
+SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Systemupdate und Werkzeuginstallation sind bestätigt. Erneute SSH-Anmeldung nach dem angestoßenen Neustart, laufender Kernel und Hardwaretests stehen aus.
