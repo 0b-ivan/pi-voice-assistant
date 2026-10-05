@@ -23,16 +23,19 @@
 - [x] Mikrofonaufnahme und Wiedergabe testen; Aufnahmequalität mit Eingangsboost 3 bestätigt.
 - [x] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen; Nutzer bestätigt „passt“.
 - [ ] Endgültigen Speaker-Pegel auslesen: zuletzt gesetzt 100 %, danach 95 % empfohlen; endgültiger Wert unbelegt.
-- [ ] Tasten-GPIO, Polarität und Entprellung prüfen.
+- [x] Tasten-GPIO anhand Herstellerbelegung identifizieren: BCM17 / Pin 11.
+- [ ] Polarität und Entprellung am echten HAT mit Probe prüfen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
 
 Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
 
 ## Phase 2 — Sprach-MVP
 
-- [ ] Homelab-Ziel und STT/LLM/TTS-Komponenten auswählen.
+- [ ] Homelab-Ziel und STT/TTS-Komponenten auswählen; LLM-Ziel OpenRouter, deutsche Sprachausgabe.
 - [ ] API-Vertrag, Authentifizierung und Audioformat festlegen.
-- [ ] Pi-Client mit Taste, Zeitlimit und Zustandssteuerung implementieren.
+- [x] Lokalen PTT-Recorder mit Halten/Loslassen, Entprellung und Zeitlimit implementieren; automatisierte Tests bestanden.
+- [ ] PTT auf dem echten Pi abnehmen; siehe [Prüfplan](push-to-talk.md).
+- [ ] Übergabe an Sprachpipeline und Sperre während Verarbeitung/Wiedergabe implementieren.
 - [ ] Timeout- und Fehlerbehandlung implementieren.
 - [ ] Durchgehende deutsche Sprachinteraktion testen; Latenzen messen.
 
@@ -40,7 +43,8 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 
 ## Phase 3 — Zuverlässiger Betrieb
 
-- [ ] systemd-Dienst und Konfiguration erstellen.
+- [x] systemd-Unit und Konfiguration für lokalen PTT-Dienst erstellen.
+- [ ] systemd-Start und PTT nach Neustart am Pi prüfen.
 - [ ] Speicherverbrauch, Startzeit, Akkulaufzeit und Temperatur messen.
 - [ ] Wiederholte Interaktionen und Dienstneustart testen.
 - [ ] Installationsanleitung mit tatsächlich getesteten Versionen vervollständigen.
@@ -53,3 +57,4 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 - [ ] Gehäuse und mobile Bedienung verbessern.
 
 Priorität: Erst Audio auf echter Hardware, dann ein vollständiger Sprachdurchlauf.
+
