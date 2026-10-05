@@ -1,6 +1,6 @@
 # Speech-to-Text: OpenRouter + Vosk
 
-Stand 05.10.2026: OpenRouter-STT ist auf `pi-assistent` mit einer echten WM8960-WAV-Datei bestätigt. Zusätzlich ist Vosk als optionales lokales deutsches STT-Backend implementiert. Die Vosk- und Auto-Modi müssen nach Deployment noch auf dem Raspberry Pi Zero 2 W hardwareseitig abgenommen werden.
+Stand 05.10.2026: OpenRouter-STT und das lokale Vosk-Backend sind auf `pi-assistent` mit echten WM8960-Aufnahmen bestätigt. Vosk läuft damit auf dem Raspberry Pi Zero 2 W vollständig offline. `auto` ist implementiert, wurde aber noch nicht separat als OpenRouter→Vosk-Fallback auf der Hardware abgenommen.
 
 ## Zielarchitektur
 
@@ -125,6 +125,22 @@ STT_PROVIDER_USED=vosk
 ```
 
 Fehler beginnen mit `STT_ERROR:` und liefern Exitstatus 1.
+
+## Hardware-Abnahme Vosk — 05.10.2026 ✅
+
+Eine Stereoaufnahme der beiden WM8960-Kanäle wurde lokal mit `STT_PROVIDER=vosk` transkribiert. Beide Kanäle lieferten verständlichen deutschen Text; als tatsächlich verwendeter Provider wurde jeweils Vosk gemeldet:
+
+```text
+=== /tmp/left.wav ===
+oder liegt es vielleicht doch noch mikro oder daran dass es nicht in der nähe
+STT_PROVIDER_USED=vosk
+
+=== /tmp/right.wav ===
+oder liegt es vielleicht doch noch mikro oder daran dass ich es nicht in der nähe
+STT_PROVIDER_USED=vosk
+```
+
+Damit ist die lokale Vosk-Erkennung mit echter WM8960-Aufnahme auf dem Zero 2 W bestätigt. Latenz, RAM-Verbrauch und der separate `auto`-Fallback-Test bleiben offen.
 
 ## PTT-Integration
 
