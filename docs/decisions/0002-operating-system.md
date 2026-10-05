@@ -9,16 +9,16 @@ Wir verwenden **Raspberry Pi OS Lite (64-bit) auf Debian 13 / Trixie** auf der 6
 | Einstellung | Festlegung |
 |---|---|
 | Hostname | `pi-assistent` |
-| Benutzer | `ivan` |
+| Benutzer | `obivan` |
 | WLAN-Land | `DE` |
 | Zeitzone | `Europe/Berlin` |
-| Zugriff | SSH mit Schlüssel |
+| Zugriff | SSH; Passwortanmeldung bestätigt, Schlüssel als spätere Verbesserung |
 | Clientbetrieb | systemd-Dienst |
 | Python | Virtuelle Umgebung (`venv`) |
 | Audio | ALSA und WM8960 |
 | Kamera, später | rpicam/libcamera |
 
-Der Hostname wurde bei der Installation tatsächlich als `pi-assistent` gesetzt. Die übrigen Zugriffseinstellungen sind Planwerte; der Abschlussbildschirm bestätigt aktiviertes SSH, aber nicht die Authentifizierungsmethode. Siehe [Installationsprotokoll mit Screenshots](../setup.md#installationsprotokoll--05102026-).
+Der Hostname wurde bei der Installation tatsächlich als `pi-assistent` gesetzt. Die erste SSH-Anmeldung bestätigt Benutzer `obivan` und Passwortauthentifizierung. Boot ist bestätigt; Wiederholungsprüfung nach Neustart und Hardwarevalidierung stehen aus. Siehe [Bootprotokoll mit Screenshots](../setup.md#boot-und-erste-ssh-anmeldung--05102026-).
 
 ## Begründung
 

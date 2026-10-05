@@ -6,21 +6,21 @@ Festgelegt am 05.10.2026: **Raspberry Pi OS Lite (64-bit), Debian 13 / Trixie**,
 
 Betrieb: Headless über SSH, systemd für den Client, Python mit virtueller Umgebung, ALSA für WM8960 und später rpicam/libcamera für die Kamera.
 
-Vor dem Flashen konkrete Image-Version, Architektur und Download-Prüfsumme dokumentieren. Es gibt noch keinen nachgewiesen funktionierenden OS-/Kernel-/Treiberstand für dieses Gerät.
+Vor dem Flashen konkrete Image-Version, Architektur und Download-Prüfsumme dokumentieren. Boot und SSH sind bestätigt; die Kompatibilität der Hardwaretreiber bleibt zu prüfen.
 
 Quelle: [Raspberry Pi OS Downloads](https://www.raspberrypi.com/software/operating-systems/).
 
 ## 1. SD-Karte vorbereiten
 
-Mit Raspberry Pi Imager das vereinbarte Lite-Image auf die 64-GB-Karte schreiben. Das überschreibt die Karte; vorher benötigte Daten sichern. Hostname `pi-assistent`, Benutzer `ivan`, SSH mit Schlüssel, 2,4-GHz-WLAN mit Land `DE` und Zeitzone `Europe/Berlin` konfigurieren. Der Zero 2 W benötigt ein 2,4-GHz-WLAN.
+Mit Raspberry Pi Imager das vereinbarte Lite-Image auf die 64-GB-Karte schreiben. Das überschreibt die Karte; vorher benötigte Daten sichern. Hostname `pi-assistent`, Benutzer `obivan`, SSH (Passwortanmeldung bei der Erstinbetriebnahme bestätigt), 2,4-GHz-WLAN mit Land `DE` und Zeitzone `Europe/Berlin` konfigurieren. Der Zero 2 W benötigt ein 2,4-GHz-WLAN.
 
 ## Installationsprotokoll — 05.10.2026 📸
 
-Raspberry Pi Imager **v2.0.11.1** auf macOS. Der Abschlussbildschirm bestätigt **Raspberry Pi Zero 2 W**, **Raspberry Pi OS Lite (64-bit)** sowie angewendete Anpassungen für Hostname, Lokalisierung, Benutzerkonto, WLAN und aktiviertes SSH. Das Image wird im Imager als **Debian Trixie**, veröffentlicht **2026-09-15**, angezeigt. Image-Prüfsumme und laufender Kernel wurden noch nicht erfasst.
+Raspberry Pi Imager **v2.0.11.1** auf macOS. Der Abschlussbildschirm bestätigt **Raspberry Pi Zero 2 W**, **Raspberry Pi OS Lite (64-bit)** sowie angewendete Anpassungen für Hostname, Lokalisierung, Benutzerkonto, WLAN und aktiviertes SSH. Das Image wird im Imager als **Debian Trixie**, veröffentlicht **2026-09-15**, angezeigt. Die Image-Prüfsumme wurde noch nicht erfasst; der laufende Kernel ist im folgenden Bootprotokoll dokumentiert.
 
-Tatsächlicher Hostname: **`pi-assistent`** (ersetzt die ursprüngliche Planung `wgz-voice-01`). WLAN wurde eingerichtet; Benutzername, SSH-Authentifizierung, WLAN-Land und Zeitzone sind in den Screenshots nicht einzeln nachgewiesen. `ivan`, `DE` und `Europe/Berlin` bleiben dafür die geplanten Werte.
+Tatsächlicher Hostname: **`pi-assistent`** (ersetzt die ursprüngliche Planung `wgz-voice-01`). WLAN wurde eingerichtet. Die spätere SSH-Anmeldung bestätigt Benutzer `obivan` und Passwortauthentifizierung. WLAN-Land `DE` und Zeitzone `Europe/Berlin` bleiben zu überprüfende Planwerte.
 
-**Bestätigt:** Schreibvorgang abgeschlossen und Karte automatisch ausgeworfen. Nutzer hat die Karte eingesetzt und startet den Pi. **Noch offen:** erfolgreicher Boot, WLAN-Erreichbarkeit und SSH-Anmeldung.
+**Bestätigt:** Schreibvorgang abgeschlossen und Karte automatisch ausgeworfen. Der Pi ist gestartet, im Netzwerk erreichbar und die SSH-Anmeldung funktioniert. **Noch offen:** Erreichbarkeit nach einem weiteren Neustart und Hardwaretests.
 
 ### Modell auswählen
 
@@ -50,9 +50,27 @@ Tatsächlicher Hostname: **`pi-assistent`** (ersetzt die ursprüngliche Planung 
 
 Alle acht Originalscreenshots liegen unter `docs/images/setup/`. [Screenshot 04](images/setup/04-image.png) ist identisch mit Screenshot 03 und wird deshalb nur einmal eingebettet.
 
+## Boot und erste SSH-Anmeldung — 05.10.2026 ✅
+
+| Beobachtung | Bestätigter Wert |
+|---|---|
+| Hostname | `pi-assistent` |
+| IPv4 beim ersten Start | `172.22.9.128` (kann sich ohne Reservierung ändern) |
+| Benutzer | `obivan` |
+| SSH | Anmeldung mit Passwort erfolgreich |
+| Architektur | `aarch64` |
+| Kernel | `6.18.50+rpt-rpi-v8` |
+| Kernelpaket laut Loginbanner | `Debian 1:6.18.50-1+rpt1 (2026-09-11)` |
+
+![Netzwerkscan zeigt pi-assistent unter 172.22.9.128](images/setup/first-boot-01.png)
+
+![Erfolgreiche SSH-Anmeldung als obivan, Kernelbanner und Shellprompt](images/setup/first-boot-02.png)
+
+Der Login belegt einen erfolgreichen Boot und SSH-Zugriff über die IP-Adresse. mDNS (`pi-assistent.local`) und Erreichbarkeit nach einem weiteren Neustart wurden noch nicht bestätigt.
+
 ## 2. Erster Start
 
-Per SSH mit `ssh ivan@pi-assistent.local` verbinden (alternativ die IP-Adresse verwenden) und Modell/OS erfassen:
+Per SSH mit `ssh obivan@pi-assistent.local` verbinden (alternativ die IP-Adresse verwenden) und Modell/OS erfassen:
 
 ```bash
 cat /proc/device-tree/model
@@ -113,4 +131,4 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 | WLAN/SSH nach Neustart verfügbar | Offen |
 | Akku-/Abschaltverhalten geprüft | Offen |
 
-SD-Karte erfolgreich geschrieben; erster Boot am 05.10.2026 vom Nutzer gestartet. SSH, Kernel und Hardwaretests sind noch nicht bestätigt.
+SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Hardwaretests und erneuter Neustart stehen aus.
