@@ -1,163 +1,60 @@
-# WM8960 Push-to-Talk
+# Push-to-Talk: Verhalten und Abnahme
 
-Stand 05.10.2026: Implementierung und automatisierte Tests vorhanden. Aktiv-Low-Polarität und normale Tastenerkennung sind auf dem Pi bestätigt (19 Start-/Release-Paare). PTT-Aufnahme, verständliche manuelle Wiedergabe und automatischer systemd-Start samt erneuter Aufnahme/Wiedergabe nach Neustart sind bestätigt. Zeitlimit ohne Wiederholung, Dienststart bei gehaltener Taste, Stop während Aufnahme und ALSA-Fehler samt Wiederherstellung sind auf Hardware bestätigt. Gezielte elektrische Prelltests und quantitative Lastmessungen bleiben offen. Die zuvor bestätigte allgemeine Audio-Neustartprüfung steht in [setup.md](setup.md).
+Die vorhandene WM8960-Taste liegt auf **BCM GPIO17 / Pin 11**, aktiv Low mit Pull-up. Auf dem Pi bestätigt: `/dev/gpiochip0`, `pinctrl-bcm2835`, Offset 17; libgpiod-Python-API v2. Kein RPi.GPIO, sysfs oder zusätzlicher Audiotreiber nötig. [Hardwarequelle](https://www.waveshare.com/wiki/WM8960_Audio_HAT).
 
-## Plan und Hardwarebeleg
+Installation über den vollständigen [Dienstinstaller im Setup](setup.md#4-repository-und-dienst-installieren); keine manuelle Kopieranleitung einzelner Module. Vor Tests Dienst stoppen, danach [wieder starten](operation.md#start-stop-und-logs).
 
-1. GPIO-Chip, Leitung und Polarität zunächst ohne Audio prüfen.
-2. Gedrückt halten startet eine Aufnahme; Loslassen beendet sie. Das ersetzt den früheren Toggle-Entwurf.
-3. Danach systemd installieren und Aufnahme, Fehlerfälle und Neustart prüfen.
-4. OpenRouter-STT an den validierten `capture_ready`-Übergabepunkt anschließen; LLM-Antwort und deutsche TTS folgen danach.
+## Bedienung und Grenzen
 
-Das [Waveshare-Wiki](https://www.waveshare.com/wiki/WM8960_Audio_HAT) ordnet `BUTTON` ausdrücklich **P17 / BCM GPIO17** zu, am Pi physischer Pin 11. Auch die vorhandene [Hardwaredokumentation](hardware.md) nennt diese Belegung. Der [Herstellerschaltplan](https://files.waveshare.com/upload/f/fa/WM8960_Audio_HAT_Schematic.pdf), Seite 1, zeigt K1, P17, R1 4,7 kΩ, 3V3 und GND. Voreinstellung: aktiv Low mit Pull-up; die tatsächliche Polarität des montierten HATs vor Betrieb mit `--probe` bestätigen. Kein Treiberwechsel nötig.
+- Halten startet Aufnahme, Loslassen beendet sie; kein Toggle. Beim Start und nach Limit/Fehler zunächst loslassen.
+- GPIO-Abfrage alle 10 ms, Pegel 40 ms stabil; konfigurierbar 10–500 ms. Sehr kurze Berührungen können entfallen.
+- Aufnahme mit `arecord`: PCM S16_LE, 48 kHz, zwei Kanäle. Standardlimit 30 s, konfigurierbar 1–120 s. `arecord -d` begrenzt zusätzlich; 30 s entsprechen etwa 5,76 MB PCM.
+- Dienst beendet `arecord` beim Loslassen mit SIGINT und wartet begrenzt. Aus den Rohdaten erzeugt er selbst ein WAV; vollständige Stereoframes, Mindestdauer 100 ms und begrenzte Größe werden geprüft.
+- Ein Slot, keine Warteschlange: während STT keine weitere Aufnahme. STT läuft seit SHIM-Integration in einem Hintergrundthread; Tasten bleiben bedienbar. Nach Verarbeitung benötigen gehaltene PTT-Tasten Release.
+- Dienststop beendet Aufnahme/verwaltete Ansage und entfernt Audiodateien. systemd startet bei Prozessausfall mit begrenzter Neustartfrequenz erneut.
 
-BCM17 ist auf dem Zero 2 W normalerweise Offset 17 am Haupt-GPIO-Chip. Am 05.10.2026 bestätigen die vom Nutzer eingereichten Ausgaben `/dev/gpiochip0` als `pinctrl-bcm2835` mit 54 Leitungen und Offset 17 (`GPIO17`) als Eingang ohne Consumer. `python3-libgpiod` und `gpiod` sind in Version `2.2.1-2+deb13u1` installiert. Die anschließende Probe mit den Voreinstellungen (`PTT_ACTIVE_LOW=1`, 40 ms Entprellung) zeigt 19 vollständige Start-/Release-Paare ohne Fehlermeldung. Der Nutzer führte dazu Tastendrücke aus; normale Tastenfunktion und Aktiv-Low-Polarität sind bestätigt. Die geplanten 20 Zyklen sowie gezielte Prell-/Kurzdrücktests sind noch nicht vollständig nachgewiesen. GPIO17 darf nicht bereits von einem anderen Dienst belegt sein. I²C GPIO2/3 und I²S GPIO18–21 bleiben für das Audio-HAT; Kamera und mini PiTFT liegen derzeit separat.
+Zusätzliches A/GPIO17-Verhalten, B-Abbruch und Wiedergabesteuerung: [Button SHIM](button-controls.md).
 
-## Verhalten und Grenzen
+## Übergabepunkt
 
-`src/ptt.py` verwendet die libgpiod-Python-API v2, die [Debian 13 als python3-libgpiod bereitstellt](https://packages.debian.org/trixie/python/python3-libgpiod). Keine RPi.GPIO-/sysfs-Abhängigkeit. Der Installer benötigt zusätzlich `sudo apt install python3-smbus i2c-tools` für die optionale Button-SHIM-Steuerung; keine pip-Installation erforderlich. Die Bibliothek wird nur beim Start des Hardwaredienstes importiert; die Zustands- und Aufnahmetests laufen ohne GPIO-Hardware.
-
-- Abfrage alle 10 ms; ein Pegel muss 40 ms stabil bleiben. Entprellung gilt für Drücken und Loslassen. Sehr kurze Tastendrücke können bewusst entfallen.
-- Beim Dienststart muss die Taste zunächst stabil losgelassen sein. Eine beim Boot gehaltene Taste startet keine Aufnahme.
-- `arecord` nimmt WAV / PCM S16_LE, 48 kHz, Stereo über `plughw:CARD=wm8960soundcard,DEV=0` auf, entsprechend dem bestätigten manuellen Mikrofontest. Mixeränderungen erfolgen nur durch C/D bei aktivierter [Button-SHIM-Steuerung](button-controls.md).
-- Standardlimit 30 Sekunden (etwa 5,76 MB Audionutzdaten). Einstellbar 1–120 Sekunden. Zusätzlich begrenzt `arecord -d` die Aufnahme; damit schützt auch ein blockierter GPIO-Ablauf vor endlosem Audio.
-- Nach Zeitlimit oder Fehler während gehaltenem Taster muss zuerst losgelassen werden. Keine wiederholten Aufnahmen bei dauerhaft gedrückter Taste.
-- Loslassen sendet SIGINT an `arecord` und wartet höchstens zwei Sekunden. arecord schreibt zunächst rohe PCM-Daten; der Dienst erzeugt und prüft anschließend selbst das WAV (Mindestlänge 100 ms, vollständige Stereoframes, begrenzte Größe). Damit hängt der WAV-Header nicht von der ALSA-Signalbehandlung ab. Bei selbst angefordertem Stop werden Exitstatus 0, 1 (unterbrochener ALSA-Leseaufruf) oder SIGINT akzeptiert, wenn gültige PCM-Daten vorhanden sind; ungeplantes Prozessende mit Fehler wird verworfen. Hängende Prozesse werden beendet. Siehe [ALSA-Quellcode: Signalhandler und pcm_read](https://github.com/alsa-project/alsa-utils/blob/master/aplay/aplay.c).
-- SIGTERM/SIGINT beendet die laufende Aufnahme und löscht die Audiodateien. `systemd` startet den Dienst bei Prozess-/GPIO-Ausfall neu, mit begrenzter Neustartfrequenz. Aufnahmefehler erscheinen als JSON-Ereignis im Journal; danach ist eine neue Aufnahme möglich.
-
-## Installation auf pi-assistent
-
-PR #5 hat den PTT-Code und die ersten Hardwarediagnosen nach main übernommen. Im Repository auf dem Pi:
-
-```bash
-sudo apt update
-sudo apt install python3 python3-libgpiod gpiod alsa-utils vim
-gpiodetect
-gpioinfo
-id obivan
-ls -l /dev/gpiochip* /dev/snd
-/usr/bin/python3 -c "import gpiod; print(gpiod.__version__); assert hasattr(gpiod, 'request_lines')"
-```
-
-Chip mit den BCM-Leitungen auswählen und Offset 17 prüfen. Erwartet ist ein freier Eingang; keine belegte Leitung erzwingen. Falls `gpioinfo` wegen Berechtigungen scheitert, einmal lesend `sudo gpioinfo` verwenden. Für den Dienst benötigen `obivan` bzw. seine Zusatzgruppen Zugriff auf Audio und den gewählten GPIO-Chip. Raspberry Pi OS verwendet gewöhnlich `audio` und `gpio`; vor Installation der Unit deren Existenz und Geräterecht prüfen. Die Unit setzt diese Gruppen selbst. Bei anderem Benutzer `User=` und gegebenenfalls Gruppen mit Vim anpassen.
-
-```bash
-sudo install -d -m 0755 /opt/pi-voice-assistant/src
-sudo install -m 0644 src/ptt.py /opt/pi-voice-assistant/src/ptt.py
-sudo install -m 0644 src/transcribe.py /opt/pi-voice-assistant/src/transcribe.py
-sudo install -m 0644 config/ptt.env.example /etc/pi-ptt.env
-if [ ! -e /etc/pi-voice-assistant.env ]; then
-  sudo install -o root -g obivan -m 0640 \
-    config/openrouter.env.example /etc/pi-voice-assistant.env
-fi
-sudo chown root:obivan /etc/pi-voice-assistant.env
-sudo chmod 0640 /etc/pi-voice-assistant.env
-sudo vim /etc/pi-ptt.env
-sudo vim /etc/pi-voice-assistant.env
-```
-
-`PTT_GPIO_CHIP` und `PTT_GPIO_LINE` anhand der Diagnose setzen. Alle Änderungen mit **Vim**: `i`, bearbeiten, Esc, `:wq`, Enter. Den PTT-Dienst für Probe und manuelle Audiotests gestoppt lassen; GPIO und Aufnahmegerät werden exklusiv benutzt.
-
-In der SSH-Shell als `obivan` die mitgelieferte vertrauenswürdige Konfiguration laden, danach **nur die Taste prüfen**:
-
-```bash
-set -a
-. /etc/pi-ptt.env
-set +a
-/usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py --probe
-```
-
-Erwartung: Losgelassen kein `start`; beim Drücken genau ein `button/start`, beim Loslassen genau ein `button/release`. Bei falscher Polarität mit Ctrl-C beenden und `PTT_ACTIVE_LOW` mit Vim korrigieren (0 = aktiv High / Pull-down). Werte erneut laden und Probe wiederholen. Die GPIO-Leitung wird beim Beenden freigegeben. Probe zeigt auch `limit`, schreibt aber keine Audiodatei.
-
-Erst nach erfolgreicher Probe den Dienst installieren:
-
-```bash
-sudo install -m 0644 deploy/pi-ptt.service /etc/systemd/system/pi-ptt.service
-sudo vim /etc/systemd/system/pi-ptt.service
-sudo systemd-analyze verify /etc/systemd/system/pi-ptt.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now pi-ptt.service
-systemctl status pi-ptt.service --no-pager
-journalctl -u pi-ptt.service -f
-```
-
-Ctrl-C beendet nur die Journalanzeige. Der Dienst verwendet `obivan` mit Audio-/GPIO-Gruppen, benötigt kein root und schreibt nur nach `/run/pi-ptt`. `ProtectHome` verhindert Abhängigkeit vom Benutzer-Checkout; darum liegt der installierte Code unter `/opt`. Nach Änderungen an der Konfiguration: `sudo systemctl restart pi-ptt.service`. Dienst entfernen/deaktivieren: `sudo systemctl disable --now pi-ptt.service`; installierte Dateien bei Bedarf entfernen. Das WM8960-Overlay und ALSA bleiben davon unabhängig.
-
-## Schnittstelle für spätere Sprachverarbeitung
-
-Rohe Daten liegen während der Aufnahme in `capture.part.pcm`; beim Verpacken entsteht kurzzeitig zusätzlich das WAV (zusammen höchstens etwa doppelte Audio-Nutzdatengröße). Nach Fertigstellung werden die Rohdaten gelöscht. Eine vollständige Aufnahme wird atomar von `capture.part.wav` nach `/run/pi-ptt/capture.wav` umbenannt. Erst danach erscheint eine JSON-Zeile auf stdout bzw. im Journal:
+Während Aufnahme: `capture.part.pcm`; beim Verpacken kurz zusätzlich `capture.part.wav`. Fertiges WAV wird atomar nach `/run/pi-ptt/capture.wav` umbenannt, Rohdaten werden entfernt. Dann erscheint:
 
 ```json
 {"version":1,"event":"capture_ready","path":"/run/pi-ptt/capture.wav","reason":"release","format":"wav","encoding":"PCM_S16_LE","sample_rate":48000,"channels":2,"frames":96000}
 ```
 
-`reason` ist `release`, `limit` oder `process_exit` (natürliches arecord-Zeitlimit). `frames` bestimmt die Dauer. Ereignisse `waiting_for_release`, `recording`, `button` (Probe) und `error` dienen der Diagnose. Kein Audioinhalt wird ins Journal geschrieben.
+Dauer = Frames / 48000. `reason` ist `release`, `limit` oder `process_exit`. Auf `capture_ready` folgt `processing`, danach `transcript`/`ERKANNT` oder `stt_error`; keine automatische Antwort. Der Dienst ruft den STT-Adapter direkt auf, Journal-Tailing ist keine Transport-API.
 
-Es gibt **einen** lokalen Aufnahmeslot. Die Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar; keine unbegrenzte Warteschlange und keine dauerhafte Speicherung. Der aktuelle STT-Adapter wird direkt nach erfolgreichem `finish` aufgerufen und übernimmt das WAV vor der nächsten Aufnahme; Journal-Tailing ist keine Transport-API. STT läuft im Hintergrund; währenddessen startet keine neue Aufnahme, die Button-SHIM-Steuerung bleibt bedienbar. Danach werden GPIO17/A resynchronisiert; gehaltene Tasten müssen zuerst losgelassen werden. Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`, erwartete API-/Netzfehler `stt_error`. LLM-Antwort und automatische Antwortwiedergabe sind noch nicht implementiert. Eine separat installierte TTS kann über E eine Statusansage liefern; siehe [Button-Steuerung](button-controls.md).
-
-## Validierung
-
-Automatisierte Tests laufen mit `python3 -m unittest discover -s tests -v`. Sie prüfen weiterhin Entprellung, Start mit gehaltenem Taster, Zeitlimit, Recorder-/WAV-Fehlerfälle und zusätzlich PTT→STT-Übergabe, GPIO-Resync sowie gemockte OpenRouter-Antworten einschließlich abgeschnittener HTTP-Antworten. Netzwerkzugriff und API-Key sind für CI nicht erforderlich. Prozess und Audio sind im Test simuliert; dies bestätigt weder libgpiod-Geräterechte noch reale ALSA-Signalbehandlung.
-
-Auf dem Pi folgende Ergebnisse mit Datum, Kernel, `dpkg-query -W python3-libgpiod gpiod alsa-utils`, GPIO-Chip/Offset, Polarität und Konfiguration protokollieren:
-
-| Prüfung | Erwartung | Status |
-|---|---|---|
-| Probe: 20 normale Drück-/Loslasszyklen | Genau ein Start und ein Ende je Zyklus | 19 vollständige Paare in Nutzer-Ausgabe bestätigt; letzter Zyklus noch offen |
-| Probe: kurze/prellende Berührungen | Keine Mehrfachstarts | Offen |
-| Start bei gehaltenem Taster | Aufnahme erst nach Loslassen und erneutem Drücken | Dienststart getestet und vom Nutzer bestätigt; kein zusätzlicher Boottest mit gehaltener Taste |
-| 2–5 s deutschen Satz halten/loslassen | `capture_ready`, gültiges verständliches Stereo-WAV | Aufnahmeereignisse dokumentiert; manuelle Wiedergabe vom Nutzer mit „funktioniert“ bestätigt |
-| Taste länger als 30 s halten | Eine begrenzte Aufnahme; keine zweite bis erneutes Drücken | 40 s durchgehend gehalten, keine Wiederholung; Nutzerbestätigung und Journal mit reason=limit |
-| Sehr kurzer Tastendruck | Keine fertige Leeraufnahme | Elf kurze Aufnahmen mit je 6000 Frames (125 ms); unter 100 ms und Zuordnung zu tatsächlichen Betätigungen nicht belegt |
-| Dienst während Aufnahme stoppen | arecord beendet; `/run/pi-ptt` bereinigt | recording 17:00:12, Stop 17:00:20 ohne capture_ready; inactive, kein arecord, Verzeichnis entfernt |
-| Falsches ALSA-Gerät konfigurieren | `error`, keine fertige Datei; nach Korrektur wieder nutzbar | Sechs einzelne Betätigungen mit je error; Testverzeichnis leer; normaler Dienst danach mit Aufnahme und verständlicher Wiedergabe bestätigt |
-| Neustart mit aktiviertem Dienst | Dienst läuft, GPIO angefordert, Aufnahme/Wiedergabe erneut möglich | Status enabled / active (running) nach Neustart belegt; anschließende Hörprüfung mit „passt“ bestätigt |
-| Speicher/CPU beobachten | Kein Dateiwachstum über einen Slot; Last messen | Offen |
-
-Fertige Aufnahme vor dem nächsten Tastendruck manuell abhören (E kann bei aktivierter Button-SHIM-Steuerung eine separate Statusansage auslösen):
+Die fertige Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar. **Vor Stop und nächstem Tastendruck abhören:**
 
 ```bash
 aplay -D plughw:CARD=wm8960soundcard,DEV=0 /run/pi-ptt/capture.wav
-sudo systemctl stop pi-ptt.service
-sudo systemctl start pi-ptt.service
 ```
 
-Beim manuellen Abspielen die Taste nicht drücken. Anschließend Stop/Start entfernt die Testaufnahme. Kein WAV committen. Speaker ist mit 95 % / 0,00 dB auf beiden Kanälen ausgelesen (siehe [setup.md](setup.md)); die bereits bestätigte allgemeine Audio-Neustartprüfung ist keine PTT-Abnahme.
+Nicht während des Abhörens erneut aufnehmen. `/run/pi-ptt` ist privat; Zugriff erfolgt als Dienstbenutzer `obivan`. Unter der Standardunit Runtime-Pfad nicht ändern.
 
-## Manueller Aufnahmetest im Vordergrund
+## Hardware-Abnahme am 05.10.2026
 
-Falls der systemd-Dienst bereits läuft, zuerst `sudo systemctl stop pi-ptt.service` ausführen, damit GPIO17 frei ist. Eine laufende Probe mit Ctrl-C beenden. Im Checkout als obivan starten:
+Grundlage: vom Nutzer eingereichte Ausgaben und Hörprüfungen, keine direkte Agentenverbindung zum Pi. Ergebnisse betreffen die jeweils getestete Version.
+
+| Prüfung | Beleg / Ergebnis |
+|---|---|
+| GPIO-Polarität und normale Zyklen | 19 vollständige Probe-Start/Release-Paare, aktiv Low bestätigt |
+| Aufnahme und manuelle Wiedergabe | Verständlich; systemd enabled/active und erneute Aufnahme nach Neustart, Nutzer „passt“ |
+| 30-s-Limit ohne Wiederholung | 16:54:44 → 16:55:14 CEST, reason=limit, 1.434.016 Frames = 29,88 s; mindestens 40 s gehalten |
+| Start bei gehaltener Taste | Dienststart 16:57:23; Aufnahme erst nach Release und erneutem Drücken laut Nutzer; kein gesonderter Pi-Boottest |
+| Kurzbetätigungen | Elf Clips à 6000 Frames = 125 ms; kein Beleg für elektrische Prellfreiheit oder Verwerfung unter 100 ms |
+| Stop während Aufnahme | recording 17:00:12, Stop 17:00:20, kein capture_ready; inactive, kein arecord, Runtime-Verzeichnis entfernt |
+| Falsches ALSA-Gerät und Wiederherstellung | Sechs einzelne Versuche mit error, keine fertige Datei; nach Rücknahme erneute verständliche Aufnahme bestätigt |
+| Ruhetest | 15 s ohne neue Ereignisse; Zwischenaufnahmen stammten laut Nutzer von weiteren Tastendrücken |
+| PTT → Vosk | Später auf Hardware bestätigt; [STT-Messwerte](speech-to-text.md#hardware-messwerte) |
+
+Offen: gezielte elektrische Prell-/Kurzdrücktests, Audio unter 100 ms, Pi-Boot mit gehaltener Taste und quantitative Dauerlast. Der fehlende zwanzigste Probezyklus ist kein nachgewiesener Funktionsfehler. Neue SHIM-/TTS-Versionen brauchen die zusätzliche [Dienstabnahme](button-controls.md#abnahme).
+
+## Automatisierte Prüfung
 
 ```bash
-cd ~/pi-voice-ptt-test
-PTT_RUNTIME_DIR=/tmp/pi-ptt-obivan /usr/bin/python3 src/ptt.py
+python3 -m unittest discover -s tests -v
 ```
 
-Taste für einen 3–5 Sekunden langen Testsatz halten und loslassen. Erwartet: recording, danach capture_ready. Solange der Recorder läuft, in einer zweiten SSH-Sitzung als obivan abhören:
-
-```bash
-aplay -D plughw:CARD=wm8960soundcard,DEV=0 /tmp/pi-ptt-obivan/capture.wav
-```
-
-Während der Wiedergabe nicht erneut drücken. Erst nach dem Abhören den Recorder mit Ctrl-C beenden: Dabei wird die Testaufnahme gelöscht. Diese Reihenfolge ist erforderlich, weil der Dienst beim Beenden auch fertige Aufnahmen entfernt. Ergebnis und etwaige Fehler zurückmelden; Aufnahme nicht ins Repository übernehmen. Der Testpfad unter /tmp ist nur für diese manuelle Probe, der systemd-Dienst verwendet weiterhin /run/pi-ptt.
-
-## Abnahme am 05.10.2026: Installation und Neustart
-
-Die Vordergrundaufnahme erzeugte wiederholt capture_ready (WAV, PCM S16_LE, 48 kHz, zwei Kanäle). Nach dem zunächst vorzeitigen Ctrl-C war die Datei erwartungsgemäß gelöscht. Der wiederholte Test mit Abhören vor Beenden wurde vom Nutzer mit „funktioniert“ bestätigt.
-
-Anschließend wurden Code, Beispielkonfiguration und Unit nach /opt, /etc/pi-ptt.env und /etc/systemd/system installiert. systemd-analyze verify zeigte keine Fehlermeldung. enable --now erzeugte den Autostart-Link; erster Dienststart am 05.10.2026 um 16:46:20 CEST, PID 1466, active (running).
-
-Nach dem angeforderten Neustart zeigt die vom Nutzer gelieferte Statusausgabe (auch als Screenshot) den automatischen Start um 16:47:34 CEST, PID 530, enabled und active (running). ExecStart verwendet /usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py. Das Journal enthält waiting_for_release für /dev/gpiochip0, Leitung 17, probe=false. Nach erneutem Tastendruck und manuellem Abspielen von /run/pi-ptt/capture.wav bestätigt der Nutzer „passt“. Damit ist der normale PTT-Ablauf inklusive automatischem Start und Hörprüfung nach Neustart bestanden. Keine quantitative Qualitätsmessung und keine automatische Wiedergabe implementiert; Die anschließenden Grenz- und Fehlerprüfungen sind unten dokumentiert; ein Boot mit gehaltener Taste wurde nicht gesondert getestet.
-
-## Abnahme am 05.10.2026: Grenzen und Fehlerbereinigung
-
-Alle folgenden Prüfungen führte der Nutzer über SSH auf pi-assistent aus; keine direkte SSH-Verbindung des Agenten. Der zuletzt bestätigte Kernel ist 6.18.50+rpt-rpi-v8; für diese Tests wurde kein neuer Kernel-/Paketstand ausgelesen. GPIO-Chip /dev/gpiochip0, Offset 17, aktiv Low und die vorhandene Installation wurden weiterverwendet.
-
-- Zeitlimit: recording um 16:54:44 CEST, capture_ready mit reason=limit um 16:55:14, 1434016 Frames (29,88 s bei 48 kHz). Der Nutzer bestätigt mindestens 40 s durchgehendes Halten ohne zweite Aufnahme. Danach sind erneute Aufnahmen mit reason=release belegt.
-- Dienststart mit gehaltener Taste: waiting_for_release um 16:57:23, erst um 16:57:33 recording und capture_ready mit reason=release. Der Nutzer bestätigt Halten beim Dienststart und Aufnahme erst nach Loslassen und erneutem Drücken. Dies ist ein Dienststarttest, kein gesonderter Neustart des Pi mit gehaltener Taste.
-- Kurzbetätigungen: elf Aufnahme-/Release-Paare zwischen 16:58:04 und 16:58:07, jeweils 6000 Frames (125 ms). Keine error-Ereignisse. Tatsächliche Anzahl der Betätigungen und elektrische Prellimpulse wurden nicht bestätigt; daher keine vollständige Entprellungsabnahme und kein Nachweis der Verwerfung von Aufnahmen unter 100 ms.
-- Stop während Aufnahme: recording um 17:00:12, erfolgreicher Dienststop um 17:00:20 ohne Veröffentlichung dieser Aufnahme. is-active meldet inactive, pgrep für arecord bleibt ohne Ausgabe, /run/pi-ptt existiert nicht mehr.
-- ALSA-Fehler: Vordergrundtest bei gestopptem Dienst, nur temporäre Umgebungswerte PTT_AUDIO_DEVICE=plughw:CARD=absichtlichungueltig,DEV=0 und PTT_RUNTIME_DIR=/tmp/pi-ptt-error-test. Sechs recording/error-Paare mit arecord exit status 1, kein capture_ready. Der Nutzer bestätigt sechs einzelne Tastendrücke, keine automatische Wiederholung bei gehaltenem Taster. Nach Ctrl-C ist das Testverzeichnis leer. Die eingereichte Prozessprüfung ist in der Kopie verunstaltet und zählt nicht als gesonderter Prozessnachweis dieses Tests.
-- Wiederherstellung: normaler Dienst danach mit erfolgreichen release-Aufnahmen um 17:04:16 (222016 Frames) und 17:04:25 (258016 Frames). Manuelle Wiedergabe wird als verständlich bestätigt. Zwischenzeitlich sichtbare Recorder und fehlendes capture.wav waren vom Nutzer durch weitere Tastendrücke ausgelöst; neue Aufnahme löscht den vorherigen Slot. Die letzten Prozessprüfungen zeigen keinen arecord. Im anschließenden 15-s-Ruhetest ohne Tastenbetätigung erscheinen keine neuen Ereignisse.
-
-Offen bleiben der zwanzigste ursprüngliche Probezyklus, gezielte elektrische Prelltests, Aufnahmen unter 100 ms, quantitative Speicher-/CPU-Messungen und ein gesonderter Boottest mit gehaltener Taste. OpenRouter-STT ist implementiert und separat erfolgreich getestet; die integrierte PTT→STT-Hardwareabnahme sowie LLM/TTS/Wiedergabe stehen noch aus.
+Tests simulieren GPIO, Recorder und Provider; sie prüfen Zustandslogik, WAV-Validierung, Fehlerbereinigung und STT-Übergabe. Reale Geräterecht-, Mixer- und Audioprüfungen erfolgen auf dem Pi.

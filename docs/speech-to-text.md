@@ -1,66 +1,18 @@
-# Speech-to-Text: OpenRouter + Vosk
+# Speech-to-Text: Vosk und OpenRouter
 
-Stand 05.10.2026: OpenRouter-STT und Vosk-STT sind auf `pi-assistent` mit echten WM8960-WAV-Dateien bestätigt. Vosk 0.3.45 läuft unter Python 3.13 auf aarch64; der integrierte PTT→Vosk-Pfad ist auf dem Raspberry Pi Zero 2 W hardwareseitig abgenommen. `pi-assistent` wird aktuell bewusst mit `STT_PROVIDER=vosk` offline betrieben. Der `auto`-Fallback ist implementiert, aber noch nicht als realer OpenRouter→Vosk-Ausfalltest abgenommen.
+Auf `pi-assistent` läuft bewusst **`STT_PROVIDER=vosk`**. PTT→Vosk mit echten WM8960-Aufnahmen ist am 05.10.2026 bestätigt. Vosk 0.3.45 funktioniert unter Python 3.13/aarch64 auf Trixie. Das liefert deutschen Text, keine KI-Antwort.
 
-## Zielarchitektur
+## Modi und Installation
 
-```text
-Taste / GPIO17
-    ↓
-WM8960 / arecord
-    ↓
-48 kHz Stereo WAV
-    ↓
-src/transcribe.py
-    ├── openrouter → OpenRouter Whisper
-    ├── vosk       → Vosk lokal
-    └── auto       → OpenRouter → bei Fehler Vosk
-    ↓
-deutscher Text
-    ↓
-OpenRouter LLM
-    ↓
-deutsche TTS
-```
-
-Damit bleiben Aufnahme und Spracherkennung im `vosk`-Modus vollständig offline. Für die eigentliche KI-Antwort ist im aktuellen Projektstand weiterhin OpenRouter vorgesehen.
-
-## Provider
-
-`STT_PROVIDER` akzeptiert genau drei Werte:
-
-| Wert | Verhalten |
+| `STT_PROVIDER` | Verhalten |
 |---|---|
-| `openrouter` | Bestehender Cloud-Pfad. Das ist der kompatible Standard. |
-| `vosk` | Nur lokale Vosk-Erkennung. Kein Internet und kein OpenRouter-Key erforderlich. |
-| `auto` | Zuerst OpenRouter. Bei Netzwerk-, API- oder STT-Fehlern automatische lokale Vosk-Erkennung. |
+| `vosk` | Vollständig lokale STT, kein Netzwerk/API-Key nötig |
+| `openrouter` | Online-STT; Code-/Vorlagenstandard, weil Vosk separat installiert wird |
+| `auto` | Zuerst OpenRouter; bei STT-/Netz-/API-Fehler Vosk, reale Ausfall-Abnahme noch offen |
 
-Bei `auto` wird das Vosk-Modell erst beim ersten benötigten Fallback geladen und anschließend im laufenden Dienst wiederverwendet. Solange OpenRouter funktioniert, entstehen dadurch keine Vosk-Modellkosten beim Dienststart.
+[Setup](setup.md#4-repository-und-dienst-installieren) enthält die vollständige Installation. Optionaler Vosk-Installer: `sudo bash scripts/install-vosk.sh`. Paket liegt in `/opt/pi-voice-assistant/vendor`, Modell in `/opt/pi-voice-assistant/models/vosk-model-small-de-0.15`. Kein Modell in Git; kein Vosk-venv für den Dienst: er verwendet `/usr/bin/python3` mit zusätzlichem Vendor-Pfad.
 
-## Audioformat
-
-Der bereits hardwareseitig getestete Recorder bleibt unverändert bei:
-
-```text
-PCM S16_LE
-48000 Hz
-2 Kanäle
-```
-
-Für Vosk wird diese Aufnahme ausschließlich innerhalb des STT-Adapters auf 16 kHz Mono heruntergemischt. Dadurch wird für die lokale STT-Einführung nicht gleichzeitig der funktionierende WM8960-/ALSA-Pfad verändert.
-
-## Konfiguration
-
-`/etc/pi-voice-assistant.env` enthält Provider- und STT-Konfiguration.
-
-Beispiel für den bisherigen Cloud-Modus:
-
-```text
-STT_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-v1-...
-```
-
-Rein lokal:
+Konfiguration mit `sudo vim /etc/pi-voice-assistant.env`, danach Dienst neu starten. Für Vosk:
 
 ```text
 STT_PROVIDER=vosk
@@ -68,117 +20,42 @@ VOSK_MODEL_PATH=/opt/pi-voice-assistant/models/vosk-model-small-de-0.15
 VOSK_PYTHON_PATH=/opt/pi-voice-assistant/vendor
 ```
 
-Hybridmodus:
+Für `openrouter`/Online-Pfad von `auto` zusätzlich echten `OPENROUTER_API_KEY` setzen. Bisher getestetes Online-Modell: `openai/whisper-large-v3-turbo`, Sprachhinweis `de`, Standard-HTTP-Timeout 30 s. Keine LLM-Anbindung aus der STT-Konfiguration ableiten.
 
-```text
-STT_PROVIDER=auto
-OPENROUTER_API_KEY=sk-or-v1-...
-VOSK_MODEL_PATH=/opt/pi-voice-assistant/models/vosk-model-small-de-0.15
-VOSK_PYTHON_PATH=/opt/pi-voice-assistant/vendor
-```
+## Format und Ausführung
 
-Mit Vim bearbeiten:
+Recorder bleibt bei **48 kHz / Stereo / S16_LE**. [`transcribe.py`](../src/transcribe.py) mischt für Vosk auf Mono herunter und reduziert auf 16 kHz. Modell wird beim ersten lokalen Auftrag geladen und im laufenden Dienst wiederverwendet. Ein neues Standalone-Programm lädt es erneut.
 
-```bash
-sudo vim /etc/pi-voice-assistant.env
-```
+STT läuft im Hintergrundthread; es bleibt bei einem Aufnahmeslot. B verwirft das Ergebnis, der native Aufruf läuft zu Ende. Providerfehler erzeugen `stt_error`; bei `auto` werden bei beidseitigem Scheitern beide Ursachen gemeldet. Leerer Online-Text ist ein Fehler und löst Fallback aus. Die Unit wartet nicht auf `network-online.target`.
 
-## Vosk installieren
+## Hardware-Messwerte
 
-Die Vosk-Installation ist absichtlich vom normalen PTT-/OpenRouter-Deployment getrennt:
+Einzelmessungen vom 05.10.2026, kein allgemeines Leistungsversprechen:
 
-```bash
-sudo bash scripts/install-vosk.sh
-```
+| Messung | Ergebnis |
+|---|---|
+| 6-s-Clip, erster Modellaufruf | 15,59 s |
+| Gleicher Clip, Modell schon geladen | 6,75 / 6,78 s |
+| Laufender PTT-Dienst mit geladenem Vosk | 145728 kB RSS ≈ 142 MiB |
+| Gesamtsystem zum Messzeitpunkt | 415 MiB RAM, 120 MiB verfügbar, 105 MiB Swap belegt |
 
-Das Skript installiert:
+System-Swap ist nicht allein Vosk zuzurechnen. Warm liegt die Verarbeitungszeit für diesen Clip etwa bei der Audiolänge; „offline“ bedeutet hier nicht „schnell“.
 
-- `vosk==0.3.45` isoliert nach `/opt/pi-voice-assistant/vendor`
-- `vosk-model-small-de-0.15` nach `/opt/pi-voice-assistant/models/`
+OpenRouter erkannte einen Vergleichsclip deutlich besser. Linker/rechter Mikrofonkanal lieferten ähnliche Vosk-Ergebnisse; SoX-Konvertierung brachte für diesen Clip kaum Verbesserung. Das kleine deutsche Modell ist deshalb der wahrscheinliche Hauptengpass in diesen Beispielen. Das schließt Audio-/Abstandsprobleme bei anderen Aufnahmen nicht aus. Keine zusätzliche SoX-Pipeline im normalen Dienst erforderlich.
 
-Es verändert keine System-Python-Pakete des Projekts. Das Modell wird nicht ins Git-Repository eingecheckt.
+Optionale Command-Grammar ist eine Idee für begrenzte Befehle, noch keine Funktion und kein Qualitätsversprechen für freie Fragen.
 
-Danach beispielsweise:
+## Standalone-Test und Logs
 
-```bash
-sudo vim /etc/pi-voice-assistant.env
-# STT_PROVIDER=vosk
-sudo systemctl restart pi-ptt.service
-```
-
-## Hardware-Abnahme auf dem Pi Zero 2 W
-
-Getestet am 05.10.2026 auf `pi-assistent` mit Raspberry Pi OS Lite 64-bit / Trixie und WM8960-HAT:
-
-- `vosk==0.3.45` ließ sich als `manylinux2014_aarch64`-Wheel unter Python 3.13 installieren und importieren.
-- `vosk-model-small-de-0.15` wurde erfolgreich geladen und wiederholt im laufenden PTT-Dienst verwendet.
-- Ein 6-Sekunden-Testclip benötigte beim ersten Modell-Load 15,59 s; weitere Durchläufe im selben Prozess benötigten 6,75 s bzw. 6,78 s.
-- Der laufende `pi-ptt.service` belegte nach geladenem Vosk-Modell 145728 kB RSS (rund 142 MiB).
-- Zum Messzeitpunkt zeigte das Gesamtsystem 415 MiB RAM, 120 MiB verfügbar und 105 MiB belegten Swap. Der Swap-Wert beschreibt den beobachteten Systemzustand und wird nicht allein Vosk zugerechnet.
-- Die Erkennungsqualität des kleinen deutschen Modells ist brauchbar, aber deutlich schwächer als OpenRouter Whisper bei freier Sprache und teilweise schwach bei kurzen Kommandos.
-- Ein identischer WM8960-Clip wurde von OpenRouter nahezu vollständig erkannt; damit ist das Mikrofon kein Hauptverdächtiger für die Vosk-Fehler.
-- Linker und rechter Mikrofonkanal lieferten mit Vosk sehr ähnliche Ergebnisse; der rechte Kanal war nur geringfügig besser.
-- Eine hochwertige 48-kHz→16-kHz-Konvertierung mit SoX lieferte praktisch dasselbe Vosk-Ergebnis wie die interne Konvertierung. Es gibt daher aktuell keinen Hinweis, dass der einfache interne Resampler die Hauptursache der Erkennungsfehler ist.
-
-Fazit: Vosk ist auf dem Pi Zero 2 W als vollständig lokale STT funktionsfähig. Für den aktuellen Offline-Betrieb bleibt `STT_PROVIDER=vosk` gesetzt. Die nächsten Qualitätsverbesserungen sollten beim Erkennungsmodell bzw. bei einer optionalen Command-Grammar ansetzen, nicht bei Mikrofon oder Resampling.
-
-## Standalone-Test
-
-Eine vorhandene WM8960-WAV kann direkt getestet werden:
+Vorhandene eigene WAV im normalen `/tmp` testen, als `obivan` mit lesbarer Konfiguration:
 
 ```bash
 set -a
 . /etc/pi-voice-assistant.env
 set +a
-
-/usr/bin/python3 src/transcribe.py /tmp/stt-test.wav
+/usr/bin/python3 /opt/pi-voice-assistant/src/transcribe.py /tmp/stt-test.wav
 ```
 
-Auf stdout erscheint der erkannte Text. Auf stderr wird zusätzlich der tatsächlich verwendete Provider ausgegeben:
+stdout enthält Text, stderr `STT_PROVIDER_USED=vosk` bzw. `openrouter`. Fehler: `STT_ERROR:` und Exitstatus 1. Das verwendet einen neuen Prozess und misst keine warme Dienstlatenz.
 
-```text
-STT_PROVIDER_USED=vosk
-```
-
-Fehler beginnen mit `STT_ERROR:` und liefern Exitstatus 1.
-
-## PTT-Integration
-
-Nach dem Loslassen sind im Journal unter anderem diese Ereignisse zu erwarten:
-
-```text
-capture_ready
-processing
-transcript
-ERKANNT: ...
-```
-
-Das JSON-Ereignis `transcript` enthält zusätzlich `provider=openrouter` oder `provider=vosk`. Damit ist bei `auto` sichtbar, ob ein Fallback stattgefunden hat.
-
-Wenn sowohl OpenRouter als auch Vosk scheitern, meldet `auto` beide Ursachen in einem `stt_error`. Der PTT-Prozess bleibt aktiv und wartet auf die nächste Aufnahme.
-
-Während der synchronen STT-Verarbeitung wird keine neue Aufnahme begonnen. Nach der Verarbeitung wird GPIO17 neu eingelesen. Ist die Taste noch gedrückt, muss sie zuerst losgelassen werden.
-
-## systemd und Offline-Betrieb
-
-Der Dienst benötigt `sound.target`, aber kein `network-online.target` mehr. Dadurch kann der lokale Vosk-Pfad auch ohne Netzwerk normal starten. Ein späterer OpenRouter-Aufruf behandelt fehlendes Netzwerk als normalen STT-Fehler; im `auto`-Modus löst das den Vosk-Fallback aus.
-
-## Tests
-
-Hardware-unabhängig:
-
-```bash
-python3 -m unittest discover -s tests -v
-python3 -m py_compile src/ptt.py src/transcribe.py
-```
-
-Die Tests prüfen unter anderem:
-
-- bisheriges OpenRouter-Verhalten als Standard
-- expliziten Vosk-Modus
-- OpenRouter-Präferenz in `auto`
-- Vosk-Fallback bei OpenRouter-Fehler
-- kombinierten Fehler, wenn beide Backends scheitern
-- 48-kHz-Stereo → 16-kHz-Mono-Konvertierung
-
-CI benötigt weder einen OpenRouter-Key noch ein installiertes Vosk-Modell. Die reale Vosk-Integration ist auf dem Pi Zero 2 W bestätigt; offen bleibt insbesondere die Hardware-Abnahme des `auto`-Fallbacks.
+PTT-Journal: `capture_ready` → `processing` → `transcript` mit tatsächlichem Provider und `ERKANNT: ...`. Audiodaten sind flüchtig, Transkripte werden protokolliert. [Troubleshooting](troubleshooting.md#stt), [Betrieb](operation.md).

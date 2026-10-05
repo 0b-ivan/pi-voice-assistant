@@ -1,45 +1,11 @@
-# ADR 0003 — Hybrides STT mit OpenRouter und Vosk
+# ADR 0003: Wählbare lokale und Online-STT
 
-## Status
+Datum 05.10.2026. Status: angenommen, Vosk hardwareseitig bestätigt; reale auto-Abnahme offen.
 
-Accepted — 05.10.2026
+Der Adapter unterstützt `vosk` (nur lokal), `openrouter` (nur online) und `auto` (OpenRouter zuerst, Vosk bei Fehler). Code-/Vorlagenstandard bleibt `openrouter`, weil der normale Installer Vosk nicht automatisch bereitstellt. **Der tatsächliche Pi-Betrieb nutzt ausdrücklich `vosk`.**
 
-## Kontext
+Aufnahme bleibt beim bestätigten 48-kHz-Stereoformat. Vosk erhält intern 16-kHz-Mono, Modell wird bei Bedarf geladen und im Dienst wiederverwendet. Das kleine deutsche Modell ist auf dem Pi funktionsfähig, benötigt aber merkliche Zeit/RAM und erkennt freie Sprache schwächer als der getestete Online-Pfad. [Messwerte und Setup](../speech-to-text.md).
 
-Der Pi Voice Assistant soll mobil mit PiSugar2 betrieben werden. OpenRouter/Whisper liefert die bessere Online-Erkennung, macht die Spracheingabe aber vollständig von Netzwerk und API-Verfügbarkeit abhängig.
+`auto` ist Online-First, kann vor Fallback warten und lädt Vosk erstmals beim Ausfall. Es ist kein Offline-Modus. Die praktische Netz-/API-Ausfallprüfung wird zurückgestellt, solange der Nutzer lokal bleiben möchte.
 
-Der Raspberry Pi Zero 2 W besitzt nur begrenzte CPU- und RAM-Ressourcen. Ein lokales LLM ist deshalb nicht Teil des aktuellen MVP. Lokale deutsche Spracherkennung mit einem kleinen Vosk-Modell ist dagegen realistisch und hält die grundlegende Eingabekette auch ohne Internet funktionsfähig.
-
-## Entscheidung
-
-Der STT-Adapter unterstützt:
-
-- `STT_PROVIDER=openrouter`: nur OpenRouter-STT
-- `STT_PROVIDER=vosk`: nur lokales Vosk-STT
-- `STT_PROVIDER=auto`: OpenRouter zuerst, bei STT-/Netzfehler Vosk als Fallback
-
-`openrouter` bleibt zunächst der Standard, damit bestehende Installationen ihr Verhalten nicht ändern.
-
-Die bereits bestätigte WM8960-Aufnahme bleibt 48 kHz Stereo. Für Vosk wird das WAV intern auf 16 kHz Mono heruntergemischt. So wird der funktionierende ALSA-Aufnahmepfad nicht gleichzeitig mit dem STT-Backend verändert.
-
-Vosk ist eine optionale Installation. Paket und Modell liegen außerhalb des Git-Repositories unter `/opt/pi-voice-assistant`. Das Modell wird erst bei tatsächlicher lokaler Nutzung geladen und danach im Dienstprozess gecacht.
-
-## Konsequenzen
-
-Vorteile:
-
-- PTT + Aufnahme + deutsche STT funktionieren im `vosk`-Modus ohne Internet.
-- `auto` kombiniert die bessere Online-Erkennung mit einem lokalen Fallback.
-- Bestehender OpenRouter-Pfad bleibt kompatibel.
-- Kein zusätzliches Audioformat für den WM8960-Recorder nötig.
-
-Nachteile:
-
-- Vosk benötigt auf dem Zero 2 W zusätzlichen RAM und CPU.
-- Der erste lokale Aufruf hat Modell-Ladezeit.
-- Vosk erreicht voraussichtlich nicht in allen Situationen die Erkennungsqualität von Whisper.
-- Das reale Speicher- und Latenzverhalten muss auf der Zielhardware gemessen werden.
-
-## Nicht Teil dieser Entscheidung
-
-Die eigentliche KI-Antwort bleibt zunächst bei OpenRouter. Lokales LLM, Wake Word und Offline-TTS werden separat bewertet.
+LLM und TTS sind getrennte Entscheidungen. Lokale TTS ist auf dem Pi inzwischen getestet; damit ist die frühere Annahme, Offline-TTS sei grundsätzlich erst zu evaluieren, als Funktionsfrage überholt. Ressourcenoptimierung bleibt offen.
