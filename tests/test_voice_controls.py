@@ -2,8 +2,11 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import sys
+import tempfile
 import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -233,6 +236,37 @@ class ProcessTests(unittest.TestCase):
         with patch('voice_controls.subprocess.run') as run:
             change_volume(-1)
         self.assertEqual(run.call_args.args[0][-3:], ['sset', 'Playback', '5%-'])
+
+    def test_speech_stop_also_kills_child_that_ignores_sigterm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ready = Path(tmp) / 'child.pid'
+            child = (
+                'import signal, time\nfrom pathlib import Path\n'
+                'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                f'path = Path({str(ready)!r})\n'
+                'while True:\n'
+                '    path.write_text(str(time.monotonic_ns()))\n'
+                '    time.sleep(.01)\n')
+            parent = (
+                'import subprocess, sys, time; '
+                f'subprocess.Popen([sys.executable, "-c", {child!r}]); '
+                'time.sleep(30)')
+            speech = SpeechOutput(f'{sys.executable} -c {shlex.quote(parent)}')
+            speech.start('status')
+            try:
+                deadline = time.monotonic() + 2
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(ready.exists(), 'child did not initialize')
+                speech.stop()
+                # Check the child's activity without assuming /proc shares
+                # this executor's PID namespace or how init reaps orphans.
+                time.sleep(.05)
+                last_write = ready.stat().st_mtime_ns
+                time.sleep(.1)
+                self.assertEqual(ready.stat().st_mtime_ns, last_write)
+            finally:
+                speech.stop()
 
 
 if __name__ == '__main__':
