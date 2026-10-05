@@ -197,7 +197,7 @@ class RecorderTests(unittest.TestCase):
 class ProcessingTests(unittest.TestCase):
     def test_success_emits_transcript(self):
         output = StringIO()
-        with patch('ptt.transcribe', return_value='Hallo Welt'), redirect_stdout(output):
+        with patch('ptt.transcribe_with_provider', return_value=('Hallo Welt', 'vosk')), redirect_stdout(output):
             self.assertEqual(process_capture('/tmp/capture.wav'), 'Hallo Welt')
         lines = output.getvalue().splitlines()
         self.assertEqual(json.loads(lines[0])['event'], 'processing')
@@ -205,12 +205,13 @@ class ProcessingTests(unittest.TestCase):
             'version': 1,
             'event': 'transcript',
             'text': 'Hallo Welt',
+            'provider': 'vosk',
         })
         self.assertEqual(lines[2], 'ERKANNT: Hallo Welt')
 
     def test_stt_error_is_recoverable(self):
         output = StringIO()
-        with patch('ptt.transcribe', side_effect=TranscriptionError('offline')), redirect_stdout(output):
+        with patch('ptt.transcribe_with_provider', side_effect=TranscriptionError('offline')), redirect_stdout(output):
             self.assertIsNone(process_capture('/tmp/capture.wav'))
         lines = output.getvalue().splitlines()
         self.assertEqual(json.loads(lines[0])['event'], 'processing')
