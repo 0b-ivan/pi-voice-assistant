@@ -1,7 +1,6 @@
 [Unit]
-Description=WM8960 hold-to-talk recorder with OpenRouter STT
-Wants=network-online.target
-After=sound.target network-online.target
+Description=WM8960 hold-to-talk recorder with selectable STT
+After=sound.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
