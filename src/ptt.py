@@ -12,6 +12,7 @@ import time
 import wave
 
 from transcribe import TranscriptionError, transcribe_with_provider
+from voice_controls import SpeechOutput, TranscriptionJob, change_volume
 
 
 def event(name, **fields):
@@ -147,6 +148,106 @@ class Recorder:
         self.ready.unlink(missing_ok=True)
 
 
+class VoiceController:
+    """One audio capture/STT slot, with A and GPIO17 combined as hold-to-talk."""
+    def __init__(self, recorder, speech, debounce, limit, probe=False):
+        self.recorder, self.speech, self.probe = recorder, speech, probe
+        self.ptt = Button(debounce, limit)
+        self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
+        self.job = None
+
+    @property
+    def color(self):
+        if self.recorder.process is not None:
+            return (255, 0, 0)
+        if self.job is not None:
+            return (0, 0, 255)
+        if self.speech.active:
+            return (0, 255, 255)
+        return (0, 255, 0)
+
+    def cancel(self, held, now):
+        self.speech.stop()
+        self.recorder.finish('cancel', publish=False)
+        if self.job is not None:
+            self.job.cancel()
+        self.ptt.resync(held, now)
+        event('cancelled')
+
+    def submit(self, reason):
+        capture = self.recorder.finish(reason)
+        if capture is not None:
+            event('processing', path=str(capture))
+            self.job = TranscriptionJob(transcribe_with_provider, capture)
+
+    def tick(self, gpio_pressed, shim_pressed, now):
+        held = gpio_pressed or shim_pressed[0]
+        action = self.ptt.update(held, now)
+        commands = [name for i, name in enumerate('BCDE', 1)
+                    if self.commands[name].update(shim_pressed[i], now) == 'start']
+        if self.probe:
+            if action:
+                event('button', button='PTT', action=action)
+            for name in commands:
+                event('button', button=name, action='start')
+            return
+        if 'B' in commands:
+            self.cancel(held, now)
+            action = None
+            # Simultaneous B/E never starts a new status utterance.
+            commands = []
+        for name in commands:
+            if name in 'CD':
+                try:
+                    change_volume(1 if name == 'D' else -1)
+                    event('volume', direction='up' if name == 'D' else 'down', step=5)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    event('mixer_error', message=str(exc))
+            elif name == 'E':
+                if self.recorder.process is not None or action == 'start':
+                    event('status_skipped', reason='recording')
+                else:
+                    state = 'Ich verarbeite die Aufnahme.' if self.job else 'Ich bin bereit.'
+                    mode = 'Offline-Spracherkennung.' if os.environ.get('STT_PROVIDER') == 'vosk' else 'Spracherkennung konfiguriert.'
+                    try:
+                        self.speech.start(state + ' ' + mode)
+                        event('status', text=state + ' ' + mode)
+                    except OSError as exc:
+                        event('speech_error', message=str(exc))
+        code = self.speech.poll()
+        if code is not None:
+            event('speech_finished' if code == 0 else 'speech_error', returncode=code)
+        if self.job is not None and self.job.done.is_set():
+            job, self.job = self.job, None
+            if job.cancelled:
+                event('transcript_discarded')
+            elif job.error is not None:
+                event('stt_error', message=job.error)
+            else:
+                text, provider = job.result
+                event('transcript', text=text, provider=provider)
+                print(f'ERKANNT: {text}', flush=True)
+            self.ptt.resync(held, now)
+            action = None
+        if action == 'start':
+            if self.job is not None:
+                event('busy', reason='processing')
+            else:
+                self.speech.stop()
+                self.recorder.start()
+        elif action in ('release', 'limit') and self.recorder.process is not None:
+            self.submit(action)
+        if self.recorder.process is not None and self.recorder.process.poll() is not None:
+            self.submit('process_exit')
+            self.ptt.resync(held, now)
+
+    def close(self):
+        if self.job is not None:
+            self.job.cancel()
+        self.speech.stop()
+        self.recorder.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--probe', action='store_true', help='button events only; no audio/STT')
@@ -169,42 +270,62 @@ def main():
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    button = Button(debounce, limit)
+    shim_enabled = os.environ.get('PTT_BUTTON_SHIM', '0')
+    if shim_enabled not in ('0', '1'):
+        parser.error('PTT_BUTTON_SHIM must be 0 or 1')
     recorder = Recorder(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt'),
                         os.environ.get('PTT_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'), limit)
     settings = gpiod.LineSettings(direction=Direction.INPUT,
                                   active_low=active_low == '1',
                                   bias=Bias.PULL_UP if active_low == '1' else Bias.PULL_DOWN)
 
-    def process_and_resync(capture, request):
-        if capture is None:
-            return
-        process_capture(capture)
-        button.resync(request.get_value(line) == Value.ACTIVE, time.monotonic())
+    speech = SpeechOutput(os.environ.get('PTT_SPEAK_COMMAND',
+        '/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py'))
+    controller = VoiceController(recorder, speech, debounce, limit, args.probe)
+    shim = None
+    if shim_enabled == '1':
+        try:
+            from button_shim import ButtonShim
+            shim = ButtonShim()
+            event('shim_ready', bus=1, address='0x3f')
+        except (ImportError, OSError) as exc:
+            event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
 
     try:
         with gpiod.request_lines(chip, consumer='pi-ptt', config={line: settings}) as request:
             event('waiting_for_release', chip=chip, line=line, probe=args.probe)
             while not stop.is_set():
-                action = button.update(request.get_value(line) == Value.ACTIVE, time.monotonic())
+                gpio_pressed = request.get_value(line) == Value.ACTIVE
+                now = time.monotonic()
+                pressed = (False,) * 5
+                if shim is not None:
+                    try:
+                        pressed = shim.read()
+                        if not args.probe:
+                            shim.set_color(controller.color)
+                    except OSError as exc:
+                        event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
+                        try:
+                            shim.close()
+                        except OSError:
+                            pass
+                        shim = None
+                        controller.cancel(gpio_pressed, now)
                 try:
-                    if action:
-                        if args.probe:
-                            event('button', action=action)
-                        elif action == 'start':
-                            recorder.start()
-                        else:
-                            process_and_resync(recorder.finish(action), request)
-                    if recorder.process is not None and recorder.process.poll() is not None:
-                        # Natural duration expiry or early device failure.
-                        process_and_resync(recorder.finish('process_exit'), request)
+                    controller.tick(gpio_pressed, pressed, now)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
-                    button.failed()
-                    recorder.close()
                     event('error', message=str(exc))
+                    controller.cancel(gpio_pressed or pressed[0], now)
                 stop.wait(0.01)
     finally:
-        recorder.close()
+        try:
+            controller.close()
+        finally:
+            if shim is not None:
+                try:
+                    shim.close()
+                except OSError as exc:
+                    event('shim_error', message=str(exc))
 
 
 if __name__ == '__main__':

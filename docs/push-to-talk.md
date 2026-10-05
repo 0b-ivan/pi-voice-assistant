@@ -15,11 +15,11 @@ BCM17 ist auf dem Zero 2 W normalerweise Offset 17 am Haupt-GPIO-Chip. Am 05.10.
 
 ## Verhalten und Grenzen
 
-`src/ptt.py` verwendet die libgpiod-Python-API v2, die [Debian 13 als python3-libgpiod bereitstellt](https://packages.debian.org/trixie/python/python3-libgpiod). Keine RPi.GPIO-/sysfs-Abhängigkeit und keine pip-Installation erforderlich. Die Bibliothek wird nur beim Start des Hardwaredienstes importiert; die Zustands- und Aufnahmetests laufen ohne GPIO-Hardware.
+`src/ptt.py` verwendet die libgpiod-Python-API v2, die [Debian 13 als python3-libgpiod bereitstellt](https://packages.debian.org/trixie/python/python3-libgpiod). Keine RPi.GPIO-/sysfs-Abhängigkeit. Der Installer benötigt zusätzlich `sudo apt install python3-smbus i2c-tools` für die optionale Button-SHIM-Steuerung; keine pip-Installation erforderlich. Die Bibliothek wird nur beim Start des Hardwaredienstes importiert; die Zustands- und Aufnahmetests laufen ohne GPIO-Hardware.
 
 - Abfrage alle 10 ms; ein Pegel muss 40 ms stabil bleiben. Entprellung gilt für Drücken und Loslassen. Sehr kurze Tastendrücke können bewusst entfallen.
 - Beim Dienststart muss die Taste zunächst stabil losgelassen sein. Eine beim Boot gehaltene Taste startet keine Aufnahme.
-- `arecord` nimmt WAV / PCM S16_LE, 48 kHz, Stereo über `plughw:CARD=wm8960soundcard,DEV=0` auf, entsprechend dem bestätigten manuellen Mikrofontest. Keine Mixeränderungen durch den Dienst.
+- `arecord` nimmt WAV / PCM S16_LE, 48 kHz, Stereo über `plughw:CARD=wm8960soundcard,DEV=0` auf, entsprechend dem bestätigten manuellen Mikrofontest. Mixeränderungen erfolgen nur durch C/D bei aktivierter [Button-SHIM-Steuerung](button-controls.md).
 - Standardlimit 30 Sekunden (etwa 5,76 MB Audionutzdaten). Einstellbar 1–120 Sekunden. Zusätzlich begrenzt `arecord -d` die Aufnahme; damit schützt auch ein blockierter GPIO-Ablauf vor endlosem Audio.
 - Nach Zeitlimit oder Fehler während gehaltenem Taster muss zuerst losgelassen werden. Keine wiederholten Aufnahmen bei dauerhaft gedrückter Taste.
 - Loslassen sendet SIGINT an `arecord` und wartet höchstens zwei Sekunden. arecord schreibt zunächst rohe PCM-Daten; der Dienst erzeugt und prüft anschließend selbst das WAV (Mindestlänge 100 ms, vollständige Stereoframes, begrenzte Größe). Damit hängt der WAV-Header nicht von der ALSA-Signalbehandlung ab. Bei selbst angefordertem Stop werden Exitstatus 0, 1 (unterbrochener ALSA-Leseaufruf) oder SIGINT akzeptiert, wenn gültige PCM-Daten vorhanden sind; ungeplantes Prozessende mit Fehler wird verworfen. Hängende Prozesse werden beendet. Siehe [ALSA-Quellcode: Signalhandler und pcm_read](https://github.com/alsa-project/alsa-utils/blob/master/aplay/aplay.c).
@@ -93,7 +93,7 @@ Rohe Daten liegen während der Aufnahme in `capture.part.pcm`; beim Verpacken en
 
 `reason` ist `release`, `limit` oder `process_exit` (natürliches arecord-Zeitlimit). `frames` bestimmt die Dauer. Ereignisse `waiting_for_release`, `recording`, `button` (Probe) und `error` dienen der Diagnose. Kein Audioinhalt wird ins Journal geschrieben.
 
-Es gibt **einen** lokalen Aufnahmeslot. Die Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar; keine unbegrenzte Warteschlange und keine dauerhafte Speicherung. Der aktuelle STT-Adapter wird direkt nach erfolgreichem `finish` aufgerufen und übernimmt das WAV vor der nächsten Aufnahme; Journal-Tailing ist keine Transport-API. Während der synchronen STT-Anfrage startet keine neue Aufnahme. Danach wird GPIO17 resynchronisiert; ist die Taste noch gedrückt, muss sie zuerst losgelassen werden. Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`, erwartete API-/Netzfehler `stt_error`. LLM-Antwort, deutsche TTS und automatische Wiedergabe sind noch nicht implementiert.
+Es gibt **einen** lokalen Aufnahmeslot. Die Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar; keine unbegrenzte Warteschlange und keine dauerhafte Speicherung. Der aktuelle STT-Adapter wird direkt nach erfolgreichem `finish` aufgerufen und übernimmt das WAV vor der nächsten Aufnahme; Journal-Tailing ist keine Transport-API. STT läuft im Hintergrund; währenddessen startet keine neue Aufnahme, die Button-SHIM-Steuerung bleibt bedienbar. Danach werden GPIO17/A resynchronisiert; gehaltene Tasten müssen zuerst losgelassen werden. Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`, erwartete API-/Netzfehler `stt_error`. LLM-Antwort und automatische Antwortwiedergabe sind noch nicht implementiert. Eine separat installierte TTS kann über E eine Statusansage liefern; siehe [Button-Steuerung](button-controls.md).
 
 ## Validierung
 
@@ -114,7 +114,7 @@ Auf dem Pi folgende Ergebnisse mit Datum, Kernel, `dpkg-query -W python3-libgpio
 | Neustart mit aktiviertem Dienst | Dienst läuft, GPIO angefordert, Aufnahme/Wiedergabe erneut möglich | Status enabled / active (running) nach Neustart belegt; anschließende Hörprüfung mit „passt“ bestätigt |
 | Speicher/CPU beobachten | Kein Dateiwachstum über einen Slot; Last messen | Offen |
 
-Fertige Aufnahme vor dem nächsten Tastendruck manuell abhören (der Dienst spielt nie selbst ab):
+Fertige Aufnahme vor dem nächsten Tastendruck manuell abhören (E kann bei aktivierter Button-SHIM-Steuerung eine separate Statusansage auslösen):
 
 ```bash
 aplay -D plughw:CARD=wm8960soundcard,DEV=0 /run/pi-ptt/capture.wav

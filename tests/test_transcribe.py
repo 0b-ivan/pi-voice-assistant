@@ -37,6 +37,9 @@ class BrokenErrorBody:
     def read(self):
         raise http.client.IncompleteRead(b'{"error":')
 
+    def close(self):
+        pass
+
 
 class TranscribeTests(unittest.TestCase):
     def setUp(self):

@@ -7,6 +7,12 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The service needs this group even when the optional SHIM is disabled.
+# Validate dependencies before stopping an already working voice service.
+if ! getent group i2c >/dev/null || ! /usr/bin/python3 -c 'import smbus'; then
+  echo "Install hardware dependency first: sudo apt install python3-smbus i2c-tools" >&2
+  exit 1
+fi
 service_was_active=0
 if systemctl is-active --quiet pi-ptt.service; then
   service_was_active=1
@@ -16,6 +22,8 @@ fi
 install -d -m 0755 /opt/pi-voice-assistant/src /opt/pi-voice-assistant/scripts
 install -m 0644 "${repo_root}/src/ptt.py" /opt/pi-voice-assistant/src/ptt.py
 install -m 0644 "${repo_root}/src/transcribe.py" /opt/pi-voice-assistant/src/transcribe.py
+install -m 0644 "${repo_root}/src/button_shim.py" /opt/pi-voice-assistant/src/button_shim.py
+install -m 0644 "${repo_root}/src/voice_controls.py" /opt/pi-voice-assistant/src/voice_controls.py
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
 

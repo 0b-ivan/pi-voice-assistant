@@ -18,6 +18,7 @@ Taste halten → Sprache aufnehmen → beim Loslassen transkribieren → über O
 - [Betriebssystem und Inbetriebnahme](docs/setup.md)
 - [Roadmap und Aufgaben](docs/roadmap.md)
 - [Push-to-Talk: Installation, Schnittstelle und Abnahme](docs/push-to-talk.md)
+- [Button SHIM: Tasten, RGB und Installation](docs/button-controls.md)
 - [Speech-to-Text mit OpenRouter](docs/speech-to-text.md)
 - [Entscheidung: Pi als Client](docs/decisions/0001-client-server.md)
 - [Entscheidung: Raspberry Pi OS Lite 64-bit / Trixie](docs/decisions/0002-operating-system.md)\n- [Entscheidung: Hybrides STT mit OpenRouter und Vosk](docs/decisions/0003-hybrid-stt.md)
@@ -35,6 +36,7 @@ Das Bestandsaufnahmeskript auf dem Pi ausführen. Fehlende Diagnoseprogramme wer
 Für den aktuellen Sprachdienst:
 
 ```bash
+sudo apt install python3-smbus i2c-tools
 sudo bash scripts/install-voice-service.sh
 ```
 
