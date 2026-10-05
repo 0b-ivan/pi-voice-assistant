@@ -2,7 +2,7 @@
 
 Stand: 05.10.2026. Zielgerät: Pi Zero 2 W, Raspberry Pi OS Lite 64-bit / Trixie, Benutzer **obivan**, Hostname **pi-assistent**.
 
-Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Tasten A–E sind in zwei Testläufen bestätigt. RGB-LED und Neustartprüfung stehen noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
+Der erweiterte Aufbau ist [mit drei neuen Fotos dokumentiert](hardware.md). Ethernet-HAT und Button SHIM sind sichtbar montiert. USB-Hub und Ethernet sind erkannt, eth0 hat eine LAN-IP, und an I²C-Adresse 0x3f antwortet ein Gerät. Tasten A–E sind in zwei Testläufen bestätigt. Die RGB-LED ist durch Nutzer-Sichtprüfung bestätigt; die Neustartprüfung steht noch aus. Alle folgenden Befehle werden auf dem Pi ausgeführt. Testergebnisse erst nach Rückmeldung in die Abnahmetabelle eintragen.
 
 ## 1. Bestandsaufnahme
 
@@ -168,7 +168,23 @@ PY
 
 Abnahme durch Sichtprüfung: Rot → Grün → Blau, danach aus. Eine erfolgreiche Python-Ausführung allein bestätigt weder die Farben noch die LED-Funktion.
 
-## 7. Gemeinsamer Betrieb und Neustart
+## 7. I²C beim Start verfügbar machen
+
+Nach erfolgreichem Tasten- und LED-Test i2c-dev über systemd beim Boot laden. Dieser Schritt ist als Anleitung ergänzt; Einrichtung und Neustart-Abnahme sind noch nicht bestätigt.
+
+~~~bash
+sudo vim /etc/modules-load.d/pi-voice-i2c.conf
+~~~
+
+In der Datei folgende Modulzeile eintragen (bei vorhandener Datei bestehende Einträge beachten):
+
+~~~text
+i2c-dev
+~~~
+
+Mit Esc, :wq, Enter speichern. Das vorhandene WM8960-Overlay bleibt bestehen. Die Datei sorgt für die Userspace-Geräteschnittstelle; die bereits aktivierte I²C-Hardware-Konfiguration bleibt weiterhin nötig.
+
+## 8. Gemeinsamer Betrieb und Neustart
 
 Nach Hub-/Button-Test weiterhin Audio-Karte und bestehenden Dienst prüfen:
 
@@ -207,6 +223,10 @@ Das lädt die I²C-Geräteschnittstelle für Userspace in der laufenden Sitzung.
 
 Der Nutzer hat den lesenden Tastentest zweimal ausgeführt. In beiden Durchläufen wurden für **A, B, C, D und E** vollständige Drücken-/Loslassen-Zyklen erkannt und alle fünf Tasten mit **PASS** gemeldet. Mehrfaches Drücken wurde ebenfalls als mehrere Zyklen ausgegeben. Damit ist die Bedienung der fünf Tasten in der laufenden Sitzung bestätigt; ein Langzeit-/Entprellungs-Stresstest sowie der Test nach Neustart stehen noch aus.
 
+### RGB-LED — Sichtprüfung bestätigt ✅
+
+Nach Installation von python3-venv und der Pimoroni-Bibliothek buttonshim 0.0.2 in einer separaten Testumgebung hat der Nutzer die zuvor angeleitete Farbsequenz **Rot → Grün → Blau → aus** mit „geht gut“ bestätigt. Damit ist der LED-Test als Nutzer-Sichtprüfung bestanden. Keine Farb-/Helligkeitsmessung und noch keine LED-Integration in den Sprachdienst.
+
 ## Abnahmeprotokoll
 
 | Prüfung | Status / Ergebnis |
@@ -220,8 +240,9 @@ Der Nutzer hat den lesenden Tastentest zweimal ausgeführt. In beiden Durchläuf
 | USB-A Port 1 / 2 / 3 | Offen / offen / offen |
 | I²C 0x3f erreichbar, keine konkurrierende Nutzung | Antwort 3f auf Bus 1 bestätigt; konkurrierende Nutzung noch nicht geprüft |
 | A / B / C / D / E drücken und loslassen | Alle fünf PASS, in zwei Hardware-Testläufen bestätigt |
-| RGB Rot / Grün / Blau / aus | Offen |
+| RGB Rot / Grün / Blau / aus | Nutzer-Sichtprüfung bestätigt: „geht gut“ |
 | WM8960 und vorhandene PTT-Taste im neuen Stapel | Offen |
+| i2c-dev dauerhaft beim Boot laden | Anleitung ergänzt; Ausführung offen |
 | LAN und Button SHIM nach Neustart | Offen |
 | Leistungsaufnahme/Akkulaufzeit unter Zusatzlast | Offen |
 
