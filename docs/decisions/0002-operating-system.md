@@ -18,7 +18,7 @@ Wir verwenden **Raspberry Pi OS Lite (64-bit) auf Debian 13 / Trixie** auf der 6
 | Audio | ALSA und WM8960 |
 | Kamera, später | rpicam/libcamera |
 
-Der Hostname wurde bei der Installation tatsächlich als `pi-assistent` gesetzt. Die erste SSH-Anmeldung bestätigt Benutzer `obivan` und Passwortauthentifizierung. Boot ist bestätigt; Wiederholungsprüfung nach Neustart und Hardwarevalidierung stehen aus. Siehe [Installationsprotokoll mit Screenshots](../setup.md#installationsprotokoll--05102026-).
+Der Hostname wurde bei der Installation tatsächlich als `pi-assistent` gesetzt. Die erste SSH-Anmeldung bestätigt Benutzer `obivan` und Passwortauthentifizierung. Boot ist bestätigt; Wiederholungsprüfung nach Neustart und Hardwarevalidierung stehen aus. Siehe [Bootprotokoll mit Screenshots](../setup.md#boot-und-erste-ssh-anmeldung--05102026-).
 
 ## Begründung
 
