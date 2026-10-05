@@ -203,3 +203,34 @@ Temperatur 48,85 → 52,62 °C, Frequenz in beiden Snapshots 1000 MHz,
 `throttled=0x0` vor/nach. Diese Snapshots zeigen keinen thermischen Engpass.
 Die kurze Ruhephase verbraucht 0,717 CPU-Sekunden, entsprechend 7,2 % eines
 Kerns bzw. 1,8 % der vier Kerne. Sie ist keine Langzeit-Leerlaufmessung.
+
+
+## Weiterer Lauf mit A während des Benchmarks
+
+Berichtbeginn 20:37:37 UTC (22:37:37 MESZ) am 5. Oktober 2026, gleiche
+Messversion und Parameter. Der Benutzer meldet ausdrücklich, währenddessen
+A gedrückt zu haben. Dieser Lauf zählt als Versuch mit zusätzlicher Bedienung,
+nicht als Wiederholung unter denselben kontrollierten Bedingungen.
+Zeitpunkt, Haltedauer, Aufnahmeabschluss und tatsächlich laufende Vosk-Transkription
+sind aus dem Ressourcenbericht nicht ablesbar; dafür ist das Dienstjournal nötig.
+
+| Messwert | Ergebnis |
+|---|---|
+| Frische Prozesse | 22,58 / 21,36 / 21,10 s |
+| Modell einmal laden | 18,01 s |
+| Erzeugungen mit geladenem Modell | 1,60 / 1,21 / 1,26 s |
+| Piper in zehn Sekunden Ruhe | 149,56 MiB RSS und 14,63 MiB Swap; CPU 7,7 % eines Kerns |
+| PTT-Dienst vor/nach | RSS 45,20 → 4,59 MiB; Swap 155,69 → 185,79 MiB |
+| Verfügbarer System-RAM | vorher 200,83 MiB; Minimum 63,62 MiB; nachher 218,71 MiB |
+| Gesamter Swap | vorher 182,47 MiB; Maximum 244,94 MiB; nachher 221,55 MiB |
+| Swap-Aktivität im gesamten Lauf | 159,79 MiB zusätzlich ausgelagert, 114,36 MiB zurückgelesen |
+| PTT-CPU-Zuwachs | 11,31 CPU-Sekunden, gegenüber 4,15 s im vorigen Lauf |
+| Temperatur / Throttling-Snapshots | 47,77 → 52,62 °C; beide `throttled=0x0` |
+
+Schon vor diesem Lauf lagen große Teile des PTT-Dienstes im Swap. Der niedrigere
+Piper-RSS ist deshalb kein Nachweis einer Speicheroptimierung: auch der neue
+Piper-Worker besitzt ausgelagerte Seiten. Die zusätzliche PTT-CPU-Zeit passt zu
+mehr Dienstaktivität, belegt aber allein keine erfolgreich beendete Transkription.
+Die Beobachtung ändert die Empfehlung zu Status-WAVs und gegen eine sofortige
+permanente Piper-Komponente nicht. Aufnahme, STT-Ergebnis, Abbruchverhalten
+und Gesamtlatenz bei abwechselndem STT/TTS separat aus dem Journal prüfen.
