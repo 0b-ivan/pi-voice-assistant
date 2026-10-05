@@ -1,15 +1,18 @@
+from array import array
 import base64
 import http.client
 import json
 import urllib.error
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import transcribe as stt
 from transcribe import TranscriptionError, transcribe
 
 
@@ -109,6 +112,93 @@ class TranscribeTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(TranscriptionError, "incomplete error response"):
                 transcribe(self.audio)
+
+
+class ProviderTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.audio = Path(self.tmp.name) / "capture.wav"
+        self.audio.write_bytes(b"RIFF-test-audio")
+
+    def test_default_provider_remains_openrouter(self):
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "transcribe.transcribe_openrouter", return_value="cloud"
+        ) as cloud, patch("transcribe.transcribe_vosk") as local:
+            result = stt.transcribe_with_provider(self.audio)
+        self.assertEqual(result, ("cloud", "openrouter"))
+        cloud.assert_called_once()
+        local.assert_not_called()
+
+    def test_vosk_provider_bypasses_openrouter(self):
+        with patch.dict("os.environ", {"STT_PROVIDER": "vosk"}, clear=True), patch(
+            "transcribe.transcribe_vosk", return_value="lokal"
+        ) as local, patch("transcribe.transcribe_openrouter") as cloud:
+            result = stt.transcribe_with_provider(self.audio)
+        self.assertEqual(result, ("lokal", "vosk"))
+        local.assert_called_once()
+        cloud.assert_not_called()
+
+    def test_auto_prefers_openrouter(self):
+        with patch.dict("os.environ", {"STT_PROVIDER": "auto"}, clear=True), patch(
+            "transcribe.transcribe_openrouter", return_value="cloud"
+        ) as cloud, patch("transcribe.transcribe_vosk") as local:
+            result = stt.transcribe_with_provider(self.audio)
+        self.assertEqual(result, ("cloud", "openrouter"))
+        cloud.assert_called_once()
+        local.assert_not_called()
+
+    def test_auto_falls_back_to_vosk(self):
+        with patch.dict("os.environ", {"STT_PROVIDER": "auto"}, clear=True), patch(
+            "transcribe.transcribe_openrouter",
+            side_effect=TranscriptionError("network offline"),
+        ), patch("transcribe.transcribe_vosk", return_value="offline text") as local:
+            result = stt.transcribe_with_provider(self.audio)
+        self.assertEqual(result, ("offline text", "vosk"))
+        local.assert_called_once()
+
+    def test_auto_reports_both_failures(self):
+        with patch.dict("os.environ", {"STT_PROVIDER": "auto"}, clear=True), patch(
+            "transcribe.transcribe_openrouter",
+            side_effect=TranscriptionError("network offline"),
+        ), patch(
+            "transcribe.transcribe_vosk",
+            side_effect=TranscriptionError("model missing"),
+        ):
+            with self.assertRaisesRegex(
+                TranscriptionError, "OpenRouter: network offline; Vosk: model missing"
+            ):
+                stt.transcribe_with_provider(self.audio)
+
+    def test_invalid_provider_is_rejected(self):
+        with patch.dict("os.environ", {"STT_PROVIDER": "magic"}, clear=True):
+            with self.assertRaisesRegex(TranscriptionError, "STT_PROVIDER"):
+                stt.transcribe_with_provider(self.audio)
+
+
+class VoskAudioTests(unittest.TestCase):
+    def test_48khz_stereo_is_downmixed_and_resampled_to_16khz_mono(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stereo.wav"
+            samples = array("h", [
+                300, 300, 600, 600, 900, 900,
+                1200, 1200, 1500, 1500, 1800, 1800,
+            ])
+            if sys.byteorder != "little":
+                samples.byteswap()
+            with wave.open(str(path), "wb") as audio:
+                audio.setnchannels(2)
+                audio.setsampwidth(2)
+                audio.setframerate(48000)
+                audio.writeframes(samples.tobytes())
+
+            payload = b"".join(stt._iter_vosk_pcm(path))
+            converted = array("h")
+            converted.frombytes(payload)
+            if sys.byteorder != "little":
+                converted.byteswap()
+
+        self.assertEqual(list(converted), [600, 1500])
 
 
 if __name__ == "__main__":
