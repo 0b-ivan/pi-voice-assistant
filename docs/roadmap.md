@@ -40,8 +40,9 @@ Abnahme: Aufnahme und Wiedergabe funktionieren nach Neustart.
 - [x] Vosk als optionales lokales deutsches STT-Backend implementieren.
 - [x] `STT_PROVIDER=openrouter|vosk|auto` mit OpenRouter→Vosk-Fallback implementieren.
 - [x] Vosk-Installationspfad und kleines deutsches Modell dokumentieren.
-- [ ] Vosk und `auto` mit echter WM8960-Aufnahme auf dem Pi Zero 2 W abnehmen; Qualität, Latenz und RAM messen.
-- [ ] Integrierten PTT→STT-Ablauf nach Deployment auf Hardware abnehmen.
+- [x] Vosk mit echter WM8960-Aufnahme auf dem Pi Zero 2 W abnehmen; Qualität, Latenz und RAM gemessen.
+- [ ] `auto` mit realem OpenRouter→Vosk-Ausfall auf dem Pi Zero 2 W abnehmen.
+- [x] Integrierten PTT→Vosk-Ablauf nach Deployment auf Hardware abnehmen.
 - [ ] OpenRouter-LLM an den erkannten Text anbinden.
 - [ ] Deutsche TTS-Komponente auswählen und anbinden.
 - [ ] Antwort über WM8960 ausgeben und Playback-Sperre implementieren.
@@ -55,8 +56,9 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 - [x] systemd-Unit und Konfiguration für lokalen PTT-Dienst erstellen.
 - [x] systemd-Installation, Autostart und PTT nach Neustart am Pi bestätigen.
 - [x] Installationsskript für PTT + OpenRouter-STT bereitstellen.
-- [ ] systemd-Autostart mit integrierter STT-Konfiguration nach Merge erneut abnehmen.
-- [ ] Speicherverbrauch, Startzeit, Akkulaufzeit und Temperatur messen.
+- [x] systemd-Dienst mit integrierter Vosk-STT-Konfiguration nach Merge erneut abnehmen.
+- [x] Speicherverbrauch des geladenen Vosk-Dienstes messen (145728 kB RSS im Test).
+- [ ] Startzeit, Akkulaufzeit und Temperatur messen.
 - [ ] Wiederholte Interaktionen und Dienstneustart testen.
 - [ ] Installationsanleitung mit tatsächlich getesteten Versionen vervollständigen.
 
@@ -67,4 +69,4 @@ Abnahme: Taste → Frage → hörbare Antwort; Wiederherstellung nach Netzwerkau
 - [ ] Wake Word und Unterbrechen der Wiedergabe evaluieren.
 - [ ] Gehäuse und mobile Bedienung verbessern.
 
-Priorität: Jetzt Vosk und den Auto-Fallback auf dem Pi abnehmen, danach OpenRouter-LLM und deutsche TTS.
+Priorität: Offline-STT mit Vosk stabilisieren und die Erkennungsqualität verbessern; insbesondere optionale Command-Grammar für kurze Befehle evaluieren. Der `auto`-Fallback wird später abgenommen. Danach LLM-Anbindung und deutsche TTS fortsetzen.
