@@ -2,7 +2,7 @@
 
 Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und PiSugar2. Der Pi dient als mobiler Audio-Client; Sprachverarbeitung läuft auf einem stärkeren Gerät im Homelab.
 
-**Stand: 05.10.2026 — SD-Karte erfolgreich geschrieben, erster Boot und SSH-Anmeldung als `obivan` bestätigt. Systemupdate und Diagnosewerkzeuge installiert; SSH nach Neustart bestätigt. WM8960 als Aufnahme- und Wiedergabegerät erkannt; Lautsprecherwiedergabe und gute Mikrofonaufnahme bestätigt; Gesamtspeicherung und Audiotest nach Neustart laut Nutzer bestätigt; minimaler lokaler Push-to-Talk-Dienst implementiert, Hardware-Abnahme offen; Sprachverarbeitung noch nicht implementiert.**
+**Stand: 05.10.2026 — SD-Karte erfolgreich geschrieben, erster Boot und SSH-Anmeldung als `obivan` bestätigt. Systemupdate und Diagnosewerkzeuge installiert; SSH nach Neustart bestätigt. WM8960 als Aufnahme- und Wiedergabegerät erkannt; Lautsprecherwiedergabe und gute Mikrofonaufnahme bestätigt; Gesamtspeicherung und Audiotest nach Neustart laut Nutzer bestätigt; lokaler Push-to-Talk-Dienst installiert; Tastenerkennung, Aufnahme, manuelle Wiedergabe und Autostart nach Neustart bestätigt; Grenz-/Fehlerprüfungen offen; Sprachverarbeitung noch nicht implementiert.**
 
 **Betriebssystem:** Raspberry Pi OS Lite 64-bit (Trixie), Headless/SSH; Hostname `pi-assistent`.
 
