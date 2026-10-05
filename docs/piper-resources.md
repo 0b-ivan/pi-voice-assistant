@@ -193,7 +193,7 @@ CLI-/API-Phasen. Der Bericht zeigt nicht, welcher Durchlauf die Auslagerung
 ausgelöst hat. Die PTT-Werte belegen aber, dass der weiterlaufende Dienst am Ende
 größtenteils ausgelagert ist. Auch Piper besitzt in der Ruhephase Swap-Seiten.
 
-Die nachher freien 221 MiB sind daher keine Reserve für beide Modelle im RAM:
+Die nachher freien 221 MiB belegen daher keine Reserve für beide Modelle unkomprimiert im RAM:
 Piper ist beendet und große Teile des PTT-Dienstes liegen im Swap. Beim nächsten
 PTT-Einsatz ist erneutes Einlesen ausgelagerter Seiten zu erwarten; die daraus
 entstehende STT-Verzögerung wurde hier noch nicht gemessen. RSS verschiedener
@@ -257,5 +257,42 @@ abwechselndem STT/TTS bleiben separat zu prüfen.
 
 Ein anschließend zurückgemeldeter `free -h`-Snapshot zeigt 217 MiB verfügbaren
 RAM und 212 MiB belegten Swap von insgesamt rund 414 MiB. Swap ist damit aktiv
-und bleibt nach dem Benchmark belegt. Sein Medium (SD-Datei, Partition oder
-zram) ist daraus nicht erkennbar; dafür die Ausgabe von `swapon --show` auslesen.
+und bleibt nach dem Benchmark belegt. Das danach zurückgemeldete `swapon --show`
+listet ausschließlich `/dev/zram0` (415M, 211.9M belegt, Priorität 100).
+Damit liegen die Swap-Seiten auf einem komprimierten RAM-Blockgerät.
+
+
+## Swap-Einordnung: zram bestätigt
+
+Die oben gemessenen Swap-Werte sind logische Seitenmengen. **212 MiB belegter
+zram-Swap bedeuten nicht 212 MiB zusätzlich belegten physischen RAM.** zram
+speichert Seiten komprimiert; der Speicherbedarf hängt von Daten, Kompressionsalgorithmus
+und Verwaltungsaufwand ab. Die 415M Kapazität ist die logische Gerätegröße,
+keine beim Start vollständig reservierte zusätzliche RAM-Menge.
+
+Nach der [Kernel-Dokumentation](https://docs.kernel.org/admin-guide/blockdev/zram.html)
+stehen die ersten drei Werte von `/sys/block/zram0/mm_stat` für
+`orig_data_size` (unkomprimierte Daten), `compr_data_size` (komprimierte Daten)
+und `mem_used_total` (tatsächlich zugewiesener Gerätespeicher einschließlich
+Allocator-Fragmentierung und Metadaten), jeweils in Bytes.
+
+Lesend prüfen, ohne Swap oder Dienste neu zu konfigurieren:
+
+```bash
+zramctl
+cat /sys/block/zram0/mm_stat
+cat /sys/block/zram0/backing_dev
+```
+
+Die Swap-in/out-Differenzen der Benchmarks beweisen **keine SD-Karten-I/O**.
+zram kann optional ein Writeback-Gerät nutzen; dessen Einrichtung oder Nutzung
+ist hier nicht belegt. `backing_dev` zeigt, ob eines eingerichtet ist;
+bei vorhandener Einrichtung enthält `bd_stat` die Writeback-Zähler.
+
+Das Auslagern des PTT-Dienstes bleibt beobachtet, betrifft hier zunächst
+komprimierte Swap-Seiten. Kompression und Dekompression können CPU kosten;
+wie viel sie zu den gemessenen zehn Sekunden STT beitragen, ist nicht isoliert.
+Eine hohe logische Swap-Belegung allein disqualifiziert deshalb keinen
+dauerhaften Piper-Prozess. Vor dessen Aktivierung den tatsächlichen zram-RAM
+und Antwortzeiten bei wechselnden STT-/TTS-Aufrufen messen. Feste Status-WAVs
+bleiben der nächste einfache Schritt, der wiederholtes Modellladen vermeidet.
