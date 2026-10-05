@@ -22,8 +22,8 @@
 - [x] Lautsprecherwiedergabe testen und passende Lautstärke bestätigen; ALSA-Zustand speichern.
 - [x] Mikrofonaufnahme und Wiedergabe testen; Aufnahmequalität mit Eingangsboost 3 bestätigt.
 - [x] Gesamten ALSA-Zustand nach Mikrofonanpassung speichern und Audio nach Neustart prüfen; Nutzer bestätigt „passt“.
-- [ ] Endgültigen Speaker-Pegel auslesen: zuletzt gesetzt 100 %, danach 95 % empfohlen; endgültiger Wert unbelegt.
-- [x] Tasten-GPIO anhand Herstellerbelegung identifizieren: BCM17 / Pin 11.
+- [x] Speaker-Pegel auslesen: beide Kanäle 121 / 127, 95 %, 0,00 dB bestätigt.
+- [x] Tasten-GPIO identifizieren: BCM17 / Pin 11; gpiochip0 (pinctrl-bcm2835), Offset 17 als freier Eingang bestätigt.
 - [ ] Polarität und Entprellung am echten HAT mit Probe prüfen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
 
