@@ -205,14 +205,32 @@ Die kurze Ruhephase verbraucht 0,717 CPU-Sekunden, entsprechend 7,2 % eines
 Kerns bzw. 1,8 % der vier Kerne. Sie ist keine Langzeit-Leerlaufmessung.
 
 
-## Weiterer Lauf mit A während des Benchmarks
+## Weiterer Lauf mit überlappender Vosk-Transkription
 
 Berichtbeginn 20:37:37 UTC (22:37:37 MESZ) am 5. Oktober 2026, gleiche
-Messversion und Parameter. Der Benutzer meldet ausdrücklich, währenddessen
-A gedrückt zu haben. Dieser Lauf zählt als Versuch mit zusätzlicher Bedienung,
-nicht als Wiederholung unter denselben kontrollierten Bedingungen.
-Zeitpunkt, Haltedauer, Aufnahmeabschluss und tatsächlich laufende Vosk-Transkription
-sind aus dem Ressourcenbericht nicht ablesbar; dafür ist das Dienstjournal nötig.
+Messversion und Parameter. Der Benutzer meldete A-Bedienung beim Test und
+lieferte anschließend das Journal. Die Aufnahme begann bereits kurz vor dem
+Benchmark; Vosk verarbeitete sie bei dessen Start noch. Dieser Lauf zählt als
+Versuch mit überlappender Verarbeitung, nicht als Wiederholung unter denselben
+kontrollierten Bedingungen.
+
+| Dienstereignis (MESZ) | Nachweis |
+|---|---|
+| 22:37:32 | `recording` |
+| 22:37:36 | `capture_ready`, Grund `release`, PCM S16_LE, 48 kHz, Stereo, 174.016 Frames |
+| 22:37:36 | `processing` |
+| 22:37:37 | Beginn des Ressourcenberichts |
+| 22:37:46 | `transcript`, `provider=vosk`, Text: „teste es test test browsers“ |
+
+Die Aufnahme enthält 174.016 / 48.000 = 3,63 s Audio. Zwischen `processing` und
+`transcript` liegen laut sekundengenauem Journal ungefähr zehn Sekunden;
+etwa neun davon fallen nach den Berichtbeginn. Das bestätigt funktionierende
+Aufnahme und erfolgreiche Offline-STT während des Starts der CLI-Vergleichsphase.
+Die ersten Hardware-/System-Snapshots gehören zum Benchmarkstart; der genaue
+Start des Piper-Kindprozesses steht nicht im Bericht. Die deutlich späteren
+residenten Erzeugungen sind deshalb kein Nachweis gleichzeitiger Vosk-/Piper-Synthese.
+Die Erkennungsgenauigkeit lässt sich ohne den tatsächlich gesprochenen Satz
+nicht beurteilen.
 
 | Messwert | Ergebnis |
 |---|---|
@@ -229,8 +247,15 @@ sind aus dem Ressourcenbericht nicht ablesbar; dafür ist das Dienstjournal nöt
 
 Schon vor diesem Lauf lagen große Teile des PTT-Dienstes im Swap. Der niedrigere
 Piper-RSS ist deshalb kein Nachweis einer Speicheroptimierung: auch der neue
-Piper-Worker besitzt ausgelagerte Seiten. Die zusätzliche PTT-CPU-Zeit passt zu
-mehr Dienstaktivität, belegt aber allein keine erfolgreich beendete Transkription.
+Piper-Worker besitzt ausgelagerte Seiten. Das Journal bestätigt diesmal eine
+beendete Transkription. Die rund zehn Sekunden sind eine Einzelmessung bei
+überlappender Last und bereits vorhandenen Swap-Seiten; den Anteil von
+Swapping, CPU-Konkurrenz und Eingabe am Zeitbedarf trennt dieser Versuch nicht.
 Die Beobachtung ändert die Empfehlung zu Status-WAVs und gegen eine sofortige
-permanente Piper-Komponente nicht. Aufnahme, STT-Ergebnis, Abbruchverhalten
-und Gesamtlatenz bei abwechselndem STT/TTS separat aus dem Journal prüfen.
+permanente Piper-Komponente nicht. Abbruchverhalten und Gesamtlatenz bei
+abwechselndem STT/TTS bleiben separat zu prüfen.
+
+Ein anschließend zurückgemeldeter `free -h`-Snapshot zeigt 217 MiB verfügbaren
+RAM und 212 MiB belegten Swap von insgesamt rund 414 MiB. Swap ist damit aktiv
+und bleibt nach dem Benchmark belegt. Sein Medium (SD-Datei, Partition oder
+zram) ist daraus nicht erkennbar; dafür die Ausgabe von `swapon --show` auslesen.
