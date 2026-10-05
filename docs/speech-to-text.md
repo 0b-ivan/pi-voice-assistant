@@ -12,7 +12,7 @@ Auf `pi-assistent` läuft bewusst **`STT_PROVIDER=vosk`**. PTT→Vosk mit echten
 
 [Setup](setup.md#4-repository-und-dienst-installieren) enthält die vollständige Installation. Optionaler Vosk-Installer: `sudo bash scripts/install-vosk.sh`. Paket liegt in `/opt/pi-voice-assistant/vendor`, Modell in `/opt/pi-voice-assistant/models/vosk-model-small-de-0.15`. Kein Modell in Git; kein Vosk-venv für den Dienst: er verwendet `/usr/bin/python3` mit zusätzlichem Vendor-Pfad.
 
-Konfiguration mit `sudo vim /etc/pi-voice-assistant.env`, danach Dienst neu starten. Für Vosk:
+Konfiguration in `/etc/pi-voice-assistant.env` ändern, danach Dienst neu starten. Für Vosk:
 
 ```text
 STT_PROVIDER=vosk

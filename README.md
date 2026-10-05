@@ -22,9 +22,3 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 Vertiefung: [Hardware und Fotos](docs/hardware.md), [Ethernet/USB/SHIM-Test](docs/hardware-bring-up.md), [PTT-Verhalten](docs/push-to-talk.md), [STT und Messwerte](docs/speech-to-text.md), [Button-Bedienung](docs/button-controls.md), [lokale TTS und Performance](docs/local-speech.md), [Architektur](docs/architecture.md), [nächste Aufgaben](docs/roadmap.md), [Projekt-/PR-Prüfung](docs/project-review.md).
 
 Die Installationsvorlage setzt weiterhin `openrouter`, weil der normale Dienstinstaller Vosk nicht mitinstalliert. Für den dokumentierten Offline-Betrieb Vosk separat installieren und **explizit `STT_PROVIDER=vosk` setzen**. Installation und Providerwahl stehen zusammen im Setup.
-
-## Entwicklung
-
-`src/` enthält PTT, STT und Button-Steuerung; `deploy/` die systemd-Unit, `config/` Konfigurationsbeispiele, `scripts/` Installation/Diagnose, `tests/` Tests ohne Hardware. Auf dem Pi kann `bash scripts/inspect-pi.sh` den Bestand lesend erfassen.
-
-Konfigurationen mit **Vim** bearbeiten. Änderungen über Branch und PR; Hardware-Abnahmen brauchen eine Rückmeldung vom Pi. Keine Schlüssel, Modelle, Sprachaufnahmen oder Kamerabilder committen. Eine Lizenz ist noch nicht festgelegt.
