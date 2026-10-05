@@ -100,12 +100,14 @@ sind Momentaufnahmen und keine vollständige Messung von Throttling unter Last.
 
 ## Entscheidung nach dem Test
 
-Wir beurteilen wiederholte Erzeugungszeit, belegten RAM im Ruhezustand, CPU in
-Ruhe und Swap-Aktivität bei gleichzeitig geladenem Vosk. Erst die Pi-Ergebnisse
-entscheiden, ob ein dauerhaft geladenes Modell sinnvoll ist. Für feste
-Statusansagen bleibt eine vorberechnete WAV-Datei eine weitere Option.
-Der Vergleich mit nachweislich geladenem Vosk ist noch offen; lokale Tests validieren nur Messablauf,
-Modell-Wiederverwendung, Fehlerbehandlung und Prozessbereinigung mit einem Stub.
+Die beiden Pi-Läufe unten zeigen: Ein geladenes Piper-Modell beschleunigt kurze
+Ansagen erheblich, aber neben Vosk entsteht deutlicher Speicherdruck. Auf diesem
+Pi Zero 2 W vorerst keinen dauerhaften Piper-Dienst aktivieren. Als nächsten
+Schritt feste Statusansagen einmal erzeugen und als WAV abspielen; bei einem
+Cache-Treffer ist keine Piper-Synthese nötig. Variable Texte und der Wechsel
+zwischen STT/TTS benötigen einen eigenen Praxistest. Der Cache ist noch nicht
+implementiert. Lokale Tests validieren Messablauf, Modell-Wiederverwendung,
+Fehlerbehandlung und Prozessbereinigung mit einem Stub.
 
 ## Erste Pi-Messung vom 5. Oktober 2026
 
@@ -152,8 +154,52 @@ Deshalb sind die 135 MiB freien RAM keine belastbare Reserve für Piper plus Vos
 Ein geladenes Piper-Modell ist für die Antwortzeit vielversprechend und kostet
 in diesem Lauf etwa 168 MiB RSS. Die 6,8 % CPU in der kurzen Ruhephase entsprechen
 etwa 1,7 % der vier Kerne; sie sind keine Langzeitmessung des Leerlaufs.
-Vor einer dauerhaften TTS-Komponente A/GPIO17 für eine echte Transkription
-benutzen, im Journal `transcript` mit `provider=vosk` prüfen und anschließend
-ohne Dienstneustart denselben Benchmark wiederholen. Dann freien RAM, Swap
-und PTT-Prozesswerte vergleichen. Für feste Statusansagen bleibt ein WAV-Cache
-eine mögliche Alternative; beides ist hier noch nicht aktiviert.
+Die folgende Wiederholung prüft den Vergleich nach der Vorbereitung mit Vosk.
+Eine permanente TTS-Komponente oder ein WAV-Cache ist weiterhin nicht aktiviert.
+
+
+## Wiederholung neben Vosk
+
+Gleiche Messversion `d056897`, gleiches Modell und gleiche Parameter, Berichtbeginn
+20:31:05 UTC (22:31:05 MESZ) am 5. Oktober 2026. Der zurückgemeldete Bericht
+`pi-piper-resources-with-vosk.json` zeigt nun den großen PTT-Speicherverbrauch
+vor dem Benchmark: 198,65 MiB RSS, Lebenszeitspitze 226,62 MiB. Derselbe PID 548
+und Startzeitwert vor/nach bestätigen, dass der PTT-Dienst nicht neu gestartet wurde.
+
+| Abschnitt | Zeit | CPU in % eines Kerns |
+|---|---:|---:|
+| Frischer Prozess 1 / 2 / 3 | 27,92 / 21,20 / 20,10 s | 103,7 / 109,6 / 111,3 % |
+| Modell einmal laden | 18,01 s | 93,0 % |
+| Geladenes Modell, Erzeugung 1 / 2 / 3 | 1,55 / 1,26 / 1,67 s | 334,7 / 390,5 / 357,9 % |
+| Geladenes Modell, zehn Sekunden Ruhe | 10,00 s | 7,2 % |
+
+Der Median sinkt von 21,20 auf 1,55 s, rund Faktor 13,7. Die API-RTF liegen
+zwischen 0,73 und 0,97. Piper bleibt für den kurzen Satz schnell; das größere
+Problem ist jetzt der Speicher.
+
+| Speicherwert | Vorher | Während / nachher |
+|---|---:|---:|
+| Verfügbarer System-RAM | 103,29 MiB | Minimum 42,73 MiB; nachher 220,68 MiB |
+| Gesamte Swap-Belegung | 27,23 MiB | Maximum 284,70 MiB; nachher 221,58 MiB |
+| PTT-Dienst RSS | 198,65 MiB | nachher 7,48 MiB |
+| PTT-Dienst Swap | 4,48 MiB | nachher 185,80 MiB |
+| Piper-Worker RSS | nach Laden 139,39 MiB | letzte Erzeugung 166,93 MiB; Ruhe 160,52 MiB |
+| Piper-Worker Swap | nach Laden 0 MiB | letzte Erzeugung 7,07 MiB; Ruhe 13,48 MiB |
+
+Im gesamten Vergleich steigen die systemweiten Swap-Zähler um **318,74 MiB
+Swap-out** und **122,13 MiB Swap-in**. Diese Zähler messen bewegte Seiten,
+nicht gleichzeitig belegten Swap, und umfassen alle Programme und sämtliche
+CLI-/API-Phasen. Der Bericht zeigt nicht, welcher Durchlauf die Auslagerung
+ausgelöst hat. Die PTT-Werte belegen aber, dass der weiterlaufende Dienst am Ende
+größtenteils ausgelagert ist. Auch Piper besitzt in der Ruhephase Swap-Seiten.
+
+Die nachher freien 221 MiB sind daher keine Reserve für beide Modelle im RAM:
+Piper ist beendet und große Teile des PTT-Dienstes liegen im Swap. Beim nächsten
+PTT-Einsatz ist erneutes Einlesen ausgelagerter Seiten zu erwarten; die daraus
+entstehende STT-Verzögerung wurde hier noch nicht gemessen. RSS verschiedener
+Prozesse weiterhin nicht als exakten additiven Speicherbedarf behandeln.
+
+Temperatur 48,85 → 52,62 °C, Frequenz in beiden Snapshots 1000 MHz,
+`throttled=0x0` vor/nach. Diese Snapshots zeigen keinen thermischen Engpass.
+Die kurze Ruhephase verbraucht 0,717 CPU-Sekunden, entsprechend 7,2 % eines
+Kerns bzw. 1,8 % der vier Kerne. Sie ist keine Langzeit-Leerlaufmessung.
