@@ -87,9 +87,13 @@ Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegun
 
 Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. Das ist eine Planungsgrundlage; mechanische Stapelbarkeit, Versorgung und weitere Funktionen der konkreten PiSugar-Revision werden gesondert geprüft.
 
+## Erste Abnahme der Erweiterungen — 05.10.2026 ✅
+
+Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethernet-Adapter (0bda:8152, Realtek RTL8152). eth0 ist in der Folgeausgabe UP und hat **172.22.9.108/24**; WLAN bleibt unter **172.22.9.128/24** erreichbar. Geschwindigkeit, SSH über LAN, die drei externen USB-Ports und Button SHIM stehen noch aus. Einzelne Prüfergebnisse stehen im [Abnahmeprotokoll](hardware-bring-up.md).
+
 ## Noch offen
 
-- Ethernet-/USB-HAT: Linux-Erkennung, LAN-Link, DHCP, SSH über LAN und drei USB-Anschlüsse.
+- Ethernet-/USB-HAT: Treibername, Linkgeschwindigkeit, Adressvergabe, Router-/SSH-Test über LAN und drei USB-Anschlüsse. Linux-Erkennung und LAN-IP sind bestätigt.
 - Button SHIM: Buszugriff, Tasten A–E, RGB-LED und gemeinsamer Betrieb mit WM8960/PiSugar2.
 - PiSugar2-Revision, Akkukapazität und sauberes Abschaltverhalten.
 - Kamerasensor und Testbild.

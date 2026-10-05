@@ -187,15 +187,29 @@ sudo reboot
 
 Bis zur Abnahme entsteht kein neuer Autostartdienst. Die Belegung A=PTT, B=Abbruch, C=leiser, D=lauter, E=Status ist ein Vorschlag; Tasten und LED sind noch nicht in den Sprachdienst integriert.
 
+## Rückmeldung vom Pi — 05.10.2026
+
+Linux erkennt den USB-Hub als **1a40:0101 Terminus Technology Inc. Hub** und Ethernet als **0bda:8152 Realtek RTL8152 Fast Ethernet Adapter**. Zunächst meldete eth0 NO-CARRIER und hatte keine Adresse. Die anschließende Ausgabe bestätigt eth0 UP mit IPv4 **172.22.9.108/24**. WLAN bleibt UP unter **172.22.9.128/24**. Herkunft der Adresse (DHCP/Profil), Treibername, Geschwindigkeit und SSH über LAN sind noch nicht ausgelesen bzw. getestet.
+
+Für i2cdetect -l liegt noch keine Buszeile vor. Wenn die Liste leer bleibt, zuerst die Userspace-Schnittstelle laden und erneut prüfen:
+
+~~~bash
+sudo modprobe i2c-dev
+i2cdetect -l
+sudo i2cdetect -y 1 0x3f 0x3f
+~~~
+
+Das lädt die I²C-Geräteschnittstelle für Userspace in der laufenden Sitzung. Es ersetzt weder den WM8960-Treiber noch das bestehende Overlay. Erst nach erfolgreichem Zugriff prüfen, ob i2c-dev auch nach Neustart verfügbar ist; die dauerhafte Einrichtung folgt bei Bedarf.
+
 ## Abnahmeprotokoll
 
 | Prüfung | Status / Ergebnis |
 |---|---|
 | Erweiterter Aufbau montiert, Fotos abgelegt | Foto-Nachweis 05.10.2026 |
-| Hub und RTL8152B von Linux erkannt | Offen |
-| LAN-Interface und Treiber | Offen |
+| Hub und RTL8152B von Linux erkannt | Bestätigt: Terminus 1a40:0101, Realtek 0bda:8152 |
+| LAN-Interface und Treiber | eth0 erkannt; Treibername noch offen |
 | Link/Geschwindigkeit | Offen |
-| LAN-IP und Router über LAN erreichbar | Offen |
+| LAN-IP und Router über LAN erreichbar | 172.22.9.108/24, eth0 UP; Router-Test offen |
 | SSH über LAN | Offen |
 | USB-A Port 1 / 2 / 3 | Offen / offen / offen |
 | I²C 0x3f erreichbar, keine konkurrierende Nutzung | Offen |
