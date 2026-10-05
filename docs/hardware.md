@@ -4,7 +4,7 @@ Stand: 05.10.2026. Grundlage: Ivans Angaben und acht Projektfotos. Sichtbare Bes
 
 ## Erweiterter Aufbau — 05.10.2026 📸
 
-Neu ergänzt: **Waveshare ETH/USB HUB HAT** und **Pimoroni Button SHIM**. Beide sind auf den neuen Fotos im Stapel montiert. Ihre Softwarefunktion ist noch nicht abgenommen; die Anleitung steht unter [Hardware-Erweiterungen in Betrieb nehmen](hardware-bring-up.md).
+Neu ergänzt: **Waveshare ETH/USB HUB HAT** und **Pimoroni Button SHIM**. Beide sind auf den neuen Fotos im Stapel montiert. USB-/LAN-Erkennung, 100-Mbit/s-Link und SHIM-Einzeltests sind bestätigt; Einzeltests stehen unter [Hardware-Erweiterungen](hardware-bring-up.md), die noch offene [Dienstabnahme unter Button-Steuerung](button-controls.md).
 
 ![Ethernet- und USB-HAT mit Button SHIM A–E](images/eth-usb-button-shim-2026-10-05.jpg)
 
@@ -49,7 +49,7 @@ Dies ist der frühere Aufbau für die Audio-Inbetriebnahme. Aufnahme und Wiederg
 
 ![WM8960 Audio-HAT mit Mikrofonen und Taste](images/wm8960-audio-hat.jpg)
 
-Am Board sichtbar: zwei Mikrofone, die zentrale Taste, weißer Lautsprecherstecker, grüne Schraubklemme und 3,5-mm-Kopfhörerbuchse. Ob ein Stecker und eine Klemme gleichzeitig belegt sind, sagt noch nichts über das tatsächliche Audiorouting aus. Die beiden Lautsprecher sind als vorhandene Hardware erfasst; Impedanz, Leistung und Wiedergabe müssen noch geprüft werden.
+Am Board sichtbar: zwei Mikrofone, die zentrale Taste, weißer Lautsprecherstecker, grüne Schraubklemme und 3,5-mm-Kopfhörerbuchse. Ob ein Stecker und eine Klemme gleichzeitig belegt sind, sagt noch nichts über das tatsächliche Audiorouting aus. Wiedergabe über die vorhandenen Lautsprecher ist bestätigt; Impedanz und Nennleistung der angeschlossenen Lautsprecher bleiben offen.
 
 ## Stromversorgung
 
@@ -67,19 +67,19 @@ Die früheren Fotos zeigen die Kamera über ein Flexkabel angeschlossen; im aktu
 
 ![Adafruit mini PiTFT 1,3 Zoll 240x240 mit zwei Tastern](images/adafruit-mini-pitft.jpg)
 
-Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240**. Die frühere Einordnung als Waveshare Pico-LCD war falsch. Es ist ein Raspberry-Pi-Zusatzdisplay und benötigt für seinen vorgesehenen Einsatz keinen Raspberry Pi Pico. Es wird erst nach dem Audio-MVP angeschlossen und getestet. Laut Adafruit erlaubt die 1,3″-Variante kein einfaches Durchstecken eines Stacking-Headers durch die Platine. Montage oberhalb des Audio-HATs oder Anschluss per geeigneter Verlängerung separat planen.
+Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240**. Die früheren Chat-Einordnungen als Waveshare Pico-LCD bzw. Waveshare LCD HAT samt behaupteten GPIO19/20/21-Konflikten waren für dieses Display falsch. Es ist ein Raspberry-Pi-Zusatzdisplay und benötigt für seinen vorgesehenen Einsatz keinen Raspberry Pi Pico. Es wird erst nach dem Audio-MVP angeschlossen und getestet. Laut Adafruit erlaubt die 1,3″-Variante kein einfaches Durchstecken eines Stacking-Headers durch die Platine. Montage oberhalb des Audio-HATs oder Anschluss per geeigneter Verlängerung separat planen.
 
 ## Schnittstellen und Planung
 
-Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegungen; der gemeinsame Aufbau ist noch nicht getestet.
+Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegungen. Audio und SHIM wurden im erweiterten Aufbau genutzt; Kamera/PiTFT sind noch nicht integriert.
 
 | Bauteil | Schnittstelle / GPIOs | Prüfung |
 |---|---|---|
-| WM8960 Steuerung | I²C: GPIO2/3 | Bus zusammen mit PiSugar prüfen |
-| WM8960 Audio | I²S: GPIO18/19/20/21 | Overlay und Treiber prüfen |
-| HAT-Taste | GPIO17, physischer Pin 11 | Polarität und Entprellung prüfen |
-| ETH/USB HUB HAT | USB-Datenverbindung zum Pi; GPIO-Stapel für Versorgung und Durchführung | USB-Erkennung, RTL8152-Treiber, LAN-Link und DHCP prüfen |
-| Button SHIM | I²C: GPIO2/3, physische Pins 3/5; Adresse `0x3f`; 5 V, 3,3 V und Masse | Adresskonflikte, Tasten A–E und RGB-LED prüfen |
+| WM8960 Steuerung | I²C: GPIO2/3 | Audio funktioniert; PiSugar-Revision/Adressbelegung separat prüfen |
+| WM8960 Audio | I²S: GPIO18/19/20/21 | Vorhandenes Kernelmodul/Overlay funktionieren |
+| HAT-Taste | GPIO17, physischer Pin 11 | Aktiv Low und normale Zyklen bestätigt; gezielte Prelltests offen |
+| ETH/USB HUB HAT | USB-Datenverbindung zum Pi; GPIO-Stapel für Versorgung und Durchführung | Erkennung/r8152/100-Mbit-Link bestätigt; LAN-SSH und externe Ports offen |
+| Button SHIM | I²C: GPIO2/3, physische Pins 3/5; Adresse `0x3f`; 5 V, 3,3 V und Masse | Einzeltests bestätigt; aktuelle Dienstabnahme/Adresskonflikte separat prüfen |
 | mini PiTFT | SPI: GPIO10/11, CS GPIO8, DC GPIO25; Backlight GPIO22 | Pinbelegung und Montage vor Anschluss abgleichen |
 | Displaytaster | GPIO23/24 | Optional zusätzliche Bedienung |
 | PiSugar2 | I²C; weitere Details revisionsabhängig | Adresse und Versorgung prüfen |
@@ -89,15 +89,15 @@ Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. Das i
 
 ## Erste Abnahme der Erweiterungen — 05.10.2026 ✅
 
-Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethernet-Adapter (0bda:8152, Realtek RTL8152). eth0 ist in der Folgeausgabe UP und hat **172.22.9.108/24**; WLAN bleibt unter **172.22.9.128/24** erreichbar. Geschwindigkeit, SSH über LAN, die drei externen USB-Ports und Button SHIM stehen noch aus. Einzelne Prüfergebnisse stehen im [Abnahmeprotokoll](hardware-bring-up.md).
+Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethernet-Adapter (0bda:8152, Realtek RTL8152). eth0 ist in der Folgeausgabe UP und hat **172.22.9.108/24**; WLAN war unter **172.22.9.128/24** erreichbar. Beide IPs sind damalige Beobachtungen, keine festen Zugangsdaten. 100 Mb/s Full Duplex mit r8152 v1.12.13 sind später bestätigt. SSH über LAN und die drei externen USB-Ports bleiben offen; SHIM-Einzeltests sind bestanden, Dienstabnahme teilweise offen. Einzelne Prüfergebnisse stehen im [Abnahmeprotokoll](hardware-bring-up.md).
 
 ## Noch offen
 
-- Ethernet-/USB-HAT: Treibername, Linkgeschwindigkeit, Adressvergabe, Router-/SSH-Test über LAN und drei USB-Anschlüsse. Linux-Erkennung und LAN-IP sind bestätigt.
-- Button SHIM: Buszugriff, Tasten A–E, RGB-LED und gemeinsamer Betrieb mit WM8960/PiSugar2.
+- Ethernet-/USB-HAT: Herkunft der IP, Router-/SSH-Test über LAN und drei USB-Anschlüsse. Erkennung, LAN-IP und 100-Mbit/s-Link sind bestätigt.
+- Button SHIM: A–E und Hersteller-LED-Test bestätigt; aktuelle Dienstfarben, aktive Abbruchfälle und Reboot der neuen Dienstversion noch abnehmen. Siehe [Button-Steuerung](button-controls.md).
 - PiSugar2-Revision, Akkukapazität und sauberes Abschaltverhalten.
 - Kamerasensor und Testbild.
-- Lautsprecherimpedanz, Leistung und Aufnahme-/Wiedergabetest.
+- Lautsprecherimpedanz und Nennleistung; Aufnahme/Wiedergabe bereits bestätigt.
 - Endgültige Montage, Abstandshalter und Gehäuse.
 
 ## Quellen
