@@ -13,6 +13,7 @@ Taste halten → Sprache aufnehmen → beim Loslassen transkribieren → über O
 ## Dokumentation
 
 - [Hardware und offene Prüfungen](docs/hardware.md)
+- [Ethernet/USB und Button SHIM in Betrieb nehmen](docs/hardware-bring-up.md)
 - [Architektur und MVP-Verhalten](docs/architecture.md)
 - [Betriebssystem und Inbetriebnahme](docs/setup.md)
 - [Roadmap und Aufgaben](docs/roadmap.md)
