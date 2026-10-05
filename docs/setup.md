@@ -20,7 +20,7 @@ Raspberry Pi Imager **v2.0.11.1** auf macOS. Der Abschlussbildschirm bestätigt 
 
 Tatsächlicher Hostname: **`pi-assistent`** (ersetzt die ursprüngliche Planung `wgz-voice-01`). WLAN wurde eingerichtet. Die spätere SSH-Anmeldung bestätigt Benutzer `obivan` und Passwortauthentifizierung. WLAN-Land `DE` und Zeitzone `Europe/Berlin` bleiben zu überprüfende Planwerte.
 
-**Bestätigt:** Schreibvorgang abgeschlossen und Karte automatisch ausgeworfen. Der Pi ist gestartet, im Netzwerk erreichbar und die SSH-Anmeldung funktioniert. **Noch offen:** Erreichbarkeit nach einem weiteren Neustart und Hardwaretests.
+**Bestätigt:** Schreibvorgang abgeschlossen und Karte automatisch ausgeworfen. Der Pi ist gestartet, im Netzwerk erreichbar und die SSH-Anmeldung funktioniert. **Noch offen:** Hardwaretests.
 
 ### Modell auswählen
 
@@ -66,7 +66,7 @@ Alle acht Originalscreenshots liegen unter `docs/images/setup/`. [Screenshot 04]
 
 ![Erfolgreiche SSH-Anmeldung als obivan, Kernelbanner und Shellprompt](images/setup/first-boot-02.png)
 
-Der Login belegt einen erfolgreichen Boot und SSH-Zugriff über die IP-Adresse. mDNS (`pi-assistent.local`) und Erreichbarkeit nach einem weiteren Neustart wurden noch nicht bestätigt.
+Der Login belegt einen erfolgreichen Boot und SSH-Zugriff über die IP-Adresse. Erneute SSH-Anmeldung nach dem Update ist inzwischen bestätigt (siehe Audio-Bestandsaufnahme). mDNS (`pi-assistent.local`) wurde noch nicht bestätigt.
 
 ## 2. Erster Start
 
@@ -118,9 +118,9 @@ Die sieben eingereichten Screenshots wurden geprüft. Drei Bilder belegen die re
 | `alsa-utils` | Bereits aktuell: `1.2.14-1+rpt1` |
 | Git | Installation abgeschlossen: `1:2.47.3-0+deb13u1` |
 | I²C-Werkzeuge | Installation abgeschlossen: `i2c-tools 4.4-2` |
-| Neustart | SSH-Verbindung vom Pi geschlossen, passend zum zuvor eingegebenen `sudo reboot`; Bootabschluss noch nicht nachgewiesen |
-| Erneute SSH-Anmeldung | Befehl eingegeben, aber noch kein Loginbanner oder Shellprompt sichtbar |
-| Audioerkennung | Ausgaben von `aplay -l` und `arecord -l` stehen aus |
+| Neustart | Verbindung nach `sudo reboot` geschlossen; anschließender Login und Diagnosebefehle bestätigt |
+| Erneute SSH-Anmeldung | Erfolgreich; Loginbanner und Shellprompt im folgenden Screenshot |
+| Audioerkennung | Nur HDMI-Wiedergabe; kein Aufnahmegerät; WM8960 noch nicht erkannt |
 
 ![Paket-Hinweise während des Updates; q schließt den Betrachter](images/setup/update-package-notes.png)
 
@@ -128,7 +128,21 @@ Die sieben eingereichten Screenshots wurden geprüft. Drei Bilder belegen die re
 
 ![Git und i2c-tools eingerichtet; SSH getrennt und erneute Verbindung gestartet](images/setup/tools-installed-reconnect.png)
 
-Die Updateausgabe referenziert Kerneldateien für `6.18.50+rpt-rpi-v8`. Das belegt noch nicht den nach dem Neustart laufenden Kernel; dafür ist `uname -r` erforderlich. APT zeigt **27,1 GB verfügbaren Platz** an. Dieser Wert ist die freie Kapazität des Dateisystems und bestätigt nicht die Größe der eingelegten SD-Karte; die geplanten 64 GB werden mit `lsblk` geprüft.
+Die Updateausgabe referenziert Kerneldateien für `6.18.50+rpt-rpi-v8`. Der nachfolgende Screenshot bestätigt diesen Kernel mit `uname -r`. APT zeigt **27,1 GB verfügbaren Platz** an. Dieser Wert ist die freie Kapazität des Dateisystems und bestätigt nicht die Größe der eingelegten SD-Karte; die geplanten 64 GB werden mit `lsblk` geprüft.
+
+### Audio-Bestandsaufnahme nach Neustart — 05.10.2026
+
+![SSH-Anmeldung nach Neustart, Kernel und ALSA-Gerätelisten](images/setup/audio-baseline.png)
+
+| Diagnose | Ergebnis |
+|---|---|
+| `uname -r` | `6.18.50+rpt-rpi-v8` |
+| `aplay -l` | Nur Karte 0 `vc4hdmi`, Gerät 0 `MAI PCM i2s-hifi-0` |
+| `arecord -l` | Leere Liste der Aufnahmegeräte |
+| WM8960 | Noch nicht als ALSA-Karte erkannt |
+| Audiofunktion | Noch nicht getestet |
+
+Die leere Aufnahmegeräteliste belegt keine defekten Mikrofone. Zunächst müssen Treiber und Device-Tree-Konfiguration geprüft werden. Der nächste Schritt ist die WM8960-Einrichtung für den bestätigten Kernel.
 
 ## 3. Audio zuerst
 
@@ -167,7 +181,7 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 | Beide Lautsprecher hörbar | Offen |
 | Mikrofonaufnahme verständlich | Offen |
 | Taste zuverlässig erkannt | Offen |
-| WLAN/SSH nach Neustart verfügbar | Offen |
+| Netzwerkerreichbarkeit und SSH nach Neustart | Bestätigt; konkrete WLAN-Schnittstelle noch nicht erfasst |
 | Akku-/Abschaltverhalten geprüft | Offen |
 
-SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Systemupdate und Werkzeuginstallation sind bestätigt. Erneute SSH-Anmeldung nach dem angestoßenen Neustart, laufender Kernel und Hardwaretests stehen aus.
+SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Systemupdate und Werkzeuginstallation sind bestätigt. Erneute SSH-Anmeldung und laufender Kernel sind bestätigt. WM8960-Einrichtung und Hardwaretests stehen aus.

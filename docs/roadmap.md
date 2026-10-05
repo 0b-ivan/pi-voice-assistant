@@ -15,8 +15,10 @@
 - [x] Trixie 64-bit mit Imager auf SD-Karte schreiben; [Screenshots dokumentiert](setup.md).
 - [x] Ersten Boot, Netzwerkerreichbarkeit und SSH-Anmeldung bestätigen.
 - [x] Systemupdate durchführen; Git, ALSA- und I²C-Werkzeuge bereitstellen.
-- [ ] M0: SSH und WLAN nach dem angestoßenen Neustart prüfen.
-- [ ] OS-/Kernelstand und WM8960-Treibercommit dokumentieren.
+- [x] SSH und Netzwerkerreichbarkeit nach dem angestoßenen Neustart bestätigen.
+- [ ] WLAN-Schnittstelle und Verbindung explizit erfassen.
+- [x] Laufenden Kernel nach Neustart und ALSA-Bestandsaufnahme dokumentieren.
+- [ ] WM8960-Treiber einrichten und Commit dokumentieren.
 - [ ] Lautsprecher und Mikrofone testen.
 - [ ] Tasten-GPIO, Polarität und Entprellung prüfen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
