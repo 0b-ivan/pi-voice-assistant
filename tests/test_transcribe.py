@@ -176,6 +176,55 @@ class ProviderTests(unittest.TestCase):
                 stt.transcribe_with_provider(self.audio)
 
 
+class VoskErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.model = Path(self.tmp.name) / "model"
+        self.model.mkdir()
+        self.audio = Path(self.tmp.name) / "capture.wav"
+        with wave.open(str(self.audio), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b"\0\0" * 1600)
+
+    def test_plain_exception_from_model_is_normalized(self):
+        class FakeVosk:
+            @staticmethod
+            def SetLogLevel(_level):
+                pass
+
+            @staticmethod
+            def Model(_path):
+                raise Exception("Failed to create a model")
+
+        env = {"VOSK_MODEL_PATH": str(self.model)}
+        with patch.dict("os.environ", env, clear=True), patch(
+            "transcribe._vosk_module", return_value=FakeVosk
+        ), patch.object(stt, "_VOSK_MODEL", None), patch.object(
+            stt, "_VOSK_MODEL_PATH", None
+        ):
+            with self.assertRaisesRegex(
+                TranscriptionError, "failed to load Vosk model.*Failed to create a model"
+            ):
+                stt._load_vosk_model()
+
+    def test_plain_exception_from_recognizer_is_normalized(self):
+        class FakeVosk:
+            @staticmethod
+            def KaldiRecognizer(_model, _rate):
+                raise Exception("native recognizer failure")
+
+        with patch("transcribe._load_vosk_model", return_value=object()), patch(
+            "transcribe._vosk_module", return_value=FakeVosk
+        ):
+            with self.assertRaisesRegex(
+                TranscriptionError, "Vosk transcription failed: native recognizer failure"
+            ):
+                stt.transcribe_vosk(self.audio)
+
+
 class VoskAudioTests(unittest.TestCase):
     def test_48khz_stereo_is_downmixed_and_resampled_to_16khz_mono(self):
         with tempfile.TemporaryDirectory() as tmp:
