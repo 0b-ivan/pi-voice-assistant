@@ -1,0 +1,20 @@
+# Lokale Konfiguration und Geheimnisse
+.env
+.env.*
+!.env.example
+*.local
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+# Laufzeitdaten
+recordings/
+captures/
+logs/
+*.wav
+*.mp3
+*.flac
+# Editor und OS
+.DS_Store
+.idea/
+.vscode/
