@@ -8,11 +8,11 @@
 | Vosk STT | Optionale lokale deutsche Spracherkennung ohne Internet |
 | OpenRouter STT | Online-STT mit Whisper; im Hybridmodus primärer Provider |
 | OpenRouter LLM | Nächster Schritt: erkannten Text beantworten |
-| TTS | Danach: deutschen Antworttext in Wiedergabeaudio umwandeln; Provider noch offen |
+| Piper TTS | Lokale deutsche Sprachsynthese mit `de_DE-thorsten-low`; Ausgabe über WM8960 |
 | PiSugar2-Integration | Später Akkustatus und kontrolliertes Herunterfahren |
 | Kamera/Display | Spätere optionale Erweiterung |
 
-Der Pi Zero 2 W übernimmt Geräte-I/O und kann STT lokal mit Vosk ausführen. Die eigentliche LLM-Antwort bleibt zunächst extern bei OpenRouter. Damit ist die Aufnahme- und Erkennungskette offline nutzbar, ohne bereits ein lokales LLM auf dem Zero 2 W betreiben zu müssen.
+Der Pi Zero 2 W übernimmt Geräte-I/O, lokale STT mit Vosk und lokale TTS mit Piper. Die eigentliche LLM-Antwort bleibt zunächst extern bei OpenRouter. Damit bleiben Aufnahme, Spracherkennung und Sprachausgabe lokal; nur die semantische Antworterzeugung benötigt im MVP eine Online-Verbindung.
 
 ## MVP-Ablauf
 
@@ -22,8 +22,8 @@ Der Pi Zero 2 W übernimmt Geräte-I/O und kann STT lokal mit Vosk ausführen. D
 4. Der STT-Adapter verwendet `STT_PROVIDER=openrouter|vosk|auto`.
 5. `auto` versucht zuerst OpenRouter und verwendet bei STT-/Netzfehler Vosk lokal.
 6. Als nächster Baustein wird der erkannte Text an ein OpenRouter-LLM gesendet.
-7. Danach synthetisiert TTS eine deutsche Antwort.
-8. Client spielt die Antwort ab und kehrt in den Wartezustand zurück.
+7. `src/speak.py` synthetisiert den deutschen Antworttext lokal mit Piper.
+8. ALSA spielt die erzeugte 16-kHz-Mono-WAV über `plughw:CARD=wm8960soundcard,DEV=0` ab; danach kehrt der Client in den Wartezustand zurück.
 
 Während der synchronen Verarbeitung startet keine neue Aufnahme. Nach STT wird GPIO17 resynchronisiert; eine während der Verarbeitung gehaltene Taste muss zuerst losgelassen werden. Wake Word, Unterbrechen der Sprachausgabe und Echounterdrückung gehören nicht zum ersten MVP.
 
@@ -35,6 +35,12 @@ Der STT-Adapter unterstützt drei Modi. `openrouter` entspricht dem bisherigen V
 
 Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`; das Transcript-Ereignis nennt den tatsächlich verwendeten Provider. Erwartete Provider-, Netzwerk- und API-Fehler werden als `stt_error` gemeldet und beenden PTT nicht.
 
+## Implementierter Vertrag: Text → TTS → WM8960
+
+[`src/speak.py`](text-to-speech.md) verwendet Piper 1.8.0 mit dem lokalen Modell `de_DE-thorsten-low.onnx`. Die Synthese schreibt in eine temporäre WAV-Datei, `aplay` gibt sie über das WM8960 aus und die Datei wird anschließend entfernt. Das getestete Ausgabeformat ist 16 kHz, Mono, S16_LE.
+
+Der am 05.10.2026 bestätigte Speaker-Pegel beträgt 80 % / −19 dB auf beiden Kanälen und wurde mit `alsactl store` gespeichert.
+
 ## Betrieb und Fehler
 
 - Begrenzte Aufnahme und HTTP-Timeout; keine unbegrenzten Audio-Uploads.
@@ -42,7 +48,7 @@ Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`; das Transcript-
 - Der Dienst wartet beim Start nicht auf `network-online.target`.
 - Das Vosk-Modell wird lazy geladen und innerhalb des Prozesses wiederverwendet.
 - Nach STT-Fehlern Rückkehr in den Wartezustand, keine Endlosschleife.
-- Zustände: bereit, Aufnahme, Verarbeitung; Wiedergabe und LLM-Antwort folgen.
+- Zustände: bereit, Aufnahme, Verarbeitung; lokale Wiedergabe ist separat bestätigt, die vollständige LLM/TTS-Orchestrierung folgt.
 - Zugangsdaten ausschließlich außerhalb von Git in `/etc/pi-voice-assistant.env`.
 - Audio bleibt im flüchtigen Runtime-Verzeichnis; keine dauerhafte Speicherung als Standard.
 - Der OpenRouter-Schlüssel wird nicht im Journal ausgegeben.
@@ -50,6 +56,6 @@ Erfolgreiche Verarbeitung erzeugt `processing` und `transcript`; das Transcript-
 
 ## Erfolgskriterien
 
-Bereits bestätigt: GPIO17 startet zuverlässig eine Aufnahme; WM8960-WAV ist verständlich; ein deutscher Test wurde über OpenRouter-STT korrekt transkribiert.
+Bereits bestätigt: GPIO17 startet zuverlässig eine Aufnahme; WM8960-WAV ist verständlich; OpenRouter-STT und Vosk wurden mit echten WM8960-Aufnahmen erfolgreich getestet; Piper 1.8.0 synthetisiert deutsche Sprache lokal und gibt sie über das WM8960 hörbar aus.
 
-Noch offen: Vosk und `auto` auf dem Pi Zero 2 W mit echter WM8960-Aufnahme abnehmen, Erkennungsqualität/Latenz/RAM messen, danach OpenRouter-LLM und deutsche TTS anbinden und die durchgehende Sprachinteraktion testen.
+Noch offen: `auto` als realen OpenRouter→Vosk-Fallback auf Hardware abnehmen, STT/TTS-Latenz und RAM messen, OpenRouter-LLM anbinden, Playback-Sperre integrieren und danach die durchgehende Sprachinteraktion testen.
