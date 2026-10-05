@@ -2,7 +2,7 @@
 
 Ein AI-Sprachassistent auf einem Raspberry Pi Zero 2 W mit WM8960 Audio-HAT und PiSugar2. Der Pi dient als mobiler Audio-Client; rechenintensive Sprach- und KI-Verarbeitung erfolgt über APIs statt lokal auf dem Zero 2 W.
 
-**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sind bestätigt. Push-to-Talk über GPIO17, systemd-Autostart und Hardware-Fehlerfälle wurden getestet. OpenRouter-STT wurde separat auf dem Pi erfolgreich mit deutschem WAV getestet („Hallo, das ist ein Test.“). Die direkte PTT→STT-Integration ist implementiert und wartet auf Hardware-Abnahme nach Deployment. LLM-Antwort und deutsche TTS folgen danach.**
+**Stand: 05.10.2026 — Raspberry Pi OS Lite 64-bit / Trixie läuft stabil; WM8960-Aufnahme und -Wiedergabe sind bestätigt. Push-to-Talk über GPIO17 und OpenRouter-STT funktionieren. Zusätzlich ist Vosk als optionales lokales deutsches STT-Backend mit `STT_PROVIDER=openrouter|vosk|auto` implementiert; `auto` bevorzugt OpenRouter und fällt bei Online-STT-Fehlern auf Vosk zurück. Vosk/Auto warten noch auf Hardware-Abnahme am Pi Zero 2 W. LLM-Antwort und deutsche TTS folgen danach.**
 
 **Betriebssystem:** Raspberry Pi OS Lite 64-bit (Trixie), Headless/SSH; Hostname `pi-assistent`.
 
@@ -23,7 +23,7 @@ Taste halten → Sprache aufnehmen → beim Loslassen transkribieren → über O
 
 ## Repository
 
-`docs/` enthält Planung und Anleitungen. `config/` enthält Konfigurationsbeispiele. `src/ptt.py` enthält den lokalen PTT-Recorder und die STT-Übergabe; `src/transcribe.py` kapselt OpenRouter-STT. `deploy/` enthält die systemd-Unit, `scripts/` Diagnose- und Installationshilfen und `tests/` Hardware-unabhängige Tests.
+`docs/` enthält Planung und Anleitungen. `config/` enthält Konfigurationsbeispiele. `src/ptt.py` enthält den lokalen PTT-Recorder und die STT-Übergabe; `src/transcribe.py` kapselt OpenRouter- und Vosk-STT einschließlich Hybrid-Fallback. `deploy/` enthält die systemd-Unit, `scripts/` Diagnose- und Installationshilfen und `tests/` Hardware-unabhängige Tests.
 
 ```bash
 bash scripts/inspect-pi.sh
@@ -37,7 +37,7 @@ Für den aktuellen Sprachdienst:
 sudo bash scripts/install-voice-service.sh
 ```
 
-Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten und den echten `OPENROUTER_API_KEY` setzen.
+Vor dem Start `/etc/pi-voice-assistant.env` mit **Vim** bearbeiten. Für `openrouter` bzw. den Online-Pfad von `auto` den echten `OPENROUTER_API_KEY` setzen. Vosk wird optional mit `sudo bash scripts/install-vosk.sh` installiert.
 
 ## Arbeitsweise
 
