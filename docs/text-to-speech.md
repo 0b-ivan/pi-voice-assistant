@@ -24,20 +24,24 @@ Der erste Installer richtet Piper in `/opt/pi-voice-assistant/.venv` ein und lä
 | `PIPER_PYTHON` | `/opt/pi-voice-assistant/.venv/bin/python` |
 | `TTS_AUDIO_DEVICE` | `plughw:CARD=wm8960soundcard,DEV=0` |
 
-Der Wrapper kann mit System-Python gestartet werden; sein Piper-Unterprozess nutzt den venv-Interpreter. Eigene Werte in `/etc/pi-voice-assistant.env` eintragen und Dienst neu starten. SHIM-Statusansagen verwenden in `/etc/pi-ptt.env`:
+Der Standalone-Wrapper kann mit System-Python gestartet werden; sein Piper-Unterprozess nutzt den venv-Interpreter. Der PTT-Dienst lädt Piper dagegen einmal aus diesem venv und hält `PiperVoice` resident. Dazu gelten zusätzlich:
 
-```text
-PTT_SPEAK_COMMAND="/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py"
-```
+| Variable | Standard |
+|---|---|
+| `PIPER_VENV` | `/opt/pi-voice-assistant/.venv` |
+| `PIPER_MODEL` | `/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx` |
+| `TTS_AUDIO_DEVICE` | `plughw:CARD=wm8960soundcard,DEV=0` |
 
-[Button-Steuerung](button-controls.md) beschreibt die Aktivierung und Abnahme. Ohne installiertes Piper/Modell meldet E `speech_error`.
+Eigene Werte in `/etc/pi-voice-assistant.env` eintragen und Dienst neu starten. `PTT_SPEAK_COMMAND` bleibt nur als Kompatibilitäts-Fallback aktiv, falls der residente Import oder das Modellladen fehlschlägt.
+
+[Button-Steuerung](button-controls.md) beschreibt die Aktivierung und Abnahme. Der Dienst meldet beim Start `tts_loading` und danach entweder `tts_ready` oder `tts_error` mit Fallback.
 
 ## Wiedergabe und Grenzen
 
-Wrapper erzeugt ein temporäres WAV, spielt es mit `aplay` ab und entfernt es anschließend. Letzter bestätigter analoger Speaker-Pegel: beide Kanäle **80 % / −19 dB**; C/D ändern den separaten digitalen Playback-Pegel. [Audio-Setup](setup.md#3-audio-testen).
+Der residente Dienst erzeugt pro Ansage ein temporäres WAV unter `PTT_RUNTIME_DIR`, spielt es mit einem eigenen `aplay`-Prozess ab und entfernt es anschließend. Synthese läuft außerhalb des Button-Control-Loops; Cancel stoppt Wiedergabe sofort und verwirft eine noch laufende native Piper-Synthese nach deren Rückkehr. Der Standalone-Wrapper behält sein bisheriges Verhalten. Letzter bestätigter analoger Speaker-Pegel: beide Kanäle **80 % / −19 dB**; C/D ändern den separaten digitalen Playback-Pegel. [Audio-Setup](setup.md#3-audio-testen).
 
 Fehlendes Phonem und ONNX-Telemetrie-Warnung waren beim protokollierten Aufruf nicht blockierend (Exitcode 0). [Troubleshooting](troubleshooting.md#sprachausgabe).
 
 Bekannter offener Wrapper-Befund: `--` wird derzeit als Teil des Sprachtexts an Piper übergeben. Die entsprechende Benchmarkkorrektur hat diesen Wrapper nicht geändert. [Textpfad und Performance](local-speech.md#performance).
 
-Pi-Messungen und Speichergrenzen stehen unter [TTS-Performance](local-speech.md) und [Ressourcenbericht](piper-resources.md). Cache, Streaming und dauerhafter Piper-Prozess sind noch nicht implementiert.
+Pi-Messungen und Speichergrenzen stehen unter [TTS-Performance](local-speech.md) und [Ressourcenbericht](piper-resources.md). Cache und Streaming sind noch nicht implementiert; resident Piper ist im PTT-Dienst implementiert.
