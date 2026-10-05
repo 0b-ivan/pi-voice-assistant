@@ -205,7 +205,7 @@ Bis zur Abnahme entsteht kein neuer Autostartdienst. Die Belegung A=PTT, B=Abbru
 
 ## Rückmeldung vom Pi — 05.10.2026
 
-Linux erkennt den USB-Hub als **1a40:0101 Terminus Technology Inc. Hub** und Ethernet als **0bda:8152 Realtek RTL8152 Fast Ethernet Adapter**. Zunächst meldete eth0 NO-CARRIER und hatte keine Adresse. Die anschließende Ausgabe bestätigt eth0 UP mit IPv4 **172.22.9.108/24**. WLAN bleibt UP unter **172.22.9.128/24**. Herkunft der Adresse (DHCP/Profil), Treibername, Geschwindigkeit und SSH über LAN sind noch nicht ausgelesen bzw. getestet.
+Linux erkennt den USB-Hub als **1a40:0101 Terminus Technology Inc. Hub** und Ethernet als **0bda:8152 Realtek RTL8152 Fast Ethernet Adapter**. Zunächst meldete eth0 NO-CARRIER und hatte keine Adresse. Die anschließende Ausgabe bestätigt eth0 UP mit IPv4 **172.22.9.108/24**. WLAN bleibt UP unter **172.22.9.128/24**. Herkunft der Adresse (DHCP/Profil) und SSH über LAN sind noch nicht separat geprüft. Treibername und Geschwindigkeit sind inzwischen durch die ethtool-Ausgabe bestätigt (siehe unten).
 
 Zunächst war die I²C-Busliste leer. Nach sudo modprobe i2c-dev bestätigt die Nutzer-Ausgabe **i2c-1 (bcm2835, i2c@7e804000)** und **i2c-2 (bcm2835, i2c@7e805000)**. Die gezielte Prüfung auf Bus 1 zeigt **3f**: Ein Gerät an der erwarteten Button-SHIM-Adresse antwortet. Tastenfunktion, RGB-LED und ein möglicher Adresskonflikt sind damit noch nicht geprüft.
 
@@ -231,14 +231,18 @@ Nach Installation von python3-venv und der Pimoroni-Bibliothek buttonshim 0.0.2 
 
 Nach der Anleitung zum dauerhaften Laden von i2c-dev und dem Neustart hat der Nutzer die angeforderten Prüfungen (I²C-Busliste, Antwort an 0x3f, Netzwerkadressen, ALSA-Aufnahme/-Wiedergabegeräte und Status von pi-ptt.service) mit **„geht gut“** bestätigt. Dies ist eine zusammenfassende Nutzerbestätigung, keine neu eingereichte Terminalausgabe. Aktuelle IP-Adressen und genaue Dienst-/Gerätedetails nach Neustart wurden nicht erneut ausgelesen dokumentiert. Physische Tasten-/LED- und Aufnahme-/Wiedergabetests nach Neustart bleiben gesonderte Prüfungen.
 
+### Ethernet-Treiber und Link — 05.10.2026 ✅
+
+Die zurückgemeldete ethtool-Ausgabe bestätigt **eth0** mit **r8152 v1.12.13**, Bus **usb-3f980000.usb-1.4**, **100 Mb/s**, **Full Duplex**, **Auto-negotiation on** und **Link detected: yes**. Verwendetes Diagnosepaket: ethtool **1:6.14.2-1**. Damit sind Treiberbindung und ausgehandelter Ethernet-Link bestätigt. Die Geschwindigkeit ist der Link-Modus, kein gemessener Datendurchsatz; Router-/SSH-Test über LAN und die drei externen USB-Buchsen bleiben getrennte Prüfungen.
+
 ## Abnahmeprotokoll
 
 | Prüfung | Status / Ergebnis |
 |---|---|
 | Erweiterter Aufbau montiert, Fotos abgelegt | Foto-Nachweis 05.10.2026 |
 | Hub und RTL8152B von Linux erkannt | Bestätigt: Terminus 1a40:0101, Realtek 0bda:8152 |
-| LAN-Interface und Treiber | eth0 erkannt; Treibername noch offen |
-| Link/Geschwindigkeit | Offen |
+| LAN-Interface und Treiber | eth0, r8152 v1.12.13, USB-Bus usb-3f980000.usb-1.4 |
+| Link/Geschwindigkeit | Link detected: yes; 100 Mb/s; Full Duplex; Auto-negotiation on |
 | LAN-IP und Router über LAN erreichbar | 172.22.9.108/24, eth0 UP; Router-Test offen |
 | SSH über LAN | Offen |
 | USB-A Port 1 / 2 / 3 | Offen / offen / offen |
