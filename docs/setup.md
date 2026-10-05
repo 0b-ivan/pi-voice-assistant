@@ -1,6 +1,6 @@
 # Setup: Pi, Audio und Offline-Sprachdienst
 
-Alle Befehle außer SSH-Verbindung und SD-Vorbereitung laufen auf dem Pi. Ziel: Raspberry Pi Zero 2 W, Raspberry Pi OS Lite **64-bit / Debian 13 Trixie**, Benutzer `obivan`, Hostname `pi-assistent`. Konfigurationen mit `sudo vim <Datei>` bearbeiten; speichern mit Esc, `:wq`, Enter.
+Alle Befehle außer SSH-Verbindung und SD-Vorbereitung laufen auf dem Pi. Ziel: Raspberry Pi Zero 2 W, Raspberry Pi OS Lite **64-bit / Debian 13 Trixie**, Benutzer `obivan`, Hostname `pi-assistent`.
 
 ## 1. System vorbereiten
 
@@ -22,7 +22,7 @@ uname -r
 uname -m
 sudo apt update
 sudo apt full-upgrade
-sudo apt install git vim alsa-utils python3 python3-libgpiod gpiod python3-smbus i2c-tools
+sudo apt install git alsa-utils python3 python3-libgpiod gpiod python3-smbus i2c-tools
 sudo reboot
 ```
 
@@ -39,7 +39,7 @@ aplay -l
 arecord -l
 ```
 
-Wenn WM8960 noch fehlt, `/boot/firmware/config.txt` sichern und mit Vim bearbeiten. Unter dem wirksamen `[all]` folgende Einträge ergänzen, sofern nicht vorhanden:
+Wenn WM8960 noch fehlt, `/boot/firmware/config.txt` sichern und bearbeiten. Unter dem wirksamen `[all]` folgende Einträge ergänzen, sofern nicht vorhanden:
 
 ```ini
 dtparam=i2c_arm=on
@@ -100,9 +100,9 @@ command -v i2cdetect
 /usr/bin/python3 -c 'import smbus, gpiod; assert hasattr(gpiod, "request_lines")'
 sudo bash scripts/install-voice-service.sh
 sudo bash scripts/install-vosk.sh
-sudo vim /etc/pi-ptt.env
-sudo vim /etc/pi-voice-assistant.env
 ```
+
+Nach der Installation `/etc/pi-ptt.env` und `/etc/pi-voice-assistant.env` prüfen und wie unten beschrieben konfigurieren.
 
 Der Dienstinstaller kopiert **alle vier** Dienstmodule und die Unit. Vorhandene Konfigurationen bleiben erhalten. Der Vosk-Installer installiert `vosk==0.3.45` nach `/opt/pi-voice-assistant/vendor` und das kleine deutsche Modell nach `/opt/pi-voice-assistant/models/`; er kann einen laufenden Dienst stoppen und startet ihn bei Erfolg wieder. Bei Installationsfehlern Dienststatus prüfen.
 

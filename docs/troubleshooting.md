@@ -32,7 +32,7 @@ id obivan
 sudo systemctl restart pi-ptt.service
 ```
 
-Erwartet: `shim_ready`, Bus 1, Adresse `0x3f`. Bei Bedarf mit Vim `i2c-dev` in `/etc/modules-load.d/pi-voice-i2c.conf` eintragen; nach Reboot prüfen. I²C muss im Boot-Config aktiviert bleiben. Ein unmittelbar nach `modprobe` gesehener `root:root 0600`-Zustand belegt nicht die endgültigen udev-Rechte. Bei Zugriffsfehlern Gruppe `i2c` und Geräterecht prüfen; keine pauschale Freigabe für alle.
+Erwartet: `shim_ready`, Bus 1, Adresse `0x3f`. Bei Bedarf `i2c-dev` in `/etc/modules-load.d/pi-voice-i2c.conf` eintragen; nach Reboot prüfen. I²C muss im Boot-Config aktiviert bleiben. Ein unmittelbar nach `modprobe` gesehener `root:root 0600`-Zustand belegt nicht die endgültigen udev-Rechte. Bei Zugriffsfehlern Gruppe `i2c` und Geräterecht prüfen; keine pauschale Freigabe für alle.
 
 Nach I²C-Ausfall bleibt GPIO17 verfügbar; SHIM wird erst beim Dienstneustart erneut geöffnet. Ein antwortendes `0x3f` bestätigt noch keine Tasten/LED. Für Einzeltests Dienst stoppen; nie parallel auf den Expander schreiben.
 

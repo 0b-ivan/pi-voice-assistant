@@ -21,7 +21,7 @@ sudo bash scripts/install-voice-service.sh
 
 Piper liegt in `/opt/pi-voice-assistant/.venv`, Stimme als `.onnx` plus passende `.onnx.json` unter `/opt/pi-voice-assistant/tts/`. Wrapper startet den venv-Interpreter, erzeugt temporäres WAV und ruft danach `aplay` auf. Wrapper kann mit System-Python gestartet werden; Piper-Unterprozess muss aus dem venv kommen.
 
-Optionale Umgebungswerte des Wrappers: `PIPER_PYTHON`, `PIPER_MODEL`, `TTS_AUDIO_DEVICE`. Unter systemd vorhandene Konfiguration mit Vim ergänzen und Dienst neu starten. Modelle/venv müssen unter erlaubtem Pfad liegen (`ProtectHome=yes`); `/opt`, `src/` und `scripts/` bleiben root-verwaltet. Nur venv und TTS-Datenverzeichnis gehören im Feature-Installer `obivan`. Historisches rekursives `chown` auf dem Pi ist kein nachgewiesener korrekter aktueller Rechtezustand.
+Optionale Umgebungswerte des Wrappers: `PIPER_PYTHON`, `PIPER_MODEL`, `TTS_AUDIO_DEVICE`. Unter systemd vorhandene Konfiguration ergänzen und Dienst neu starten. Modelle/venv müssen unter erlaubtem Pfad liegen (`ProtectHome=yes`); `/opt`, `src/` und `scripts/` bleiben root-verwaltet. Nur venv und TTS-Datenverzeichnis gehören im Feature-Installer `obivan`. Historisches rekursives `chown` auf dem Pi ist kein nachgewiesener korrekter aktueller Rechtezustand.
 
 Die Warnungen `Missing phoneme from id map` und `Failed to persist telemetry device ID` waren beim protokollierten Statusaufruf nicht blockierend (Exitcode 0). Das ersetzt keine Qualitätsprüfung verschiedener Texte.
 
