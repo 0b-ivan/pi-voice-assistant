@@ -146,14 +146,45 @@ Die leere Aufnahmegeräteliste belegt keine defekten Mikrofone. Zunächst müsse
 
 ## 3. Audio zuerst
 
-Den [Herstellerleitfaden](https://www.waveshare.com/wiki/WM8960_Audio_HAT) und den [Treiber](https://github.com/waveshareteam/WM8960-Audio-HAT) für den ausgewählten Kernel prüfen. Installationsskript vor Ausführung lesen und verwendeten Commit festhalten. Alte Wiki-Beispiele sind keine Kompatibilitätszusage für aktuelle Kernel. Keine automatische Treiberinstallation in diesem Repository.
+### Vorhandenes Kernel-Overlay aktivieren
 
-Nach Installation und Neustart:
+Am 05.10.2026 wurden `/boot/firmware/overlays/wm8960-soundcard.dtbo` und der im Kernel enthaltene Codec-Treiber `snd_soc_wm8960` für `6.18.50+rpt-rpi-v8` nachgewiesen. Die lokale Overlay-Dokumentation beschreibt ausdrücklich das Waveshare-HAT mit 12,288 MHz MCLK. Es war keine zusätzliche Waveshare-Treiberinstallation erforderlich.
+
+Vorher waren I²C/I²S auskommentiert, kein WM8960-Overlay gesetzt und nur HDMI als ALSA-Wiedergabegerät sichtbar.
+
+Konfiguration sichern und bearbeiten:
+
+```bash
+sudo cp /boot/firmware/config.txt /boot/firmware/config.txt.before-wm8960
+sudo nano /boot/firmware/config.txt
+```
+
+Unter dem bestehenden `[all]` am Dateiende ergänzen:
+
+```ini
+# Waveshare WM8960 Audio HAT
+dtparam=i2c_arm=on
+dtparam=i2s=on
+dtoverlay=wm8960-soundcard
+```
+
+Speichern, `sudo reboot` ausführen und erneut per SSH anmelden. Anschließend:
 
 ```bash
 aplay -l
 arecord -l
-alsamixer
+```
+
+### Ergebnis nach Neustart — 05.10.2026 ✅
+
+![WM8960 als Wiedergabe- und Aufnahmegerät nach Neustart erkannt](images/setup/wm8960-detected.png)
+
+Beide Listen zeigen Karte 0 **`wm8960soundcard`**, Gerät 0, mit `bcm2835-i2s-wm8960-hifi`. HDMI ist zusätzlich als Karte 1 verfügbar. Damit ist die Geräteerkennung bestätigt; hörbare Wiedergabe und verständliche Mikrofonaufnahme sind noch nicht geprüft.
+
+Zunächst Mixerzustand erfassen, bevor Pegel oder Signalwege verändert werden:
+
+```bash
+amixer -c wm8960soundcard scontents
 ```
 
 Erkannten Kartenbezeichner in `AUDIO_CARD` einsetzen. Leise beginnen:
@@ -177,11 +208,11 @@ Erst nach erfolgreichem Audio-Test Taste und Entprellung testen. Danach PiSugar2
 | Prüfung | Ergebnis |
 |---|---|
 | Modell, Image, Architektur, Kernel dokumentiert | Offen |
-| Treibercommit dokumentiert; keine Installationsfehler | Offen |
+| WM8960-Treiber / Overlay | Kernelmodul und vorhandenes Overlay verwendet; ALSA-Erkennung nach Neustart bestätigt |
 | Beide Lautsprecher hörbar | Offen |
 | Mikrofonaufnahme verständlich | Offen |
 | Taste zuverlässig erkannt | Offen |
 | Netzwerkerreichbarkeit und SSH nach Neustart | Bestätigt; konkrete WLAN-Schnittstelle noch nicht erfasst |
 | Akku-/Abschaltverhalten geprüft | Offen |
 
-SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Systemupdate und Werkzeuginstallation sind bestätigt. Erneute SSH-Anmeldung und laufender Kernel sind bestätigt. WM8960-Einrichtung und Hardwaretests stehen aus.
+SD-Karte, erster Boot und SSH-Anmeldung am 05.10.2026 bestätigt. Systemupdate und Werkzeuginstallation sind bestätigt. Erneute SSH-Anmeldung und laufender Kernel sind bestätigt. WM8960 wird nach Overlay-Aktivierung als Aufnahme- und Wiedergabegerät erkannt. Lautsprecher-, Mikrofon- und weitere Hardwaretests stehen aus.

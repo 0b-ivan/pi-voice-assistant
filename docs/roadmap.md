@@ -18,7 +18,7 @@
 - [x] SSH und Netzwerkerreichbarkeit nach dem angestoßenen Neustart bestätigen.
 - [ ] WLAN-Schnittstelle und Verbindung explizit erfassen.
 - [x] Laufenden Kernel nach Neustart und ALSA-Bestandsaufnahme dokumentieren.
-- [ ] WM8960-Treiber einrichten und Commit dokumentieren.
+- [x] Vorhandenes WM8960-Kernelmodul und Overlay aktivieren; Aufnahme-/Wiedergabegerät nach Neustart bestätigt (kein zusätzlicher Treibercommit).
 - [ ] Lautsprecher und Mikrofone testen.
 - [ ] Tasten-GPIO, Polarität und Entprellung prüfen.
 - [ ] Akkuversorgung und sauberes Herunterfahren testen.
