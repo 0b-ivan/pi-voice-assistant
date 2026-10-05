@@ -300,17 +300,26 @@ cat /sys/class/block/loop0/loop/backing_file
 cat /sys/block/zram0/bd_stat
 ```
 
-Das Loop-Gerät verweist auf eine Datei; deren Dateisystem anschließend mit
-`findmnt -T /ausgegebenem/pfad` bestimmen. Die drei `bd_stat`-Zähler stehen für
+Zurückgemeldete Ausgaben vom 05.10.2026:
+
+```text
+backing_file: /var/swap
+bd_stat:      0 0 0
+```
+
+Das Loop-Gerät verweist damit auf `/var/swap`. Die drei `bd_stat`-Zähler stehen für
 aktuell auf dem Backing-Gerät gespeicherte Daten sowie kumulative Lese- und
 Schreibmengen, jeweils in Einheiten von 4 KiB. Werte vor/nach einem neuen Test
 vergleichen, um dessen zusätzliche Writeback-I/O zu ermitteln.
 
-Die Swap-in/out-Differenzen der Benchmarks beweisen **keine SD-Karten-I/O**.
-Ein Writeback-Gerät ist nun mit `/dev/loop0` nachgewiesen. Tatsächliche Nutzung
-und Dateisystem der dahinterliegenden Datei sind noch nicht ausgelesen.
-Deshalb ist weder rein RAM-basierter Betrieb noch SD-Karten-I/O für die
-vergangenen Benchmarks bewiesen.
+**Abschließende Einordnung:** Writeback nach `/var/swap` ist eingerichtet,
+aber alle drei Geräte-Zähler stehen auf null. Seit Geräteinitialisierung wurden
+laut diesen Zählern keine Seiten auf das Backing-Gerät geschrieben oder von dort
+gelesen. Die beobachtete Swap-Aktivität ist daher als zram-Verarbeitung im RAM
+einzuordnen, nicht als Writeback-I/O nach `/var/swap`. Das sagt nichts über
+anderweitige Dateisystem-I/O des Systems aus. Das Dateisystem von `/var/swap`
+ist für eine spätere Writeback-Prüfung mit `findmnt -T /var/swap` bestimmbar;
+für die Einordnung dieses ungenutzten Writeback-Geräts ist es nicht erforderlich.
 
 Das Auslagern des PTT-Dienstes bleibt beobachtet, betrifft hier zunächst
 komprimierte Swap-Seiten. Kompression und Dekompression können CPU kosten;
