@@ -70,7 +70,7 @@ Der residente Servitor-Pfad schreibt Piper-PCM direkt auf FFmpeg-stdin und start
 
 ## Dynamischer Status auf SHIM E
 
-Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Wenn verfügbar, werden angesagt:
+Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Laufzeit-Zahlen werden als deutsche Zahlwörter normalisiert, damit Piper Zusammensetzungen wie `53` zuverlässig als „dreiundfünfzig“ spricht. Wenn verfügbar, werden angesagt:
 
 - normierte 1-Minuten-Systemlast aus `/proc/loadavg`
 - CPU-Kerntemperatur
@@ -85,8 +85,8 @@ Beispiel:
 STATUS NOMINAL.
 LAST 21 PROZENT. KERN 55 GRAD.
 ARBEITSSPEICHER 62 FREI. SPEICHER 40 FREI.
-LAUFZEIT 2 Stunden 36 Minuten. ERKENNUNG LOKAL.
-SERVITOR BEREIT. DIREKTIVE ERWARTET.
+LAUFZEIT zwei Stunden sechsunddreißig Minuten. ERKENNUNG LOKAL.
+SERVITOR BEREIT. BEFEHL ERWARTET.
 ```
 
 Fehlt eine Quelle unter `/proc` oder `/sys`, wird nur dieser Wert ausgelassen; die Statusansage bleibt funktionsfähig. Während STT beginnt sie mit `VERARBEITUNGSPROTOKOLL AKTIV. AUFNAHME IN ANALYSE.`.
