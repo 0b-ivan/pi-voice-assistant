@@ -58,8 +58,8 @@ class SystemStatusTests(unittest.TestCase):
             uptime_path="/missing/uptime",
             disk_usage=lambda _path: (_ for _ in ()).throw(OSError("missing")),
         )
-        self.assertIn("Ich verarbeite die Aufnahme.", text)
         self.assertIn("VERARBEITUNGSPROTOKOLL AKTIV.", text)
+        self.assertIn("AUFNAHME IN ANALYSE.", text)
         self.assertTrue(text.endswith("BEFEHL IN BEARBEITUNG."))
 
     def test_missing_optional_sources_do_not_break_status(self):
