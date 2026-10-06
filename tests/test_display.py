@@ -141,10 +141,13 @@ class DisplayVoiceEventTests(unittest.TestCase):
             "waiting_for_release": "BEREIT",
             "recording": "ZUHÖREN",
             "processing": "VERSTEHEN",
-            "transcript": "BEREIT",
+            "transcript": "DENKEN",
+            "llm_start": "DENKEN",
+            "llm_response": "SPRECHEN",
             "speech_started": "SPRECHEN",
             "speech_finished": "BEREIT",
             "stt_error": "FEHLER",
+            "llm_error": "FEHLER",
         }
         for event_name, state in expected.items():
             with self.subTest(event=event_name):
