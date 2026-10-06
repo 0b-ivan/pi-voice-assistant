@@ -11,6 +11,7 @@ import threading
 import time
 import wave
 
+from llm import configured_model, generate_reply
 from system_status import build_status_text
 from transcribe import (
     LiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider
@@ -23,9 +24,10 @@ DISPLAY_EVENTS = {
     'tts_loading', 'tts_ready', 'tts_error',
     'waiting_for_release', 'recording', 'capture_ready', 'processing',
     'transcript', 'transcript_discarded', 'cancelled', 'busy',
+    'llm_start', 'llm_response', 'llm_discarded', 'llm_error',
     'status', 'speech_started', 'speech_finished', 'speech_error',
 }
-DISPLAY_ERROR_EVENTS = {'stt_error', 'tts_error', 'speech_error'}
+DISPLAY_ERROR_EVENTS = {'stt_error', 'llm_error', 'tts_error', 'speech_error'}
 DISPLAY_ERROR_HOLD_SECONDS = 3.0
 _display_last_error_at = None
 
@@ -303,12 +305,15 @@ class Recorder:
 
 
 class VoiceController:
-    """One audio capture/STT slot, with A and GPIO17 combined as hold-to-talk."""
+    """One capture/STT/LLM slot, with A and GPIO17 combined as hold-to-talk."""
     def __init__(self, recorder, speech, debounce, limit, probe=False):
         self.recorder, self.speech, self.probe = recorder, speech, probe
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
+        self.job_stage = None
+        self.job_started_at = None
+        self.speech_started_at = None
 
     @staticmethod
     def _mix_color(first, second, amount):
@@ -344,6 +349,7 @@ class VoiceController:
 
     def cancel(self, held, now):
         self.speech.stop()
+        self.speech_started_at = None
         self.recorder.finish('cancel', publish=False)
         if self.job is not None:
             self.job.cancel()
@@ -363,6 +369,8 @@ class VoiceController:
                 self.job = TranscriptionJob(lambda _path: live_result, capture)
             else:
                 self.job = TranscriptionJob(transcribe_with_provider, capture)
+            self.job_stage = 'stt'
+            self.job_started_at = time.monotonic()
 
     def tick(self, gpio_pressed, shim_pressed, now):
         held = gpio_pressed or shim_pressed[0]
@@ -397,23 +405,60 @@ class VoiceController:
                     )
                     try:
                         self.speech.start(text)
+                        self.speech_started_at = time.monotonic()
                         event('status', text=text)
                         event('speech_started', source='status')
-                    except OSError as exc:
+                    except (OSError, RuntimeError, ValueError) as exc:
                         event('speech_error', message=str(exc))
         code = self.speech.poll()
         if code is not None:
+            if self.speech_started_at is not None:
+                event(
+                    'latency',
+                    stage='tts',
+                    metric='playback_total',
+                    latency_ms=round(
+                        (time.monotonic() - self.speech_started_at) * 1000
+                    ),
+                )
+                self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
         if self.job is not None and self.job.done.is_set():
             job, self.job = self.job, None
+            stage, self.job_stage = self.job_stage, None
+            started_at, self.job_started_at = self.job_started_at, None
+            if started_at is not None and stage in ('stt', 'llm'):
+                event(
+                    'latency',
+                    stage=stage,
+                    latency_ms=round((time.monotonic() - started_at) * 1000),
+                )
+
             if job.cancelled:
-                event('transcript_discarded')
+                event('transcript_discarded' if stage == 'stt' else 'llm_discarded')
             elif job.error is not None:
-                event('stt_error', message=job.error)
-            else:
+                event('stt_error' if stage == 'stt' else 'llm_error', message=job.error)
+            elif stage == 'stt':
                 text, provider = job.result
                 event('transcript', text=text, provider=provider)
                 print(f'ERKANNT: {text}', flush=True)
+                self.job = TranscriptionJob(generate_reply, text)
+                self.job_stage = 'llm'
+                self.job_started_at = time.monotonic()
+                event('llm_start', model=configured_model())
+            elif stage == 'llm':
+                reply, model = job.result
+                event('llm_response', text=reply, model=model)
+                print(f'SERVITOR: {reply}', flush=True)
+                try:
+                    self.speech.start(reply)
+                    self.speech_started_at = time.monotonic()
+                    event('speech_started', source='assistant', model=model)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    event('speech_error', message=str(exc))
+            else:
+                event('llm_error', message='unknown processing stage')
+
             self.ptt.resync(held, now)
             action = None
         if action == 'start':
@@ -421,6 +466,7 @@ class VoiceController:
                 event('busy', reason='processing')
             else:
                 self.speech.stop()
+                self.speech_started_at = None
                 self.recorder.start()
         elif action in ('release', 'limit') and self.recorder.process is not None:
             self.submit(action)

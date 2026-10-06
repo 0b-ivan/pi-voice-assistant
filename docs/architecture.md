@@ -1,23 +1,28 @@
 # Architektur
 
-Der Pi übernimmt Taste, Audio und lokale STT. **Implementiert auf `main`:**
+Der Pi übernimmt Taste, Audio, lokale STT und lokale TTS. OpenRouter wird ausschließlich für das LLM verwendet. **Implementierter Antwortpfad:**
 
 ```text
 GPIO17 oder optional SHIM A
-  → arecord: 48 kHz / Stereo / S16_LE
-  → validierter WAV-Slot /run/pi-ptt/capture.wav
-  → STT-Hintergrundthread
-      vosk: intern 16 kHz Mono, Modell im Prozess wiederverwendet
-      openrouter: Online-STT
-      auto: Online zuerst, bei Fehler Vosk
-  → transcript / ERKANNT im Journal
+  → arecord: 16 kHz / Mono / S16_LE im lokalen Vosk-Pfad
+  → Live-Vosk während gedrückter PTT-Taste
+  → transcript / ERKANNT
+  → src/llm.py
+      OpenRouter Chat Completions
+      Servitor-System-Prompt
+      nicht-streamend
+      Timeout + recoverable errors
+  → resident Piper / Thorsten Emotional
+  → Servitor-FFmpeg-Live-DSP
+  → ALSA
+  → WM8960
 ```
 
-[`src/ptt.py`](../src/ptt.py) steuert GPIO und Aufnahme, [`src/voice_controls.py`](../src/voice_controls.py) den STT-Auftrag und eigene Sprachprozesse, [`src/transcribe.py`](../src/transcribe.py) die Provider. Der Hintergrundthread hält die Tasten bedienbar; es gibt weiterhin nur **einen** Aufnahmeslot, keine Warteschlange.
+[`src/ptt.py`](../src/ptt.py) orchestriert GPIO, Aufnahme und die Zustandsfolge. [`src/transcribe.py`](../src/transcribe.py) enthält STT, [`src/llm.py`](../src/llm.py) ausschließlich den OpenRouter-LLM-Client und [`src/voice_controls.py`](../src/voice_controls.py) die lokalen Speech-/Piper-Prozesse. `llm.py` kennt weder GPIO noch ALSA, WM8960 oder Piper. Es gibt weiterhin nur **einen** Verarbeitungs-Slot, keine Warteschlange.
 
 Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Modell-Laden erfolgt bei der ersten lokalen Transkription, nicht beim Dienststart.
 
-## Statusansage und geplanter Antwortpfad
+## Statusansage und Antwortpfad
 
 SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest normierte Systemlast, CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.
 
@@ -42,14 +47,14 @@ Das Adafruit mini PiTFT 1,3″ läuft separat vom Sprachdienst direkt über SPI/
 
 Der Display-Dienst greift nicht in Aufnahme, STT oder TTS ein. `ptt.py` veröffentlicht zusätzlich zu den vollständigen Journal-Events einen minimierten, atomar ersetzten Snapshot unter `/run/pi-ptt/display-event.json`. Darin stehen nur Eventname, Version und Zeitstempel. Der Display-Prozess liest diesen Snapshot mit 100-ms-Takt und bildet ihn auf `BEREIT`, `ZUHÖREN`, `VERSTEHEN`, `SPRECHEN` oder kurzzeitig `FEHLER` ab. System-/Netzwerkprobes bleiben auf einem separaten 2-s-Takt.
 
-`DENKEN` existiert bewusst noch nicht als Displayzustand, weil der LLM-Aufruf noch fehlt. So zeigt das Display nur Zustände, die im aktuellen Laufzeitpfad tatsächlich existieren.
+`DENKEN` wird durch `transcript`/`llm_start` gesetzt; `llm_response` bzw. `speech_started` wechseln auf `SPRECHEN`. LLM-Fehler werden wie STT-/TTS-Fehler kurz als `FEHLER` angezeigt.
 
-Geplant: Transcript → OpenRouter-LLM → Piper → WM8960. **LLM-Aufruf und automatische Antwort-Orchestrierung fehlen.** Der vorhandene Offline-STT-Pfad liefert daher noch keinen vollständig offline antwortenden Assistenten. Lokales LLM, Wake Word, Echounterdrückung sowie die Kamera sind keine aktuellen Funktionen.
+OpenRouter verarbeitet nur Text. Mikrofon-Audio bleibt bei Vosk lokal, und die Antwort wird lokal mit Piper erzeugt. Der API-Key wird ausschließlich aus dem von systemd geladenen Environment gelesen. Lokales LLM, Wake Word, Echounterdrückung sowie die Kamera sind keine aktuellen Funktionen.
 
 ## Betrieb und Grenzen
 
 Die [Unit](../deploy/pi-ptt.service) läuft als `obivan` mit `audio/gpio/i2c`, ohne root. Runtime-Verzeichnis ist `/run/pi-ptt`; Code unter `/opt`, Home gesperrt. Ein dedizierter Dienstbenutzer ist eine offene Verbesserung, keine bereits implementierte Isolation.
 
-Aufnahme hat standardmäßig 30 s Limit; Provider-/Aufnahmefehler werden protokolliert. Vosk braucht kein Netzwerk, die Unit wartet nicht auf `network-online.target`. `auto` ist implementiert, aber der reale Ausfalltest steht aus. WAVs sind flüchtig, Transkripte stehen im Journal.
+Aufnahme hat standardmäßig 30 s Limit; STT-/LLM-/TTS-Fehler werden protokolliert und beenden den Dienst nicht. Vosk braucht kein Netzwerk, der LLM-Schritt dagegen schon. Die Unit wartet trotzdem nicht auf `network-online.target`: ein Netz-/OpenRouter-Ausfall wird als `llm_error` behandelt, danach bleibt PTT nutzbar. WAVs sind flüchtig; Transkripte und LLM-Antworten stehen im Journal.
 
 Messwerte stehen ausschließlich unter [STT](speech-to-text.md) und [TTS](local-speech.md); Hardware-Abnahmen unter [PTT](push-to-talk.md), [Button SHIM](button-controls.md) und [Erweiterungen](hardware-bring-up.md). Entscheidungen: [Pi-Client](decisions/0001-client-server.md), [OS](decisions/0002-operating-system.md), [STT-Modi](decisions/0003-hybrid-stt.md).

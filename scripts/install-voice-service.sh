@@ -21,6 +21,7 @@ fi
 
 install -d -m 0755 /opt/pi-voice-assistant/src /opt/pi-voice-assistant/scripts
 install -m 0644 "${repo_root}/src/ptt.py" /opt/pi-voice-assistant/src/ptt.py
+install -m 0644 "${repo_root}/src/llm.py" /opt/pi-voice-assistant/src/llm.py
 install -m 0644 "${repo_root}/src/transcribe.py" /opt/pi-voice-assistant/src/transcribe.py
 install -m 0755 "${repo_root}/src/speak.py" /opt/pi-voice-assistant/src/speak.py
 install -m 0644 "${repo_root}/src/button_shim.py" /opt/pi-voice-assistant/src/button_shim.py

@@ -252,11 +252,18 @@ class ResidentSpeechOutput:
                 raise RuntimeError("Piper produced no audio chunks") from exc
 
             first_chunk_at = time.monotonic()
+            first_chunk_latency_ms = round((first_chunk_at - started_at) * 1000)
             _speech_event(
                 "tts_first_chunk",
                 profile=self.profile,
-                latency_ms=round((first_chunk_at - started_at) * 1000),
+                latency_ms=first_chunk_latency_ms,
                 bytes=len(chunk.audio_int16_bytes),
+            )
+            _speech_event(
+                "latency",
+                stage="tts",
+                metric="first_chunk",
+                latency_ms=first_chunk_latency_ms,
             )
 
             sample_rate = int(chunk.sample_rate)

@@ -104,7 +104,7 @@ sudo bash scripts/install-vosk.sh
 
 Nach der Installation `/etc/pi-ptt.env` und `/etc/pi-voice-assistant.env` prüfen und wie unten beschrieben konfigurieren.
 
-Der Dienstinstaller kopiert PTT-, STT-, Button- und TTS-Module und die Unit. Vorhandene Konfigurationen bleiben erhalten. Der Vosk-Installer installiert `vosk==0.3.45` nach `/opt/pi-voice-assistant/vendor` und das kleine deutsche Modell nach `/opt/pi-voice-assistant/models/`; er kann einen laufenden Dienst stoppen und startet ihn bei Erfolg wieder. Bei Installationsfehlern Dienststatus prüfen.
+Der Dienstinstaller kopiert PTT-, STT-, LLM-, Button- und TTS-Module und die Unit. Vorhandene Konfigurationen bleiben erhalten. Der Vosk-Installer installiert `vosk==0.3.45` nach `/opt/pi-voice-assistant/vendor` und das kleine deutsche Modell nach `/opt/pi-voice-assistant/models/`; er kann einen laufenden Dienst stoppen und startet ihn bei Erfolg wieder. Bei Installationsfehlern Dienststatus prüfen.
 
 In `/etc/pi-voice-assistant.env`:
 
@@ -112,9 +112,16 @@ In `/etc/pi-voice-assistant.env`:
 STT_PROVIDER=vosk
 VOSK_MODEL_PATH=/opt/pi-voice-assistant/models/vosk-model-small-de-0.15
 VOSK_PYTHON_PATH=/opt/pi-voice-assistant/vendor
+
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_LLM_MODEL=openai/gpt-5.4-mini
+OPENROUTER_LLM_TIMEOUT_SECONDS=15
+OPENROUTER_LLM_MAX_TOKENS=180
+
+TTS_VOICE_PROFILE=servitor
 ```
 
-Für `vosk` ist kein API-Key erforderlich; den Platzhalter-Key entfernen oder leer lassen. Die Vorlage bleibt aus Kompatibilitätsgründen `openrouter`. `/etc/pi-voice-assistant.env` hat `root:obivan`, Modus 0640; nicht öffentlich lesbar machen.
+Vosk selbst benötigt keinen API-Key. Der Key wird ausschließlich für den anschließenden OpenRouter-LLM-Schritt gebraucht und gehört nur in diese lokale Environment-Datei. Die Vorlage setzt `STT_PROVIDER=vosk` und enthält keinen echten Key. `/etc/pi-voice-assistant.env` hat `root:obivan`, Modus 0640; nicht öffentlich lesbar machen.
 
 In `/etc/pi-ptt.env`: GPIO17 aktiv Low, `PTT_RUNTIME_DIR=/run/pi-ptt`. Unter der mitgelieferten Unit den Runtime-Pfad beibehalten. `PTT_BUTTON_SHIM=0` ist die Voreinstellung; SHIM erst nach [Einzeltest](hardware-bring-up.md) auf 1 setzen. Details zu Dienstrechten: [Betrieb](operation.md).
 
@@ -138,6 +145,6 @@ systemctl status pi-ptt.service --no-pager
 journalctl -u pi-ptt.service -f
 ```
 
-Taste halten, einen Satz sprechen, loslassen: `recording` → `capture_ready` → `processing` → `transcript` mit `provider=vosk`. Erste Transkription ist wegen Modell-Laden langsamer. Ctrl-C beendet nur die Loganzeige. Dies ergibt Text, noch keine automatische KI-Antwort.
+Taste halten, eine Frage sprechen, loslassen. Erwartet ist `recording` → `capture_ready` → `processing` → `transcript` mit `provider=vosk` → `llm_start` → `llm_response` → `speech_started` → hörbare lokale Servitor-Ausgabe → `speech_finished`. Zusätzlich erscheinen Latenz-Events für STT, LLM und TTS. Ctrl-C beendet nur die Loganzeige.
 
 Optional: [Button SHIM A–E](button-controls.md), [Piper-Paket und Stimme installieren](text-to-speech.md). PiSugar-Abschaltung, PiTFT und Kamera folgen nach der Audio-/Performance-Abnahme.
