@@ -77,6 +77,67 @@ def _disk_free_percent(path="/", disk_usage=shutil.disk_usage):
     return max(0, min(100, round(usage.free * 100 / usage.total)))
 
 
+def _de_number(value):
+    """German cardinal number words for compact TTS telemetry (0..999)."""
+    value = int(value)
+    if not 0 <= value <= 999:
+        return str(value)
+
+    ones = {
+        0: "null",
+        1: "eins",
+        2: "zwei",
+        3: "drei",
+        4: "vier",
+        5: "fünf",
+        6: "sechs",
+        7: "sieben",
+        8: "acht",
+        9: "neun",
+        10: "zehn",
+        11: "elf",
+        12: "zwölf",
+        13: "dreizehn",
+        14: "vierzehn",
+        15: "fünfzehn",
+        16: "sechzehn",
+        17: "siebzehn",
+        18: "achtzehn",
+        19: "neunzehn",
+    }
+    tens = {
+        20: "zwanzig",
+        30: "dreißig",
+        40: "vierzig",
+        50: "fünfzig",
+        60: "sechzig",
+        70: "siebzig",
+        80: "achtzig",
+        90: "neunzig",
+    }
+
+    if value < 20:
+        return ones[value]
+    if value < 100:
+        ten = (value // 10) * 10
+        unit = value % 10
+        if unit == 0:
+            return tens[ten]
+        unit_word = "ein" if unit == 1 else ones[unit]
+        return f"{unit_word}und{tens[ten]}"
+
+    hundreds, rest = divmod(value, 100)
+    prefix = "einhundert" if hundreds == 1 else f"{ones[hundreds]}hundert"
+    return prefix if rest == 0 else f"{prefix}{_de_number(rest)}"
+
+
+def _duration_words(value, singular, plural, feminine=False):
+    if value == 1:
+        number = "eine" if feminine else "ein"
+        return f"{number} {singular}"
+    return f"{_de_number(value)} {plural}"
+
+
 def _uptime_words(path=UPTIME_PATH):
     raw = _read_text(path)
     if not raw:
@@ -89,10 +150,16 @@ def _uptime_words(path=UPTIME_PATH):
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     if days:
-        return f"{days} Tage {hours} Stunden"
+        return (
+            f"{_duration_words(days, 'Tag', 'Tage')} "
+            f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)}"
+        )
     if hours:
-        return f"{hours} Stunden {minutes} Minuten"
-    return f"{minutes} Minuten"
+        return (
+            f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)} "
+            f"{_duration_words(minutes, 'Minute', 'Minuten', feminine=True)}"
+        )
+    return _duration_words(minutes, "Minute", "Minuten", feminine=True)
 
 
 def build_status_text(
@@ -147,6 +214,6 @@ def build_status_text(
         parts.append("DIREKTIVE IN BEARBEITUNG.")
     else:
         parts.append("SERVITOR BEREIT.")
-        parts.append("DIREKTIVE ERWARTET.")
+        parts.append("BEFEHL ERWARTET.")
 
     return " ".join(parts)
