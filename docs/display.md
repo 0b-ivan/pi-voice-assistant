@@ -61,31 +61,48 @@ python scripts/pitft-color-test.py
 
 Der Test zeigt jeweils kurz Rot, Grün, Blau, Weiß und Schwarz.
 
-## Warum noch kein Framebuffer
+## Boot-/Statusdienst
 
-Für die Statusanzeige des Sprachassistenten wird zunächst direkt per SPI/ST7789 geschrieben. Das hält Display und Audio voneinander getrennt und vermeidet einen zusätzlichen Kernel-/Framebuffer-Stack.
+Der Statusbildschirm läuft direkt über SPI/ST7789 und benötigt keinen zusätzlichen Kernel-/Framebuffer-Treiber. `src/display.py` prüft SPI, WM8960, Netzwerk, Vosk-Modell, aktives TTS-Modell und `pi-ptt.service`. Netzwerk ist informativ und blockiert `SYSTEM READY` nicht, weil der dokumentierte Vosk-Betrieb offline funktioniert.
 
-Damit kann später sehr früh im Userspace eine kompakte Boot-/Statusanzeige erscheinen, zum Beispiel:
+Installation:
 
-```text
-SPI ........ OK
-AUDIO ...... OK
-WLAN ....... OK
-VOSK ....... LOAD
-TTS ........ LOAD
-ASSISTANT ... READY
+```bash
+sudo bash scripts/install-display.sh
+sudo systemctl enable --now pi-display.service
 ```
 
-Die allerersten Kernelmeldungen direkt nach dem Einschalten sind damit nicht gemeint. Ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
+Prüfung:
+
+```bash
+systemctl status pi-display.service --no-pager
+journalctl -u pi-display.service -n 30 --no-pager
+```
+
+Der Dienst läuft als `obivan`, erhält nur die zusätzlichen Gruppen `spi` und `gpio`, nutzt eine eigene virtuelle Umgebung unter `/opt/pi-voice-assistant/.venv-display` und startet beim Boot über `multi-user.target`. Die funktionierende Audio-/Vosk-/Piper-Konfiguration wird nicht verändert.
+
+Bestätigte Anzeige:
+
+```text
+PI ASSISTANT
+
+SPI      .... OK
+AUDIO    .... OK
+NETWORK  .... OK
+VOSK     .... OK
+TTS      .... OK
+VOICE    .... OK
+
+SYSTEM READY
+```
+
+Die Anzeige aktualisiert sich nur, wenn sich einer der geprüften Zustände ändert. Die allerersten Kernelmeldungen direkt nach dem Einschalten werden damit nicht angezeigt; ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
 
 ## Nächster Schritt
 
 Noch **nicht implementiert**:
 
-- eigener Display-Dienst für Boot- und Laufzeitstatus
-- Übernahme der vorhandenen strukturierten Events wie `stt_ready`, `tts_loading` und `tts_ready`
-- Zustände wie `BEREIT`, `ZUHÖREN`, `DENKEN`, `SPRECHEN`
+- Laufzeitstatus aus den strukturierten Voice-Events wie `recording`, `processing`, `stt_ready`, `tts_loading` und `tts_ready`
+- Zustände wie `BEREIT`, `ZUHÖREN`, `VERSTEHEN`, `DENKEN`, `SPRECHEN`
 - sinnvolle Belegung der beiden PiTFT-Tasten auf GPIO23/24
 - endgültige mechanische Montage im Hardware-Stack
-
-Die funktionierende Audio-/Vosk-/Piper-Konfiguration soll dafür nicht verändert werden.

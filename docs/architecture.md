@@ -36,7 +36,13 @@ SHIM E
 
 Der residente Servitor-Pfad erzeugt keine TTS-WAV mehr: Piper liefert Audio-Chunks direkt an FFmpeg. Dadurch beginnt die Ausgabe mit dem ersten synthetisierten Chunk. Das Normalprofil und der Standalone-Fallback können weiterhin dateibasiert arbeiten. [`src/voice_effects.py`](../src/voice_effects.py) enthält beide FFmpeg-Befehlsvarianten.
 
-Geplant: Transcript → OpenRouter-LLM → Piper → WM8960. **LLM-Aufruf und automatische Antwort-Orchestrierung fehlen.** Der vorhandene Offline-STT-Pfad liefert daher noch keinen vollständig offline antwortenden Assistenten. Lokales LLM, Wake Word, Echounterdrückung sowie Kamera/Display sind keine aktuellen Funktionen.
+## Display
+
+Das Adafruit mini PiTFT 1,3″ läuft separat vom Sprachdienst direkt über SPI/ST7789. `src/display.py` prüft beim Boot und während des Betriebs SPI, WM8960, Netzwerk, Vosk-/TTS-Modellpfade und den Zustand von `pi-ptt.service`. Die zugehörige Unit ist `deploy/pi-display.service`; die Display-Abhängigkeiten liegen in einer eigenen Venv unter `/opt/pi-voice-assistant/.venv-display`.
+
+Der aktuelle Display-Dienst ist absichtlich nur ein Zustandsmonitor. Er konsumiert noch keine Voice-Events und greift nicht in Aufnahme, STT oder TTS ein.
+
+Geplant: Transcript → OpenRouter-LLM → Piper → WM8960. **LLM-Aufruf und automatische Antwort-Orchestrierung fehlen.** Der vorhandene Offline-STT-Pfad liefert daher noch keinen vollständig offline antwortenden Assistenten. Lokales LLM, Wake Word, Echounterdrückung sowie die Kamera sind keine aktuellen Funktionen.
 
 ## Betrieb und Grenzen
 
