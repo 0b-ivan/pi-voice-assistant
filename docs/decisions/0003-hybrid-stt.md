@@ -1,11 +1,31 @@
-# ADR 0003: Wählbare lokale und Online-STT
+# ADR 0003: Vosk-only STT, OpenRouter nur für das LLM
 
-Datum 05.10.2026. Status: angenommen, Vosk hardwareseitig bestätigt; reale auto-Abnahme offen.
+Datum 05.10.2026. Aktualisiert 06.10.2026. Status: angenommen; frühere Hybrid-STT-Entscheidung ersetzt.
 
-Der Adapter unterstützt `vosk` (nur lokal), `openrouter` (nur online) und `auto` (OpenRouter zuerst, Vosk bei Fehler). Code-/Vorlagenstandard bleibt `openrouter`, weil der normale Installer Vosk nicht automatisch bereitstellt. **Der tatsächliche Pi-Betrieb nutzt ausdrücklich `vosk`.**
+## Entscheidung
 
-Aufnahme bleibt beim bestätigten 48-kHz-Stereoformat. Vosk erhält intern 16-kHz-Mono, Modell wird bei Bedarf geladen und im Dienst wiederverwendet. Das kleine deutsche Modell ist auf dem Pi funktionsfähig, benötigt aber merkliche Zeit/RAM und erkennt freie Sprache schwächer als der getestete Online-Pfad. [Messwerte und Setup](../speech-to-text.md).
+Speech-to-Text läuft ausschließlich lokal mit Vosk.
 
-`auto` ist Online-First, kann vor Fallback warten und lädt Vosk erstmals beim Ausfall. Es ist kein Offline-Modus. Die praktische Netz-/API-Ausfallprüfung wird zurückgestellt, solange der Nutzer lokal bleiben möchte.
+```text
+WM8960 / PTT
+  -> Vosk STT lokal
+  -> Text
+  -> OpenRouter LLM
+  -> Piper TTS lokal
+```
 
-LLM und TTS sind getrennte Entscheidungen. Lokale TTS ist auf dem Pi inzwischen getestet; damit ist die frühere Annahme, Offline-TTS sei grundsätzlich erst zu evaluieren, als Funktionsfrage überholt. Ressourcenoptimierung bleibt offen.
+OpenRouter verarbeitet kein Mikrofon-Audio. Die früheren STT-Modi `openrouter` und `auto` wurden aus dem aktiven Adapter entfernt. `STT_PROVIDER` akzeptiert nur noch `vosk`.
+
+## Gründe
+
+- Offline-Spracherkennung bleibt auch bei Netz-/API-Ausfall verfügbar.
+- Audio verlässt den Pi nicht.
+- STT und LLM haben klare Verantwortungsgrenzen.
+- Es gibt nur noch einen STT-Codepfad zu testen und zu betreiben.
+- Der OpenRouter-Key wird ausschließlich vom LLM-Client benötigt.
+
+## Umsetzung
+
+Der normale PTT-Pfad erfasst 16-kHz-Mono-PCM und speist Vosk bereits während gedrückter Taste. Das Modell wird beim Dienststart vorgewärmt. Ein validierter WAV-Slot bleibt als lokaler Vosk-Fallback bestehen.
+
+Die bisherige Hardware-/Qualitätsbewertung und Messwerte stehen unter [Speech-to-Text](../speech-to-text.md). Ein lokales LLM ist damit nicht beschlossen; nur STT und TTS bleiben lokal.
