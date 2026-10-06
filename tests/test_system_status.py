@@ -98,9 +98,9 @@ class SystemStatusTests(unittest.TestCase):
         )
         self.assertIn("LAUFZEIT dreiundfünfzig Minuten.", text)
 
-    def test_auto_provider_is_named_explicitly(self):
+    def test_invalid_provider_is_reported_as_misconfigured(self):
         text = build_status_text(
-            stt_provider="auto",
+            stt_provider="openrouter",
             thermal_path="/missing/temp",
             meminfo_path="/missing/meminfo",
             loadavg_path="/missing/loadavg",
@@ -108,7 +108,7 @@ class SystemStatusTests(unittest.TestCase):
             disk_usage=lambda _path: (_ for _ in ()).throw(OSError("missing")),
             cpu_count=self.cpu_count,
         )
-        self.assertIn("STT AUTOMATIK.", text)
+        self.assertIn("STT FEHLKONFIGURIERT.", text)
 
 
 if __name__ == "__main__":
