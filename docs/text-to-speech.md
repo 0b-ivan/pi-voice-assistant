@@ -50,16 +50,12 @@ resident Piper
   -> erster PCM-Chunk sofort per Pipe
   -> FFmpeg Filtergraph
        - Pitch-Absenkung
-       - metallische EQ-Resonanzen
-       - starker Flanger (Feedback 48 %, 1 Hz)
-       - stärkerer Chorus / Mehrstimmen-Layer
-       - Stutter/Tremolo
-       - Phaser/Aura
-       - Doppler-Flanger
-       - >20-Hz-Tremolo als Ringmod-Textur
-       - Tracer-/Glitch-Spur mit kurzen gestaffelten Echos
-       - kontinuierliche Saw-Phase-Spur: 6-Hz-Sägezahn-Hüllkurve + Phaser
-       - unabhängige Maschinen-Aura: 220-Hz-Sägezahn + 440-Hz-Oberwelle + langsamer, tiefer Phaser-Sweep, auch in Satzpausen
+       - Direktsignal für Verständlichkeit
+       - metallische EQ-Resonanzen + ein starker Flanger
+       - Chorus / Mehrstimmen-Layer
+       - Tracer-/Glitch-Spur mit Tremolo und gestaffelten Echos
+       - Saw-Phase-Spur: 6-Hz-Sägezahn-Hüllkurve + Phaser
+       - unabhängige Maschinen-Aura: 220-Hz-Sägezahn + 440-Hz-Oberwelle + langsamer Phaser-Sweep, auch in Satzpausen
        - kurzer Hall
        - Limiter
        - kurzer natürlicher Echo-Tail
@@ -114,6 +110,6 @@ set +a
 
 Der residente Servitor-Pfad erzeugt keine WAV mehr: Piper liefert 16-Bit-PCM-Chunks direkt an FFmpeg und damit an ALSA. Nur das Normalprofil verwendet weiterhin die temporäre WAV. B bzw. PTT kann die eigene Wiedergabe weiterhin über die Prozessgruppe abbrechen.
 
-Der aktuelle Maschinenfilter ist bewusst aggressiv und für die zwei kleinen WM8960-Lautsprecher abgestimmt. Der digitale `Playback`-Regler und der analoge `Speaker`-Pegel bleiben davon getrennt.
+Der aktuelle Maschinenfilter ist bewusst aggressiv und für die zwei kleinen WM8960-Lautsprecher abgestimmt. Nach der Hardware-Abnahme wurde der Live-DSP von elf Mix-Eingängen auf sechs reduziert: redundante Flanger-, Doppler-, Ring- und Aura-Zweige entfallen; Metall, Chorus, Tracer, Saw-Phase und die unabhängige Maschinen-Aura bleiben erhalten. Ziel ist derselbe Charakter mit deutlich weniger Echtzeit-CPU und weniger ALSA-Xruns. Der digitale `Playback`-Regler und der analoge `Speaker`-Pegel bleiben davon getrennt.
 
 Pi-Messungen und Speichergrenzen: [TTS-Performance](local-speech.md) und [Ressourcenbericht](piper-resources.md).
