@@ -134,5 +134,46 @@ class DisplayStatusTests(unittest.TestCase):
                 self.assertEqual(display.models_ok(), (True, True))
 
 
+
+class DisplayVoiceEventTests(unittest.TestCase):
+    def test_runtime_event_mapping(self):
+        expected = {
+            "waiting_for_release": "BEREIT",
+            "recording": "ZUHÖREN",
+            "processing": "VERSTEHEN",
+            "transcript": "BEREIT",
+            "speech_started": "SPRECHEN",
+            "speech_finished": "BEREIT",
+            "stt_error": "FEHLER",
+        }
+        for event_name, state in expected.items():
+            with self.subTest(event=event_name):
+                self.assertEqual(display.voice_state_for_event(event_name), state)
+
+    def test_loading_events_keep_boot_screen(self):
+        self.assertEqual(display.voice_state_for_event("stt_loading"), "STARTET")
+        self.assertEqual(display.voice_state_for_event("tts_loading"), "STARTET")
+
+    def test_irrelevant_event_has_no_runtime_state(self):
+        self.assertIsNone(display.voice_state_for_event("volume"))
+
+    def test_read_voice_event_accepts_valid_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "event.json"
+            path.write_text(
+                '{"version":1,"event":"recording","timestamp":12.5}\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(display.read_voice_event(path), ("recording", 12.5))
+
+    def test_read_voice_event_rejects_malformed_or_incomplete_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "event.json"
+            path.write_text("not json", encoding="utf-8")
+            self.assertIsNone(display.read_voice_event(path))
+            path.write_text('{"event":"recording"}', encoding="utf-8")
+            self.assertIsNone(display.read_voice_event(path))
+
+
 if __name__ == "__main__":
     unittest.main()
