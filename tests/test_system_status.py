@@ -49,14 +49,14 @@ class SystemStatusTests(unittest.TestCase):
         )
 
         self.assertIn("SYSTEM NOMINAL.", text)
-                self.assertIn("TELEMETRIE.", text)
+        self.assertIn("TELEMETRIE.", text)
         self.assertIn("LAST 21 PROZENT.", text)
         self.assertIn("KERN 55 GRAD.", text)
         self.assertIn("RAM 62 PROZENT FREI.", text)
         self.assertIn("SPEICHER 40 PROZENT FREI.", text)
         self.assertIn("LAUFZEIT 2 Stunden 36 Minuten.", text)
         self.assertIn("VOSK OFFLINE.", text)
-                self.assertTrue(text.endswith("DIREKTIVE ERWARTET."))
+        self.assertTrue(text.endswith("DIREKTIVE ERWARTET."))
 
     def test_processing_status_keeps_operator_feedback(self):
         text = build_status_text(
