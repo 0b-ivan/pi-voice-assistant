@@ -1,6 +1,6 @@
 # Nächste Aufgaben
 
-Stand 05.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md); diese Liste enthält nur verbleibende Arbeit.
+Stand 06.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md); diese Liste enthält nur verbleibende Arbeit.
 
 ## Jetzt: lokale Sprache zuverlässig betreiben
 
@@ -24,6 +24,7 @@ Stand 05.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md
 - SSH/Routertest über LAN und alle drei externen USB-Ports abnehmen.
 - Verbleibende PTT-Grenztests: elektrische Prellimpulse, Aufnahme unter 100 ms, Boot mit gehaltener Taste.
 - Image-Prüfsumme, WLAN-Land/Zeitzone bei nächster Systemaufnahme ergänzen.
-- Kamera identifizieren/testen, Adafruit mini PiTFT anschließen und Montage prüfen; anschließend Gehäuse. Wake Word erst später bewerten.
+- PiTFT-Boot-/Statusdienst auf Basis des bestätigten SPI/ST7789-Tests bauen, strukturierte Assistant-Events anzeigen und GPIO23/24 sinnvoll belegen; danach endgültige Montage/Gehäuse.
+- Kamera identifizieren/testen. Wake Word erst später bewerten.
 
 Abnahmekriterium für den ersten antwortenden Assistenten: Taste → verständlicher Text → hörbare deutsche Antwort; nach einem Fehler wieder nutzbar. Dieses Kriterium ist noch nicht erreicht.
