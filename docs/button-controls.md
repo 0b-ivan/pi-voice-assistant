@@ -10,11 +10,11 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
 | B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen |
 | C / D | Digitalen `Playback`-Pegel um 5 Prozentpunkte senken/erhöhen |
-| E | Dynamischen Systemstatus ansagen: Temperatur, freier RAM/Datenspeicher, Laufzeit, STT-Modus und Servitor-Zustand |
+| E | Dynamischen Systemstatus ansagen: Systemlast, Temperatur, freier RAM/Datenspeicher, Laufzeit, STT-Modus und Servitor-Zustand |
 
 A und GPIO17 bilden gemeinsam einen Aufnahmetaster: Aufnahme endet erst, wenn beide losgelassen sind. Alle Tasten beim Start loslassen; B–E lösen einmal pro Druck aus. B hat bei gleichzeitigen Aktionen Vorrang.
 
-STT läuft im Hintergrund. B verwirft dessen Ergebnis, bricht den nativen Vosk-Aufruf aber nicht ab. Der Slot bleibt bis zum Abschluss belegt, danach braucht gehaltenes PTT Release. PTT stoppt eine vom Dienst gestartete Statusansage vor der Aufnahme; E spricht nicht während Aufnahme. Die Statusansage wird beim Druck neu aus `/proc`, `/sys` und dem Dateisystem aufgebaut. Eigene Wiedergabe läuft als verwalteter `aplay`- oder FFmpeg-Prozess; externe Audioprozesse werden nicht verwaltet.
+STT läuft im Hintergrund. B verwirft dessen Ergebnis, bricht den nativen Vosk-Aufruf aber nicht ab. Der Slot bleibt bis zum Abschluss belegt, danach braucht gehaltenes PTT Release. PTT stoppt eine vom Dienst gestartete Statusansage vor der Aufnahme; E spricht nicht während Aufnahme. Die Statusansage wird beim Druck neu aus `/proc`, `/sys` und dem Dateisystem aufgebaut; die 1-Minuten-Load wird auf die CPU-Kernzahl normiert und als `SYSTEMLAST` gesprochen. Eigene Wiedergabe läuft als verwalteter `aplay`- oder FFmpeg-Prozess; externe Audioprozesse werden nicht verwaltet.
 
 C/D ändern `amixer ... sset Playback 5%-/5%+`, nicht Speaker, Speaker AC/DC oder Mikrofonpegel. Änderungen werden vom Dienst nicht für den nächsten Boot gespeichert.
 
