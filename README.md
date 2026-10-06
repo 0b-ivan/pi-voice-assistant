@@ -8,7 +8,7 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 |---|---|
 | System | Raspberry Pi OS Lite 64-bit / Debian 13 Trixie, `pi-assistent`, Benutzer `obivan` |
 | Audio | WM8960-Aufnahme und Wiedergabe samt Neustart bestätigt; vorhandenes Kernelmodul/Overlay, kein zusätzlicher Waveshare-Treiber |
-| PTT und STT | GPIO17, optional Button SHIM A–E/RGB; der Assistent nutzt bewusst lokale Live-Vosk-STT mit `STT_PROVIDER=vosk`. Der ältere OpenRouter-STT-Adapter bleibt nur als Kompatibilitäts-/Diagnosepfad. |
+| PTT und STT | GPIO17, optional Button SHIM A–E/RGB; STT ist ausschließlich lokale Live-Vosk-Erkennung mit `STT_PROVIDER=vosk`. OpenRouter erhält kein Mikrofon-Audio. |
 | Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 resident; `normal` nutzt `de_DE-thorsten-low`, `servitor` nutzt `de_DE-thorsten_emotional-medium` (Speaker 4) plus gestreamten FFmpeg-Live-DSP. SHIM E spricht kompakte dynamische Telemetrie; Verarbeitung blinkt Rot↔Gelb, Sprachpausen sind Türkis und Sprachsegmente Orange. |
 | Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): frischer Prozess 17–22 s, resident 1,12–1,20 s. Kontrollierter Vosk/Piper-Wechsel stabilisierte sich bei 5,89 s STT / 1,26 s TTS; kombinierter Peak-RSS 254,7 MiB, zram physisch ~57 MiB, kein Writeback-I/O |
 | LLM | `src/llm.py` kapselt OpenRouter vollständig getrennt von GPIO/Audio; API-Key nur aus Environment, nicht-streamend, mit Timeout und Fehlerbehandlung. |
