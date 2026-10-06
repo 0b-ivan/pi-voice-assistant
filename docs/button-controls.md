@@ -22,11 +22,11 @@ C/D ändern `amixer ... sset Playback 5%-/5%+`, nicht Speaker, Speaker AC/DC ode
 |---|---|
 | Grün | Bereit, auch beim anfänglichen Warten auf Release |
 | Rot | Aufnahme |
-| Rot ↔ Gelb, weich atmend | STT/Verarbeitung bzw. späteres „Nachdenken“ |
+| Rot ↔ Gelb, klar blinkend | STT/Verarbeitung bzw. späteres „Nachdenken“ |
 | Türkis ↔ Orange | Sprachausgabe: Türkis in Pausen, Orange während Sprachsegmenten |
 | Aus | Dienst beendet oder reine Probe |
 
-Die Sprachfarbe folgt der Piper-Chunk-Timeline: Satzpausen bleiben Türkis, Sprachsegmente blenden weich Richtung Orange. Verarbeitung pulsiert unabhängig davon Rot↔Gelb. Die tatsächliche optische Wirkung auf der Hardware muss noch abgenommen werden. Kein eigener Fehler-/Offline-LED-Zustand implementiert.
+Die Sprachfarbe folgt der Piper-Chunk-Timeline: Satzpausen bleiben Türkis, Sprachsegmente blenden weich Richtung Orange. Verarbeitung blinkt unabhängig davon klar zwischen Rot und Gelb (500 ms pro Farbe). Die tatsächliche optische Wirkung auf der Hardware muss noch abgenommen werden. Kein eigener Fehler-/Offline-LED-Zustand implementiert.
 
 ## Aktivieren
 
