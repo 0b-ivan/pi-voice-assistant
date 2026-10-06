@@ -22,11 +22,11 @@ C/D ändern `amixer ... sset Playback 5%-/5%+`, nicht Speaker, Speaker AC/DC ode
 |---|---|
 | Grün | Bereit, auch beim anfänglichen Warten auf Release |
 | Rot | Aufnahme |
-| Blau | STT, auch nach B bis Auftragsende |
-| Türkis | Eigene Statusansage |
+| Rot ↔ Gelb, weich atmend | STT/Verarbeitung bzw. späteres „Nachdenken“ |
+| Türkis ↔ Orange | Sprachausgabe: Türkis in Pausen, Orange während Sprachsegmenten |
 | Aus | Dienst beendet oder reine Probe |
 
-Die tatsächlichen Dienstfarben/Reaktionszeiten sind noch nicht vollständig auf Hardware bestätigt. Kein roter Fehler-/Offline-LED-Zustand implementiert.
+Die Sprachfarbe folgt der Piper-Chunk-Timeline: Satzpausen bleiben Türkis, Sprachsegmente blenden weich Richtung Orange. Verarbeitung pulsiert unabhängig davon Rot↔Gelb. Die tatsächliche optische Wirkung auf der Hardware muss noch abgenommen werden. Kein eigener Fehler-/Offline-LED-Zustand implementiert.
 
 ## Aktivieren
 
@@ -44,7 +44,7 @@ journalctl -u pi-ptt.service -n 30 --no-pager
 
 Erwartet: `shim_ready`, Bus 1, `0x3f`. Der Dienst nutzt die Gruppe `i2c`. Bei I²C-Fehler wird SHIM bis zum Neustart deaktiviert; GPIO17 bleibt nutzbar. Beim späteren Busausfall wird der aktuelle Vorgang verworfen.
 
-Der Dienst hält Piper resident; `speak.py` ist nur Fallback. Für das Servitor-Profil installiert [Piper-TTS](text-to-speech.md) zusätzlich `de_DE-thorsten_emotional-medium` und FFmpeg. Das Maschinenprofil streamt den Filtergraph direkt nach ALSA und erzeugt keine parallelen Effekt-WAVs.
+Der Dienst hält Piper resident; `speak.py` ist nur Fallback. Für das Servitor-Profil installiert [Piper-TTS](text-to-speech.md) zusätzlich `de_DE-thorsten_emotional-medium` und FFmpeg. Der residente Maschinenpfad streamt Piper-PCM direkt nach FFmpeg/ALSA; dadurch kann die Ausgabe mit dem ersten synthetisierten Chunk beginnen.
 
 Keinen zweiten SHIM-/LED-Test parallel starten. Rücknahme: `PTT_BUTTON_SHIM=0`, Dienst neu starten. GPIO17 und STT-Konfiguration bleiben verwendbar.
 
