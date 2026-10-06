@@ -71,7 +71,7 @@ Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240*
 
 ## Schnittstellen und Planung
 
-Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegungen. Audio und SHIM wurden im erweiterten Aufbau genutzt; Kamera/PiTFT sind noch nicht integriert.
+Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegungen. Audio, SHIM und PiTFT wurden im erweiterten Aufbau genutzt; die Kamera ist noch nicht integriert.
 
 | Bauteil | Schnittstelle / GPIOs | Prüfung |
 |---|---|---|
@@ -80,7 +80,7 @@ Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegun
 | HAT-Taste | GPIO17, physischer Pin 11 | Aktiv Low und normale Zyklen bestätigt; gezielte Prelltests offen |
 | ETH/USB HUB HAT | USB-Datenverbindung zum Pi; GPIO-Stapel für Versorgung und Durchführung | Erkennung/r8152/100-Mbit-Link bestätigt; LAN-SSH und externe Ports offen |
 | Button SHIM | I²C: GPIO2/3, physische Pins 3/5; Adresse `0x3f`; 5 V, 3,3 V und Masse | Einzeltests bestätigt; aktuelle Dienstabnahme/Adresskonflikte separat prüfen |
-| mini PiTFT | SPI: GPIO10/11, CS GPIO8, DC GPIO25; Backlight GPIO22 | SPI0 und `/dev/spidev0.0/.1` bestätigt; ST7789-Farbtest bestanden; Statusdienst noch offen |
+| mini PiTFT | SPI: GPIO10/11, CS GPIO8, DC GPIO25; Backlight GPIO22 | SPI0 und `/dev/spidev0.0/.1` bestätigt; ST7789-Farbtest und Boot-/Statusdienst bestanden |
 | Displaytaster | GPIO23/24 | Optional zusätzliche Bedienung |
 | PiSugar2 | I²C; weitere Details revisionsabhängig | Adresse und Versorgung prüfen |
 | Kamera | Kameraanschluss/Flexkabel | Sensor und Treiber prüfen |
@@ -98,7 +98,7 @@ Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethern
 - PiSugar2-Revision, Akkukapazität und sauberes Abschaltverhalten.
 - Kamerasensor und Testbild.
 - Lautsprecherimpedanz und Nennleistung; Aufnahme/Wiedergabe bereits bestätigt.
-- PiTFT-Boot-/Statusanzeige und Belegung der beiden Displaytaster; SPI/Farbtest ist bereits bestätigt.
+- PiTFT-Live-Voice-Zustände und Belegung der beiden Displaytaster; Boot-/Statusdienst ist bestätigt.
 - Endgültige Montage, Abstandshalter und Gehäuse.
 
 ## Quellen
