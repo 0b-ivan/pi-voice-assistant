@@ -60,9 +60,9 @@ class VoiceSynthesisTests(unittest.TestCase):
             configs,
             [{
                 "speaker_id": 4,
-                "length_scale": 1.10,
-                "noise_scale": 0.30,
-                "noise_w_scale": 0.25,
+                "length_scale": 1.02,
+                "noise_scale": 0.22,
+                "noise_w_scale": 0.18,
             }],
         )
         voice.synthesize.assert_called_once()
