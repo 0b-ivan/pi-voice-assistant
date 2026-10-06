@@ -3,7 +3,7 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 import sys
 
@@ -36,12 +36,15 @@ class VoiceSynthesisTests(unittest.TestCase):
         voice = Mock()
         voice.config.num_speakers = 8
         voice.synthesize.return_value = [chunk1, chunk2]
-        fake_piper_config = SimpleNamespace(SynthesisConfig=FakeSynthesisConfig)
+        fake_piper = ModuleType("piper")
+        fake_piper.__path__ = []
+        fake_piper_config = ModuleType("piper.config")
+        fake_piper_config.SynthesisConfig = FakeSynthesisConfig
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "status.wav"
             with patch.dict(os.environ, {}, clear=True), patch.dict(
-                sys.modules, {"piper": SimpleNamespace(), "piper.config": fake_piper_config}
+                sys.modules, {"piper": fake_piper, "piper.config": fake_piper_config}
             ):
                 with wave.open(str(path), "wb") as audio:
                     _synthesize_voice(voice, "Eins. Zwei.", audio, "servitor")
