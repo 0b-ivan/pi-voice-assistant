@@ -32,7 +32,6 @@ class LLMTests(unittest.TestCase):
             "OPENROUTER_LLM_MODEL": "openai/gpt-5.4-mini",
             "OPENROUTER_LLM_TIMEOUT_SECONDS": "7.5",
             "OPENROUTER_LLM_MAX_TOKENS": "120",
-            "OPENROUTER_LLM_TEMPERATURE": "0.2",
         }
 
     def test_missing_api_key_fails_before_network(self):
@@ -60,8 +59,8 @@ class LLMTests(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertFalse(payload["stream"])
         self.assertEqual(payload["model"], "openai/gpt-5.4-mini")
-        self.assertEqual(payload["max_tokens"], 120)
-        self.assertEqual(payload["temperature"], 0.2)
+        self.assertEqual(payload["max_completion_tokens"], 120)
+        self.assertNotIn("temperature", payload)
         self.assertEqual(payload["messages"][0]["role"], "system")
         self.assertEqual(
             payload["messages"][0]["content"], llm.SERVITOR_SYSTEM_PROMPT
