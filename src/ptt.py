@@ -290,21 +290,23 @@ def main():
         model = os.environ.get(
             'PIPER_MODEL',
             '/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx')
-        event('tts_loading', mode='resident', model=model)
+        profile = os.environ.get('TTS_VOICE_PROFILE', 'normal')
+        event('tts_loading', mode='resident', model=model, profile=profile)
         try:
             speech = ResidentSpeechOutput(
                 model,
                 os.environ.get(
                     'TTS_AUDIO_DEVICE',
                     'plughw:CARD=wm8960soundcard,DEV=0'),
-                runtime_dir)
+                runtime_dir,
+                profile=profile)
         except Exception as exc:
             # TTS must not take PTT/STT down. Keep the old command path as a
             # compatibility fallback if the in-process Piper import/load fails.
             event('tts_error', message=str(exc), fallback='command')
             speech = SpeechOutput(fallback_command)
         else:
-            event('tts_ready', mode='resident', model=model)
+            event('tts_ready', mode='resident', model=model, profile=speech.profile)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe)
     shim = None
     if shim_enabled == '1':
