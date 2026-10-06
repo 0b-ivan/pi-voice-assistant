@@ -16,7 +16,7 @@ DEFAULT_APLAY_BIN = "/usr/bin/aplay"
 SERVITOR_FILTER_GRAPH = (
     "[0:a]aresample=48000,"
     "asetrate=sample_rate=44400,aresample=48000,atempo=1.081081,"
-    "asplit=9[main0][metal0][flange0][choir0][stutter0][aura0][doppler0][ring0][tracer0];"
+    "asplit=10[main0][metal0][flange0][choir0][stutter0][aura0][doppler0][ring0][tracer0][sawphase0];"
 
     "[main0]"
     "equalizer=f=180:t=q:w=1:g=3,"
@@ -81,8 +81,16 @@ SERVITOR_FILTER_GRAPH = (
     "aecho=0.8:0.62:34|68|102:0.52|0.30|0.16,"
     "volume=0.82[tracer];"
 
-    "[main][metal][flange][choir][stutter][aura][doppler][ring][tracer]"
-    "amix=inputs=9:duration=first:dropout_transition=0:normalize=0,"
+    "[sawphase0]"
+    "highpass=f=650,lowpass=f=4700,"
+    "aeval=val(0)*(0.48+0.52*(t*6-floor(t*6))),"
+    "aphaser=in_gain=0.75:out_gain=0.62:delay=2:decay=0.58:"
+    "speed=0.85:type=triangular,"
+    "aecho=0.8:0.26:19|38:0.13|0.07,"
+    "volume=0.58[sawphase];"
+
+    "[main][metal][flange][choir][stutter][aura][doppler][ring][tracer][sawphase]"
+    "amix=inputs=10:duration=first:dropout_transition=0:normalize=0,"
     "volume=4.4,"
     "aecho=0.8:0.10:72|145:0.040|0.018,"
     "alimiter=level_in=2.5:level_out=1:limit=0.97:attack=5:release=60:level=0"
