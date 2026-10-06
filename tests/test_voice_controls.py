@@ -147,15 +147,14 @@ class ControllerTests(unittest.TestCase):
         self.speech.start.assert_called_once()
         self.speech.stop.assert_called_once()
 
-    def test_led_processing_breathes_and_speech_tracks_voice_level(self):
+    def test_led_processing_blinks_and_speech_tracks_voice_level(self):
         self.c.job = Mock()
         with patch("ptt.time.monotonic", return_value=0.0):
-            processing_a = self.c.color
-        with patch("ptt.time.monotonic", return_value=0.35):
-            processing_b = self.c.color
-        self.assertEqual(processing_a[0], 255)
-        self.assertEqual(processing_b[0], 255)
-        self.assertNotEqual(processing_a, processing_b)
+            processing_red = self.c.color
+        with patch("ptt.time.monotonic", return_value=0.5):
+            processing_yellow = self.c.color
+        self.assertEqual(processing_red, (255, 0, 0))
+        self.assertEqual(processing_yellow, (255, 208, 0))
 
         self.c.job = None
         self.speech.active = True
