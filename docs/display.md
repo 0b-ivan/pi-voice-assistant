@@ -96,13 +96,42 @@ VOICE    .... OK
 SYSTEM READY
 ```
 
-Die Anzeige aktualisiert sich nur, wenn sich einer der geprüften Zustände ändert. Die allerersten Kernelmeldungen direkt nach dem Einschalten werden damit nicht angezeigt; ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
+Die Systemprüfungen laufen nur alle zwei Sekunden. Der Live-Zustand wird dagegen alle 100 ms aus `/run/pi-ptt/display-event.json` gelesen, damit der Pi Zero nicht permanent `systemctl` und `ip` starten muss.
+
+## Live-Zustände
+
+`src/ptt.py` schreibt für Display-relevante strukturierte Events atomar einen kleinen Snapshot in das vorhandene Runtime-Verzeichnis. Persistiert werden bewusst nur Eventname, Version und Zeitstempel; Transkript, Fehlermeldungen oder andere Event-Felder landen nicht in dieser Datei. Das Journal behält weiterhin die vollständigen strukturierten Events.
+
+Aktuelle Abbildung:
+
+```text
+waiting_for_release / transcript / cancelled
+  -> BEREIT
+
+recording
+  -> ZUHÖREN
+
+capture_ready / processing
+  -> VERSTEHEN
+
+status / speech_started
+  -> SPRECHEN
+
+stt_error / tts_error / speech_error
+  -> FEHLER (3 Sekunden, danach BEREIT wenn das System gesund ist)
+```
+
+`stt_loading` und `tts_loading` halten während des Starts die Bootansicht aktiv. Ein Netzwerkausfall bleibt für den lokalen Vosk-Modus nur eine Information und blockiert `BEREIT` nicht.
+
+`DENKEN` wird noch nicht vorgetäuscht: Dieser Zustand kommt erst mit dem tatsächlichen LLM-Aufruf. `SPRECHEN` ist aktuell bei der vorhandenen gesprochenen Statusansage sichtbar; der spätere Antwortpfad soll denselben generischen Eventzustand verwenden.
+
+Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nicht angezeigt; ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
 
 ## Nächster Schritt
 
 Noch **nicht implementiert**:
 
-- Laufzeitstatus aus den strukturierten Voice-Events wie `recording`, `processing`, `stt_ready`, `tts_loading` und `tts_ready`
-- Zustände wie `BEREIT`, `ZUHÖREN`, `VERSTEHEN`, `DENKEN`, `SPRECHEN`
+- `DENKEN` am realen LLM-Aufruf
+- Live-`SPRECHEN` für die spätere automatische LLM-Antwort
 - sinnvolle Belegung der beiden PiTFT-Tasten auf GPIO23/24
 - endgültige mechanische Montage im Hardware-Stack
