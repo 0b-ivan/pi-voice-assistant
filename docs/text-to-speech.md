@@ -69,6 +69,7 @@ Der FFmpeg-Prozess schreibt direkt zum ALSA-Gerät. Die früheren parallelen Met
 
 Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Wenn verfügbar, werden angesagt:
 
+- normierte 1-Minuten-Systemlast aus `/proc/loadavg`
 - CPU-Kerntemperatur
 - freier Arbeitsspeicher in Prozent
 - freier Root-Datenspeicher in Prozent
@@ -79,12 +80,13 @@ Beispiel:
 
 ```text
 SYSTEM NOMINAL. MASCHINENGEIST SYNCHRONISIERT.
+TELEMETRIE. SYSTEMLAST 21 PROZENT.
 KERNTEMPERATUR 55 GRAD.
 ARBEITSSPEICHER 62 PROZENT FREI.
 DATENSPEICHER 40 PROZENT FREI.
 LAUFZEIT 2 Stunden 36 Minuten.
 OFFLINE SPRACHERKENNUNG AKTIV.
-SERVITOR EINHEIT BEREIT. BEFEHL ERWARTET.
+PROTOKOLLE STABIL. SERVITOR EINHEIT BEREIT. DIREKTIVE ERWARTET.
 ```
 
 Fehlt eine Quelle unter `/proc` oder `/sys`, wird nur dieser Wert ausgelassen; die Statusansage bleibt funktionsfähig. Während STT beginnt sie mit `VERARBEITUNGSPROTOKOLL AKTIV. AUFNAHME IN ANALYSE.`.
