@@ -16,7 +16,7 @@ DEFAULT_APLAY_BIN = "/usr/bin/aplay"
 SERVITOR_FILTER_GRAPH = (
     "[0:a]aresample=24000,"
     "asetrate=sample_rate=22200,aresample=24000,atempo=1.081081,"
-    "asplit=5[main0][metal0][choir0][tracer0][sawphase0];"
+    "asplit=6[main0][metal0][choir0][tracer0][sawphase0][machine0];"
 
     "[main0]"
     "equalizer=f=180:t=q:w=1:g=3,"
@@ -56,8 +56,9 @@ SERVITOR_FILTER_GRAPH = (
     "aecho=0.8:0.18:21|42:0.08|0.04,"
     "volume=0.82[sawphase];"
 
-    "aevalsrc=0.060*(2*(t*220-floor(t*220))-1)"
-    "+0.030*(2*(t*440-floor(t*440))-1):s=24000,"
+    "[machine0]"
+    "aeval=0.060*(2*(t*220-floor(t*220))-1)"
+    "+0.030*(2*(t*440-floor(t*440))-1),"
     "highpass=f=170,lowpass=f=3600,"
     "tremolo=f=5.5:d=0.34,"
     "aphaser=in_gain=0.30:out_gain=0.56:delay=4:decay=0.78:"

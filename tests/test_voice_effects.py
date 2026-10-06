@@ -40,7 +40,7 @@ class VoiceEffectsTests(unittest.TestCase):
         self.assertIn("-filter_complex", command)
         graph = command[command.index("-filter_complex") + 1]
         self.assertEqual(graph, SERVITOR_FILTER_GRAPH)
-        self.assertIn("asplit=5", graph)
+        self.assertIn("asplit=6", graph)
         self.assertIn("flanger=delay=6:depth=6:regen=38", graph)
         self.assertEqual(graph.count("flanger="), 1)
         self.assertEqual(graph.count("aphaser="), 2)
@@ -51,6 +51,8 @@ class VoiceEffectsTests(unittest.TestCase):
         self.assertIn("speed=0.52:type=triangular", graph)
         self.assertIn("t*220-floor(t*220)", graph)
         self.assertIn("t*440-floor(t*440)", graph)
+        self.assertNotIn("aevalsrc=", graph)
+        self.assertIn("[machine0]aeval=", graph)
         self.assertIn("speed=0.46:type=triangular", graph)
         self.assertIn("volume=1.02[machinehum]", graph)
         self.assertIn("amix=inputs=6", graph)
