@@ -9,7 +9,7 @@ import tempfile
 import threading
 import wave
 
-from voice_effects import apply_voice_profile, resolve_voice_profile
+from voice_effects import build_playback_command, resolve_voice_profile
 
 
 class TranscriptionJob:
@@ -47,7 +47,7 @@ def _terminate_process_group(proc):
         except ProcessLookupError:
             pass
         proc.wait(timeout=1)
-    # The leader may terminate before an aplay child that ignores SIGTERM.
+    # The leader may terminate before an aplay/ffmpeg child that ignores SIGTERM.
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -73,6 +73,56 @@ def _load_piper_voice(model):
         raise RuntimeError(f"failed to load Piper model {model}: {exc}") from exc
 
 
+def _env_float(name, default):
+    value = float(os.environ.get(name, str(default)))
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
+def _synthesize_voice(voice, text, audio, profile):
+    """Write Piper audio, with a restrained command cadence for Servitor."""
+    if profile != "servitor":
+        voice.synthesize_wav(text, audio)
+        return
+
+    try:
+        from piper import SynthesisConfig
+    except ImportError as exc:
+        raise RuntimeError("Piper SynthesisConfig unavailable") from exc
+
+    speaker_id = int(os.environ.get("TTS_PIPER_SPEAKER_ID", "4"))
+    num_speakers = getattr(getattr(voice, "config", None), "num_speakers", None)
+    if num_speakers is not None and not 0 <= speaker_id < num_speakers:
+        raise ValueError(
+            f"TTS_PIPER_SPEAKER_ID={speaker_id} outside model speaker range 0..{num_speakers - 1}"
+        )
+
+    syn_config = SynthesisConfig(
+        speaker_id=speaker_id,
+        length_scale=_env_float("TTS_PIPER_LENGTH_SCALE", 1.10),
+        noise_scale=_env_float("TTS_PIPER_NOISE_SCALE", 0.30),
+        noise_w_scale=_env_float("TTS_PIPER_NOISE_W_SCALE", 0.25),
+    )
+    sentence_silence = _env_float("TTS_PIPER_SENTENCE_SILENCE", 0.32)
+
+    wrote_format = False
+    chunks = voice.synthesize(text, syn_config=syn_config)
+    for index, chunk in enumerate(chunks):
+        if not wrote_format:
+            audio.setframerate(chunk.sample_rate)
+            audio.setsampwidth(chunk.sample_width)
+            audio.setnchannels(chunk.sample_channels)
+            wrote_format = True
+        if index > 0 and sentence_silence:
+            silence_samples = int(chunk.sample_rate * sentence_silence)
+            audio.writeframes(bytes(silence_samples * chunk.sample_width * chunk.sample_channels))
+        audio.writeframes(chunk.audio_int16_bytes)
+
+    if not wrote_format:
+        raise RuntimeError("Piper produced no audio chunks")
+
+
 class _SpeechJob:
     def __init__(self):
         self.done = threading.Event()
@@ -83,9 +133,9 @@ class _SpeechJob:
 
 
 class ResidentSpeechOutput:
-    """Keep Piper loaded; synthesize off the control loop and own only our aplay."""
+    """Keep Piper loaded; synthesize off the control loop and own our playback."""
     def __init__(self, model, audio_device, runtime_dir, loader=None, popen=None,
-                 effect_runner=None, profile=None):
+                 profile=None):
         self.model = str(model)
         self.audio_device = audio_device
         self.runtime_dir = Path(runtime_dir)
@@ -93,7 +143,6 @@ class ResidentSpeechOutput:
         self.profile = resolve_voice_profile(profile)
         self.voice = (loader or _load_piper_voice)(self.model)
         self._popen = popen or subprocess.Popen
-        self._effect_runner = effect_runner or subprocess.run
         self._synthesis_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._job = None
@@ -109,7 +158,6 @@ class ResidentSpeechOutput:
 
     def _run(self, job, text):
         path = None
-        effect_path = None
         try:
             fd, name = tempfile.mkstemp(
                 prefix="speech-", suffix=".wav", dir=self.runtime_dir
@@ -120,26 +168,16 @@ class ResidentSpeechOutput:
                 if not self._current(job):
                     return
                 with wave.open(str(path), "wb") as audio:
-                    self.voice.synthesize_wav(text, audio)
+                    _synthesize_voice(self.voice, text, audio, self.profile)
             if not self._current(job):
                 return
-            playback_path = path
-            if self.profile != "normal":
-                effect_fd, effect_name = tempfile.mkstemp(
-                    prefix="speech-effect-", suffix=".wav", dir=self.runtime_dir
-                )
-                os.close(effect_fd)
-                effect_path = Path(effect_name)
-                playback_path = apply_voice_profile(
-                    path,
-                    effect_path,
-                    profile=self.profile,
-                    runner=self._effect_runner,
-                )
-            if not self._current(job):
-                return
+
             proc = self._popen(
-                ["/usr/bin/aplay", "-q", "-D", self.audio_device, str(playback_path)],
+                build_playback_command(
+                    path,
+                    self.audio_device,
+                    profile=self.profile,
+                ),
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
             )
@@ -156,8 +194,6 @@ class ResidentSpeechOutput:
                 job.error = str(exc)
                 job.result = 1
         finally:
-            if effect_path is not None:
-                effect_path.unlink(missing_ok=True)
             if path is not None:
                 path.unlink(missing_ok=True)
             job.done.set()
@@ -220,7 +256,7 @@ class SpeechOutput:
         proc, self.process = self.process, None
         if proc is None:
             return
-        # Own process group includes speak.py and its aplay child. Never kill
+        # Own process group includes speak.py and its playback child. Never kill
         # unrelated playback processes by name.
         _terminate_process_group(proc)
 
