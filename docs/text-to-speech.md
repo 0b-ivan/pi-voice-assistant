@@ -32,14 +32,14 @@ TTS_AUDIO_DEVICE=plughw:CARD=wm8960soundcard,DEV=0
 TTS_VOICE_PROFILE=servitor
 TTS_SERVITOR_MODEL=/opt/pi-voice-assistant/tts/de_DE-thorsten_emotional-medium.onnx
 TTS_PIPER_SPEAKER_ID=4
-TTS_PIPER_LENGTH_SCALE=1.10
-TTS_PIPER_NOISE_SCALE=0.30
-TTS_PIPER_NOISE_W_SCALE=0.25
+TTS_PIPER_LENGTH_SCALE=1.02
+TTS_PIPER_NOISE_SCALE=0.22
+TTS_PIPER_NOISE_W_SCALE=0.18
 TTS_PIPER_SENTENCE_SILENCE=0.32
 # TTS_FFMPEG_BIN=/usr/bin/ffmpeg
 ```
 
-Die Wörter bleiben mit `length_scale=1.10` relativ knapp. Die schwerfällige Wirkung kommt primär aus **320 ms zusätzlicher Pause zwischen Sätzen**, nicht aus stark gedehnten Phonemen. Der DSP senkt die Grundtonhöhe nur noch moderat um rund **1,8 Halbtöne** ab.
+Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe moderat um rund **1,8 Halbtöne** ab und mischt etwas mehr Direktsignal bei, damit Konsonanten klarer durchschlagen.
 
 ## Servitor-DSP
 
@@ -79,11 +79,11 @@ Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Wenn ve
 Beispiel:
 
 ```text
-SYSTEM NOMINAL. TELEMETRIE.
+STATUS NOMINAL.
 LAST 21 PROZENT. KERN 55 GRAD.
-RAM 62 PROZENT FREI. SPEICHER 40 PROZENT FREI.
-LAUFZEIT 2 Stunden 36 Minuten. VOSK OFFLINE.
-SERVITOR EINHEIT BEREIT. DIREKTIVE ERWARTET.
+RAM 62 FREI. SPEICHER 40 FREI.
+LAUFZEIT 2 Stunden 36 Minuten. STT LOKAL.
+SERVITOR BEREIT. DIREKTIVE ERWARTET.
 ```
 
 Fehlt eine Quelle unter `/proc` oder `/sys`, wird nur dieser Wert ausgelassen; die Statusansage bleibt funktionsfähig. Während STT beginnt sie mit `VERARBEITUNGSPROTOKOLL AKTIV. AUFNAHME IN ANALYSE.`.
