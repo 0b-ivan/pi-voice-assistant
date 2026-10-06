@@ -54,8 +54,9 @@ class SpeakTests(unittest.TestCase):
                         "/models/test.onnx",
                         "-f",
                         str(wav),
-                        "Hallo Welt",
                     ],
+                    input="Hallo Welt",
+                    text=True,
                     check=True,
                 ),
                 call(
@@ -89,7 +90,9 @@ class SpeakTests(unittest.TestCase):
         self.assertEqual(piper[piper.index("-s") + 1], "4")
         self.assertEqual(piper[piper.index("--length-scale") + 1], "1.10")
         self.assertEqual(piper[piper.index("--sentence-silence") + 1], "0.32")
-        self.assertEqual(piper[-3:], ["-f", str(wav), "Status"])
+        self.assertEqual(piper[-2:], ["-f", str(wav)])
+        self.assertEqual(run.call_args_list[0].kwargs["input"], "Status")
+        self.assertTrue(run.call_args_list[0].kwargs["text"])
 
         ffmpeg = run.call_args_list[1].args[0]
         self.assertEqual(ffmpeg[0], "/usr/bin/ffmpeg")
