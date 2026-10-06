@@ -53,9 +53,9 @@ class SystemStatusTests(unittest.TestCase):
         self.assertIn("KERN 55 GRAD.", text)
         self.assertIn("ARBEITSSPEICHER 62 FREI.", text)
         self.assertIn("SPEICHER 40 FREI.", text)
-        self.assertIn("LAUFZEIT 2 Stunden 36 Minuten.", text)
+        self.assertIn("LAUFZEIT zwei Stunden sechsunddreißig Minuten.", text)
         self.assertIn("ERKENNUNG LOKAL.", text)
-        self.assertTrue(text.endswith("DIREKTIVE ERWARTET."))
+        self.assertTrue(text.endswith("BEFEHL ERWARTET."))
 
     def test_processing_status_keeps_operator_feedback(self):
         text = build_status_text(
@@ -83,8 +83,20 @@ class SystemStatusTests(unittest.TestCase):
         self.assertEqual(
             text,
             "STATUS NOMINAL. "
-            "SERVITOR BEREIT. DIREKTIVE ERWARTET.",
+            "SERVITOR BEREIT. BEFEHL ERWARTET.",
         )
+
+    def test_uptime_uses_compound_german_number_words(self):
+        self.uptime.write_text("3180.0 0.0\n", encoding="utf-8")
+        text = build_status_text(
+            uptime_path=self.uptime,
+            thermal_path="/missing/temp",
+            meminfo_path="/missing/meminfo",
+            loadavg_path="/missing/loadavg",
+            disk_usage=lambda _path: (_ for _ in ()).throw(OSError("missing")),
+            cpu_count=self.cpu_count,
+        )
+        self.assertIn("LAUFZEIT dreiundfünfzig Minuten.", text)
 
     def test_auto_provider_is_named_explicitly(self):
         text = build_status_text(
