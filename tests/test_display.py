@@ -164,7 +164,14 @@ class DisplayVoiceEventTests(unittest.TestCase):
                 '{"version":1,"event":"recording","timestamp":12.5}\n',
                 encoding="utf-8",
             )
-            self.assertEqual(display.read_voice_event(path), ("recording", 12.5))
+            self.assertEqual(
+                display.read_voice_event(path),
+                {
+                    "event": "recording",
+                    "timestamp": 12.5,
+                    "error_timestamp": None,
+                },
+            )
 
     def test_read_voice_event_rejects_malformed_or_incomplete_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,6 +180,29 @@ class DisplayVoiceEventTests(unittest.TestCase):
             self.assertIsNone(display.read_voice_event(path))
             path.write_text('{"event":"recording"}', encoding="utf-8")
             self.assertIsNone(display.read_voice_event(path))
+            path.write_text('null', encoding="utf-8")
+            self.assertIsNone(display.read_voice_event(path))
+            path.write_text('[]', encoding="utf-8")
+            self.assertIsNone(display.read_voice_event(path))
+            path.write_text('"recording"', encoding="utf-8")
+            self.assertIsNone(display.read_voice_event(path))
+
+    def test_read_voice_event_preserves_error_timestamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "event.json"
+            path.write_text(
+                '{"version":1,"event":"waiting_for_release",'
+                '"timestamp":101.0,"error_timestamp":100.0}\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                display.read_voice_event(path),
+                {
+                    "event": "waiting_for_release",
+                    "timestamp": 101.0,
+                    "error_timestamp": 100.0,
+                },
+            )
 
 
 if __name__ == "__main__":
