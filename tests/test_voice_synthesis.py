@@ -67,10 +67,20 @@ class VoiceSynthesisTests(unittest.TestCase):
 
     def test_normal_profile_keeps_default_piper_path(self):
         voice = Mock()
+
+        def write_audio(_text, audio):
+            audio.setframerate(16000)
+            audio.setsampwidth(2)
+            audio.setnchannels(1)
+            audio.writeframes(b"\\x00\\x00" * 2)
+
+        voice.synthesize_wav.side_effect = write_audio
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "normal.wav"
             with wave.open(str(path), "wb") as audio:
                 _synthesize_voice(voice, "Hallo", audio, "normal")
+            with wave.open(str(path), "rb") as audio:
+                self.assertEqual(audio.getnframes(), 2)
         voice.synthesize_wav.assert_called_once()
 
 
