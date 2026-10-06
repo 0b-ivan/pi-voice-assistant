@@ -113,25 +113,24 @@ def build_status_text(
         parts.append("AUFNAHME IN ANALYSE.")
     else:
         parts.append("SYSTEM NOMINAL.")
-        parts.append("MASCHINENGEIST SYNCHRONISIERT.")
 
     parts.append("TELEMETRIE.")
 
     load = _system_load_percent(loadavg_path, cpu_count=cpu_count)
     if load is not None:
-        parts.append(f"SYSTEMLAST {load} PROZENT.")
+        parts.append(f"LAST {load} PROZENT.")
 
     temperature = _temperature_c(thermal_path)
     if temperature is not None:
-        parts.append(f"KERNTEMPERATUR {temperature} GRAD.")
+        parts.append(f"KERN {temperature} GRAD.")
 
     memory = _memory_free_percent(meminfo_path)
     if memory is not None:
-        parts.append(f"ARBEITSSPEICHER {memory} PROZENT FREI.")
+        parts.append(f"RAM {memory} PROZENT FREI.")
 
     disk = _disk_free_percent(disk_path, disk_usage=disk_usage)
     if disk is not None:
-        parts.append(f"DATENSPEICHER {disk} PROZENT FREI.")
+        parts.append(f"SPEICHER {disk} PROZENT FREI.")
 
     uptime = _uptime_words(uptime_path)
     if uptime:
@@ -139,15 +138,14 @@ def build_status_text(
 
     provider = (stt_provider or "").strip().lower()
     if provider == "vosk":
-        parts.append("OFFLINE SPRACHERKENNUNG AKTIV.")
+        parts.append("VOSK OFFLINE.")
     elif provider == "openrouter":
-        parts.append("EXTERNE SPRACHERKENNUNG AKTIV.")
+        parts.append("OPENROUTER ONLINE.")
     elif provider == "auto":
-        parts.append("SPRACHERKENNUNG AUTOMATIK AKTIV.")
+        parts.append("STT AUTOMATIK.")
     elif provider:
-        parts.append("SPRACHERKENNUNG KONFIGURIERT.")
+        parts.append("STT KONFIGURIERT.")
 
-    parts.append("PROTOKOLLE STABIL.")
     if processing:
         parts.append("DIREKTIVE IN BEARBEITUNG.")
     else:
