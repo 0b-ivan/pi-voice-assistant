@@ -157,14 +157,36 @@ class VoiceController:
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
 
+    @staticmethod
+    def _mix_color(first, second, amount):
+        amount = max(0.0, min(1.0, float(amount)))
+        values = tuple(
+            int(round(a + (b - a) * amount)) for a, b in zip(first, second)
+        )
+        # Quantize slightly so the main 10 ms loop does not flood I2C with
+        # imperceptibly small RGB changes while still looking smooth.
+        return tuple(max(0, min(255, int(round(value / 8)) * 8)) for value in values)
+
     @property
     def color(self):
         if self.recorder.process is not None:
             return (255, 0, 0)
+
         if self.job is not None:
-            return (0, 0, 255)
+            # Processing/thinking: slow red <-> yellow "breathing" pulse.
+            phase = (math.sin(time.monotonic() * math.tau / 1.4) + 1.0) / 2.0
+            return self._mix_color((255, 16, 0), (255, 208, 0), phase)
+
         if self.speech.active:
-            return (0, 255, 255)
+            # Speech follows the actual streamed Piper cadence. Sentence pauses
+            # are turquoise; voiced chunks fade toward orange.
+            level = getattr(self.speech, 'voice_level', 1.0)
+            try:
+                level = float(level)
+            except (TypeError, ValueError):
+                level = 1.0
+            return self._mix_color((0, 224, 208), (255, 104, 0), level)
+
         return (0, 255, 0)
 
     def cancel(self, held, now):
