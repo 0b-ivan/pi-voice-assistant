@@ -10,11 +10,11 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
 | B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen |
 | C / D | Digitalen `Playback`-Pegel um 5 Prozentpunkte senken/erhöhen |
-| E | Bereitschaft/Verarbeitung und konfigurierten STT-Modus ansagen; separate TTS erforderlich |
+| E | Dynamischen Systemstatus ansagen: Systemlast, Temperatur, freier RAM/Datenspeicher, Laufzeit, STT-Modus und Servitor-Zustand |
 
 A und GPIO17 bilden gemeinsam einen Aufnahmetaster: Aufnahme endet erst, wenn beide losgelassen sind. Alle Tasten beim Start loslassen; B–E lösen einmal pro Druck aus. B hat bei gleichzeitigen Aktionen Vorrang.
 
-STT läuft im Hintergrund. B verwirft dessen Ergebnis, bricht den nativen Vosk-Aufruf aber nicht ab. Der Slot bleibt bis zum Abschluss belegt, danach braucht gehaltenes PTT Release. PTT stoppt eine vom Dienst gestartete Statusansage vor der Aufnahme; E spricht nicht während Aufnahme. Externe `aplay`-Prozesse werden nicht verwaltet.
+STT läuft im Hintergrund. B verwirft dessen Ergebnis, bricht den nativen Vosk-Aufruf aber nicht ab. Der Slot bleibt bis zum Abschluss belegt, danach braucht gehaltenes PTT Release. PTT stoppt eine vom Dienst gestartete Statusansage vor der Aufnahme; E spricht nicht während Aufnahme. Die Statusansage wird beim Druck neu aus `/proc`, `/sys` und dem Dateisystem aufgebaut; die 1-Minuten-Load wird auf die CPU-Kernzahl normiert und als `SYSTEMLAST` gesprochen. Eigene Wiedergabe läuft als verwalteter `aplay`- oder FFmpeg-Prozess; externe Audioprozesse werden nicht verwaltet.
 
 C/D ändern `amixer ... sset Playback 5%-/5%+`, nicht Speaker, Speaker AC/DC oder Mikrofonpegel. Änderungen werden vom Dienst nicht für den nächsten Boot gespeichert.
 
@@ -22,11 +22,11 @@ C/D ändern `amixer ... sset Playback 5%-/5%+`, nicht Speaker, Speaker AC/DC ode
 |---|---|
 | Grün | Bereit, auch beim anfänglichen Warten auf Release |
 | Rot | Aufnahme |
-| Blau | STT, auch nach B bis Auftragsende |
-| Türkis | Eigene Statusansage |
+| Rot ↔ Gelb, klar blinkend | STT/Verarbeitung bzw. späteres „Nachdenken“ |
+| Türkis ↔ Orange | Sprachausgabe: Türkis in Pausen, Orange während Sprachsegmenten |
 | Aus | Dienst beendet oder reine Probe |
 
-Die tatsächlichen Dienstfarben/Reaktionszeiten sind noch nicht vollständig auf Hardware bestätigt. Kein roter Fehler-/Offline-LED-Zustand implementiert.
+Die Sprachfarbe folgt der Piper-Chunk-Timeline: Satzpausen bleiben Türkis, Sprachsegmente blenden weich Richtung Orange. Verarbeitung blinkt unabhängig davon klar zwischen Rot und Gelb (500 ms pro Farbe). Die tatsächliche optische Wirkung auf der Hardware muss noch abgenommen werden. Kein eigener Fehler-/Offline-LED-Zustand implementiert.
 
 ## Aktivieren
 
@@ -44,7 +44,7 @@ journalctl -u pi-ptt.service -n 30 --no-pager
 
 Erwartet: `shim_ready`, Bus 1, `0x3f`. Der Dienst nutzt die Gruppe `i2c`. Bei I²C-Fehler wird SHIM bis zum Neustart deaktiviert; GPIO17 bleibt nutzbar. Beim späteren Busausfall wird der aktuelle Vorgang verworfen.
 
-Der Sprachbefehl erhält den gesamten Text als ein zusätzliches Argument ohne Shell. Der Dienstinstaller liefert `speak.py` mit; für E müssen [Piper-Paket und Stimme separat installiert](text-to-speech.md) sein. Der Wrapper startet Piper mit seinem venv-Interpreter. Ein alter lokaler Wrapper mit System-Python erzeugte `No module named piper`; die später installierte GitHub-Version erreicht `speech_finished` mit Exitcode 0.
+Der Dienst hält Piper resident; `speak.py` ist nur Fallback. Für das Servitor-Profil installiert [Piper-TTS](text-to-speech.md) zusätzlich `de_DE-thorsten_emotional-medium` und FFmpeg. Der residente Maschinenpfad streamt Piper-PCM direkt nach FFmpeg/ALSA; dadurch kann die Ausgabe mit dem ersten synthetisierten Chunk beginnen.
 
 Keinen zweiten SHIM-/LED-Test parallel starten. Rücknahme: `PTT_BUTTON_SHIM=0`, Dienst neu starten. GPIO17 und STT-Konfiguration bleiben verwendbar.
 

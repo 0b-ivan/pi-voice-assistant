@@ -6,13 +6,16 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
-VOICE="de_DE-thorsten-low"
 BASE="/opt/pi-voice-assistant"
 VENV="${BASE}/.venv"
 TTS_DIR="${BASE}/tts"
+VOICES=(
+  "de_DE-thorsten-low"
+  "de_DE-thorsten_emotional-medium"
+)
 
 apt-get update
-apt-get install -y python3-venv alsa-utils
+apt-get install -y python3-venv alsa-utils ffmpeg
 
 install -d -o root -g root -m 0755 "${BASE}" "${BASE}/src" "${BASE}/scripts"
 install -d -o obivan -g obivan -m 0755 "${VENV}" "${TTS_DIR}"
@@ -26,8 +29,9 @@ runuser -u obivan -- "${VENV}/bin/pip" install "piper-tts==1.8.0"
 runuser -u obivan -- "${VENV}/bin/python" \
   -m piper.download_voices \
   --data-dir "${TTS_DIR}" \
-  "${VOICE}"
+  "${VOICES[@]}"
 
 echo "Piper installed."
-echo "Voice: ${TTS_DIR}/${VOICE}.onnx"
-echo "Test: ${BASE}/src/speak.py \"Hallo Ivan, ich kann jetzt komplett lokal sprechen.\""
+echo "Normal voice: ${TTS_DIR}/de_DE-thorsten-low.onnx"
+echo "Servitor voice: ${TTS_DIR}/de_DE-thorsten_emotional-medium.onnx"
+echo "Test: ${BASE}/src/speak.py \"SYSTEM NOMINAL. SERVITOR BEREIT.\""

@@ -54,22 +54,55 @@ class SpeakTests(unittest.TestCase):
                         "/models/test.onnx",
                         "-f",
                         str(wav),
-                        "--",
-                        "Hallo Welt",
                     ],
+                    input="Hallo Welt",
+                    text=True,
                     check=True,
                 ),
                 call(
-                    ["aplay", "-q", "-D", "test-device", str(wav)],
+                    ["/usr/bin/aplay", "-q", "-D", "test-device", str(wav)],
                     check=True,
                 ),
             ],
         )
         self.assertFalse(wav.exists())
 
+    def test_servitor_profile_uses_emotional_voice_and_live_ffmpeg(self):
+        fd, wav = self._output_file()
+        env = {
+            "PIPER_PYTHON": "/venv/bin/python",
+            "TTS_AUDIO_DEVICE": "test-device",
+            "TTS_VOICE_PROFILE": "servitor",
+            "TTS_SERVITOR_MODEL": "/models/servitor.onnx",
+        }
+
+        with patch.dict(os.environ, env, clear=True), patch(
+            "speak.tempfile.mkstemp", return_value=(fd, str(wav))
+        ), patch("speak.subprocess.run") as run:
+            tts.speak("Status")
+
+        self.assertEqual(run.call_count, 2)
+        piper = run.call_args_list[0].args[0]
+        self.assertEqual(piper[:5], [
+            "/venv/bin/python", "-m", "piper", "-m", "/models/servitor.onnx"
+        ])
+        self.assertIn("-s", piper)
+        self.assertEqual(piper[piper.index("-s") + 1], "4")
+        self.assertEqual(piper[piper.index("--length-scale") + 1], "1.10")
+        self.assertEqual(piper[piper.index("--sentence-silence") + 1], "0.32")
+        self.assertEqual(piper[-2:], ["-f", str(wav)])
+        self.assertEqual(run.call_args_list[0].kwargs["input"], "Status")
+        self.assertTrue(run.call_args_list[0].kwargs["text"])
+
+        ffmpeg = run.call_args_list[1].args[0]
+        self.assertEqual(ffmpeg[0], "/usr/bin/ffmpeg")
+        self.assertIn("-filter_complex", ffmpeg)
+        self.assertEqual(ffmpeg[-3:], ["-f", "alsa", "test-device"])
+        self.assertFalse(wav.exists())
+
     def test_removes_temporary_file_when_synthesis_fails(self):
         fd, wav = self._output_file()
-        error = subprocess.CalledProcessError(1, ["piper"])
+        error = subprocess.CalledProcessError(1, ["/venv/bin/python"])
 
         with patch(
             "speak.tempfile.mkstemp", return_value=(fd, str(wav))

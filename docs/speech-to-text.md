@@ -24,9 +24,9 @@ Für `openrouter`/Online-Pfad von `auto` zusätzlich echten `OPENROUTER_API_KEY`
 
 ## Format und Ausführung
 
-Recorder bleibt bei **48 kHz / Stereo / S16_LE**. [`transcribe.py`](../src/transcribe.py) mischt für Vosk auf Mono herunter und reduziert auf 16 kHz. Modell wird beim ersten lokalen Auftrag geladen und im laufenden Dienst wiederverwendet. Ein neues Standalone-Programm lädt es erneut.
+Bei **`STT_PROVIDER=vosk`** nimmt der PTT-Dienst jetzt direkt in **16 kHz / Mono / S16_LE** auf und speist diese PCM-Daten bereits während gedrückter PTT-Taste in einen inkrementellen Vosk-Recognizer. Das Modell wird beim Dienststart vorgewärmt. Beim Loslassen muss Vosk dadurch nur noch `FinalResult()` liefern; eine zweite komplette WAV-Nachtranskription entfällt im Normalfall. Für `openrouter` und `auto` bleibt der bisherige 48-kHz-/Stereo-WAV-Pfad bestehen. Fällt Live-Vosk aus, wird die erzeugte WAV weiterhin über den bisherigen Adapter transkribiert.
 
-STT läuft im Hintergrundthread; es bleibt bei einem Aufnahmeslot. B verwirft das Ergebnis, der native Aufruf läuft zu Ende. Providerfehler erzeugen `stt_error`; bei `auto` werden bei beidseitigem Scheitern beide Ursachen gemeldet. Leerer Online-Text ist ein Fehler und löst Fallback aus. Die Unit wartet nicht auf `network-online.target`.
+Es bleibt bei einem Aufnahmeslot. Bei lokalem Vosk läuft die Erkennung schon im Capture-Thread parallel zur Aufnahme; nach Release wird das bereits fertige Ergebnis in den bestehenden Job-/Controller-Pfad übernommen. B verwirft die laufende Aufnahme bzw. das Ergebnis wie bisher. Providerfehler erzeugen `stt_error`; bei `auto` werden bei beidseitigem Scheitern beide Ursachen gemeldet. Leerer Online-Text ist ein Fehler und löst Fallback aus. Die Unit wartet nicht auf `network-online.target`.
 
 ## Hardware-Messwerte
 
@@ -58,4 +58,4 @@ set +a
 
 stdout enthält Text, stderr `STT_PROVIDER_USED=vosk` bzw. `openrouter`. Fehler: `STT_ERROR:` und Exitstatus 1. Das verwendet einen neuen Prozess und misst keine warme Dienstlatenz.
 
-PTT-Journal: `capture_ready` → `processing` → `transcript` mit tatsächlichem Provider und `ERKANNT: ...`. Audiodaten sind flüchtig, Transkripte werden protokolliert. [Troubleshooting](troubleshooting.md#stt), [Betrieb](operation.md).
+PTT-Journal: bei lokalem Live-Vosk erscheinen beim Dienststart `stt_loading`/`stt_ready`, während Aufnahme `recording` mit `stt=vosk-live`, danach `capture_ready` mit `live_stt=true`, `processing` und direkt `transcript`/`ERKANNT: ...`. Audiodaten sind flüchtig, Transkripte werden protokolliert. [Troubleshooting](troubleshooting.md#stt), [Betrieb](operation.md).

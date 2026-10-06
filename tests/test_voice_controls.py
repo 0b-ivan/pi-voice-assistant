@@ -54,6 +54,7 @@ class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.recorder, self.speech = Mock(), Mock()
         self.recorder.process = None
+        self.recorder.take_live_transcript.return_value = None
         self.speech.active = False
         self.speech.poll.return_value = None
         self.c = VoiceController(self.recorder, self.speech, .04, 30)
@@ -141,16 +142,43 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual([c.args for c in volume.call_args_list], [(-1,), (1,)])
         self.tick()
         self.tick(down='E')
-        self.assertIn('verarbeite', self.speech.start.call_args.args[0])
+        self.assertIn('VERARBEITUNG.', self.speech.start.call_args.args[0])
         self.tick()
         self.tick(down='BE')
         self.speech.start.assert_called_once()
         self.speech.stop.assert_called_once()
 
+    def test_led_processing_blinks_and_speech_tracks_voice_level(self):
+        self.c.job = Mock()
+        with patch("ptt.time.monotonic", return_value=0.0):
+            processing_red = self.c.color
+        with patch("ptt.time.monotonic", return_value=0.5):
+            processing_yellow = self.c.color
+        self.assertEqual(processing_red, (255, 0, 0))
+        self.assertEqual(processing_yellow, (255, 208, 0))
+
+        self.c.job = None
+        self.speech.active = True
+        self.speech.voice_level = 0.0
+        pause = self.c.color
+        self.speech.voice_level = 1.0
+        voiced = self.c.color
+        self.assertGreater(pause[1], pause[0])
+        self.assertGreater(voiced[0], voiced[1])
+        self.assertGreater(pause[2], voiced[2])
+
     def test_status_never_plays_into_recording(self):
         self.tick(down='AE')
         self.speech.start.assert_not_called()
         self.recorder.start.assert_called_once()
+
+    def test_live_transcript_skips_second_file_transcription(self):
+        self.recorder.finish.return_value = Path('/tmp/capture.wav')
+        self.recorder.take_live_transcript.return_value = ('Schon erkannt', 'vosk')
+        self.c.submit('release')
+        self.assertIsNotNone(self.c.job)
+        self.assertTrue(self.c.job.done.wait(1))
+        self.assertEqual(self.c.job.result, ('Schon erkannt', 'vosk'))
 
     def test_errors_are_logged_and_next_job_can_run(self):
         job = self.job()
@@ -254,6 +282,61 @@ class ResidentSpeechTests(unittest.TestCase):
             ["Eins", "Zwei"])
         self.assertEqual(len(processes), 2)
         self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
+
+    def test_servitor_profile_streams_piper_chunks_to_ffmpeg_stdin(self):
+        chunk1 = Mock(
+            sample_rate=16000,
+            sample_width=2,
+            sample_channels=1,
+            audio_int16_bytes=b"\\x01\\x00" * 160,
+        )
+        chunk2 = Mock(
+            sample_rate=16000,
+            sample_width=2,
+            sample_channels=1,
+            audio_int16_bytes=b"\\x02\\x00" * 160,
+        )
+        voice = Mock()
+        voice.synthesize.return_value = [chunk1, chunk2]
+
+        proc = Mock()
+        proc.wait.return_value = 0
+        proc.poll.return_value = 0
+        proc.pid = 5432
+        proc.stdin = Mock()
+        proc.stdin.closed = False
+        popen = Mock(return_value=proc)
+
+        with patch(
+            "voice_controls._servitor_synthesis_config",
+            return_value=(object(), 0.32),
+        ):
+            speech = ResidentSpeechOutput(
+                "/models/test.onnx",
+                "test-device",
+                self.tmp.name,
+                loader=Mock(return_value=voice),
+                popen=popen,
+                profile="servitor",
+            )
+
+            speech.start("Systemstatus")
+            self.assertEqual(self._wait_result(speech), 0)
+
+        playback = popen.call_args.args[0]
+        self.assertEqual(playback[0], "/usr/bin/ffmpeg")
+        self.assertIn("pipe:0", playback)
+        self.assertIn("-filter_complex", playback)
+        self.assertEqual(playback[-3:], ["-f", "alsa", "test-device"])
+        self.assertEqual(proc.stdin.write.call_count, 3)
+        self.assertEqual(proc.stdin.write.call_args_list[0].args[0], chunk1.audio_int16_bytes)
+        self.assertEqual(proc.stdin.write.call_args_list[2].args[0], chunk2.audio_int16_bytes)
+        self.assertEqual(
+            len(proc.stdin.write.call_args_list[1].args[0]),
+            int(16000 * 0.32) * 2,
+        )
+        self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
+        self.assertFalse(list(Path(self.tmp.name).glob("speech-effect-*.wav")))
 
     def test_cancelled_synthesis_never_starts_playback(self):
         started, release = threading.Event(), threading.Event()

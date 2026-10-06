@@ -8,6 +8,7 @@ import unittest
 import wave
 from pathlib import Path
 from unittest.mock import patch
+import unittest.mock
 
 import sys
 
@@ -177,6 +178,50 @@ class ProviderTests(unittest.TestCase):
         with patch.dict("os.environ", {"STT_PROVIDER": "magic"}, clear=True):
             with self.assertRaisesRegex(TranscriptionError, "STT_PROVIDER"):
                 stt.transcribe_with_provider(self.audio)
+
+
+class LiveVoskTests(unittest.TestCase):
+    def test_incremental_recognizer_collects_segments_and_final_text(self):
+        class FakeRecognizer:
+            def __init__(self):
+                self.calls = 0
+
+            def AcceptWaveform(self, _pcm):
+                self.calls += 1
+                return self.calls == 1
+
+            def Result(self):
+                return json.dumps({"text": "eins"})
+
+            def FinalResult(self):
+                return json.dumps({"text": "zwei"})
+
+        class FakeVosk:
+            @staticmethod
+            def KaldiRecognizer(_model, rate):
+                self_rate.append(rate)
+                return recognizer
+
+        recognizer = FakeRecognizer()
+        self_rate = []
+        with patch("transcribe._load_vosk_model", return_value=object()), patch(
+            "transcribe._vosk_module", return_value=FakeVosk
+        ):
+            live = stt.LiveVoskRecognizer()
+            live.accept_pcm(b"\0\0" * 160)
+            live.accept_pcm(b"\0\0" * 160)
+            self.assertEqual(live.finish(), "eins zwei")
+
+        self.assertEqual(self_rate, [16000])
+
+    def test_incremental_recognizer_rejects_unaligned_pcm(self):
+        with patch("transcribe._load_vosk_model", return_value=object()), patch(
+            "transcribe._vosk_module"
+        ) as vosk:
+            vosk.return_value.KaldiRecognizer.return_value = unittest.mock.Mock()
+            live = stt.LiveVoskRecognizer()
+            with self.assertRaisesRegex(TranscriptionError, "aligned 16-bit PCM"):
+                live.accept_pcm(b"\0")
 
 
 class VoskErrorTests(unittest.TestCase):

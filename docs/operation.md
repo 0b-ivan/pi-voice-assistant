@@ -26,7 +26,7 @@ Die Logs enthalten Transkripte und Statusmeldungen, auch wenn WAVs flüchtig ges
 | Datei | Zweck |
 |---|---|
 | `/etc/pi-ptt.env` | GPIO, 40 ms Entprellung, 30 s Aufnahmelimit, Audiogerät, optionaler SHIM und Status-Sprachbefehl |
-| `/etc/pi-voice-assistant.env` | STT-Provider, Modellpfade, optional OpenRouter-Key/Timeout |
+| `/etc/pi-voice-assistant.env` | STT-Provider, Piper-/Servitor-Modell, DSP-/Sprechparameter, optional OpenRouter-Key/Timeout |
 | `/boot/firmware/config.txt` | Bestehendes WM8960-Overlay, I²C/I²S |
 | `/etc/modules-load.d/pi-voice-i2c.conf` | Bei aktiviertem SHIM `i2c-dev` beim Boot laden |
 
@@ -41,7 +41,7 @@ Nach Konfigurationsänderungen `sudo systemctl restart pi-ptt.service`. Für Ove
 - Dienstcode: `/opt/pi-voice-assistant/src`, root-verwaltet. Der Dienst läuft tatsächlich als **obivan**, mit `audio`, `gpio`, `i2c`; kein dedizierter Dienstbenutzer implementiert.
 - Aufnahme: ein Slot `/run/pi-ptt/capture.wav`, privat, flüchtig. Neue Aufnahme, Dienststop oder Reboot entfernt die vorherige Datei. Vor Ctrl-C/Stop abhören, falls die Testaufnahme benötigt wird.
 - Vosk: root-verwaltete `vendor/`- und `models/`-Verzeichnisse; Modell einmal bei Bedarf laden, im Dienst wiederverwenden.
-- Piper, separat: `.venv/` und `tts/`, siehe [TTS-Setup](text-to-speech.md). Kein rekursives `chown` des gesamten Anwendungsverzeichnisses.
+- Piper/Servitor, separat: `.venv/` und `tts/`; FFmpeg kommt über den Piper-Installer. Der residente Servitor-Pfad streamt Piper-PCM direkt über FFmpeg nach ALSA und benötigt keine TTS-WAV. Siehe [TTS-Setup](text-to-speech.md).
 - `ProtectHome=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`: Dienstdateien nicht aus `~/...` laden. Manuelle TTS-WAVs in `/tmp` sind nicht automatisch im privaten Dienst-`/tmp` sichtbar.
 
 Bei anderem Loginbenutzer müssen Unit, Installer und Dateigruppen gemeinsam angepasst werden; nur `User=` zu ändern reicht nicht. Die Isolation eines dedizierten Dienstbenutzers bleibt eine offene Verbesserung.
@@ -59,7 +59,7 @@ sudo systemctl restart pi-ptt.service
 systemctl status pi-ptt.service --no-pager
 ```
 
-Vosk/Piper nicht bei jedem Codeupdate neu installieren. Installer verändern `/opt` und die systemd-Unit; ein Wechsel des Git-Checkouts allein verändert den installierten Dienst nicht. Für Rücknahme einen bekannten Commit in einem sauberen Checkout wählen und dessen Installer ausführen, Konfiguration separat prüfen.
+Vosk/Piper nicht bei jedem Codeupdate neu installieren. **Nach erstmaligem Wechsel auf das Servitor-Profil** `sudo bash scripts/install-piper.sh` einmal ausführen, damit Emotional-Modell und FFmpeg vorhanden sind. Installer verändern `/opt` und die systemd-Unit; ein Wechsel des Git-Checkouts allein verändert den installierten Dienst nicht. Für Rücknahme einen bekannten Commit in einem sauberen Checkout wählen und dessen Installer ausführen, Konfiguration separat prüfen.
 
 ## Abnahme nach Änderungen
 
