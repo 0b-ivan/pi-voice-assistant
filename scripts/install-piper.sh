@@ -12,7 +12,7 @@ VENV="${BASE}/.venv"
 TTS_DIR="${BASE}/tts"
 
 apt-get update
-apt-get install -y python3-venv alsa-utils
+apt-get install -y python3-venv alsa-utils sox
 
 install -d -o root -g root -m 0755 "${BASE}" "${BASE}/src" "${BASE}/scripts"
 install -d -o obivan -g obivan -m 0755 "${VENV}" "${TTS_DIR}"
