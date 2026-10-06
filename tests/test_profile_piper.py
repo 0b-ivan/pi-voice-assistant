@@ -143,7 +143,7 @@ with wave.open(args.f, 'wb') as audio:
             audio.writeframes(b'\x10\x00\x10\x00' * 48000)
         self.env['VOSK_PYTHON_PATH'] = str(self.root)
         self.env['TEST_ORDER'] = str(self.root / 'order')
-        self.env['STT_PROVIDER'] = 'openrouter'  # benchmark must stay offline
+        self.env['STT_PROVIDER'] = 'vosk'
         (self.root / 'vosk.py').write_text('''
 import json, os, signal, time
 from pathlib import Path
