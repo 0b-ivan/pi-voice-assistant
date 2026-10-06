@@ -9,14 +9,13 @@ SUPPORTED_VOICE_PROFILES = ("normal", "servitor")
 DEFAULT_FFMPEG_BIN = "/usr/bin/ffmpeg"
 DEFAULT_APLAY_BIN = "/usr/bin/aplay"
 
-# Tuned on the Pi Zero 2 W + WM8960. The dry voice stays intelligible while
-# parallel branches add metal resonance, a strong flanger, chorus, stutter,
-# phaser/doppler motion and a restrained >20 Hz tremolo ring-mod texture.
-# The final limiter is intentional: the branch gains are character controls,
-# not a request to clip the WM8960 output.
+# Tuned on the Pi Zero 2 W + WM8960. The base pitch is only moderately lowered
+# so the voice stays authoritative without becoming unnaturally bass-heavy.
+# Do not add whole-stream reverse/fade filters here: they buffer the complete
+# utterance and destroy time-to-first-audio for the resident streaming path.
 SERVITOR_FILTER_GRAPH = (
     "[0:a]aresample=48000,"
-    "asetrate=sample_rate=40320,aresample=48000,atempo=1.190476,"
+    "asetrate=sample_rate=43200,aresample=48000,atempo=1.111111,"
     "asplit=8[main0][metal0][flange0][choir0][stutter0][aura0][doppler0][ring0];"
 
     "[main0]"
@@ -79,8 +78,7 @@ SERVITOR_FILTER_GRAPH = (
     "amix=inputs=8:duration=first:dropout_transition=0:normalize=0,"
     "volume=4.4,"
     "aecho=0.8:0.16:85|170:0.055|0.025,"
-    "alimiter=level_in=2.5:level_out=1:limit=0.97:attack=5:release=60:level=0,"
-    "areverse,afade=t=in:d=0.55,areverse"
+    "alimiter=level_in=2.5:level_out=1:limit=0.97:attack=5:release=60:level=0"
     "[out]"
 )
 
@@ -99,6 +97,22 @@ def resolve_voice_profile(profile=None):
     return value
 
 
+def _ffmpeg_output_args(audio_device):
+    return [
+        "-filter_complex",
+        SERVITOR_FILTER_GRAPH,
+        "-map",
+        "[out]",
+        "-ac",
+        "1",
+        "-ar",
+        "48000",
+        "-f",
+        "alsa",
+        audio_device,
+    ]
+
+
 def build_playback_command(
     source,
     audio_device,
@@ -106,7 +120,7 @@ def build_playback_command(
     ffmpeg_bin=None,
     aplay_bin=None,
 ):
-    """Build direct playback command; Servitor DSP never renders an effect WAV."""
+    """Build file playback command for normal mode and the CLI fallback."""
     profile = resolve_voice_profile(profile)
     source = str(Path(source))
     if profile == "normal":
@@ -127,15 +141,38 @@ def build_playback_command(
         "-nostdin",
         "-i",
         source,
-        "-filter_complex",
-        SERVITOR_FILTER_GRAPH,
-        "-map",
-        "[out]",
-        "-ac",
-        "1",
-        "-ar",
-        "48000",
+        *_ffmpeg_output_args(audio_device),
+    ]
+
+
+def build_stream_playback_command(
+    sample_rate,
+    channels,
+    audio_device,
+    profile="servitor",
+    ffmpeg_bin=None,
+):
+    """Build FFmpeg raw-PCM stdin -> live DSP -> ALSA command."""
+    if resolve_voice_profile(profile) != "servitor":
+        raise ValueError("stream playback is only defined for the servitor profile")
+    sample_rate = int(sample_rate)
+    channels = int(channels)
+    if sample_rate <= 0 or channels <= 0:
+        raise ValueError("sample_rate and channels must be positive")
+
+    executable = ffmpeg_bin or os.environ.get("TTS_FFMPEG_BIN", DEFAULT_FFMPEG_BIN)
+    return [
+        executable,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
         "-f",
-        "alsa",
-        audio_device,
+        "s16le",
+        "-ar",
+        str(sample_rate),
+        "-ac",
+        str(channels),
+        "-i",
+        "pipe:0",
+        *_ffmpeg_output_args(audio_device),
     ]
