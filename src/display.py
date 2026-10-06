@@ -7,11 +7,6 @@ import shutil
 import subprocess
 import time
 
-import board
-import digitalio
-from PIL import Image, ImageDraw, ImageFont
-from adafruit_rgb_display import st7789
-
 
 WIDTH = 240
 HEIGHT = 240
@@ -37,6 +32,8 @@ def load_env():
 
 
 def font(size):
+    from PIL import ImageFont
+
     path = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 
     try:
@@ -65,13 +62,16 @@ def network_ok():
     if not ip:
         return False
 
-    result = subprocess.run(
-        [ip, "-4", "-brief", "address", "show", "up"],
-        capture_output=True,
-        text=True,
-        timeout=2,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [ip, "-4", "-brief", "address", "show", "up"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
 
     for line in result.stdout.splitlines():
         if line.startswith("lo "):
@@ -84,11 +84,14 @@ def network_ok():
 
 
 def service_ok():
-    result = subprocess.run(
-        ["systemctl", "is-active", "--quiet", "pi-ptt.service"],
-        timeout=2,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", "pi-ptt.service"],
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
 
     return result.returncode == 0
 
@@ -103,14 +106,8 @@ def models_ok():
         )
     )
 
-    tts_model = Path(
-        env.get(
-            "PIPER_MODEL",
-            "/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx",
-        )
-    )
-
-    if env.get("TTS_VOICE_PROFILE") == "servitor":
+    profile = env.get("TTS_VOICE_PROFILE", "normal").strip().lower()
+    if profile == "servitor":
         tts_model = Path(
             env.get(
                 "TTS_SERVITOR_MODEL",
@@ -118,11 +115,38 @@ def models_ok():
                 "de_DE-thorsten_emotional-medium.onnx",
             )
         )
+    else:
+        tts_model = Path(
+            env.get(
+                "PIPER_MODEL",
+                "/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx",
+            )
+        )
 
     return vosk_model.exists(), tts_model.exists()
 
 
+def is_ready(states):
+    """Network is informational; local Vosk operation must remain READY offline."""
+    return (
+        states["spi"]
+        and states["audio"]
+        and states["vosk"]
+        and states["tts"]
+        and states["voice"]
+    )
+
+
+def footer_status(states):
+    if is_ready(states):
+        return "SYSTEM READY", (0, 255, 100)
+
+    return "BOOTING ...", (255, 180, 0)
+
+
 def render(display, states):
+    from PIL import Image, ImageDraw
+
     image = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(image)
 
@@ -174,27 +198,13 @@ def render(display, states):
 
         y += 25
 
-    critical = (
-        states["spi"]
-        and states["audio"]
-        and states["vosk"]
-        and states["tts"]
-        and states["voice"]
-    )
-
     draw.line(
         (12, 202, 228, 202),
         fill=(90, 90, 90),
         width=1,
     )
 
-    if critical:
-        footer = "SYSTEM READY"
-        footer_color = (0, 255, 100)
-    else:
-        footer = "BOOTING ..."
-        footer_color = (255, 180, 0)
-
+    footer, footer_color = footer_status(states)
     draw.text(
         (12, 211),
         footer,
@@ -206,6 +216,10 @@ def render(display, states):
 
 
 def main():
+    import board
+    import digitalio
+    from adafruit_rgb_display import st7789
+
     spi = board.SPI()
 
     cs = digitalio.DigitalInOut(board.CE0)
