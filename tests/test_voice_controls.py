@@ -84,6 +84,8 @@ class ControllerTests(unittest.TestCase):
         job.result = ('Hallo', 'vosk')
         job.cancel.side_effect = lambda: setattr(job, 'cancelled', True)
         self.c.job = job
+        self.c.job_stage = 'stt'
+        self.c.job_started_at = time.monotonic()
         return job
 
     def test_a_and_gpio_hold_one_recording_until_both_released(self):
@@ -198,13 +200,44 @@ class ControllerTests(unittest.TestCase):
         self.recorder.start.assert_not_called()
         self.speech.start.assert_not_called()
 
-    def test_completed_job_publishes_and_rearms_released_ptt(self):
+    def test_completed_stt_runs_llm_then_starts_speech(self):
         job = self.job()
         job.done.is_set.return_value = True
-        self.tick()
+
+        llm_job = Mock()
+        llm_job.done.is_set.return_value = True
+        llm_job.cancelled = False
+        llm_job.error = None
+        llm_job.result = ('DIREKTIVE BESTÄTIGT.', 'openai/gpt-5.4-mini')
+
+        with patch('ptt.TranscriptionJob', return_value=llm_job) as worker:
+            self.tick()
+
         transcript = [e for e in self.events() if e['event'] == 'transcript']
         self.assertEqual(transcript[0]['text'], 'Hallo')
         self.assertEqual(transcript[0]['provider'], 'vosk')
+        worker.assert_called_once()
+        self.assertEqual(worker.call_args.args[1], 'Hallo')
+        self.speech.start.assert_called_once_with('DIREKTIVE BESTÄTIGT.')
+        names = [e['event'] for e in self.events()]
+        self.assertIn('llm_start', names)
+        self.assertIn('llm_response', names)
+        self.assertIn('speech_started', names)
+        self.assertIn('latency', names)
+
+        self.tick(down='A')
+        self.recorder.start.assert_called_once()
+
+    def test_llm_error_is_recoverable(self):
+        job = self.job()
+        self.c.job_stage = 'llm'
+        job.done.is_set.return_value = True
+        job.error = 'request timed out'
+        self.tick()
+        self.assertIsNone(self.c.job)
+        errors = [e for e in self.events() if e['event'] == 'llm_error']
+        self.assertEqual(errors[-1]['message'], 'request timed out')
+        self.speech.start.assert_not_called()
         self.tick(down='A')
         self.recorder.start.assert_called_once()
 
