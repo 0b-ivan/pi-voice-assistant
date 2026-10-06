@@ -147,6 +147,26 @@ class ControllerTests(unittest.TestCase):
         self.speech.start.assert_called_once()
         self.speech.stop.assert_called_once()
 
+    def test_led_processing_breathes_and_speech_tracks_voice_level(self):
+        self.c.job = Mock()
+        with patch("ptt.time.monotonic", return_value=0.0):
+            processing_a = self.c.color
+        with patch("ptt.time.monotonic", return_value=0.35):
+            processing_b = self.c.color
+        self.assertEqual(processing_a[0], 255)
+        self.assertEqual(processing_b[0], 255)
+        self.assertNotEqual(processing_a, processing_b)
+
+        self.c.job = None
+        self.speech.active = True
+        self.speech.voice_level = 0.0
+        pause = self.c.color
+        self.speech.voice_level = 1.0
+        voiced = self.c.color
+        self.assertGreater(pause[1], pause[0])
+        self.assertGreater(voiced[0], voiced[1])
+        self.assertGreater(pause[2], voiced[2])
+
     def test_status_never_plays_into_recording(self):
         self.tick(down='AE')
         self.speech.start.assert_not_called()
@@ -255,19 +275,34 @@ class ResidentSpeechTests(unittest.TestCase):
         self.assertEqual(len(processes), 2)
         self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
 
-    def test_servitor_profile_streams_ffmpeg_without_effect_file(self):
+    def test_servitor_profile_streams_piper_chunks_to_ffmpeg_stdin(self):
+        chunk1 = Mock(
+            sample_rate=16000,
+            sample_width=2,
+            sample_channels=1,
+            audio_int16_bytes=b"\\x01\\x00" * 160,
+        )
+        chunk2 = Mock(
+            sample_rate=16000,
+            sample_width=2,
+            sample_channels=1,
+            audio_int16_bytes=b"\\x02\\x00" * 160,
+        )
         voice = Mock()
+        voice.synthesize.return_value = [chunk1, chunk2]
+
         proc = Mock()
         proc.wait.return_value = 0
         proc.poll.return_value = 0
         proc.pid = 5432
+        proc.stdin = Mock()
+        proc.stdin.closed = False
         popen = Mock(return_value=proc)
 
-        def synthesize(_voice, text, audio, profile):
-            self.assertEqual(profile, "servitor")
-            self._write_audio(text, audio)
-
-        with patch("voice_controls._synthesize_voice", side_effect=synthesize) as synth:
+        with patch(
+            "voice_controls._servitor_synthesis_config",
+            return_value=(object(), 0.32),
+        ):
             speech = ResidentSpeechOutput(
                 "/models/test.onnx",
                 "test-device",
@@ -280,11 +315,18 @@ class ResidentSpeechTests(unittest.TestCase):
             speech.start("Systemstatus")
             self.assertEqual(self._wait_result(speech), 0)
 
-        synth.assert_called_once()
         playback = popen.call_args.args[0]
         self.assertEqual(playback[0], "/usr/bin/ffmpeg")
+        self.assertIn("pipe:0", playback)
         self.assertIn("-filter_complex", playback)
         self.assertEqual(playback[-3:], ["-f", "alsa", "test-device"])
+        self.assertEqual(proc.stdin.write.call_count, 3)
+        self.assertEqual(proc.stdin.write.call_args_list[0].args[0], chunk1.audio_int16_bytes)
+        self.assertEqual(proc.stdin.write.call_args_list[2].args[0], chunk2.audio_int16_bytes)
+        self.assertEqual(
+            len(proc.stdin.write.call_args_list[1].args[0]),
+            int(16000 * 0.32) * 2,
+        )
         self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
         self.assertFalse(list(Path(self.tmp.name).glob("speech-effect-*.wav")))
 
