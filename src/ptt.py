@@ -25,6 +25,9 @@ DISPLAY_EVENTS = {
     'transcript', 'transcript_discarded', 'cancelled', 'busy',
     'status', 'speech_started', 'speech_finished', 'speech_error',
 }
+DISPLAY_ERROR_EVENTS = {'stt_error', 'tts_error', 'speech_error'}
+DISPLAY_ERROR_HOLD_SECONDS = 3.0
+_display_last_error_at = None
 
 
 def display_event_path():
@@ -34,9 +37,16 @@ def display_event_path():
 
 
 def publish_display_event(name):
-    """Publish only the latest display-relevant event; never persist event fields."""
+    """Publish the latest display state without persisting sensitive event fields."""
+    global _display_last_error_at
+
     if name not in DISPLAY_EVENTS:
         return
+
+    now = time.time()
+    if name in DISPLAY_ERROR_EVENTS:
+        _display_last_error_at = now
+
     path = display_event_path()
     tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
     try:
@@ -45,8 +55,13 @@ def publish_display_event(name):
         payload = {
             'version': 1,
             'event': name,
-            'timestamp': time.time(),
+            'timestamp': now,
         }
+        if (
+            _display_last_error_at is not None
+            and now - _display_last_error_at < DISPLAY_ERROR_HOLD_SECONDS
+        ):
+            payload['error_timestamp'] = _display_last_error_at
         tmp.write_text(json.dumps(payload) + '\n', encoding='utf-8')
         os.replace(tmp, path)
     except OSError:
