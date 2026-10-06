@@ -93,8 +93,8 @@ SERVITOR_FILTER_GRAPH = (
     "+0.030*(2*(t*440-floor(t*440))-1):s=48000,"
     "highpass=f=170,lowpass=f=3600,"
     "tremolo=f=5.5:d=0.34,"
-    "aphaser=in_gain=0.78:out_gain=0.70:delay=3:decay=0.68:"
-    "speed=0.82:type=triangular,"
+    "aphaser=in_gain=0.62:out_gain=0.88:delay=4:decay=0.84:"
+    "speed=0.46:type=triangular,"
     "aecho=0.8:0.28:21|43|67:0.16|0.09|0.045,"
     "volume=0.90[machinehum];"
 
