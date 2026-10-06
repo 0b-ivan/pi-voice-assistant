@@ -12,7 +12,7 @@ import unittest.mock
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from ptt import Button, Recorder, process_capture
+from ptt import Button, Recorder, event, process_capture
 from transcribe import TranscriptionError
 
 
@@ -228,6 +228,38 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(audio.getframerate(), 16000)
             self.assertEqual(audio.getnchannels(), 1)
             self.assertEqual(audio.getsampwidth(), 2)
+
+
+class DisplayEventPublishingTests(unittest.TestCase):
+    def test_display_event_snapshot_contains_no_event_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'display-event.json'
+            output = StringIO()
+            with (
+                patch.dict('os.environ', {'PTT_DISPLAY_EVENT_PATH': str(path)}),
+                redirect_stdout(output),
+            ):
+                event('transcript', text='nicht im statusfile speichern', provider='vosk')
+
+            journal_event = json.loads(output.getvalue())
+            snapshot = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(journal_event['text'], 'nicht im statusfile speichern')
+            self.assertEqual(snapshot['event'], 'transcript')
+            self.assertNotIn('text', snapshot)
+            self.assertNotIn('provider', snapshot)
+            self.assertIsInstance(snapshot['timestamp'], float)
+
+    def test_irrelevant_event_does_not_replace_last_voice_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'display-event.json'
+            with patch.dict('os.environ', {'PTT_DISPLAY_EVENT_PATH': str(path)}):
+                event('recording')
+                before = path.read_text(encoding='utf-8')
+                event('volume', direction='up')
+                after = path.read_text(encoding='utf-8')
+
+            self.assertEqual(before, after)
+
 
 class ProcessingTests(unittest.TestCase):
     def test_success_emits_transcript(self):
