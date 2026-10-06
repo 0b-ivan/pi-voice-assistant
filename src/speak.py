@@ -5,11 +5,39 @@ import subprocess
 import sys
 import tempfile
 
-from voice_effects import apply_voice_profile, resolve_voice_profile
+from voice_effects import build_playback_command, resolve_voice_profile
 
 DEFAULT_MODEL = "/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx"
+DEFAULT_SERVITOR_MODEL = (
+    "/opt/pi-voice-assistant/tts/de_DE-thorsten_emotional-medium.onnx"
+)
 DEFAULT_AUDIO_DEVICE = "plughw:CARD=wm8960soundcard,DEV=0"
 DEFAULT_PIPER_PYTHON = "/opt/pi-voice-assistant/.venv/bin/python"
+
+
+def _piper_command(piper_python, model, wav_file, text, profile):
+    command = [
+        piper_python,
+        "-m",
+        "piper",
+        "-m",
+        model,
+    ]
+    if profile == "servitor":
+        command.extend([
+            "-s",
+            os.environ.get("TTS_PIPER_SPEAKER_ID", "4"),
+            "--length-scale",
+            os.environ.get("TTS_PIPER_LENGTH_SCALE", "1.10"),
+            "--noise-scale",
+            os.environ.get("TTS_PIPER_NOISE_SCALE", "0.30"),
+            "--noise-w-scale",
+            os.environ.get("TTS_PIPER_NOISE_W_SCALE", "0.25"),
+            "--sentence-silence",
+            os.environ.get("TTS_PIPER_SENTENCE_SILENCE", "0.32"),
+        ])
+    command.extend(["-f", wav_file, text])
+    return command
 
 
 def speak(text: str) -> None:
@@ -17,57 +45,35 @@ def speak(text: str) -> None:
     if not text:
         return
 
-    model = os.environ.get("PIPER_MODEL", DEFAULT_MODEL)
+    profile = resolve_voice_profile()
+    if profile == "servitor":
+        model = os.environ.get("TTS_SERVITOR_MODEL", DEFAULT_SERVITOR_MODEL)
+    else:
+        model = os.environ.get("PIPER_MODEL", DEFAULT_MODEL)
     audio_device = os.environ.get("TTS_AUDIO_DEVICE", DEFAULT_AUDIO_DEVICE)
     piper_python = os.environ.get("PIPER_PYTHON", DEFAULT_PIPER_PYTHON)
-    profile = resolve_voice_profile()
 
     fd, wav_file = tempfile.mkstemp(prefix="pi-tts-", suffix=".wav")
     os.close(fd)
-    effect_file = None
 
     try:
         subprocess.run(
-            [
-                piper_python,
-                "-m",
-                "piper",
-                "-m",
-                model,
-                "-f",
-                wav_file,
-                text,
-            ],
+            _piper_command(piper_python, model, wav_file, text, profile),
             check=True,
         )
-
-        playback_file = wav_file
-        if profile != "normal":
-            effect_fd, effect_file = tempfile.mkstemp(
-                prefix="pi-tts-effect-", suffix=".wav"
-            )
-            os.close(effect_fd)
-            playback_file = str(
-                apply_voice_profile(
-                    wav_file,
-                    effect_file,
-                    profile=profile,
-                    runner=subprocess.run,
-                )
-            )
-
         subprocess.run(
-            ["aplay", "-q", "-D", audio_device, playback_file],
+            build_playback_command(
+                wav_file,
+                audio_device,
+                profile=profile,
+            ),
             check=True,
         )
     finally:
-        for path in (effect_file, wav_file):
-            if path is None:
-                continue
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
+        try:
+            os.remove(wav_file)
+        except FileNotFoundError:
+            pass
 
 
 def main() -> int:
