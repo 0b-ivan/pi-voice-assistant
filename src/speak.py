@@ -36,7 +36,7 @@ def _piper_command(piper_python, model, wav_file, text, profile):
             "--sentence-silence",
             os.environ.get("TTS_PIPER_SENTENCE_SILENCE", "0.32"),
         ])
-    command.extend(["-f", wav_file, text])
+    command.extend(["-f", wav_file])
     return command
 
 
@@ -59,6 +59,8 @@ def speak(text: str) -> None:
     try:
         subprocess.run(
             _piper_command(piper_python, model, wav_file, text, profile),
+            input=text,
+            text=True,
             check=True,
         )
         subprocess.run(
