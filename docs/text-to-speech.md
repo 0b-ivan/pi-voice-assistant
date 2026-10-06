@@ -23,6 +23,8 @@ Der erste Installer richtet Piper in `/opt/pi-voice-assistant/.venv` ein und lä
 | `PIPER_MODEL` | `/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx` |
 | `PIPER_PYTHON` | `/opt/pi-voice-assistant/.venv/bin/python` |
 | `TTS_AUDIO_DEVICE` | `plughw:CARD=wm8960soundcard,DEV=0` |
+| `TTS_VOICE_PROFILE` | `normal` (`servitor` optional) |
+| `TTS_SOX_BIN` | `/usr/bin/sox` |
 
 Der Standalone-Wrapper kann mit System-Python gestartet werden; sein Piper-Unterprozess nutzt den venv-Interpreter. Der PTT-Dienst lädt Piper dagegen einmal aus diesem venv und hält `PiperVoice` resident. Dazu gelten zusätzlich:
 
@@ -31,10 +33,35 @@ Der Standalone-Wrapper kann mit System-Python gestartet werden; sein Piper-Unter
 | `PIPER_VENV` | `/opt/pi-voice-assistant/.venv` |
 | `PIPER_MODEL` | `/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx` |
 | `TTS_AUDIO_DEVICE` | `plughw:CARD=wm8960soundcard,DEV=0` |
+| `TTS_VOICE_PROFILE` | `normal` (`servitor` optional) |
+| `TTS_SOX_BIN` | `/usr/bin/sox` |
 
 Eigene Werte in `/etc/pi-voice-assistant.env` eintragen und Dienst neu starten. `PTT_SPEAK_COMMAND` bleibt nur als Kompatibilitäts-Fallback aktiv, falls der residente Import oder das Modellladen fehlschlägt.
 
 [Button-Steuerung](button-controls.md) beschreibt die Aktivierung und Abnahme. Der Dienst meldet beim Start `tts_loading` und danach entweder `tts_ready` oder `tts_error` mit Fallback.
+
+## Servitor-Profil
+
+`TTS_VOICE_PROFILE=servitor` legt nach der Piper-Synthese eine leichte
+SoX-Effektkette über das WAV. Sie ist für den Pi Zero 2 W bewusst ohne weiteres
+KI-/Voice-Conversion-Modell gebaut: Pitch-Absenkung, 180–4000-Hz-Bandbegrenzung,
+Kompression, leichte Sättigung, eine 60-Hz-Tremolo/Ringmod-Anmutung und kurzer
+Hall. Das Preset-Konzept orientiert sich an
+[marmalade-tts](https://github.com/maxwhipw/marmalade-tts), bleibt aber auf den
+bestehenden Piper-/WM8960-Pfad dieses Projekts zugeschnitten.
+
+Aktivieren und mit der Statusabfrage auf Button SHIM **E** prüfen:
+
+```bash
+sudo vim /etc/pi-voice-assistant.env
+# TTS_VOICE_PROFILE=servitor
+sudo systemctl restart pi-ptt.service
+journalctl -u pi-ptt.service -n 30 --no-pager
+```
+
+Beim Dienststart muss `tts_ready` zusätzlich `"profile":"servitor"` melden.
+Der Installer installiert SoX zusammen mit Piper. `normal` umgeht die
+Effektverarbeitung vollständig.
 
 ## Wiedergabe und Grenzen
 
