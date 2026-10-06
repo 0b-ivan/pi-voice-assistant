@@ -79,7 +79,8 @@ SERVITOR_FILTER_GRAPH = (
     "amix=inputs=8:duration=first:dropout_transition=0:normalize=0,"
     "volume=4.4,"
     "aecho=0.8:0.16:85|170:0.055|0.025,"
-    "alimiter=level_in=2.5:level_out=1:limit=0.97:attack=5:release=60:level=0"
+    "alimiter=level_in=2.5:level_out=1:limit=0.97:attack=5:release=60:level=0,"
+    "areverse,afade=t=in:d=0.55,areverse"
     "[out]"
 )
 
