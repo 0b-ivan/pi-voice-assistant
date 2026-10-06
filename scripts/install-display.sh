@@ -12,8 +12,16 @@ if systemctl is-active --quiet pi-display.service; then
   service_was_active=1
 fi
 
-apt-get update
-apt-get install -y python3-venv python3-pil
+missing_packages=()
+dpkg-query -W -f='${Status}' python3-venv 2>/dev/null | grep -q 'ok installed' \
+  || missing_packages+=(python3-venv)
+dpkg-query -W -f='${Status}' python3-pil 2>/dev/null | grep -q 'ok installed' \
+  || missing_packages+=(python3-pil)
+
+if (( ${#missing_packages[@]} > 0 )); then
+  apt-get update
+  apt-get install -y "${missing_packages[@]}"
+fi
 
 install -d -m 0755 /opt/pi-voice-assistant/src
 install -m 0644   "${repo_root}/src/display.py"   /opt/pi-voice-assistant/src/display.py

@@ -11,7 +11,7 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 | PTT und STT auf `main` | GPIO17, optional Button SHIM A–E/RGB, OpenRouter- und Vosk-STT implementiert; Pi läuft bewusst mit `STT_PROVIDER=vosk` |
 | Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 resident; `normal` nutzt `de_DE-thorsten-low`, `servitor` nutzt `de_DE-thorsten_emotional-medium` (Speaker 4) plus gestreamten FFmpeg-Live-DSP. SHIM E spricht kompakte dynamische Telemetrie; Verarbeitung blinkt Rot↔Gelb, Sprachpausen sind Türkis und Sprachsegmente Orange. |
 | Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): frischer Prozess 17–22 s, resident 1,12–1,20 s. Kontrollierter Vosk/Piper-Wechsel stabilisierte sich bei 5,89 s STT / 1,26 s TTS; kombinierter Peak-RSS 254,7 MiB, zram physisch ~57 MiB, kein Writeback-I/O |
-| Display | Adafruit mini PiTFT 1,3″: SPI0, ST7789-Farbtest und eigener Boot-/Statusdienst bestätigt; Live-Voice-Zustände noch offen |
+| Display | Adafruit mini PiTFT 1,3″: SPI0, ST7789-Farbtest und Boot-/Statusdienst; strukturierte Live-Zustände BEREIT/ZUHÖREN/VERSTEHEN/SPRECHEN/FEHLER implementiert, DENKEN folgt mit dem LLM |
 | Noch offen | LLM-Anbindung und automatische Antwortwiedergabe; reale `auto`-Fallback-Abnahme; Akku/Abschaltung und Kamera |
 
 ## Einrichten und betreiben

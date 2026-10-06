@@ -18,8 +18,62 @@ from transcribe import (
 from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
 
 
+DISPLAY_EVENTS = {
+    'stt_loading', 'stt_ready', 'stt_live_error', 'stt_error',
+    'tts_loading', 'tts_ready', 'tts_error',
+    'waiting_for_release', 'recording', 'capture_ready', 'processing',
+    'transcript', 'transcript_discarded', 'cancelled', 'busy',
+    'status', 'speech_started', 'speech_finished', 'speech_error',
+}
+DISPLAY_ERROR_EVENTS = {'stt_error', 'tts_error', 'speech_error'}
+DISPLAY_ERROR_HOLD_SECONDS = 3.0
+_display_last_error_at = None
+
+
+def display_event_path():
+    runtime_dir = os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')
+    default = str(Path(runtime_dir) / 'display-event.json')
+    return Path(os.environ.get('PTT_DISPLAY_EVENT_PATH', default))
+
+
+def publish_display_event(name):
+    """Publish the latest display state without persisting sensitive event fields."""
+    global _display_last_error_at
+
+    if name not in DISPLAY_EVENTS:
+        return
+
+    now = time.time()
+    if name in DISPLAY_ERROR_EVENTS:
+        _display_last_error_at = now
+
+    path = display_event_path()
+    tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+    try:
+        if not path.parent.is_dir():
+            return
+        payload = {
+            'version': 1,
+            'event': name,
+            'timestamp': now,
+        }
+        if (
+            _display_last_error_at is not None
+            and now - _display_last_error_at < DISPLAY_ERROR_HOLD_SECONDS
+        ):
+            payload['error_timestamp'] = _display_last_error_at
+        tmp.write_text(json.dumps(payload) + '\n', encoding='utf-8')
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def event(name, **fields):
     print(json.dumps(dict(version=1, event=name, **fields)), flush=True)
+    publish_display_event(name)
 
 
 def process_capture(path):
@@ -344,6 +398,7 @@ class VoiceController:
                     try:
                         self.speech.start(text)
                         event('status', text=text)
+                        event('speech_started', source='status')
                     except OSError as exc:
                         event('speech_error', message=str(exc))
         code = self.speech.poll()
