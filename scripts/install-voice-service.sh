@@ -26,6 +26,7 @@ install -m 0755 "${repo_root}/src/speak.py" /opt/pi-voice-assistant/src/speak.py
 install -m 0644 "${repo_root}/src/button_shim.py" /opt/pi-voice-assistant/src/button_shim.py
 install -m 0644 "${repo_root}/src/voice_controls.py" /opt/pi-voice-assistant/src/voice_controls.py
 install -m 0644 "${repo_root}/src/voice_effects.py" /opt/pi-voice-assistant/src/voice_effects.py
+install -m 0644 "${repo_root}/src/system_status.py" /opt/pi-voice-assistant/src/system_status.py
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
