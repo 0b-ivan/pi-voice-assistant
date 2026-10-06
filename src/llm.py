@@ -102,7 +102,6 @@ def generate_reply(prompt):
 
     model = configured_model()
     timeout = _float_env("OPENROUTER_LLM_TIMEOUT_SECONDS", 15.0, 1.0, 120.0)
-    temperature = _float_env("OPENROUTER_LLM_TEMPERATURE", 0.3, 0.0, 2.0)
     max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
     url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
 
@@ -110,8 +109,7 @@ def generate_reply(prompt):
         {
             "model": model,
             "stream": False,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
             "messages": [
                 {"role": "system", "content": SERVITOR_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
