@@ -39,7 +39,7 @@ TTS_PIPER_SENTENCE_SILENCE=0.32
 # TTS_FFMPEG_BIN=/usr/bin/ffmpeg
 ```
 
-Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe moderat um rund **1,8 Halbtöne** ab und mischt etwas mehr Direktsignal bei, damit Konsonanten klarer durchschlagen.
+Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe jetzt nur noch um rund **1,35 Halbtöne** ab. Metallische Resonanzen und Chorus liegen deutlich weiter vorn; zusätzlich erzeugt eine leichte Tracer-Spur kurze gestaffelte Digital-Echos, ohne den Streaming-Pfad zu blockieren.
 
 ## Servitor-DSP
 
@@ -52,11 +52,12 @@ resident Piper
        - Pitch-Absenkung
        - metallische EQ-Resonanzen
        - starker Flanger (Feedback 48 %, 1 Hz)
-       - Chorus
+       - stärkerer Chorus / Mehrstimmen-Layer
        - Stutter/Tremolo
        - Phaser/Aura
        - Doppler-Flanger
        - >20-Hz-Tremolo als Ringmod-Textur
+       - Tracer-/Glitch-Spur mit kurzen gestaffelten Echos
        - kurzer Hall
        - Limiter
        - kurzer natürlicher Echo-Tail
@@ -81,8 +82,8 @@ Beispiel:
 ```text
 STATUS NOMINAL.
 LAST 21 PROZENT. KERN 55 GRAD.
-RAM 62 FREI. SPEICHER 40 FREI.
-LAUFZEIT 2 Stunden 36 Minuten. STT LOKAL.
+ARBEITSSPEICHER 62 FREI. SPEICHER 40 FREI.
+LAUFZEIT 2 Stunden 36 Minuten. ERKENNUNG LOKAL.
 SERVITOR BEREIT. DIREKTIVE ERWARTET.
 ```
 
