@@ -214,7 +214,6 @@ class LiveVoskRecognizer:
 
 
 def transcribe_vosk(path: str | os.PathLike[str]) -> str:
-    _provider()
     audio_path = _audio_path(path)
     model = _load_vosk_model()
 
