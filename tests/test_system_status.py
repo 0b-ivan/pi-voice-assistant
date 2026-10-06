@@ -48,14 +48,13 @@ class SystemStatusTests(unittest.TestCase):
             cpu_count=self.cpu_count,
         )
 
-        self.assertIn("SYSTEM NOMINAL.", text)
-        self.assertIn("TELEMETRIE.", text)
-        self.assertIn("LAST 21 PROZENT.", text)
+        self.assertIn("STATUS NOMINAL.", text)
+                self.assertIn("LAST 21 PROZENT.", text)
         self.assertIn("KERN 55 GRAD.", text)
-        self.assertIn("RAM 62 PROZENT FREI.", text)
-        self.assertIn("SPEICHER 40 PROZENT FREI.", text)
+        self.assertIn("RAM 62 FREI.", text)
+        self.assertIn("SPEICHER 40 FREI.", text)
         self.assertIn("LAUFZEIT 2 Stunden 36 Minuten.", text)
-        self.assertIn("VOSK OFFLINE.", text)
+        self.assertIn("STT LOKAL.", text)
         self.assertTrue(text.endswith("DIREKTIVE ERWARTET."))
 
     def test_processing_status_keeps_operator_feedback(self):
@@ -69,9 +68,8 @@ class SystemStatusTests(unittest.TestCase):
             disk_usage=lambda _path: (_ for _ in ()).throw(OSError("missing")),
             cpu_count=self.cpu_count,
         )
-        self.assertIn("VERARBEITUNGSPROTOKOLL AKTIV.", text)
-        self.assertIn("AUFNAHME IN ANALYSE.", text)
-        self.assertIn("TELEMETRIE.", text)
+        self.assertIn("VERARBEITUNG.", text)
+                self.assertIn("TELEMETRIE.", text)
         self.assertTrue(text.endswith("DIREKTIVE IN BEARBEITUNG."))
 
     def test_missing_optional_sources_do_not_break_status(self):
@@ -85,8 +83,8 @@ class SystemStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             text,
-            "SYSTEM NOMINAL. TELEMETRIE. "
-            "SERVITOR EINHEIT BEREIT. DIREKTIVE ERWARTET.",
+            "STATUS NOMINAL. "
+            "SERVITOR BEREIT. DIREKTIVE ERWARTET.",
         )
 
     def test_auto_provider_is_named_explicitly(self):
