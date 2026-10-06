@@ -255,6 +255,37 @@ class ResidentSpeechTests(unittest.TestCase):
         self.assertEqual(len(processes), 2)
         self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
 
+    def test_servitor_profile_filters_resident_audio_before_playback(self):
+        voice = Mock()
+        voice.synthesize_wav.side_effect = self._write_audio
+        effect_runner = Mock()
+        proc = Mock()
+        proc.wait.return_value = 0
+        proc.poll.return_value = 0
+        proc.pid = 5432
+        popen = Mock(return_value=proc)
+        speech = ResidentSpeechOutput(
+            "/models/test.onnx",
+            "test-device",
+            self.tmp.name,
+            loader=Mock(return_value=voice),
+            popen=popen,
+            effect_runner=effect_runner,
+            profile="servitor",
+        )
+
+        speech.start("Systemstatus")
+        self.assertEqual(self._wait_result(speech), 0)
+
+        effect_runner.assert_called_once()
+        sox = effect_runner.call_args.args[0]
+        self.assertEqual(sox[0], "/usr/bin/sox")
+        self.assertIn("tremolo", sox)
+        playback = popen.call_args.args[0]
+        self.assertTrue(Path(playback[-1]).name.startswith("speech-effect-"))
+        self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
+        self.assertFalse(list(Path(self.tmp.name).glob("speech-effect-*.wav")))
+
     def test_cancelled_synthesis_never_starts_playback(self):
         started, release = threading.Event(), threading.Event()
         voice = Mock()
