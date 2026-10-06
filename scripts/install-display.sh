@@ -7,6 +7,10 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+service_was_active=0
+if systemctl is-active --quiet pi-display.service; then
+  service_was_active=1
+fi
 
 apt-get update
 apt-get install -y python3-venv python3-pil
@@ -27,7 +31,12 @@ install -m 0644   "${repo_root}/deploy/pi-display.service"   /etc/systemd/system
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/pi-display.service
 
-echo
-echo "Display service installed."
-echo "Start with:"
-echo "  sudo systemctl enable --now pi-display.service"
+if [[ ${service_was_active} -eq 1 ]]; then
+  systemctl restart pi-display.service
+  echo "pi-display.service restarted."
+else
+  echo
+  echo "Display service installed."
+  echo "Start with:"
+  echo "  sudo systemctl enable --now pi-display.service"
+fi
