@@ -89,8 +89,16 @@ SERVITOR_FILTER_GRAPH = (
     "aecho=0.8:0.26:19|38:0.13|0.07,"
     "volume=0.58[sawphase];"
 
-    "[main][metal][flange][choir][stutter][aura][doppler][ring][tracer][sawphase]"
-    "amix=inputs=10:duration=first:dropout_transition=0:normalize=0,"
+    "aevalsrc=0.026*(2*(t*96-floor(t*96))-1):s=48000,"
+    "highpass=f=80,lowpass=f=2600,"
+    "tremolo=f=6:d=0.24,"
+    "aphaser=in_gain=0.72:out_gain=0.58:delay=3:decay=0.62:"
+    "speed=0.72:type=triangular,"
+    "aecho=0.8:0.22:23|47:0.10|0.05,"
+    "volume=0.52[machinehum];"
+
+    "[main][metal][flange][choir][stutter][aura][doppler][ring][tracer][sawphase][machinehum]"
+    "amix=inputs=11:duration=first:dropout_transition=0:normalize=0,"
     "volume=4.4,"
     "aecho=0.8:0.10:72|145:0.040|0.018,"
     "alimiter=level_in=2.5:level_out=1:limit=0.97:attack=5:release=60:level=0"
