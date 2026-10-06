@@ -14,8 +14,8 @@ DEFAULT_APLAY_BIN = "/usr/bin/aplay"
 # Do not add whole-stream reverse/fade filters here: they buffer the complete
 # utterance and destroy time-to-first-audio for the resident streaming path.
 SERVITOR_FILTER_GRAPH = (
-    "[0:a]aresample=48000,"
-    "asetrate=sample_rate=44400,aresample=48000,atempo=1.081081,"
+    "[0:a]aresample=24000,"
+    "asetrate=sample_rate=22200,aresample=24000,atempo=1.081081,"
     "asplit=5[main0][metal0][choir0][tracer0][sawphase0];"
 
     "[main0]"
@@ -57,7 +57,7 @@ SERVITOR_FILTER_GRAPH = (
     "volume=0.82[sawphase];"
 
     "aevalsrc=0.060*(2*(t*220-floor(t*220))-1)"
-    "+0.030*(2*(t*440-floor(t*440))-1):s=48000,"
+    "+0.030*(2*(t*440-floor(t*440))-1):s=24000,"
     "highpass=f=170,lowpass=f=3600,"
     "tremolo=f=5.5:d=0.34,"
     "aphaser=in_gain=0.30:out_gain=0.56:delay=4:decay=0.78:"
@@ -69,7 +69,8 @@ SERVITOR_FILTER_GRAPH = (
     "amix=inputs=6:duration=first:dropout_transition=0:normalize=0,"
     "volume=4.0,"
     "aecho=0.8:0.08:72|145:0.035|0.015,"
-    "alimiter=level_in=2.2:level_out=1:limit=0.97:attack=5:release=60:level=0"
+    "alimiter=level_in=2.2:level_out=1:limit=0.97:attack=5:release=60:level=0,"
+    "aresample=48000"
     "[out]"
 )
 
