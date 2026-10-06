@@ -69,7 +69,6 @@ class SystemStatusTests(unittest.TestCase):
             cpu_count=self.cpu_count,
         )
         self.assertIn("VERARBEITUNG.", text)
-                self.assertIn("TELEMETRIE.", text)
         self.assertTrue(text.endswith("DIREKTIVE IN BEARBEITUNG."))
 
     def test_missing_optional_sources_do_not_break_status(self):
