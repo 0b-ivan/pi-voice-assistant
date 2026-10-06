@@ -49,7 +49,7 @@ class SystemStatusTests(unittest.TestCase):
         )
 
         self.assertIn("STATUS NOMINAL.", text)
-                self.assertIn("LAST 21 PROZENT.", text)
+        self.assertIn("LAST 21 PROZENT.", text)
         self.assertIn("KERN 55 GRAD.", text)
         self.assertIn("RAM 62 FREI.", text)
         self.assertIn("SPEICHER 40 FREI.", text)
