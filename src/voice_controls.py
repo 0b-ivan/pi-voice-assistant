@@ -87,7 +87,7 @@ def _synthesize_voice(voice, text, audio, profile):
         return
 
     try:
-        from piper import SynthesisConfig
+        from piper.config import SynthesisConfig
     except ImportError as exc:
         raise RuntimeError("Piper SynthesisConfig unavailable") from exc
 
