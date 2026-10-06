@@ -11,6 +11,7 @@ import threading
 import time
 import wave
 
+from system_status import build_status_text
 from transcribe import TranscriptionError, transcribe_with_provider
 from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
 
@@ -207,11 +208,13 @@ class VoiceController:
                 if self.recorder.process is not None or action == 'start':
                     event('status_skipped', reason='recording')
                 else:
-                    state = 'Ich verarbeite die Aufnahme.' if self.job else 'Ich bin bereit.'
-                    mode = 'Offline-Spracherkennung.' if os.environ.get('STT_PROVIDER') == 'vosk' else 'Spracherkennung konfiguriert.'
+                    text = build_status_text(
+                        processing=self.job is not None,
+                        stt_provider=os.environ.get('STT_PROVIDER'),
+                    )
                     try:
-                        self.speech.start(state + ' ' + mode)
-                        event('status', text=state + ' ' + mode)
+                        self.speech.start(text)
+                        event('status', text=text)
                     except OSError as exc:
                         event('speech_error', message=str(exc))
         code = self.speech.poll()
@@ -287,10 +290,15 @@ def main():
         # Probe mode must never load a TTS model or touch the audio device.
         speech = SpeechOutput('/usr/bin/true')
     else:
-        model = os.environ.get(
-            'PIPER_MODEL',
-            '/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx')
         profile = os.environ.get('TTS_VOICE_PROFILE', 'normal')
+        if profile.strip().lower() == 'servitor':
+            model = os.environ.get(
+                'TTS_SERVITOR_MODEL',
+                '/opt/pi-voice-assistant/tts/de_DE-thorsten_emotional-medium.onnx')
+        else:
+            model = os.environ.get(
+                'PIPER_MODEL',
+                '/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx')
         event('tts_loading', mode='resident', model=model, profile=profile)
         try:
             speech = ResidentSpeechOutput(
