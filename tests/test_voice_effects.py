@@ -1,13 +1,16 @@
 import os
-import subprocess
 import unittest
-from unittest.mock import Mock, patch
-
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from voice_effects import apply_voice_profile, build_sox_command, resolve_voice_profile
+
+from voice_effects import (
+    SERVITOR_FILTER_GRAPH,
+    build_playback_command,
+    resolve_voice_profile,
+)
 
 
 class VoiceEffectsTests(unittest.TestCase):
@@ -19,47 +22,38 @@ class VoiceEffectsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported TTS_VOICE_PROFILE"):
             resolve_voice_profile("servo-skull")
 
-    def test_normal_profile_skips_sox(self):
-        runner = Mock()
-        result = apply_voice_profile(
-            "/tmp/input.wav", "/tmp/output.wav", profile="normal", runner=runner
-        )
-        self.assertEqual(result, Path("/tmp/input.wav"))
-        runner.assert_not_called()
-
-    def test_servitor_profile_builds_lightweight_sox_chain(self):
-        command = build_sox_command(
-            "/tmp/input.wav",
-            "/tmp/output.wav",
-            profile="servitor",
+    def test_normal_profile_uses_aplay(self):
+        command = build_playback_command(
+            "/tmp/input.wav", "test-device", profile="normal"
         )
         self.assertEqual(
-            command[:3],
-            ["/usr/bin/sox", "/tmp/input.wav", "/tmp/output.wav"],
+            command,
+            ["/usr/bin/aplay", "-q", "-D", "test-device", "/tmp/input.wav"],
         )
-        self.assertIn("pitch", command)
-        self.assertIn("-300", command)
-        self.assertIn("highpass", command)
-        self.assertIn("lowpass", command)
-        self.assertIn("overdrive", command)
-        self.assertIn("tremolo", command)
-        self.assertIn("reverb", command)
 
-    def test_servitor_profile_runs_sox_without_shell(self):
-        runner = Mock()
-        result = apply_voice_profile(
-            "/tmp/input.wav",
-            "/tmp/output.wav",
-            profile="servitor",
-            runner=runner,
+    def test_servitor_profile_streams_ffmpeg_directly_to_alsa(self):
+        command = build_playback_command(
+            "/tmp/input.wav", "test-device", profile="servitor"
         )
-        self.assertEqual(result, Path("/tmp/output.wav"))
-        runner.assert_called_once()
-        kwargs = runner.call_args.kwargs
-        self.assertTrue(kwargs["check"])
-        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
-        self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
-        self.assertEqual(kwargs["stderr"], subprocess.PIPE)
+        self.assertEqual(command[0], "/usr/bin/ffmpeg")
+        self.assertIn("-filter_complex", command)
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertEqual(graph, SERVITOR_FILTER_GRAPH)
+        self.assertIn("flanger=delay=8:depth=8:regen=48", graph)
+        self.assertIn("speed=1.0", graph)
+        self.assertIn("volume=3.80[flange]", graph)
+        self.assertIn("chorus=", graph)
+        self.assertIn("tremolo=f=13:d=0.94", graph)
+        self.assertIn("tremolo=f=42:d=0.55", graph)
+        self.assertIn("alimiter=", graph)
+        self.assertEqual(command[-3:], ["alsa", "test-device"][-3:])
+
+    def test_servitor_ffmpeg_path_can_be_overridden(self):
+        with patch.dict(os.environ, {"TTS_FFMPEG_BIN": "/custom/ffmpeg"}, clear=True):
+            command = build_playback_command(
+                "/tmp/input.wav", "test-device", profile="servitor"
+            )
+        self.assertEqual(command[0], "/custom/ffmpeg")
 
 
 if __name__ == "__main__":
