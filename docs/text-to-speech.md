@@ -87,7 +87,7 @@ OFFLINE SPRACHERKENNUNG AKTIV.
 SERVITOR EINHEIT BEREIT. BEFEHL ERWARTET.
 ```
 
-Fehlt eine Quelle unter `/proc` oder `/sys`, wird nur dieser Wert ausgelassen; die Statusansage bleibt funktionsfähig. Während STT beginnt der Text weiterhin mit `Ich verarbeite die Aufnahme.`, ergänzt aber das Maschinenprotokoll.
+Fehlt eine Quelle unter `/proc` oder `/sys`, wird nur dieser Wert ausgelassen; die Statusansage bleibt funktionsfähig. Während STT beginnt sie mit `VERARBEITUNGSPROTOKOLL AKTIV. AUFNAHME IN ANALYSE.`.
 
 ## Aktivieren und prüfen
 
