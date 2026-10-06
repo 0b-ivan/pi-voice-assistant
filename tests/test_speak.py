@@ -54,7 +54,6 @@ class SpeakTests(unittest.TestCase):
                         "/models/test.onnx",
                         "-f",
                         str(wav),
-                        "--",
                         "Hallo Welt",
                     ],
                     check=True,
@@ -66,6 +65,39 @@ class SpeakTests(unittest.TestCase):
             ],
         )
         self.assertFalse(wav.exists())
+
+    def test_servitor_profile_filters_before_playback(self):
+        raw_fd, raw = self._output_file()
+        effect_fd, effect = self._output_file()
+        env = {
+            "PIPER_MODEL": "/models/test.onnx",
+            "PIPER_PYTHON": "/venv/bin/python",
+            "TTS_AUDIO_DEVICE": "test-device",
+            "TTS_VOICE_PROFILE": "servitor",
+        }
+
+        with patch.dict(os.environ, env, clear=True), patch(
+            "speak.tempfile.mkstemp",
+            side_effect=[(raw_fd, str(raw)), (effect_fd, str(effect))],
+        ), patch("speak.subprocess.run") as run:
+            tts.speak("Status")
+
+        self.assertEqual(run.call_count, 3)
+        sox = run.call_args_list[1]
+        self.assertEqual(
+            sox.args[0][:3],
+            ["/usr/bin/sox", str(raw), str(effect)],
+        )
+        self.assertIn("tremolo", sox.args[0])
+        self.assertEqual(
+            run.call_args_list[2],
+            call(
+                ["aplay", "-q", "-D", "test-device", str(effect)],
+                check=True,
+            ),
+        )
+        self.assertFalse(raw.exists())
+        self.assertFalse(effect.exists())
 
     def test_removes_temporary_file_when_synthesis_fails(self):
         fd, wav = self._output_file()
