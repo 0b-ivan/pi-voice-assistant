@@ -173,9 +173,9 @@ class VoiceController:
             return (255, 0, 0)
 
         if self.job is not None:
-            # Processing/thinking: slow red <-> yellow "breathing" pulse.
-            phase = (math.sin(time.monotonic() * math.tau / 1.4) + 1.0) / 2.0
-            return self._mix_color((255, 16, 0), (255, 208, 0), phase)
+            # Processing/thinking: hard red/yellow blink. This intentionally
+            # looks different from the smooth turquoise/orange speech envelope.
+            return (255, 208, 0) if int(time.monotonic() * 2) % 2 else (255, 0, 0)
 
         if self.speech.active:
             # Speech follows the actual streamed Piper cadence. Sentence pauses
