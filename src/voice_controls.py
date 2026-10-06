@@ -10,6 +10,11 @@ import threading
 import time
 import wave
 
+def _speech_event(name, **fields):
+    import json
+    print(json.dumps(dict(version=1, event=name, **fields)), flush=True)
+
+
 from voice_effects import (
     build_playback_command,
     build_stream_playback_command,
@@ -233,6 +238,8 @@ class ResidentSpeechOutput:
 
     def _run_servitor(self, job, text):
         proc = None
+        started_at = time.monotonic()
+        _speech_event("tts_synthesis_start", profile=self.profile, chars=len(text))
         with self._synthesis_lock:
             if not self._current(job):
                 return
@@ -244,6 +251,14 @@ class ResidentSpeechOutput:
             except StopIteration as exc:
                 raise RuntimeError("Piper produced no audio chunks") from exc
 
+            first_chunk_at = time.monotonic()
+            _speech_event(
+                "tts_first_chunk",
+                profile=self.profile,
+                latency_ms=round((first_chunk_at - started_at) * 1000),
+                bytes=len(chunk.audio_int16_bytes),
+            )
+
             sample_rate = int(chunk.sample_rate)
             sample_width = int(chunk.sample_width)
             channels = int(chunk.sample_channels)
@@ -254,6 +269,7 @@ class ResidentSpeechOutput:
             if sample_rate <= 0 or channels <= 0:
                 raise RuntimeError("invalid Piper PCM format")
 
+            proc_started_at = time.monotonic()
             proc = self._popen(
                 build_stream_playback_command(
                     sample_rate,
@@ -263,6 +279,12 @@ class ResidentSpeechOutput:
                 ),
                 stdin=subprocess.PIPE,
                 start_new_session=True,
+            )
+            _speech_event(
+                "tts_playback_start",
+                profile=self.profile,
+                latency_ms=round((time.monotonic() - started_at) * 1000),
+                ffmpeg_start_ms=round((time.monotonic() - proc_started_at) * 1000),
             )
             with self._state_lock:
                 if self._job is not job:
