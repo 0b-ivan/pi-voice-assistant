@@ -75,7 +75,7 @@ class VoiceSynthesisTests(unittest.TestCase):
             audio.setframerate(16000)
             audio.setsampwidth(2)
             audio.setnchannels(1)
-            audio.writeframes(b"\\x00\\x00" * 2)
+            audio.writeframes(bytes(4))
 
         voice.synthesize_wav.side_effect = write_audio
         with tempfile.TemporaryDirectory() as tmp:
