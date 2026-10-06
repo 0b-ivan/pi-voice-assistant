@@ -248,6 +248,34 @@ class DisplayEventPublishingTests(unittest.TestCase):
             self.assertNotIn('text', snapshot)
             self.assertNotIn('provider', snapshot)
             self.assertIsInstance(snapshot['timestamp'], float)
+            self.assertNotIn('error_timestamp', snapshot)
+
+    def test_error_marker_survives_immediate_followup_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'display-event.json'
+            with (
+                patch.dict('os.environ', {'PTT_DISPLAY_EVENT_PATH': str(path)}),
+                patch('ptt.time.time', side_effect=[100.0, 100.01]),
+            ):
+                event('stt_error', message='offline')
+                event('waiting_for_release')
+
+            snapshot = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(snapshot['event'], 'waiting_for_release')
+            self.assertEqual(snapshot['error_timestamp'], 100.0)
+
+    def test_error_marker_expires_from_later_snapshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'display-event.json'
+            with (
+                patch.dict('os.environ', {'PTT_DISPLAY_EVENT_PATH': str(path)}),
+                patch('ptt.time.time', side_effect=[100.0, 104.1]),
+            ):
+                event('speech_error', message='failed')
+                event('waiting_for_release')
+
+            snapshot = json.loads(path.read_text(encoding='utf-8'))
+            self.assertNotIn('error_timestamp', snapshot)
 
     def test_irrelevant_event_does_not_replace_last_voice_state(self):
         with tempfile.TemporaryDirectory() as tmp:
