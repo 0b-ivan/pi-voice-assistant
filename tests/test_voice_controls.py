@@ -54,6 +54,7 @@ class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.recorder, self.speech = Mock(), Mock()
         self.recorder.process = None
+        self.recorder.take_live_transcript.return_value = None
         self.speech.active = False
         self.speech.poll.return_value = None
         self.c = VoiceController(self.recorder, self.speech, .04, 30)
@@ -170,6 +171,14 @@ class ControllerTests(unittest.TestCase):
         self.tick(down='AE')
         self.speech.start.assert_not_called()
         self.recorder.start.assert_called_once()
+
+    def test_live_transcript_skips_second_file_transcription(self):
+        self.recorder.finish.return_value = Path('/tmp/capture.wav')
+        self.recorder.take_live_transcript.return_value = ('Schon erkannt', 'vosk')
+        self.c.submit('release')
+        self.assertIsNotNone(self.c.job)
+        self.assertTrue(self.c.job.done.wait(1))
+        self.assertEqual(self.c.job.result, ('Schon erkannt', 'vosk'))
 
     def test_errors_are_logged_and_next_job_can_run(self):
         job = self.job()
