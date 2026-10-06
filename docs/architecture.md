@@ -19,11 +19,24 @@ Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten b
 
 ## Statusansage und geplanter Antwortpfad
 
-SHIM E kann bereits eine **separat installierte** Sprach-CLI für Statusmeldungen starten. PTT stoppt die vom Dienst gestartete Ansage vor Aufnahme; E spricht nicht während Aufnahme. Das ist keine LLM-Antwort. Externe manuelle Playback-Prozesse verwaltet der Dienst nicht.
+SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.
 
-Piper 1.8.0 mit deutscher Thorsten-Stimme ist auf dem Pi getestet. [`src/speak.py`](../src/speak.py) erzeugt ein temporäres WAV und spielt es über WM8960 ab; der Dienstinstaller deployt den Wrapper. Piper-Paket und Stimme werden separat installiert: [TTS-Setup](text-to-speech.md). Der Ressourcenvergleich ist inzwischen implementiert und auf dem Pi gemessen; [Performance und Grenzen](local-speech.md).
+Piper 1.8.0 bleibt resident. `normal` nutzt Thorsten Low. `servitor` nutzt Thorsten Emotional mit neutralem Speaker und einer Sprechkonfiguration, bei der Wörter nur leicht langsamer sind, während zusätzliche Satzpausen den schweren Befehlston erzeugen.
 
-Geplant: Transcript → OpenRouter-LLM → Piper → WM8960. **LLM-Aufruf und automatische Antwort-Orchestrierung fehlen.** Der vorhandene Offline-STT-Pfad liefert daher noch keinen vollständig offline antwortenden Assistenten. Lokales LLM, Wake Word, Streaming, Echounterdrückung sowie Kamera/Display sind keine aktuellen Funktionen.
+```text
+SHIM E
+  -> dynamischer Systemtext
+  -> resident Piper
+  -> eine private WAV in /run/pi-ptt
+  -> FFmpeg Live-DSP
+       metal / flanger / chorus / stutter / aura / doppler / ringmod / limiter
+  -> ALSA
+  -> WM8960
+```
+
+Der DSP erzeugt keine einzelnen Effekt-WAVs. [`src/voice_effects.py`](../src/voice_effects.py) baut nur den direkten Playback-Befehl. [`src/speak.py`](../src/speak.py) nutzt denselben Pfad als Fallback.
+
+Geplant: Transcript → OpenRouter-LLM → Piper → WM8960. **LLM-Aufruf und automatische Antwort-Orchestrierung fehlen.** Der vorhandene Offline-STT-Pfad liefert daher noch keinen vollständig offline antwortenden Assistenten. Lokales LLM, Wake Word, Echounterdrückung sowie Kamera/Display sind keine aktuellen Funktionen.
 
 ## Betrieb und Grenzen
 
