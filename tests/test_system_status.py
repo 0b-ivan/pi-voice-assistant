@@ -49,16 +49,14 @@ class SystemStatusTests(unittest.TestCase):
         )
 
         self.assertIn("SYSTEM NOMINAL.", text)
-        self.assertIn("MASCHINENGEIST SYNCHRONISIERT.", text)
-        self.assertIn("TELEMETRIE.", text)
-        self.assertIn("SYSTEMLAST 21 PROZENT.", text)
-        self.assertIn("KERNTEMPERATUR 55 GRAD.", text)
-        self.assertIn("ARBEITSSPEICHER 62 PROZENT FREI.", text)
-        self.assertIn("DATENSPEICHER 40 PROZENT FREI.", text)
+                self.assertIn("TELEMETRIE.", text)
+        self.assertIn("LAST 21 PROZENT.", text)
+        self.assertIn("KERN 55 GRAD.", text)
+        self.assertIn("RAM 62 PROZENT FREI.", text)
+        self.assertIn("SPEICHER 40 PROZENT FREI.", text)
         self.assertIn("LAUFZEIT 2 Stunden 36 Minuten.", text)
-        self.assertIn("OFFLINE SPRACHERKENNUNG AKTIV.", text)
-        self.assertIn("PROTOKOLLE STABIL.", text)
-        self.assertTrue(text.endswith("DIREKTIVE ERWARTET."))
+        self.assertIn("VOSK OFFLINE.", text)
+                self.assertTrue(text.endswith("DIREKTIVE ERWARTET."))
 
     def test_processing_status_keeps_operator_feedback(self):
         text = build_status_text(
@@ -87,8 +85,8 @@ class SystemStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             text,
-            "SYSTEM NOMINAL. MASCHINENGEIST SYNCHRONISIERT. TELEMETRIE. "
-            "PROTOKOLLE STABIL. SERVITOR EINHEIT BEREIT. DIREKTIVE ERWARTET.",
+            "SYSTEM NOMINAL. TELEMETRIE. "
+            "SERVITOR EINHEIT BEREIT. DIREKTIVE ERWARTET.",
         )
 
     def test_auto_provider_is_named_explicitly(self):
@@ -101,7 +99,7 @@ class SystemStatusTests(unittest.TestCase):
             disk_usage=lambda _path: (_ for _ in ()).throw(OSError("missing")),
             cpu_count=self.cpu_count,
         )
-        self.assertIn("SPRACHERKENNUNG AUTOMATIK AKTIV.", text)
+        self.assertIn("STT AUTOMATIK.", text)
 
 
 if __name__ == "__main__":
