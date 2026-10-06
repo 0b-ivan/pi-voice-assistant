@@ -1,6 +1,6 @@
 # Hardwarebestand und Fotodokumentation 🔧
 
-Stand: 05.10.2026. Grundlage: Ivans Angaben und acht Projektfotos. Sichtbare Beschriftungen sind von noch nicht geprüften technischen Details getrennt.
+Stand: 06.10.2026. Grundlage: Ivans Angaben und acht Projektfotos. Sichtbare Beschriftungen sind von noch nicht geprüften technischen Details getrennt.
 
 ## Erweiterter Aufbau — 05.10.2026 📸
 
@@ -67,7 +67,7 @@ Die früheren Fotos zeigen die Kamera über ein Flexkabel angeschlossen; im aktu
 
 ![Adafruit mini PiTFT 1,3 Zoll 240x240 mit zwei Tastern](images/adafruit-mini-pitft.jpg)
 
-Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240**. Die früheren Chat-Einordnungen als Waveshare Pico-LCD bzw. Waveshare LCD HAT samt behaupteten GPIO19/20/21-Konflikten waren für dieses Display falsch. Es ist ein Raspberry-Pi-Zusatzdisplay und benötigt für seinen vorgesehenen Einsatz keinen Raspberry Pi Pico. Es wird erst nach dem Audio-MVP angeschlossen und getestet. Laut Adafruit erlaubt die 1,3″-Variante kein einfaches Durchstecken eines Stacking-Headers durch die Platine. Montage oberhalb des Audio-HATs oder Anschluss per geeigneter Verlängerung separat planen.
+Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240**. Die früheren Chat-Einordnungen als Waveshare Pico-LCD bzw. Waveshare LCD HAT samt behaupteten GPIO19/20/21-Konflikten waren für dieses Display falsch. Es ist ein Raspberry-Pi-Zusatzdisplay und benötigt für seinen vorgesehenen Einsatz keinen Raspberry Pi Pico. Am 06.10.2026 wurde SPI0 neben der bestehenden WM8960-Konfiguration aktiviert. `/dev/spidev0.0` und `/dev/spidev0.1` sind nach dem Neustart vorhanden; der ST7789-Farbtest wurde bestätigt. Ein zusätzlicher Kernel-/Framebuffer-Treiber ist dafür nicht nötig. Details und reproduzierbarer Test stehen unter [PiTFT-Display](display.md). Laut Adafruit erlaubt die 1,3″-Variante kein einfaches Durchstecken eines Stacking-Headers durch die Platine; das Display gehört deshalb an das Ende des GPIO-Stacks.
 
 ## Schnittstellen und Planung
 
@@ -80,12 +80,12 @@ Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegun
 | HAT-Taste | GPIO17, physischer Pin 11 | Aktiv Low und normale Zyklen bestätigt; gezielte Prelltests offen |
 | ETH/USB HUB HAT | USB-Datenverbindung zum Pi; GPIO-Stapel für Versorgung und Durchführung | Erkennung/r8152/100-Mbit-Link bestätigt; LAN-SSH und externe Ports offen |
 | Button SHIM | I²C: GPIO2/3, physische Pins 3/5; Adresse `0x3f`; 5 V, 3,3 V und Masse | Einzeltests bestätigt; aktuelle Dienstabnahme/Adresskonflikte separat prüfen |
-| mini PiTFT | SPI: GPIO10/11, CS GPIO8, DC GPIO25; Backlight GPIO22 | Pinbelegung und Montage vor Anschluss abgleichen |
+| mini PiTFT | SPI: GPIO10/11, CS GPIO8, DC GPIO25; Backlight GPIO22 | SPI0 und `/dev/spidev0.0/.1` bestätigt; ST7789-Farbtest bestanden; Statusdienst noch offen |
 | Displaytaster | GPIO23/24 | Optional zusätzliche Bedienung |
 | PiSugar2 | I²C; weitere Details revisionsabhängig | Adresse und Versorgung prüfen |
 | Kamera | Kameraanschluss/Flexkabel | Sensor und Treiber prüfen |
 
-Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. Das ist eine Planungsgrundlage; mechanische Stapelbarkeit, Versorgung und weitere Funktionen der konkreten PiSugar-Revision werden gesondert geprüft.
+Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. SPI0 wurde zusammen mit der bestehenden WM8960-Konfiguration aktiviert; die endgültige mechanische Montage, Versorgung und weitere Funktionen der konkreten PiSugar-Revision werden gesondert geprüft.
 
 ## Erste Abnahme der Erweiterungen — 05.10.2026 ✅
 
@@ -98,6 +98,7 @@ Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethern
 - PiSugar2-Revision, Akkukapazität und sauberes Abschaltverhalten.
 - Kamerasensor und Testbild.
 - Lautsprecherimpedanz und Nennleistung; Aufnahme/Wiedergabe bereits bestätigt.
+- PiTFT-Boot-/Statusanzeige und Belegung der beiden Displaytaster; SPI/Farbtest ist bereits bestätigt.
 - Endgültige Montage, Abstandshalter und Gehäuse.
 
 ## Quellen
