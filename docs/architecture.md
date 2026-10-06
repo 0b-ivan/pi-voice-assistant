@@ -20,7 +20,7 @@ GPIO17 oder optional SHIM A
 
 [`src/ptt.py`](../src/ptt.py) orchestriert GPIO, Aufnahme und die Zustandsfolge. [`src/transcribe.py`](../src/transcribe.py) enthält STT, [`src/llm.py`](../src/llm.py) ausschließlich den OpenRouter-LLM-Client und [`src/voice_controls.py`](../src/voice_controls.py) die lokalen Speech-/Piper-Prozesse. `llm.py` kennt weder GPIO noch ALSA, WM8960 oder Piper. Es gibt weiterhin nur **einen** Verarbeitungs-Slot, keine Warteschlange.
 
-Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Modell-Laden erfolgt bei der ersten lokalen Transkription, nicht beim Dienststart.
+Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Das Vosk-Modell wird beim Dienststart vorgewärmt, damit der erste PTT-Zyklus keinen Modell-Load bezahlen muss.
 
 ## Statusansage und Antwortpfad
 
@@ -45,7 +45,7 @@ Der residente Servitor-Pfad erzeugt keine TTS-WAV mehr: Piper liefert Audio-Chun
 
 Das Adafruit mini PiTFT 1,3″ läuft separat vom Sprachdienst direkt über SPI/ST7789. `src/display.py` prüft beim Boot und während des Betriebs SPI, WM8960, Netzwerk, Vosk-/TTS-Modellpfade und den Zustand von `pi-ptt.service`. Die zugehörige Unit ist `deploy/pi-display.service`; die Display-Abhängigkeiten liegen in einer eigenen Venv unter `/opt/pi-voice-assistant/.venv-display`.
 
-Der Display-Dienst greift nicht in Aufnahme, STT oder TTS ein. `ptt.py` veröffentlicht zusätzlich zu den vollständigen Journal-Events einen minimierten, atomar ersetzten Snapshot unter `/run/pi-ptt/display-event.json`. Darin stehen nur Eventname, Version und Zeitstempel. Der Display-Prozess liest diesen Snapshot mit 100-ms-Takt und bildet ihn auf `BEREIT`, `ZUHÖREN`, `VERSTEHEN`, `SPRECHEN` oder kurzzeitig `FEHLER` ab. System-/Netzwerkprobes bleiben auf einem separaten 2-s-Takt.
+Der Display-Dienst greift nicht in Aufnahme, STT oder TTS ein. `ptt.py` veröffentlicht zusätzlich zu den vollständigen Journal-Events einen minimierten, atomar ersetzten Snapshot unter `/run/pi-ptt/display-event.json`. Darin stehen nur Eventname, Version und Zeitstempel. Der Display-Prozess liest diesen Snapshot mit 100-ms-Takt und bildet ihn auf `BEREIT`, `ZUHÖREN`, `VERSTEHEN`, `DENKEN`, `SPRECHEN` oder kurzzeitig `FEHLER` ab. System-/Netzwerkprobes bleiben auf einem separaten 2-s-Takt.
 
 `DENKEN` wird durch `transcript`/`llm_start` gesetzt; `llm_response` bzw. `speech_started` wechseln auf `SPRECHEN`. LLM-Fehler werden wie STT-/TTS-Fehler kurz als `FEHLER` angezeigt.
 
@@ -57,4 +57,4 @@ Die [Unit](../deploy/pi-ptt.service) läuft als `obivan` mit `audio/gpio/i2c`, o
 
 Aufnahme hat standardmäßig 30 s Limit; STT-/LLM-/TTS-Fehler werden protokolliert und beenden den Dienst nicht. Vosk braucht kein Netzwerk, der LLM-Schritt dagegen schon. Die Unit wartet trotzdem nicht auf `network-online.target`: ein Netz-/OpenRouter-Ausfall wird als `llm_error` behandelt, danach bleibt PTT nutzbar. WAVs sind flüchtig; Transkripte und LLM-Antworten stehen im Journal.
 
-Messwerte stehen ausschließlich unter [STT](speech-to-text.md) und [TTS](local-speech.md); Hardware-Abnahmen unter [PTT](push-to-talk.md), [Button SHIM](button-controls.md) und [Erweiterungen](hardware-bring-up.md). Entscheidungen: [Pi-Client](decisions/0001-client-server.md), [OS](decisions/0002-operating-system.md), [STT-Modi](decisions/0003-hybrid-stt.md).
+Messwerte stehen ausschließlich unter [STT](speech-to-text.md) und [TTS](local-speech.md); Hardware-Abnahmen unter [PTT](push-to-talk.md), [Button SHIM](button-controls.md) und [Erweiterungen](hardware-bring-up.md). Entscheidungen: [Pi-Client](decisions/0001-client-server.md), [OS](decisions/0002-operating-system.md), [Vosk-only STT](decisions/0003-hybrid-stt.md).
