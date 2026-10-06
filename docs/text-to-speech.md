@@ -39,7 +39,7 @@ TTS_PIPER_SENTENCE_SILENCE=0.32
 # TTS_FFMPEG_BIN=/usr/bin/ffmpeg
 ```
 
-Die Wörter bleiben mit `length_scale=1.10` relativ knapp. Die schwerfällige Wirkung kommt primär aus **320 ms zusätzlicher Pause zwischen Sätzen**, nicht aus stark gedehnten Phonemen.
+Die Wörter bleiben mit `length_scale=1.10` relativ knapp. Die schwerfällige Wirkung kommt primär aus **320 ms zusätzlicher Pause zwischen Sätzen**, nicht aus stark gedehnten Phonemen. Der DSP senkt die Grundtonhöhe nur noch moderat um rund **1,8 Halbtöne** ab.
 
 ## Servitor-DSP
 
@@ -47,7 +47,7 @@ Das Profil rendert keine zweite Effekt-WAV mehr. Ablauf:
 
 ```text
 resident Piper
-  -> eine private WAV unter /run/pi-ptt
+  -> erster PCM-Chunk sofort per Pipe
   -> FFmpeg Filtergraph
        - Pitch-Absenkung
        - metallische EQ-Resonanzen
@@ -59,11 +59,11 @@ resident Piper
        - >20-Hz-Tremolo als Ringmod-Textur
        - kurzer Hall
        - Limiter
-       - 550 ms Fade-out
+       - kurzer natürlicher Echo-Tail
   -> ALSA / WM8960
 ```
 
-Der FFmpeg-Prozess schreibt direkt zum ALSA-Gerät. Die früheren parallelen Metal-/Chorus-/Aura-WAV-Dateien existieren im Produktivpfad nicht.
+Der residente Servitor-Pfad schreibt Piper-PCM direkt auf FFmpeg-stdin und startet die Wiedergabe mit dem ersten verfügbaren Audio-Chunk. Eine vollständige Quell-WAV muss nicht mehr fertig synthetisiert werden. Der frühere Reverse-Fade wurde entfernt, weil er die komplette Ansage puffern und damit Streaming verhindern würde. Der kurze Echo-Tail sorgt weiterhin für ein kontrolliertes Ausklingen.
 
 ## Dynamischer Status auf SHIM E
 
@@ -79,14 +79,11 @@ Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Wenn ve
 Beispiel:
 
 ```text
-SYSTEM NOMINAL. MASCHINENGEIST SYNCHRONISIERT.
-TELEMETRIE. SYSTEMLAST 21 PROZENT.
-KERNTEMPERATUR 55 GRAD.
-ARBEITSSPEICHER 62 PROZENT FREI.
-DATENSPEICHER 40 PROZENT FREI.
-LAUFZEIT 2 Stunden 36 Minuten.
-OFFLINE SPRACHERKENNUNG AKTIV.
-PROTOKOLLE STABIL. SERVITOR EINHEIT BEREIT. DIREKTIVE ERWARTET.
+SYSTEM NOMINAL. TELEMETRIE.
+LAST 21 PROZENT. KERN 55 GRAD.
+RAM 62 PROZENT FREI. SPEICHER 40 PROZENT FREI.
+LAUFZEIT 2 Stunden 36 Minuten. VOSK OFFLINE.
+SERVITOR EINHEIT BEREIT. DIREKTIVE ERWARTET.
 ```
 
 Fehlt eine Quelle unter `/proc` oder `/sys`, wird nur dieser Wert ausgelassen; die Statusansage bleibt funktionsfähig. Während STT beginnt sie mit `VERARBEITUNGSPROTOKOLL AKTIV. AUFNAHME IN ANALYSE.`.
@@ -112,7 +109,7 @@ set +a
 
 ## Wiedergabe und Grenzen
 
-Der residente Dienst erzeugt pro Ansage nur die Piper-Quell-WAV unter `PTT_RUNTIME_DIR`, spielt sie über den eigenen FFmpeg-/ALSA-Prozess und löscht sie danach. B bzw. PTT kann die eigene Wiedergabe weiterhin über die Prozessgruppe abbrechen.
+Der residente Servitor-Pfad erzeugt keine WAV mehr: Piper liefert 16-Bit-PCM-Chunks direkt an FFmpeg und damit an ALSA. Nur das Normalprofil verwendet weiterhin die temporäre WAV. B bzw. PTT kann die eigene Wiedergabe weiterhin über die Prozessgruppe abbrechen.
 
 Der aktuelle Maschinenfilter ist bewusst aggressiv und für die zwei kleinen WM8960-Lautsprecher abgestimmt. Der digitale `Playback`-Regler und der analoge `Speaker`-Pegel bleiben davon getrennt.
 
