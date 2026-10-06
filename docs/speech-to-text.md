@@ -1,13 +1,13 @@
 # Speech-to-Text: Vosk und OpenRouter
 
-Auf `pi-assistent` läuft bewusst **`STT_PROVIDER=vosk`**. PTT→Vosk mit echten WM8960-Aufnahmen ist am 05.10.2026 bestätigt. Vosk 0.3.45 funktioniert unter Python 3.13/aarch64 auf Trixie. Das liefert deutschen Text, keine KI-Antwort.
+Auf `pi-assistent` läuft bewusst **`STT_PROVIDER=vosk`**. PTT→Vosk mit echten WM8960-Aufnahmen ist am 05.10.2026 bestätigt. Vosk 0.3.45 funktioniert unter Python 3.13/aarch64 auf Trixie. Im integrierten Assistentenpfad wird erst dieser lokale Text anschließend an das getrennte OpenRouter-LLM übergeben.
 
 ## Modi und Installation
 
 | `STT_PROVIDER` | Verhalten |
 |---|---|
 | `vosk` | Vollständig lokale STT, kein Netzwerk/API-Key nötig |
-| `openrouter` | Online-STT; Code-/Vorlagenstandard, weil Vosk separat installiert wird |
+| `openrouter` | älterer Online-STT-Kompatibilitäts-/Diagnosepfad; nicht der normale Assistentenbetrieb |
 | `auto` | Zuerst OpenRouter; bei STT-/Netz-/API-Fehler Vosk, reale Ausfall-Abnahme noch offen |
 
 [Setup](setup.md#4-repository-und-dienst-installieren) enthält die vollständige Installation. Optionaler Vosk-Installer: `sudo bash scripts/install-vosk.sh`. Paket liegt in `/opt/pi-voice-assistant/vendor`, Modell in `/opt/pi-voice-assistant/models/vosk-model-small-de-0.15`. Kein Modell in Git; kein Vosk-venv für den Dienst: er verwendet `/usr/bin/python3` mit zusätzlichem Vendor-Pfad.
@@ -20,7 +20,7 @@ VOSK_MODEL_PATH=/opt/pi-voice-assistant/models/vosk-model-small-de-0.15
 VOSK_PYTHON_PATH=/opt/pi-voice-assistant/vendor
 ```
 
-Für `openrouter`/Online-Pfad von `auto` zusätzlich echten `OPENROUTER_API_KEY` setzen. Bisher getestetes Online-Modell: `openai/whisper-large-v3-turbo`, Sprachhinweis `de`, Standard-HTTP-Timeout 30 s. Keine LLM-Anbindung aus der STT-Konfiguration ableiten.
+Für den normalen Assistentenbetrieb bleibt STT bei Vosk. `OPENROUTER_API_KEY` wird trotzdem benötigt, aber erst durch `src/llm.py` nach erfolgreicher Transkription. Der ältere `openrouter`/`auto`-STT-Code bleibt getrennt davon erhalten.
 
 ## Format und Ausführung
 
@@ -58,4 +58,4 @@ set +a
 
 stdout enthält Text, stderr `STT_PROVIDER_USED=vosk` bzw. `openrouter`. Fehler: `STT_ERROR:` und Exitstatus 1. Das verwendet einen neuen Prozess und misst keine warme Dienstlatenz.
 
-PTT-Journal: bei lokalem Live-Vosk erscheinen beim Dienststart `stt_loading`/`stt_ready`, während Aufnahme `recording` mit `stt=vosk-live`, danach `capture_ready` mit `live_stt=true`, `processing` und direkt `transcript`/`ERKANNT: ...`. Audiodaten sind flüchtig, Transkripte werden protokolliert. [Troubleshooting](troubleshooting.md#stt), [Betrieb](operation.md).
+PTT-Journal: bei lokalem Live-Vosk erscheinen beim Dienststart `stt_loading`/`stt_ready`, während Aufnahme `recording` mit `stt=vosk-live`, danach `capture_ready` mit `live_stt=true`, `processing`, `transcript`/`ERKANNT: ...` und ein `latency`-Event mit `stage=stt`. Erst danach beginnt der getrennte LLM-Schritt. Audiodaten sind flüchtig, Transkripte werden protokolliert. [Troubleshooting](troubleshooting.md#stt), [Betrieb](operation.md).
