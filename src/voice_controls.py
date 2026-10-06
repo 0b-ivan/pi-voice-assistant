@@ -9,6 +9,8 @@ import tempfile
 import threading
 import wave
 
+from voice_effects import apply_voice_profile, resolve_voice_profile
+
 
 class TranscriptionJob:
     def __init__(self, transcribe, path):
@@ -82,13 +84,16 @@ class _SpeechJob:
 
 class ResidentSpeechOutput:
     """Keep Piper loaded; synthesize off the control loop and own only our aplay."""
-    def __init__(self, model, audio_device, runtime_dir, loader=None, popen=None):
+    def __init__(self, model, audio_device, runtime_dir, loader=None, popen=None,
+                 effect_runner=None, profile=None):
         self.model = str(model)
         self.audio_device = audio_device
         self.runtime_dir = Path(runtime_dir)
         self.runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.profile = resolve_voice_profile(profile)
         self.voice = (loader or _load_piper_voice)(self.model)
         self._popen = popen or subprocess.Popen
+        self._effect_runner = effect_runner or subprocess.run
         self._synthesis_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._job = None
@@ -104,6 +109,7 @@ class ResidentSpeechOutput:
 
     def _run(self, job, text):
         path = None
+        effect_path = None
         try:
             fd, name = tempfile.mkstemp(
                 prefix="speech-", suffix=".wav", dir=self.runtime_dir
@@ -117,8 +123,23 @@ class ResidentSpeechOutput:
                     self.voice.synthesize_wav(text, audio)
             if not self._current(job):
                 return
+            playback_path = path
+            if self.profile != "normal":
+                effect_fd, effect_name = tempfile.mkstemp(
+                    prefix="speech-effect-", suffix=".wav", dir=self.runtime_dir
+                )
+                os.close(effect_fd)
+                effect_path = Path(effect_name)
+                playback_path = apply_voice_profile(
+                    path,
+                    effect_path,
+                    profile=self.profile,
+                    runner=self._effect_runner,
+                )
+            if not self._current(job):
+                return
             proc = self._popen(
-                ["/usr/bin/aplay", "-q", "-D", self.audio_device, str(path)],
+                ["/usr/bin/aplay", "-q", "-D", self.audio_device, str(playback_path)],
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
             )
@@ -135,6 +156,8 @@ class ResidentSpeechOutput:
                 job.error = str(exc)
                 job.result = 1
         finally:
+            if effect_path is not None:
+                effect_path.unlink(missing_ok=True)
             if path is not None:
                 path.unlink(missing_ok=True)
             job.done.set()
