@@ -1,6 +1,11 @@
 # Piper-TTS einrichten
 
-Lokale deutsche Sprachausgabe auf Pi Zero 2 W / Trixie ist mit **Piper 1.8.0** und **`de_DE-thorsten-low`** getestet. Ausgabe: S16_LE, 16 kHz, Mono über WM8960. Das ist Standalone-TTS bzw. SHIM-Statusausgabe; LLM und automatische Antwortwiedergabe fehlen weiterhin.
+Lokale deutsche Sprachausgabe auf Pi Zero 2 W / Trixie läuft mit **Piper 1.8.0**. Der Dienst hält das Modell resident. Zwei Profile sind vorgesehen:
+
+| Profil | Stimme | Charakter |
+|---|---|---|
+| `normal` | `de_DE-thorsten-low` | unveränderte lokale Sprachausgabe |
+| `servitor` | `de_DE-thorsten_emotional-medium`, Speaker 4 | neutral/kommandierend, längere Satzpausen, starker Maschinen-DSP |
 
 ## Installation
 
@@ -9,66 +14,103 @@ Im aktuellen Repo-Checkout auf dem Pi:
 ```bash
 sudo bash scripts/install-piper.sh
 sudo bash scripts/install-voice-service.sh
-/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py "Hallo Ivan, ich kann lokal sprechen."
 ```
 
-Der erste Installer richtet Piper in `/opt/pi-voice-assistant/.venv` ein und lädt Modell plus passende `.onnx.json` nach `/opt/pi-voice-assistant/tts/`. Der Dienstinstaller deployt `speak.py` und aktualisiert die übrigen Dienstmodule; vorhandene Konfigurationen bleiben erhalten. Paket-/Modelldownload benötigt Netzwerk, spätere Synthese nicht.
+`install-piper.sh` installiert Piper 1.8.0, ALSA/FFmpeg und lädt beide deutschen Modelle nach `/opt/pi-voice-assistant/tts/`. Netzwerk ist nur für Paket- und Modelldownload nötig. Die spätere Synthese und der Servitor-DSP laufen lokal.
 
-`/opt/pi-voice-assistant`, `src/` und `scripts/` bleiben root-verwaltet; nur `.venv/` und `tts/` sind im Piper-Installer für `obivan` beschreibbar. Kein rekursives `chown` des gesamten Anwendungsverzeichnisses. Dienst läuft mit `ProtectHome=yes`, daher Modell/Programme nicht unter `~/...` ablegen.
+`/opt/pi-voice-assistant`, `src/` und `scripts/` bleiben root-verwaltet; nur `.venv/` und `tts/` sind für `obivan` beschreibbar.
 
-## Konfiguration und SHIM E
+## Konfiguration
 
-| Variable | Standard |
-|---|---|
-| `PIPER_MODEL` | `/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx` |
-| `PIPER_PYTHON` | `/opt/pi-voice-assistant/.venv/bin/python` |
-| `TTS_AUDIO_DEVICE` | `plughw:CARD=wm8960soundcard,DEV=0` |
-| `TTS_VOICE_PROFILE` | `normal` (`servitor` optional) |
-| `TTS_SOX_BIN` | `/usr/bin/sox` |
+`/etc/pi-voice-assistant.env`:
 
-Der Standalone-Wrapper kann mit System-Python gestartet werden; sein Piper-Unterprozess nutzt den venv-Interpreter. Der PTT-Dienst lädt Piper dagegen einmal aus diesem venv und hält `PiperVoice` resident. Dazu gelten zusätzlich:
+```text
+PIPER_VENV=/opt/pi-voice-assistant/.venv
+PIPER_MODEL=/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx
+TTS_AUDIO_DEVICE=plughw:CARD=wm8960soundcard,DEV=0
 
-| Variable | Standard |
-|---|---|
-| `PIPER_VENV` | `/opt/pi-voice-assistant/.venv` |
-| `PIPER_MODEL` | `/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx` |
-| `TTS_AUDIO_DEVICE` | `plughw:CARD=wm8960soundcard,DEV=0` |
-| `TTS_VOICE_PROFILE` | `normal` (`servitor` optional) |
-| `TTS_SOX_BIN` | `/usr/bin/sox` |
+TTS_VOICE_PROFILE=servitor
+TTS_SERVITOR_MODEL=/opt/pi-voice-assistant/tts/de_DE-thorsten_emotional-medium.onnx
+TTS_PIPER_SPEAKER_ID=4
+TTS_PIPER_LENGTH_SCALE=1.10
+TTS_PIPER_NOISE_SCALE=0.30
+TTS_PIPER_NOISE_W_SCALE=0.25
+TTS_PIPER_SENTENCE_SILENCE=0.32
+# TTS_FFMPEG_BIN=/usr/bin/ffmpeg
+```
 
-Eigene Werte in `/etc/pi-voice-assistant.env` eintragen und Dienst neu starten. `PTT_SPEAK_COMMAND` bleibt nur als Kompatibilitäts-Fallback aktiv, falls der residente Import oder das Modellladen fehlschlägt.
+Die Wörter bleiben mit `length_scale=1.10` relativ knapp. Die schwerfällige Wirkung kommt primär aus **320 ms zusätzlicher Pause zwischen Sätzen**, nicht aus stark gedehnten Phonemen.
 
-[Button-Steuerung](button-controls.md) beschreibt die Aktivierung und Abnahme. Der Dienst meldet beim Start `tts_loading` und danach entweder `tts_ready` oder `tts_error` mit Fallback.
+## Servitor-DSP
 
-## Servitor-Profil
+Das Profil rendert keine zweite Effekt-WAV mehr. Ablauf:
 
-`TTS_VOICE_PROFILE=servitor` legt nach der Piper-Synthese eine leichte
-SoX-Effektkette über das WAV. Sie ist für den Pi Zero 2 W bewusst ohne weiteres
-KI-/Voice-Conversion-Modell gebaut: Pitch-Absenkung, 180–4000-Hz-Bandbegrenzung,
-Kompression, leichte Sättigung, eine 60-Hz-Tremolo/Ringmod-Anmutung und kurzer
-Hall. Das Preset-Konzept orientiert sich an
-[marmalade-tts](https://github.com/maxwhipw/marmalade-tts), bleibt aber auf den
-bestehenden Piper-/WM8960-Pfad dieses Projekts zugeschnitten.
+```text
+resident Piper
+  -> eine private WAV unter /run/pi-ptt
+  -> FFmpeg Filtergraph
+       - Pitch-Absenkung
+       - metallische EQ-Resonanzen
+       - starker Flanger (Feedback 48 %, 1 Hz)
+       - Chorus
+       - Stutter/Tremolo
+       - Phaser/Aura
+       - Doppler-Flanger
+       - >20-Hz-Tremolo als Ringmod-Textur
+       - kurzer Hall
+       - Limiter
+  -> ALSA / WM8960
+```
 
-Aktivieren und mit der Statusabfrage auf Button SHIM **E** prüfen:
+Der FFmpeg-Prozess schreibt direkt zum ALSA-Gerät. Die früheren parallelen Metal-/Chorus-/Aura-WAV-Dateien existieren im Produktivpfad nicht.
+
+## Dynamischer Status auf SHIM E
+
+Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Wenn verfügbar, werden angesagt:
+
+- CPU-Kerntemperatur
+- freier Arbeitsspeicher in Prozent
+- freier Root-Datenspeicher in Prozent
+- Laufzeit
+- aktiver STT-Modus
+
+Beispiel:
+
+```text
+SYSTEM NOMINAL. MASCHINENGEIST SYNCHRONISIERT.
+KERNTEMPERATUR 55 GRAD.
+ARBEITSSPEICHER 62 PROZENT FREI.
+DATENSPEICHER 40 PROZENT FREI.
+LAUFZEIT 2 Stunden 36 Minuten.
+OFFLINE SPRACHERKENNUNG AKTIV.
+SERVITOR EINHEIT BEREIT. BEFEHL ERWARTET.
+```
+
+Fehlt eine Quelle unter `/proc` oder `/sys`, wird nur dieser Wert ausgelassen; die Statusansage bleibt funktionsfähig. Während STT beginnt der Text weiterhin mit `Ich verarbeite die Aufnahme.`, ergänzt aber das Maschinenprotokoll.
+
+## Aktivieren und prüfen
 
 ```bash
 sudo vim /etc/pi-voice-assistant.env
-# TTS_VOICE_PROFILE=servitor
 sudo systemctl restart pi-ptt.service
-journalctl -u pi-ptt.service -n 30 --no-pager
+journalctl -u pi-ptt.service -n 40 --no-pager
 ```
 
-Beim Dienststart muss `tts_ready` zusätzlich `"profile":"servitor"` melden.
-Der Installer installiert SoX zusammen mit Piper. `normal` umgeht die
-Effektverarbeitung vollständig.
+Beim Start muss `tts_ready` das Profil `servitor` und das Emotional-Modell melden. Danach SHIM **E** drücken.
+
+Fallback-Test ohne Dienst:
+
+```bash
+set -a
+source /etc/pi-voice-assistant.env
+set +a
+/opt/pi-voice-assistant/src/speak.py "SYSTEM NOMINAL. SERVITOR BEREIT. BEFEHL ERWARTET."
+```
 
 ## Wiedergabe und Grenzen
 
-Der residente Dienst erzeugt pro Ansage ein temporäres WAV unter `PTT_RUNTIME_DIR`, spielt es mit einem eigenen `aplay`-Prozess ab und entfernt es anschließend. Synthese läuft außerhalb des Button-Control-Loops; Cancel stoppt Wiedergabe sofort und verwirft eine noch laufende native Piper-Synthese nach deren Rückkehr. Der Standalone-Wrapper behält sein bisheriges Verhalten. Letzter bestätigter analoger Speaker-Pegel: beide Kanäle **80 % / −19 dB**; C/D ändern den separaten digitalen Playback-Pegel. [Audio-Setup](setup.md#3-audio-testen).
+Der residente Dienst erzeugt pro Ansage nur die Piper-Quell-WAV unter `PTT_RUNTIME_DIR`, spielt sie über den eigenen FFmpeg-/ALSA-Prozess und löscht sie danach. B bzw. PTT kann die eigene Wiedergabe weiterhin über die Prozessgruppe abbrechen.
 
-Fehlendes Phonem und ONNX-Telemetrie-Warnung waren beim protokollierten Aufruf nicht blockierend (Exitcode 0). [Troubleshooting](troubleshooting.md#sprachausgabe).
+Der aktuelle Maschinenfilter ist bewusst aggressiv und für die zwei kleinen WM8960-Lautsprecher abgestimmt. Der digitale `Playback`-Regler und der analoge `Speaker`-Pegel bleiben davon getrennt.
 
-Bekannter offener Wrapper-Befund: `--` wird derzeit als Teil des Sprachtexts an Piper übergeben. Die entsprechende Benchmarkkorrektur hat diesen Wrapper nicht geändert. [Textpfad und Performance](local-speech.md#performance).
-
-Pi-Messungen und Speichergrenzen stehen unter [TTS-Performance](local-speech.md) und [Ressourcenbericht](piper-resources.md). Cache und Streaming sind noch nicht implementiert; resident Piper ist im PTT-Dienst implementiert.
+Pi-Messungen und Speichergrenzen: [TTS-Performance](local-speech.md) und [Ressourcenbericht](piper-resources.md).
