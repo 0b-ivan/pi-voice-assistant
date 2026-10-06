@@ -123,7 +123,7 @@ def build_status_text(
 
     memory = _memory_free_percent(meminfo_path)
     if memory is not None:
-        parts.append(f"RAM {memory} FREI.")
+        parts.append(f"ARBEITSSPEICHER {memory} FREI.")
 
     disk = _disk_free_percent(disk_path, disk_usage=disk_usage)
     if disk is not None:
@@ -135,7 +135,7 @@ def build_status_text(
 
     provider = (stt_provider or "").strip().lower()
     if provider == "vosk":
-        parts.append("STT LOKAL.")
+        parts.append("ERKENNUNG LOKAL.")
     elif provider == "openrouter":
         parts.append("OPENROUTER ONLINE.")
     elif provider == "auto":
