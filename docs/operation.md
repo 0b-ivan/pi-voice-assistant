@@ -1,6 +1,6 @@
 # Betrieb
 
-Die Unit heißt `pi-ptt.service`, auch mit STT und Button SHIM. Der aktuelle Pi-Betrieb nutzt Vosk offline; `main` liefert keine automatische LLM-Antwort.
+Die Unit heißt `pi-ptt.service`, auch mit STT, OpenRouter-LLM, lokaler TTS und Button SHIM. Der Assistent nutzt Vosk lokal; nur der Textschritt zum LLM benötigt OpenRouter.
 
 ## Start, Stop und Logs
 
@@ -19,18 +19,32 @@ sudo systemctl stop pi-ptt.service
 sudo systemctl start pi-ptt.service
 ```
 
-Die Logs enthalten Transkripte und Statusmeldungen, auch wenn WAVs flüchtig gespeichert werden. Logs vor Weitergabe auf private Inhalte prüfen.
+Die Logs enthalten Transkripte, LLM-Antworten und Statusmeldungen, auch wenn WAVs flüchtig gespeichert werden. Zusätzlich werden `latency`-Events für `stt`, `llm` und `tts` ausgegeben; der residente Servitor-Pfad meldet weiterhin `tts_first_chunk` und `tts_playback_start`. Logs vor Weitergabe auf private Inhalte prüfen.
 
 ## Konfiguration
 
 | Datei | Zweck |
 |---|---|
 | `/etc/pi-ptt.env` | GPIO, 40 ms Entprellung, 30 s Aufnahmelimit, Audiogerät, optionaler SHIM und Status-Sprachbefehl |
-| `/etc/pi-voice-assistant.env` | STT-Provider, Piper-/Servitor-Modell, DSP-/Sprechparameter, optional OpenRouter-Key/Timeout |
+| `/etc/pi-voice-assistant.env` | Vosk/STT, OpenRouter-LLM, Piper-/Servitor-Modell und DSP-/Sprechparameter; echter API-Key nur hier |
 | `/boot/firmware/config.txt` | Bestehendes WM8960-Overlay, I²C/I²S |
 | `/etc/modules-load.d/pi-voice-i2c.conf` | Bei aktiviertem SHIM `i2c-dev` beim Boot laden |
 
 `config/client.env.example` ist ein ungenutzter früherer Backend-Entwurf und wird vom Dienst nicht geladen.
+
+Für den integrierten Assistentenpfad mindestens:
+
+```text
+STT_PROVIDER=vosk
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_LLM_MODEL=openai/gpt-5.4-mini
+OPENROUTER_LLM_TIMEOUT_SECONDS=15
+OPENROUTER_LLM_MAX_TOKENS=180
+OPENROUTER_LLM_TEMPERATURE=0.3
+TTS_VOICE_PROFILE=servitor
+```
+
+Den echten Key niemals in Git oder eine Beispielkonfiguration schreiben. `deploy/pi-ptt.service` lädt `/etc/pi-voice-assistant.env` bereits über `EnvironmentFile=`.
 
 Nach Konfigurationsänderungen `sudo systemctl restart pi-ptt.service`. Für Overlay-Änderungen ist ein Pi-Neustart nötig. Mixeränderungen nur nach Hörprüfung mit `sudo alsactl store wm8960soundcard` dauerhaft speichern.
 
@@ -63,4 +77,4 @@ Vosk/Piper nicht bei jedem Codeupdate neu installieren. **Nach erstmaligem Wechs
 
 ## Abnahme nach Änderungen
 
-Eine Aufnahme/transcript prüfen; mit SHIM zusätzlich A, B während Aufnahme/STT, C/D-Pegel und E-Ansage. Nach einem Reboot I²C, Audio und Dienst prüfen. Einzelne frühere Tests ersetzen keine Abnahme einer neu installierten Version. Aktuelle offene Tests stehen in [Roadmap](roadmap.md) und [Button-Abnahme](button-controls.md).
+Den vollständigen Ablauf prüfen: `recording → processing → transcript → llm_start → llm_response → speech_started → speech_finished`. Dazwischen müssen `latency`-Events für STT, LLM und TTS erscheinen. Mit SHIM zusätzlich A, B während Aufnahme/STT/LLM/Ansage, C/D-Pegel und E-Ansage prüfen. Nach einem Reboot I²C, Audio und Dienst prüfen. Einzelne frühere Tests ersetzen keine Abnahme einer neu installierten Version. Aktuelle offene Tests stehen in [Roadmap](roadmap.md) und [Button-Abnahme](button-controls.md).
