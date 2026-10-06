@@ -1,4 +1,5 @@
 import json
+from io import BytesIO
 import signal
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
+import unittest.mock
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
@@ -193,6 +195,39 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(audio.getnframes(), 9600)
         self.assertFalse(self.r.raw.exists())
 
+
+    def test_live_vosk_records_native_16khz_mono_and_reuses_result(self):
+        pcm = b'\x01\x00' * 3200
+
+        class LiveProcess(FakeProcess):
+            def __init__(self):
+                super().__init__()
+                self.stdout = BytesIO(pcm)
+
+        recognizer = unittest.mock.Mock()
+        recognizer.finish.return_value = 'hallo live'
+        live = Recorder(
+            self.tmp.name,
+            'test-device',
+            1,
+            live_vosk_factory=lambda: recognizer,
+        )
+        output = StringIO()
+        proc = LiveProcess()
+        with patch('ptt.subprocess.Popen', return_value=proc) as popen, redirect_stdout(output):
+            live.start()
+            capture = live.finish('release')
+
+        argv = popen.call_args.args[0]
+        self.assertIn('16000', argv)
+        self.assertIn('1', argv)
+        self.assertNotIn(str(live.raw), argv)
+        recognizer.accept_pcm.assert_called()
+        self.assertEqual(live.take_live_transcript(), ('hallo live', 'vosk'))
+        with wave.open(str(capture), 'rb') as audio:
+            self.assertEqual(audio.getframerate(), 16000)
+            self.assertEqual(audio.getnchannels(), 1)
+            self.assertEqual(audio.getsampwidth(), 2)
 
 class ProcessingTests(unittest.TestCase):
     def test_success_emits_transcript(self):
