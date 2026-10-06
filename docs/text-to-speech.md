@@ -59,6 +59,7 @@ resident Piper
        - >20-Hz-Tremolo als Ringmod-Textur
        - kurzer Hall
        - Limiter
+       - 550 ms Fade-out
   -> ALSA / WM8960
 ```
 
