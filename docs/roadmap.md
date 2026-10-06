@@ -10,12 +10,13 @@ Stand 06.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md
 4. SHIM-Dienstabnahme vervollständigen: A gegenüber GPIO17, beide gemeinsam, B während Aufnahme/STT/Ansage, C/D mit ausgelesenen Pegeln, LED-Farben und Reboot mit der aktuellen Version.
 5. Offline-Vosk anhand mehrerer bekannter Sätze bewerten; optionale Command-Grammar nur für feste Kommandos evaluieren. Kein Versprechen, dass sie freie Sprache verbessert.
 
-## Danach: vollständiger Sprachloop
+## Jetzt: vollständigen Sprachloop auf Hardware abnehmen
 
-- OpenRouter-LLM anbinden; tatsächliche Fehler-/Timeoutbehandlung festlegen.
-- Transcript → LLM → Piper → WM8960 halbduplex orchestrieren und auf dem Pi testen.
-- Wiederholte Interaktionen und Gesamtlatenz messen.
-- `auto` bei realem Netz-/API-Ausfall abnehmen, wenn Online-STT wieder gewünscht ist; der Pi bleibt vorerst `vosk`.
+- Integrierten Pfad Vosk → OpenRouter-LLM → Piper/Servitor → WM8960 auf dem Pi testen.
+- STT-, LLM- und TTS-Latenzen aus den strukturierten `latency`-/TTS-Events messen und die End-to-End-Latenz bewerten.
+- B/Abbruch während LLM und TTS sowie OpenRouter-Timeout/Netzausfall prüfen; der Dienst muss danach weiter nutzbar sein.
+- Wiederholte Interaktionen auf Speicher, zram und Audio-xruns prüfen.
+- Der Pi bleibt für STT bei `vosk`; den älteren `openrouter`/`auto`-STT-Pfad nur noch separat abnehmen, falls er als Diagnosefunktion erhalten bleiben soll.
 
 ## Betrieb und Hardware
 
@@ -24,7 +25,7 @@ Stand 06.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md
 - SSH/Routertest über LAN und alle drei externen USB-Ports abnehmen.
 - Verbleibende PTT-Grenztests: elektrische Prellimpulse, Aufnahme unter 100 ms, Boot mit gehaltener Taste.
 - Image-Prüfsumme, WLAN-Land/Zeitzone bei nächster Systemaufnahme ergänzen.
-- PiTFT GPIO23/24 sinnvoll belegen; Boot-/Statusdienst und Live-Zustände aus strukturierten Events sind umgesetzt. `DENKEN` erst zusammen mit dem realen LLM-Aufruf ergänzen. Danach endgültige Montage/Gehäuse.
+- PiTFT GPIO23/24 sinnvoll belegen; Boot-/Statusdienst und Live-Zustände inklusive `DENKEN` sind umgesetzt. Danach endgültige Montage/Gehäuse.
 - Kamera identifizieren/testen. Wake Word erst später bewerten.
 
-Abnahmekriterium für den ersten antwortenden Assistenten: Taste → verständlicher Text → hörbare deutsche Antwort; nach einem Fehler wieder nutzbar. Dieses Kriterium ist noch nicht erreicht.
+Abnahmekriterium für den ersten antwortenden Assistenten: Taste → verständlicher Text → hörbare deutsche Antwort; nach einem Fehler wieder nutzbar. Der Codepfad ist implementiert, die Hardware-Abnahme dieses vollständigen Ablaufs steht noch aus.
