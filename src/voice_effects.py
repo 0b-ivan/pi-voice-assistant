@@ -22,7 +22,7 @@ SERVITOR_FILTER_GRAPH = (
     "equalizer=f=180:t=q:w=1:g=3,"
     "equalizer=f=2200:t=q:w=1.2:g=3,"
     "equalizer=f=3500:t=q:w=1.2:g=3,"
-    "volume=0.48[main];"
+    "volume=0.60[main];"
 
     "[metal0]"
     "highpass=f=220,lowpass=f=5400,"
@@ -39,14 +39,14 @@ SERVITOR_FILTER_GRAPH = (
     "flanger=delay=8:depth=8:regen=48:width=100:speed=1.0:"
     "shape=sinusoidal:phase=50:interp=linear,"
     "aecho=0.8:0.35:14|29:0.14|0.08,"
-    "volume=3.80[flange];"
+    "volume=3.45[flange];"
 
     "[choir0]"
     "chorus=0.45:1.0:22|31|43|58:"
     "0.80|0.70|0.60|0.55:"
     "0.45|0.60|0.72|0.82:"
     "0.7|1.0|1.4|1.9,"
-    "volume=1.85[choir];"
+    "volume=1.60[choir];"
 
     "[stutter0]"
     "highpass=f=450,lowpass=f=4600,"
@@ -60,7 +60,7 @@ SERVITOR_FILTER_GRAPH = (
     "aphaser=in_gain=0.8:out_gain=0.8:delay=3:decay=0.4:"
     "speed=1.6:type=triangular,"
     "aecho=0.8:0.30:31|63:0.13|0.07,"
-    "volume=0.45[aura];"
+    "volume=0.38[aura];"
 
     "[doppler0]"
     "flanger=delay=10:depth=7:regen=15:width=90:speed=0.28:"
@@ -77,7 +77,7 @@ SERVITOR_FILTER_GRAPH = (
     "[main][metal][flange][choir][stutter][aura][doppler][ring]"
     "amix=inputs=8:duration=first:dropout_transition=0:normalize=0,"
     "volume=4.4,"
-    "aecho=0.8:0.16:85|170:0.055|0.025,"
+    "aecho=0.8:0.10:72|145:0.040|0.018,"
     "alimiter=level_in=2.5:level_out=1:limit=0.97:attack=5:release=60:level=0"
     "[out]"
 )
