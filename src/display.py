@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""PiTFT boot/status display for the Pi Voice Assistant."""
+"""PiTFT boot and live voice status display for the Pi Voice Assistant."""
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -11,6 +12,42 @@ import time
 WIDTH = 240
 HEIGHT = 240
 ENV_FILE = Path("/etc/pi-voice-assistant.env")
+VOICE_EVENT_FILE = Path(
+    os.environ.get("PI_DISPLAY_EVENT_FILE", "/run/pi-ptt/display-event.json")
+)
+PROBE_INTERVAL_SECONDS = 2.0
+EVENT_INTERVAL_SECONDS = 0.1
+ERROR_HOLD_SECONDS = 3.0
+
+VOICE_EVENT_STATES = {
+    "stt_loading": "STARTET",
+    "stt_ready": "STARTET",
+    "tts_loading": "STARTET",
+    "tts_ready": "STARTET",
+    "waiting_for_release": "BEREIT",
+    "recording": "ZUHÖREN",
+    "capture_ready": "VERSTEHEN",
+    "processing": "VERSTEHEN",
+    "stt_live_error": "VERSTEHEN",
+    "busy": "VERSTEHEN",
+    "transcript": "BEREIT",
+    "transcript_discarded": "BEREIT",
+    "cancelled": "BEREIT",
+    "status": "SPRECHEN",
+    "speech_started": "SPRECHEN",
+    "speech_finished": "BEREIT",
+    "stt_error": "FEHLER",
+    "tts_error": "FEHLER",
+    "speech_error": "FEHLER",
+}
+
+VOICE_COLORS = {
+    "BEREIT": (0, 255, 100),
+    "ZUHÖREN": (255, 80, 80),
+    "VERSTEHEN": (255, 200, 0),
+    "SPRECHEN": (255, 140, 0),
+    "FEHLER": (255, 70, 70),
+}
 
 
 def load_env():
@@ -126,6 +163,18 @@ def models_ok():
     return vosk_model.exists(), tts_model.exists()
 
 
+def collect_system_states():
+    vosk, tts = models_ok()
+    return {
+        "spi": spi_ok(),
+        "audio": audio_ok(),
+        "network": network_ok(),
+        "vosk": vosk,
+        "tts": tts,
+        "voice": service_ok(),
+    }
+
+
 def is_ready(states):
     """Network is informational; local Vosk operation must remain READY offline."""
     return (
@@ -144,7 +193,26 @@ def footer_status(states):
     return "BOOTING ...", (255, 180, 0)
 
 
-def render(display, states):
+def read_voice_event(path=None):
+    path = VOICE_EVENT_FILE if path is None else Path(path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+
+    name = payload.get("event")
+    timestamp = payload.get("timestamp")
+    if not isinstance(name, str) or not isinstance(timestamp, (int, float)):
+        return None
+
+    return name, float(timestamp)
+
+
+def voice_state_for_event(name):
+    return VOICE_EVENT_STATES.get(name)
+
+
+def render_boot(display, states):
     from PIL import Image, ImageDraw
 
     image = Image.new("RGB", (WIDTH, HEIGHT), "black")
@@ -154,18 +222,8 @@ def render(display, states):
     row_font = font(17)
     small_font = font(13)
 
-    draw.text(
-        (12, 8),
-        "PI ASSISTANT",
-        font=title_font,
-        fill="white",
-    )
-
-    draw.line(
-        (12, 37, 228, 37),
-        fill=(90, 90, 90),
-        width=1,
-    )
+    draw.text((12, 8), "PI ASSISTANT", font=title_font, fill="white")
+    draw.line((12, 37, 228, 37), fill=(90, 90, 90), width=1)
 
     rows = [
         ("SPI", states["spi"]),
@@ -177,41 +235,55 @@ def render(display, states):
     ]
 
     y = 48
-
     for label, ok in rows:
         state = "OK" if ok else "WAIT"
         color = (0, 220, 90) if ok else (255, 180, 0)
-
         draw.text(
             (12, y),
             f"{label:<8} ....",
             font=row_font,
             fill=(190, 190, 190),
         )
-
-        draw.text(
-            (182, y),
-            state,
-            font=row_font,
-            fill=color,
-        )
-
+        draw.text((182, y), state, font=row_font, fill=color)
         y += 25
 
-    draw.line(
-        (12, 202, 228, 202),
-        fill=(90, 90, 90),
-        width=1,
-    )
-
+    draw.line((12, 202, 228, 202), fill=(90, 90, 90), width=1)
     footer, footer_color = footer_status(states)
+    draw.text((12, 211), footer, font=small_font, fill=footer_color)
+    display.image(image, 180)
+
+
+def render_voice(display, state, network):
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (WIDTH, HEIGHT), "black")
+    draw = ImageDraw.Draw(image)
+
+    title_font = font(20)
+    state_font = font(27 if len(state) <= 9 else 23)
+    small_font = font(13)
+    color = VOICE_COLORS.get(state, (220, 220, 220))
+
+    draw.text((12, 10), "PI ASSISTANT", font=title_font, fill="white")
+    draw.line((12, 40, 228, 40), fill=(90, 90, 90), width=1)
+
+    box = draw.textbbox((0, 0), state, font=state_font)
+    text_width = box[2] - box[0]
     draw.text(
-        (12, 211),
-        footer,
-        font=small_font,
-        fill=footer_color,
+        ((WIDTH - text_width) // 2, 101),
+        state,
+        font=state_font,
+        fill=color,
     )
 
+    draw.line((12, 197, 228, 197), fill=(90, 90, 90), width=1)
+    draw.text((12, 209), "VOICE LIVE", font=small_font, fill=(170, 170, 170))
+    draw.text(
+        (143, 209),
+        "NET OK" if network else "OFFLINE",
+        font=small_font,
+        fill=(120, 220, 160) if network else (180, 180, 180),
+    )
     display.image(image, 180)
 
 
@@ -221,7 +293,6 @@ def main():
     from adafruit_rgb_display import st7789
 
     spi = board.SPI()
-
     cs = digitalio.DigitalInOut(board.CE0)
     dc = digitalio.DigitalInOut(board.D25)
 
@@ -240,26 +311,52 @@ def main():
         y_offset=80,
     )
 
-    previous = None
+    states = None
+    voice_state = None
+    last_event = None
+    error_until = None
+    next_probe = 0.0
+    previous_screen = None
 
     while True:
-        vosk, tts = models_ok()
+        now = time.monotonic()
 
-        states = {
-            "spi": spi_ok(),
-            "audio": audio_ok(),
-            "network": network_ok(),
-            "vosk": vosk,
-            "tts": tts,
-            "voice": service_ok(),
-        }
+        if states is None or now >= next_probe:
+            states = collect_system_states()
+            next_probe = now + PROBE_INTERVAL_SECONDS
 
-        if states != previous:
-            print(states, flush=True)
-            render(display, states)
-            previous = states
+        current_event = read_voice_event()
+        if current_event is not None and current_event != last_event:
+            last_event = current_event
+            mapped = voice_state_for_event(current_event[0])
+            if mapped is not None:
+                voice_state = mapped
+                error_until = (
+                    now + ERROR_HOLD_SECONDS if mapped == "FEHLER" else None
+                )
 
-        time.sleep(0.5)
+        if (
+            voice_state == "FEHLER"
+            and error_until is not None
+            and now >= error_until
+            and states is not None
+            and is_ready(states)
+        ):
+            voice_state = "BEREIT"
+            error_until = None
+
+        if states is None or not is_ready(states) or voice_state in (None, "STARTET"):
+            screen = ("boot", tuple(sorted((states or {}).items())))
+            if screen != previous_screen and states is not None:
+                render_boot(display, states)
+                previous_screen = screen
+        else:
+            screen = ("voice", voice_state, states["network"])
+            if screen != previous_screen:
+                render_voice(display, voice_state, states["network"])
+                previous_screen = screen
+
+        time.sleep(EVENT_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
