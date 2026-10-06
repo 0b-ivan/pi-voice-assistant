@@ -200,12 +200,24 @@ def read_voice_event(path=None):
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
 
-    name = payload.get("event")
-    timestamp = payload.get("timestamp")
-    if not isinstance(name, str) or not isinstance(timestamp, (int, float)):
+    if not isinstance(payload, dict):
         return None
 
-    return name, float(timestamp)
+    name = payload.get("event")
+    timestamp = payload.get("timestamp")
+    error_timestamp = payload.get("error_timestamp")
+    if not isinstance(name, str) or not isinstance(timestamp, (int, float)):
+        return None
+    if error_timestamp is not None and not isinstance(error_timestamp, (int, float)):
+        return None
+
+    return {
+        "event": name,
+        "timestamp": float(timestamp),
+        "error_timestamp": (
+            None if error_timestamp is None else float(error_timestamp)
+        ),
+    }
 
 
 def voice_state_for_event(name):
@@ -328,12 +340,21 @@ def main():
         current_event = read_voice_event()
         if current_event is not None and current_event != last_event:
             last_event = current_event
-            mapped = voice_state_for_event(current_event[0])
-            if mapped is not None:
+            mapped = voice_state_for_event(current_event["event"])
+            if mapped is not None and mapped != "FEHLER":
                 voice_state = mapped
-                error_until = (
-                    now + ERROR_HOLD_SECONDS if mapped == "FEHLER" else None
-                )
+
+        if current_event is not None and current_event["error_timestamp"] is not None:
+            remaining = (
+                current_event["error_timestamp"]
+                + ERROR_HOLD_SECONDS
+                - time.time()
+            )
+            if remaining > 0:
+                voice_state = "FEHLER"
+                error_until = now + remaining
+            elif voice_state == "FEHLER":
+                error_until = now
 
         if (
             voice_state == "FEHLER"
@@ -342,7 +363,16 @@ def main():
             and states is not None
             and is_ready(states)
         ):
-            voice_state = "BEREIT"
+            mapped = (
+                None
+                if current_event is None
+                else voice_state_for_event(current_event["event"])
+            )
+            voice_state = (
+                mapped
+                if mapped not in (None, "FEHLER", "STARTET")
+                else "BEREIT"
+            )
             error_until = None
 
         if states is None or not is_ready(states) or voice_state in (None, "STARTET"):
