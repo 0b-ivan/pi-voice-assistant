@@ -39,7 +39,7 @@ TTS_PIPER_SENTENCE_SILENCE=0.32
 # TTS_FFMPEG_BIN=/usr/bin/ffmpeg
 ```
 
-Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe jetzt nur noch um rund **1,35 Halbtöne** ab. Metallische Resonanzen und Chorus liegen deutlich weiter vorn. Zusätzlich laufen zwei Tracer-Ebenen: kurze gestaffelte Digital-Echos sowie eine kontinuierliche 6-Hz-Sägezahn-Hüllkurve durch einen Phaser. Beide werden direkt aus dem Sprachsignal abgeleitet und blockieren den Streaming-Pfad nicht.
+Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe jetzt nur noch um rund **1,35 Halbtöne** ab. Metallische Resonanzen und Chorus liegen deutlich weiter vorn. Zusätzlich laufen zwei sprachgebundene Tracer-Ebenen sowie eine unabhängige Maschinen-Aura: kurze gestaffelte Digital-Echos, eine 6-Hz-Sägezahn-Hüllkurve durch einen Phaser und ein eigenes leises 96-Hz-Säge-/Phaser-Brummen. Die Maschinen-Aura läuft auch durch Satzpausen weiter und endet erst mit der gesamten Ansage.
 
 ## Servitor-DSP
 
@@ -59,6 +59,7 @@ resident Piper
        - >20-Hz-Tremolo als Ringmod-Textur
        - Tracer-/Glitch-Spur mit kurzen gestaffelten Echos
        - kontinuierliche Saw-Phase-Spur: 6-Hz-Sägezahn-Hüllkurve + Phaser
+       - unabhängige Maschinen-Aura: 96-Hz-Sägezahn + Phaser, auch in Satzpausen
        - kurzer Hall
        - Limiter
        - kurzer natürlicher Echo-Tail
