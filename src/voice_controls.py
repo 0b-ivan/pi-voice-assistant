@@ -104,9 +104,9 @@ def _servitor_synthesis_config(voice):
     return (
         SynthesisConfig(
             speaker_id=speaker_id,
-            length_scale=_env_float("TTS_PIPER_LENGTH_SCALE", 1.10),
-            noise_scale=_env_float("TTS_PIPER_NOISE_SCALE", 0.30),
-            noise_w_scale=_env_float("TTS_PIPER_NOISE_W_SCALE", 0.25),
+            length_scale=_env_float("TTS_PIPER_LENGTH_SCALE", 1.02),
+            noise_scale=_env_float("TTS_PIPER_NOISE_SCALE", 0.22),
+            noise_w_scale=_env_float("TTS_PIPER_NOISE_W_SCALE", 0.18),
         ),
         _env_float("TTS_PIPER_SENTENCE_SILENCE", 0.32),
     )
