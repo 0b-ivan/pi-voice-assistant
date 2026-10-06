@@ -36,12 +36,12 @@ class VoiceSynthesisTests(unittest.TestCase):
         voice = Mock()
         voice.config.num_speakers = 8
         voice.synthesize.return_value = [chunk1, chunk2]
-        fake_piper = SimpleNamespace(SynthesisConfig=FakeSynthesisConfig)
+        fake_piper_config = SimpleNamespace(SynthesisConfig=FakeSynthesisConfig)
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "status.wav"
             with patch.dict(os.environ, {}, clear=True), patch.dict(
-                sys.modules, {"piper": fake_piper}
+                sys.modules, {"piper": SimpleNamespace(), "piper.config": fake_piper_config}
             ):
                 with wave.open(str(path), "wb") as audio:
                     _synthesize_voice(voice, "Eins. Zwei.", audio, "servitor")
