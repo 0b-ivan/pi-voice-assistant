@@ -8,7 +8,7 @@ Installation über den vollständigen [Dienstinstaller im Setup](setup.md#4-repo
 
 - Halten startet Aufnahme, Loslassen beendet sie; kein Toggle. Beim Start und nach Limit/Fehler zunächst loslassen.
 - GPIO-Abfrage alle 10 ms, Pegel 40 ms stabil; konfigurierbar 10–500 ms. Sehr kurze Berührungen können entfallen.
-- Aufnahme mit `arecord`: bei `STT_PROVIDER=vosk` direkt PCM S16_LE, **16 kHz mono** für Live-Erkennung; bei den übrigen Providern bleibt **48 kHz stereo**. Standardlimit 30 s, konfigurierbar 1–120 s.
+- Aufnahme mit `arecord`: für die einzige unterstützte STT `vosk` direkt PCM S16_LE, **16 kHz mono** für Live-Erkennung. Standardlimit 30 s, konfigurierbar 1–120 s.
 - Dienst beendet `arecord` beim Loslassen mit SIGINT und wartet begrenzt. Im Live-Vosk-Pfad liest ein Pump-Thread das 16-kHz-Mono-PCM gleichzeitig in die flüchtige Capture-Datei und in Vosk. Anschließend wird wie bisher ein validiertes WAV für Fallback/Diagnose erzeugt.
 - Ein Slot, keine Warteschlange: während STT keine weitere Aufnahme. STT läuft seit SHIM-Integration in einem Hintergrundthread; Tasten bleiben bedienbar. Nach Verarbeitung benötigen gehaltene PTT-Tasten Release.
 - Dienststop beendet Aufnahme/verwaltete Ansage und entfernt Audiodateien. systemd startet bei Prozessausfall mit begrenzter Neustartfrequenz erneut.
@@ -20,10 +20,10 @@ Zusätzliches A/GPIO17-Verhalten, B-Abbruch und Wiedergabesteuerung: [Button SHI
 Während Aufnahme: `capture.part.pcm`; beim Verpacken kurz zusätzlich `capture.part.wav`. Bei Live-Vosk entsteht `capture.part.pcm` durch den PCM-Pump statt direkt als `arecord`-Zieldatei. Fertiges WAV wird atomar nach `/run/pi-ptt/capture.wav` umbenannt, Rohdaten werden entfernt. Dann erscheint:
 
 ```json
-{"version":1,"event":"capture_ready","path":"/run/pi-ptt/capture.wav","reason":"release","format":"wav","encoding":"PCM_S16_LE","sample_rate":48000,"channels":2,"frames":96000}
+{"version":1,"event":"capture_ready","path":"/run/pi-ptt/capture.wav","reason":"release","format":"wav","encoding":"PCM_S16_LE","sample_rate":16000,"channels":1,"frames":32000,"live_stt":true}
 ```
 
-Dauer = Frames / 48000. `reason` ist `release`, `limit` oder `process_exit`. Auf `capture_ready` folgt `processing`, danach `transcript`/`ERKANNT` oder `stt_error`; keine automatische Antwort. Der Dienst ruft den STT-Adapter direkt auf, Journal-Tailing ist keine Transport-API.
+Dauer = Frames / `sample_rate`. `reason` ist `release`, `limit` oder `process_exit`. Auf `capture_ready` folgt `processing`, danach `transcript`/`ERKANNT` oder `stt_error`. Bei Erfolg folgen `llm_start`, `llm_response` und die lokale Sprachausgabe. Der Dienst ruft die Komponenten direkt auf; Journal-Tailing ist keine Transport-API.
 
 Die fertige Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar. **Vor Stop und nächstem Tastendruck abhören:**
 
@@ -57,4 +57,4 @@ Offen: gezielte elektrische Prell-/Kurzdrücktests, Audio unter 100 ms, Pi-Boot 
 python3 -m unittest discover -s tests -v
 ```
 
-Tests simulieren GPIO, Recorder und Provider; sie prüfen Zustandslogik, WAV-Validierung, Fehlerbereinigung und STT-Übergabe. Reale Geräterecht-, Mixer- und Audioprüfungen erfolgen auf dem Pi.
+Tests simulieren GPIO, Recorder, Vosk, LLM und Sprachausgabe; sie prüfen Zustandslogik, WAV-Validierung, Fehlerbereinigung und STT→LLM→TTS-Übergabe. Reale Geräterecht-, Mixer- und Audioprüfungen erfolgen auf dem Pi.

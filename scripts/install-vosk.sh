@@ -47,7 +47,7 @@ PY
 
 echo "Vosk ${VOSK_VERSION} installed."
 echo "German model: ${MODEL_DIR}"
-echo "Set STT_PROVIDER=vosk or STT_PROVIDER=auto in /etc/pi-voice-assistant.env."
+echo "Set STT_PROVIDER=vosk in /etc/pi-voice-assistant.env."
 
 if [[ ${service_was_active} -eq 1 ]]; then
   systemctl start pi-ptt.service

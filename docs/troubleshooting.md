@@ -44,7 +44,11 @@ Nach I²C-Ausfall bleibt GPIO17 verfügbar; SHIM wird erst beim Dienstneustart e
 
 **Erkennung schlecht:** das kleine deutsche Modell ist nach den bisherigen Vergleichsclips das wahrscheinliche Hauptlimit. L/R-Kanalwahl und SoX verbesserten diese Beispiele kaum. Das schließt Pegel-, Abstands- oder Umgebungsprobleme bei anderen Aufnahmen nicht aus. Optionale Command-Grammar ist noch nicht implementiert; sie wäre nur für begrenzte Befehle sinnvoll.
 
-**Offline erwartet, API-Fehler erhalten:** Vorlage und Code-Default sind `openrouter`. In `/etc/pi-voice-assistant.env` ausdrücklich `STT_PROVIDER=vosk` setzen und neu starten. `auto` versucht immer zuerst online und kann vor dem Fallback warten; es ist kein Offline-First-Modus.
+**`STT_PROVIDER must be vosk`:** eine alte Konfiguration enthält noch `openrouter`, `auto` oder einen anderen Wert. In `/etc/pi-voice-assistant.env` auf `STT_PROVIDER=vosk` korrigieren und den Dienst neu starten. STT führt keine API-Aufrufe mehr aus.
+
+## LLM
+
+**`llm_error` / OpenRouter nicht erreichbar:** Netzwerk prüfen und `OPENROUTER_API_KEY`, `OPENROUTER_LLM_MODEL` sowie `OPENROUTER_LLM_TIMEOUT_SECONDS` kontrollieren. Ein LLM-Fehler darf den Dienst nicht beenden; nach dem Fehler muss die nächste PTT-Aufnahme wieder möglich sein. API-Fehler gehören zum LLM-Schritt und sind kein STT-Fehler.
 
 ## Sprachausgabe
 

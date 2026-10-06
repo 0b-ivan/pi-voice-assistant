@@ -16,7 +16,7 @@ Stand 06.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md
 - STT-, LLM- und TTS-Latenzen aus den strukturierten `latency`-/TTS-Events messen und die End-to-End-Latenz bewerten.
 - B/Abbruch während LLM und TTS sowie OpenRouter-Timeout/Netzausfall prüfen; der Dienst muss danach weiter nutzbar sein.
 - Wiederholte Interaktionen auf Speicher, zram und Audio-xruns prüfen.
-- Der Pi bleibt für STT bei `vosk`; den älteren `openrouter`/`auto`-STT-Pfad nur noch separat abnehmen, falls er als Diagnosefunktion erhalten bleiben soll.
+- Vosk-Qualität mit mehreren bekannten Sätzen und unterschiedlichen Sprechabständen messen; Cloud-STT ist bewusst nicht Teil der Architektur.
 
 ## Betrieb und Hardware
 

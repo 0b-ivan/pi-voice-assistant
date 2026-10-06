@@ -203,12 +203,8 @@ def build_status_text(
     provider = (stt_provider or "").strip().lower()
     if provider == "vosk":
         parts.append("ERKENNUNG LOKAL.")
-    elif provider == "openrouter":
-        parts.append("OPENROUTER ONLINE.")
-    elif provider == "auto":
-        parts.append("STT AUTOMATIK.")
     elif provider:
-        parts.append("STT KONFIGURIERT.")
+        parts.append("STT FEHLKONFIGURIERT.")
 
     if processing:
         parts.append("DIREKTIVE IN BEARBEITUNG.")
