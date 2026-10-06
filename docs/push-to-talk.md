@@ -8,8 +8,8 @@ Installation über den vollständigen [Dienstinstaller im Setup](setup.md#4-repo
 
 - Halten startet Aufnahme, Loslassen beendet sie; kein Toggle. Beim Start und nach Limit/Fehler zunächst loslassen.
 - GPIO-Abfrage alle 10 ms, Pegel 40 ms stabil; konfigurierbar 10–500 ms. Sehr kurze Berührungen können entfallen.
-- Aufnahme mit `arecord`: PCM S16_LE, 48 kHz, zwei Kanäle. Standardlimit 30 s, konfigurierbar 1–120 s. `arecord -d` begrenzt zusätzlich; 30 s entsprechen etwa 5,76 MB PCM.
-- Dienst beendet `arecord` beim Loslassen mit SIGINT und wartet begrenzt. Aus den Rohdaten erzeugt er selbst ein WAV; vollständige Stereoframes, Mindestdauer 100 ms und begrenzte Größe werden geprüft.
+- Aufnahme mit `arecord`: bei `STT_PROVIDER=vosk` direkt PCM S16_LE, **16 kHz mono** für Live-Erkennung; bei den übrigen Providern bleibt **48 kHz stereo**. Standardlimit 30 s, konfigurierbar 1–120 s.
+- Dienst beendet `arecord` beim Loslassen mit SIGINT und wartet begrenzt. Im Live-Vosk-Pfad liest ein Pump-Thread das 16-kHz-Mono-PCM gleichzeitig in die flüchtige Capture-Datei und in Vosk. Anschließend wird wie bisher ein validiertes WAV für Fallback/Diagnose erzeugt.
 - Ein Slot, keine Warteschlange: während STT keine weitere Aufnahme. STT läuft seit SHIM-Integration in einem Hintergrundthread; Tasten bleiben bedienbar. Nach Verarbeitung benötigen gehaltene PTT-Tasten Release.
 - Dienststop beendet Aufnahme/verwaltete Ansage und entfernt Audiodateien. systemd startet bei Prozessausfall mit begrenzter Neustartfrequenz erneut.
 
@@ -17,7 +17,7 @@ Zusätzliches A/GPIO17-Verhalten, B-Abbruch und Wiedergabesteuerung: [Button SHI
 
 ## Übergabepunkt
 
-Während Aufnahme: `capture.part.pcm`; beim Verpacken kurz zusätzlich `capture.part.wav`. Fertiges WAV wird atomar nach `/run/pi-ptt/capture.wav` umbenannt, Rohdaten werden entfernt. Dann erscheint:
+Während Aufnahme: `capture.part.pcm`; beim Verpacken kurz zusätzlich `capture.part.wav`. Bei Live-Vosk entsteht `capture.part.pcm` durch den PCM-Pump statt direkt als `arecord`-Zieldatei. Fertiges WAV wird atomar nach `/run/pi-ptt/capture.wav` umbenannt, Rohdaten werden entfernt. Dann erscheint:
 
 ```json
 {"version":1,"event":"capture_ready","path":"/run/pi-ptt/capture.wav","reason":"release","format":"wav","encoding":"PCM_S16_LE","sample_rate":48000,"channels":2,"frames":96000}
