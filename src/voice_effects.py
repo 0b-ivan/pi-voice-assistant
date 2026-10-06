@@ -84,10 +84,10 @@ SERVITOR_FILTER_GRAPH = (
     "[sawphase0]"
     "highpass=f=650,lowpass=f=4700,"
     "aeval=val(0)*(0.48+0.52*(t*6-floor(t*6))),"
-    "aphaser=in_gain=0.75:out_gain=0.62:delay=2:decay=0.58:"
-    "speed=0.85:type=triangular,"
+    "aphaser=in_gain=0.66:out_gain=0.82:delay=4:decay=0.78:"
+    "speed=0.52:type=triangular,"
     "aecho=0.8:0.26:19|38:0.13|0.07,"
-    "volume=0.58[sawphase];"
+    "volume=0.72[sawphase];"
 
     "aevalsrc=0.060*(2*(t*220-floor(t*220))-1)"
     "+0.030*(2*(t*440-floor(t*440))-1):s=48000,"
