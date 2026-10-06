@@ -46,7 +46,7 @@ class VoiceEffectsTests(unittest.TestCase):
         self.assertIn("tremolo=f=13:d=0.94", graph)
         self.assertIn("tremolo=f=42:d=0.55", graph)
         self.assertIn("alimiter=", graph)
-        self.assertEqual(command[-3:], ["alsa", "test-device"][-3:])
+        self.assertEqual(command[-3:], ["-f", "alsa", "test-device"])
 
     def test_servitor_ffmpeg_path_can_be_overridden(self):
         with patch.dict(os.environ, {"TTS_FFMPEG_BIN": "/custom/ffmpeg"}, clear=True):
