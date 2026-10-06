@@ -1,0 +1,24 @@
+[Unit]
+Description=Pi Voice Assistant status display
+After=local-fs.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=obivan
+SupplementaryGroups=spi gpio
+ExecStart=/opt/pi-voice-assistant/.venv-display/bin/python /opt/pi-voice-assistant/src/display.py
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
