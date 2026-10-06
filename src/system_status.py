@@ -91,9 +91,8 @@ def build_status_text(
     """Return a compact Servitor-style status using only locally readable data."""
     parts = []
     if processing:
-        # Keep "verarbeite" for the existing operator-facing behavior/tests.
-        parts.append("Ich verarbeite die Aufnahme.")
         parts.append("VERARBEITUNGSPROTOKOLL AKTIV.")
+        parts.append("AUFNAHME IN ANALYSE.")
     else:
         parts.append("SYSTEM NOMINAL.")
         parts.append("MASCHINENGEIST SYNCHRONISIERT.")
