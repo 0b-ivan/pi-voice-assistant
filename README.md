@@ -9,7 +9,7 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 | System | Raspberry Pi OS Lite 64-bit / Debian 13 Trixie, `pi-assistent`, Benutzer `obivan` |
 | Audio | WM8960-Aufnahme und Wiedergabe samt Neustart bestätigt; vorhandenes Kernelmodul/Overlay, kein zusätzlicher Waveshare-Treiber |
 | PTT und STT auf `main` | GPIO17, optional Button SHIM A–E/RGB, OpenRouter- und Vosk-STT implementiert; Pi läuft bewusst mit `STT_PROVIDER=vosk` |
-| Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 resident; `normal` nutzt `de_DE-thorsten-low`, `servitor` nutzt `de_DE-thorsten_emotional-medium` (Speaker 4) plus FFmpeg-Live-DSP. SHIM E spricht dynamische Telemetrie inklusive Systemlast, Temperatur, RAM, Speicher, Uptime und STT-Modus. |
+| Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 resident; `normal` nutzt `de_DE-thorsten-low`, `servitor` nutzt `de_DE-thorsten_emotional-medium` (Speaker 4) plus gestreamten FFmpeg-Live-DSP. SHIM E spricht kompakte dynamische Telemetrie; Verarbeitung pulsiert Rot↔Gelb, Sprachpausen sind Türkis und Sprachsegmente Orange. |
 | Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): frischer Prozess 17–22 s, resident 1,12–1,20 s. Kontrollierter Vosk/Piper-Wechsel stabilisierte sich bei 5,89 s STT / 1,26 s TTS; kombinierter Peak-RSS 254,7 MiB, zram physisch ~57 MiB, kein Writeback-I/O |
 | Noch offen | LLM-Anbindung und automatische Antwortwiedergabe; reale `auto`-Fallback-Abnahme; Akku/Abschaltung, Kamera und PiTFT |
 
