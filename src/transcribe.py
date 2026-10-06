@@ -218,6 +218,64 @@ def _result_text(payload: str, source: str) -> str:
     return text.strip()
 
 
+def prepare_vosk() -> None:
+    """Load the local model now so the first PTT press never pays model startup."""
+    _load_vosk_model()
+
+
+class LiveVoskRecognizer:
+    """Incremental 16-kHz mono recognizer for audio captured while PTT is held."""
+
+    def __init__(self):
+        try:
+            vosk = _vosk_module()
+            self.recognizer = vosk.KaldiRecognizer(
+                _load_vosk_model(), VOSK_SAMPLE_RATE
+            )
+        except TranscriptionError:
+            raise
+        except Exception as exc:
+            raise TranscriptionError(
+                f"failed to initialize live Vosk recognizer: {exc}"
+            ) from exc
+        self.parts = []
+        self.finished = False
+
+    def accept_pcm(self, pcm: bytes) -> None:
+        if self.finished:
+            raise TranscriptionError("live Vosk recognizer is already finalized")
+        if not pcm:
+            return
+        if len(pcm) % 2:
+            raise TranscriptionError("live Vosk requires aligned 16-bit PCM")
+        try:
+            if self.recognizer.AcceptWaveform(pcm):
+                text = _result_text(self.recognizer.Result(), "segment")
+                if text:
+                    self.parts.append(text)
+        except TranscriptionError:
+            raise
+        except Exception as exc:
+            raise TranscriptionError(f"live Vosk failed: {exc}") from exc
+
+    def finish(self) -> str:
+        if self.finished:
+            raise TranscriptionError("live Vosk recognizer is already finalized")
+        self.finished = True
+        try:
+            final_text = _result_text(self.recognizer.FinalResult(), "final")
+        except TranscriptionError:
+            raise
+        except Exception as exc:
+            raise TranscriptionError(f"live Vosk finalization failed: {exc}") from exc
+        if final_text:
+            self.parts.append(final_text)
+        text = " ".join(self.parts).strip()
+        if not text:
+            raise TranscriptionError("Vosk returned no transcript")
+        return text
+
+
 def transcribe_vosk(path: str | os.PathLike[str]) -> str:
     audio_path = _audio_path(path)
     model = _load_vosk_model()
