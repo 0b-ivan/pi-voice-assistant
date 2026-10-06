@@ -109,12 +109,9 @@ def build_status_text(
     """Return a compact Servitor-style status using only locally readable data."""
     parts = []
     if processing:
-        parts.append("VERARBEITUNGSPROTOKOLL AKTIV.")
-        parts.append("AUFNAHME IN ANALYSE.")
+        parts.append("VERARBEITUNG.")
     else:
-        parts.append("SYSTEM NOMINAL.")
-
-    parts.append("TELEMETRIE.")
+        parts.append("STATUS NOMINAL.")
 
     load = _system_load_percent(loadavg_path, cpu_count=cpu_count)
     if load is not None:
@@ -126,11 +123,11 @@ def build_status_text(
 
     memory = _memory_free_percent(meminfo_path)
     if memory is not None:
-        parts.append(f"RAM {memory} PROZENT FREI.")
+        parts.append(f"RAM {memory} FREI.")
 
     disk = _disk_free_percent(disk_path, disk_usage=disk_usage)
     if disk is not None:
-        parts.append(f"SPEICHER {disk} PROZENT FREI.")
+        parts.append(f"SPEICHER {disk} FREI.")
 
     uptime = _uptime_words(uptime_path)
     if uptime:
@@ -138,7 +135,7 @@ def build_status_text(
 
     provider = (stt_provider or "").strip().lower()
     if provider == "vosk":
-        parts.append("VOSK OFFLINE.")
+        parts.append("STT LOKAL.")
     elif provider == "openrouter":
         parts.append("OPENROUTER ONLINE.")
     elif provider == "auto":
@@ -149,7 +146,7 @@ def build_status_text(
     if processing:
         parts.append("DIREKTIVE IN BEARBEITUNG.")
     else:
-        parts.append("SERVITOR EINHEIT BEREIT.")
+        parts.append("SERVITOR BEREIT.")
         parts.append("DIREKTIVE ERWARTET.")
 
     return " ".join(parts)
