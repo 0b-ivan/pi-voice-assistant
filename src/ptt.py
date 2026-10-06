@@ -508,7 +508,10 @@ def main():
         parser.error('PTT_BUTTON_SHIM must be 0 or 1')
     runtime_dir = os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')
     live_vosk_factory = None
-    if not args.probe and os.environ.get('STT_PROVIDER', '').strip().lower() == 'vosk':
+    if not args.probe:
+        provider = os.environ.get('STT_PROVIDER', 'vosk').strip().lower()
+        if provider != 'vosk':
+            parser.error('STT_PROVIDER must be vosk; OpenRouter is LLM-only')
         event('stt_loading', provider='vosk', mode='live')
         try:
             prepare_vosk()
