@@ -39,7 +39,7 @@ TTS_PIPER_SENTENCE_SILENCE=0.32
 # TTS_FFMPEG_BIN=/usr/bin/ffmpeg
 ```
 
-Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe jetzt nur noch um rund **1,35 Halbtöne** ab. Metallische Resonanzen und Chorus liegen deutlich weiter vorn. Zusätzlich laufen zwei sprachgebundene Tracer-Ebenen sowie eine unabhängige Maschinen-Aura: kurze gestaffelte Digital-Echos, eine 6-Hz-Sägezahn-Hüllkurve durch einen Phaser und ein eigenes leises 220-Hz-Säge-/Phaser-Brummen mit 440-Hz-Oberwelle und deutlich langsamem Phaser-Sweep. Die Maschinen-Aura läuft auch durch Satzpausen weiter und endet erst mit der gesamten Ansage.
+Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe jetzt nur noch um rund **1,35 Halbtöne** ab. Metallische Resonanzen und Chorus liegen deutlich weiter vorn. Zusätzlich laufen zwei sprachgebundene Tracer-Ebenen sowie eine zeitstromgebundene Maschinen-Aura: kurze gestaffelte Digital-Echos, eine 6-Hz-Sägezahn-Hüllkurve durch einen Phaser und ein eigenes leises 220-Hz-Säge-/Phaser-Brummen mit 440-Hz-Oberwelle und deutlich langsamem Phaser-Sweep. Die Maschinen-Aura läuft auch durch Satzpausen weiter und endet erst mit der gesamten Ansage.
 
 ## Servitor-DSP
 
@@ -62,7 +62,7 @@ resident Piper
   -> ALSA / WM8960
 ```
 
-Der residente Servitor-Pfad schreibt Piper-PCM direkt auf FFmpeg-stdin und startet die Wiedergabe mit dem ersten verfügbaren Audio-Chunk. Eine vollständige Quell-WAV muss nicht mehr fertig synthetisiert werden. Der frühere Reverse-Fade wurde entfernt, weil er die komplette Ansage puffern und damit Streaming verhindern würde. Der kurze Echo-Tail sorgt weiterhin für ein kontrolliertes Ausklingen.
+Der residente Servitor-Pfad schreibt Piper-PCM direkt auf FFmpeg-stdin und startet die Wiedergabe mit dem ersten verfügbaren Audio-Chunk. Die Aura wird nicht als frei laufende FFmpeg-Quelle erzeugt, sondern aus der Zeitbasis des eingehenden PCM-Stroms. Dadurch bleibt sie während der explizit eingespeisten Satzpausen hörbar, kann die Sprach-Pipe aber nicht durch vorauseilende Synthese zurückstauen. Eine vollständige Quell-WAV muss nicht mehr fertig synthetisiert werden. Der frühere Reverse-Fade wurde entfernt, weil er die komplette Ansage puffern und damit Streaming verhindern würde. Der kurze Echo-Tail sorgt weiterhin für ein kontrolliertes Ausklingen.
 
 ## Dynamischer Status auf SHIM E
 
@@ -110,6 +110,6 @@ set +a
 
 Der residente Servitor-Pfad erzeugt keine WAV mehr: Piper liefert 16-Bit-PCM-Chunks direkt an FFmpeg und damit an ALSA. Nur das Normalprofil verwendet weiterhin die temporäre WAV. B bzw. PTT kann die eigene Wiedergabe weiterhin über die Prozessgruppe abbrechen.
 
-Der aktuelle Maschinenfilter ist bewusst aggressiv und für die zwei kleinen WM8960-Lautsprecher abgestimmt. Nach der Hardware-Abnahme wurde der Live-DSP von elf Mix-Eingängen auf sechs reduziert: redundante Flanger-, Doppler-, Ring- und Aura-Zweige entfallen; Metall, Chorus, Tracer, Saw-Phase und die unabhängige Maschinen-Aura bleiben erhalten. Zusätzlich laufen die eigentlichen Effekte intern mit 24 kHz statt 48 kHz; erst unmittelbar vor ALSA wird auf 48 kHz resampelt. Damit halbiert sich die Sample-Arbeit der teuren Echtzeitfilter weitgehend, ohne deren Frequenz-/Zeitparameter zu ändern. Der digitale `Playback`-Regler und der analoge `Speaker`-Pegel bleiben davon getrennt.
+Der aktuelle Maschinenfilter ist bewusst aggressiv und für die zwei kleinen WM8960-Lautsprecher abgestimmt. Nach der Hardware-Abnahme wurde der Live-DSP von elf Mix-Eingängen auf sechs reduziert: redundante Flanger-, Doppler-, Ring- und Aura-Zweige entfallen; Metall, Chorus, Tracer, Saw-Phase und die Maschinen-Aura bleiben erhalten. Zusätzlich laufen die eigentlichen Effekte intern mit 24 kHz statt 48 kHz; erst unmittelbar vor ALSA wird auf 48 kHz resampelt. Damit halbiert sich die Sample-Arbeit der teuren Echtzeitfilter weitgehend, ohne deren Frequenz-/Zeitparameter zu ändern. Der digitale `Playback`-Regler und der analoge `Speaker`-Pegel bleiben davon getrennt.
 
 Pi-Messungen und Speichergrenzen: [TTS-Performance](local-speech.md) und [Ressourcenbericht](piper-resources.md).
