@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import wave
 
 
@@ -242,6 +243,26 @@ def transcribe_vosk(path: str | os.PathLike[str]) -> str:
 
 def transcribe_with_provider(path: str | os.PathLike[str]) -> tuple[str, str]:
     _provider()
+    if os.environ.get("PTT_MEMORY_MODE", "resident") == "isolated":
+        # Never load the native model in the controller. Reap this worker before
+        # returning its transcript so subsequent Piper cannot overlap Vosk.
+        environment = dict(os.environ, PTT_MEMORY_MODE="resident")
+        try:
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), str(path)],
+                env=environment, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=120,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TranscriptionError("isolated Vosk exceeded 120 seconds") from exc
+        if result.returncode:
+            raise TranscriptionError(
+                f"isolated Vosk failed ({result.returncode}): {result.stderr[-2000:]}"
+            )
+        text = result.stdout.strip()
+        if not text:
+            raise TranscriptionError("isolated Vosk returned no transcript")
+        return text, "vosk"
     return transcribe_vosk(path), "vosk"
 
 

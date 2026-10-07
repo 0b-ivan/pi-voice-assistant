@@ -151,6 +151,13 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn('llm_response', names)
         self.speech.start.assert_not_called()
 
+    def test_isolated_mode_skips_status_while_stt_worker_owns_memory(self):
+        self.job()
+        with patch.dict(os.environ, {"PTT_MEMORY_MODE": "isolated"}):
+            self.tick(down='E')
+        self.speech.start.assert_not_called()
+        self.assertIn('status_skipped', [e['event'] for e in self.events()])
+
     def test_volume_and_status_stay_usable_during_stt(self):
         self.job()
         with patch('ptt.change_volume') as volume:

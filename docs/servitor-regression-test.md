@@ -238,3 +238,56 @@ besser unterscheiden. Die fünf bisherigen Durchgänge allein beweisen
 weder CPU-Sättigung noch aktiven Swap-Sturm. Im geposteten Kernel-Ausschnitt
 sind keine SD-I/O-/Dateisystemfehler enthalten; die zuvor beschädigte
 Git-Kopie bleibt als gesonderter Befund bestehen.
+
+## OOM bestätigt: optionaler isolierter Modus
+
+Der Kernel bestätigte am 2026-10-07 erneut OOM während einer langen Antwort.
+Nur 415 MiB zram waren als Swap aktiv. Klang/Latenz sind damit noch nicht
+abgenommen. `PTT_MEMORY_MODE=isolated` entfernt die gemeinsame permanente
+Vosk/Piper-Modellhaltung: WAV-Aufnahme → eigener Vosk-Prozess → vollständiges
+Prozessende → OpenRouter → Piper-CLI-Prozess → Prozessende → Wiedergabe.
+Der Controller lädt dabei keines der beiden Modelle. Fehler/Timeout des
+Vosk-Workers laden keinen residenten Fallback. Status während Verarbeitung
+wird übersprungen, damit er keine TTS parallel zur Erkennung startet.
+Abbruch verwirft eine laufende STT-Antwort; der Slot bleibt bis zum Ende des
+Workers belegt (maximal 120 s). B beendet laufende TTS samt Prozessgruppe.
+
+Dieser Modus ist langsamer beim Modellstart und erkennt erst nach Loslassen;
+Live-Vosk bleibt im unveränderten Standardmodus `resident` verfügbar. Es ist
+eine ausdrückliche Stabilitätsoption für begrenzten RAM, keine Behauptung,
+dass die Hardware nun OOM-frei ist. Ein einzelnes Modell kann weiterhin
+Speicherdruck verursachen. `TTS_PLAYBACK_MODE` betrifft residenten Piper;
+isoliert läuft TTS immer über den vorhandenen WAV/CLI-Pfad. Piper-Parameter
+für den Vergleich weiterhin explizit setzen, da CLI-Defaults abweichen.
+
+Pi-Abnahme:
+
+```bash
+cd ~/pi-voice-assistant-audio-test-clean
+git pull --ff-only
+python3 -m unittest discover -s tests -q
+sudo systemctl stop pi-ptt.service
+sudo bash scripts/install-voice-service.sh
+sudoedit /etc/pi-ptt.env
+```
+
+`PTT_MEMORY_MODE=isolated` in `/etc/pi-ptt.env` setzen. In der Voice-Env
+Low-Modell und für Servitor Speaker 0 beibehalten. Zuerst normal testen.
+Optional für überschaubare Antworten `OPENROUTER_LLM_MAX_TOKENS=80` setzen;
+dies ist nur eine Längenbegrenzung und kein Ersatz für Speicherisolierung.
+
+```bash
+sudo systemctl start pi-ptt.service
+journalctl -u pi-ptt.service -f -o cat
+```
+
+Auf `memory_mode` mit `isolated`, `tts_ready` mit `isolated` und
+`waiting_for_release` warten; `stt_ready`/`mode=live` gibt es hier nicht.
+Drei kurze Fragen, anschließend eine Antwort mit drei kurzen Sätzen testen.
+In zweitem Terminal `vmstat 1` beobachten, danach neue Kernel-OOM-Einträge
+und `NRestarts` prüfen. Zwischen Antworten muss eine neue Aufnahme möglich
+sein; Abbruch und E während Verarbeitung zusätzlich prüfen. Erst bei
+Stabilität den identischen Versuch mit Servitor/Low durchführen.
+
+Rückkehr zum bisherigen Live-Modus: `PTT_MEMORY_MODE=resident` und Dienst
+neu starten. Der bisherige bestätigte OOM bleibt dann ein bekanntes Risiko.

@@ -405,8 +405,10 @@ class VoiceController:
                 except (OSError, subprocess.SubprocessError) as exc:
                     event('mixer_error', message=str(exc))
             elif name == 'E':
-                if self.recorder.process is not None or action == 'start':
-                    event('status_skipped', reason='recording')
+                if (self.recorder.process is not None or action == 'start'
+                        or (os.environ.get('PTT_MEMORY_MODE') == 'isolated'
+                            and self.job is not None)):
+                    event('status_skipped', reason='recording_or_processing')
                 else:
                     text = build_status_text(
                         processing=self.job is not None,
@@ -516,11 +518,16 @@ def main():
     if shim_enabled not in ('0', '1'):
         parser.error('PTT_BUTTON_SHIM must be 0 or 1')
     runtime_dir = os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')
+    memory_mode = os.environ.get('PTT_MEMORY_MODE', 'resident')
+    if memory_mode not in ('resident', 'isolated'):
+        parser.error('PTT_MEMORY_MODE must be resident or isolated')
     live_vosk_factory = None
     if not args.probe:
         provider = os.environ.get('STT_PROVIDER', 'vosk').strip().lower()
         if provider != 'vosk':
             parser.error('STT_PROVIDER must be vosk; OpenRouter is LLM-only')
+        event('memory_mode', mode=memory_mode)
+    if not args.probe and memory_mode == 'resident':
         event('stt_loading', provider='vosk', mode='live')
         try:
             prepare_vosk()
@@ -546,6 +553,13 @@ def main():
     if args.probe:
         # Probe mode must never load a TTS model or touch the audio device.
         speech = SpeechOutput('/usr/bin/true')
+    elif memory_mode == 'isolated':
+        # speak.py invokes Piper in its venv, then playback. Both processes
+        # are owned by SpeechOutput's group and ended before new capture/STT.
+        speech = SpeechOutput(
+            f"{os.environ.get('PIPER_PYTHON', '/opt/pi-voice-assistant/.venv/bin/python')} "
+            '/opt/pi-voice-assistant/src/speak.py')
+        event('tts_ready', mode='isolated', profile=os.environ.get('TTS_VOICE_PROFILE', 'normal'))
     else:
         profile = os.environ.get('TTS_VOICE_PROFILE', 'normal')
         if profile.strip().lower() == 'servitor':
