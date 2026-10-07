@@ -189,6 +189,18 @@ class RecorderUplinkTests(unittest.TestCase):
         self.assertEqual((started['event'], started['stt'], started['remote']),
                          ('recording', 'remote', True))
 
+    def test_local_live_vosk_only_runs_without_uplink(self):
+        for uplink, expected_calls in ((Mock(), 0), (None, 1)):
+            with self.subTest(remote=uplink is not None), tempfile.TemporaryDirectory() as tmp, \
+                    redirect_stdout(StringIO()):
+                factory = Mock(return_value=Mock())
+                uplink_factory = None if uplink is None else (lambda: uplink)
+                recorder = Recorder(tmp, 'dev', 1, live_vosk_factory=factory,
+                                    uplink_factory=uplink_factory)
+                with patch('ptt.subprocess.Popen'), patch.object(Recorder, '_pump_live_audio'):
+                    recorder.start()
+                self.assertEqual(factory.call_count, expected_calls)
+
 
 class FakeJob:
     def __init__(self, **fields):

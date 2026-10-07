@@ -44,6 +44,10 @@ PTT los → Abschlusschunk → NDJSON lesen → Display → aplay remote-reply.w
 
 Der Fallback setzt dort an, wo der Server ausgefallen ist: Verbindung/Upload → lokale Vosk-Erkennung der mitgeschriebenen Aufnahme; LLM-Fehler → lokales LLM mit dem Server-Transkript; Synthese-/Renderfehler → lokale Piper-Ausgabe der Server-Antwort. „Keine Sprache erkannt“ wird nicht lokal wiederholt. Das Token steht nur in `/etc/pi-voice-assistant.env` und wird nie geloggt.
 
+Während der Server erreichbar ist, läuft auf dem Pi keine zusätzliche Live-Vosk-Erkennung. Im Modus `hybrid` bleibt der vorgeladene Vosk-Worker für den Fallback bereit und erkennt bei Bedarf die mitgeschriebene WAV.
+
+**Hardware-Messung 07.10.2026** (Pi Zero 2 W, LAN, WAV, Frage „Wie hoch ist der Eiffelturm?“, 3,6 s Aufnahme): Server nach Upload-Ende 1,67 s (STT-Abschluss 0,05 s, LLM 0,95 s, Synthese 0,48 s, Render 0,19 s). Loslassen bis Wiedergabestart ca. 2,0–2,5 s, vorher lokal ca. 13,7 s. Stimme unverändert; das Display durchlief alle Schritte. Diese Messung lief noch mit mitlaufender lokaler Vosk-Erkennung.
+
 ## Statusansage und Antwortpfad
 
 SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest normierte Systemlast, CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.

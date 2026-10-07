@@ -205,13 +205,6 @@ class Recorder:
         self._pump_thread = None
         self.drop_uplink()
 
-        recognizer = None
-        if self.live_vosk_factory is not None:
-            try:
-                recognizer = self.live_vosk_factory()
-            except (OSError, TranscriptionError) as exc:
-                self._live_error = str(exc)
-
         uplink = None
         if self.uplink_factory is not None:
             try:
@@ -219,6 +212,15 @@ class Recorder:
             except (OSError, ValueError) as exc:
                 event('remote_error', stage='connect', code='client', message=str(exc))
         self._uplink = uplink
+
+        # The server recognizes the stream; shadowing it with local Vosk costs
+        # the Pi CPU, swap and ~1 s finalize. The fallback transcribes the WAV.
+        recognizer = None
+        if self.live_vosk_factory is not None and uplink is None:
+            try:
+                recognizer = self.live_vosk_factory()
+            except (OSError, TranscriptionError) as exc:
+                self._live_error = str(exc)
 
         if recognizer is not None or uplink is not None:
             self._live_recognizer = recognizer
