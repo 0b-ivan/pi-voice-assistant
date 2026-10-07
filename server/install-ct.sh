@@ -41,6 +41,12 @@ TTS_PIPER_SENTENCE_SILENCE=0.32
 TTS_FFMPEG_BIN=/usr/bin/ffmpeg
 OPENROUTER_LLM_MODEL=openai/gpt-5.4-mini
 OPENROUTER_API_KEY=REPLACE_ME
+# Short enough that the offline fallback still answers within the Pi's 25 s.
+OPENROUTER_LLM_TIMEOUT_SECONDS=8
+# Offline fallback (server/install-llm.sh): answers when OpenRouter fails.
+SERVITOR_LOCAL_LLM=1
+LOCAL_LLM_MODEL_NAME=qwen2.5-3b
+LOCAL_LLM_MAX_TOKENS=120
 ENV
   chown root:servitor /etc/servitor-voice.env
   chmod 0640 /etc/servitor-voice.env

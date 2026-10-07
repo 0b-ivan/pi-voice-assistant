@@ -172,5 +172,45 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(text, "SERVITOR BEREIT.")
 
 
+
+class LocalLLMTests(unittest.TestCase):
+    def test_local_request_uses_loopback_prompt_and_no_key(self):
+        response = FakeResponse({"choices": [{"message": {"content": "Daten unzureichend."}}]})
+        env = {"LOCAL_LLM_MODEL_NAME": "qwen2.5-3b", "LOCAL_LLM_MAX_TOKENS": "64"}
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("llm.urllib.request.urlopen", return_value=response) as urlopen,
+        ):
+            text, model = llm.generate_local_reply("Status?")
+        self.assertEqual((text, model), ("Daten unzureichend.", "local/qwen2.5-3b"))
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, llm.DEFAULT_LOCAL_LLM_URL)
+        self.assertIsNone(request.get_header("Authorization"))
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["max_tokens"], 64)
+        self.assertNotIn("max_completion_tokens", payload)
+        self.assertEqual(payload["messages"][0]["content"], llm.SERVITOR_SYSTEM_PROMPT)
+
+    def test_openrouter_body_keeps_only_max_completion_tokens(self):
+        response = FakeResponse({"choices": [{"message": {"content": "OK."}}]})
+        with (
+            patch.dict("os.environ", {"OPENROUTER_API_KEY": "k"}, clear=True),
+            patch("llm.urllib.request.urlopen", return_value=response) as urlopen,
+        ):
+            llm.generate_reply("Status?")
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertIn("max_completion_tokens", payload)
+        self.assertNotIn("max_tokens", payload)
+
+    def test_local_failure_is_labelled(self):
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("llm.urllib.request.urlopen",
+                  side_effect=urllib.error.URLError("refused")),
+        ):
+            with self.assertRaisesRegex(llm.LLMError, "Local LLM request failed"):
+                llm.generate_local_reply("Status?")
+
+
 if __name__ == "__main__":
     unittest.main()

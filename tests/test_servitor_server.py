@@ -187,6 +187,30 @@ class ServerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ss.Config({'SERVITOR_API_TOKEN': 'short'})
 
+    def test_openrouter_failure_falls_back_to_local_llm(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+        import llm
+        pipeline = ss.RealPipeline(self.tmp.name)
+        cases = (
+            ('1', None, ('lokal', 'local/q')),
+            ('0', None, llm.LLMError),
+            ('1', llm.LLMError('down'), llm.LLMError),
+        )
+        for enabled, local_error, expected in cases:
+            with self.subTest(enabled=enabled, local_error=local_error), \
+                    unittest.mock.patch.dict(os.environ, {'SERVITOR_LOCAL_LLM': enabled}), \
+                    unittest.mock.patch('llm.generate_reply',
+                                        side_effect=llm.LLMError('402 no credits')), \
+                    unittest.mock.patch('llm.generate_local_reply',
+                                        return_value=('lokal', 'local/q'),
+                                        side_effect=local_error), \
+                    unittest.mock.patch('sys.stdout'):
+                if isinstance(expected, tuple):
+                    self.assertEqual(pipeline.reply('frage'), expected)
+                else:
+                    with self.assertRaisesRegex(expected, '402 no credits'):
+                        pipeline.reply('frage')
+
     def raw_turn(self, body_bytes):
         """Send a hand-written chunked body; return the decoded NDJSON events."""
         import socket

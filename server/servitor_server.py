@@ -98,14 +98,34 @@ class RealPipeline:
         self.voice = PiperVoice.load(model)
         # Warm the ONNX session once so the first real turn pays no setup cost.
         self.synthesize('Bereit.').unlink()
+        if os.environ.get('SERVITOR_LOCAL_LLM') == '1':
+            # Page the GGUF in and cache the system prompt; never fatal.
+            from llm import LLMError, generate_local_reply
+            try:
+                generate_local_reply('Bereit?')
+            except LLMError as exc:
+                print(json.dumps(dict(event='local_llm_warmup_failed', error=str(exc))),
+                      flush=True)
 
     def recognizer(self):
         from transcribe import LiveVoskRecognizer
         return LiveVoskRecognizer()
 
     def reply(self, text):
-        from llm import generate_reply
-        return generate_reply(text)
+        """OpenRouter first; on any LLM error (offline, no credits, timeout)
+        the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
+        from llm import LLMError, generate_local_reply, generate_reply
+        try:
+            return generate_reply(text)
+        except LLMError as exc:
+            if os.environ.get('SERVITOR_LOCAL_LLM') != '1':
+                raise
+            primary = str(exc)
+        print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
+        try:
+            return generate_local_reply(text)
+        except LLMError as exc:
+            raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
     def synthesize(self, text):
         from voice_controls import _synthesize_voice
