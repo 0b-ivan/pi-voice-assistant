@@ -3,6 +3,7 @@
 This module intentionally contains no GPIO, audio, Piper or recorder logic.
 Configuration and the API key are read from the process environment only.
 """
+import http.client
 import json
 import os
 import socket
@@ -63,7 +64,7 @@ def _http_error_message(exc):
         message = payload.get("error", {}).get("message")
         if isinstance(message, str) and message.strip():
             return message.strip()
-    except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+    except (http.client.HTTPException, OSError, UnicodeError, json.JSONDecodeError, AttributeError):
         pass
     return f"HTTP {getattr(exc, 'code', 'error')}"
 
@@ -132,7 +133,7 @@ def generate_reply(prompt):
             raw = response.read()
     except urllib.error.HTTPError as exc:
         raise LLMError(f"OpenRouter request failed: {_http_error_message(exc)}") from exc
-    except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+    except (http.client.HTTPException, urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
         reason = getattr(exc, "reason", exc)
         raise LLMError(f"OpenRouter request failed: {reason}") from exc
 

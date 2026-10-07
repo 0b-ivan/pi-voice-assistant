@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import sys
@@ -90,6 +91,49 @@ class LLMTests(unittest.TestCase):
                 llm.generate_reply("Test")
         self.assertIn("provider unavailable", str(caught.exception))
         self.assertNotIn("test-key", str(caught.exception))
+
+    def test_malformed_http_error_body_falls_back_to_status(self):
+        class BrokenBody:
+            def read(self, *_args):
+                raise http.client.IncompleteRead(b"{", 12)
+
+        error = urllib.error.HTTPError(
+            llm.DEFAULT_LLM_URL,
+            503,
+            "Service Unavailable",
+            {},
+            BrokenBody(),
+        )
+        with (
+            patch.dict("os.environ", self.base_env(), clear=True),
+            patch("llm.urllib.request.urlopen", side_effect=error),
+        ):
+            with self.assertRaises(llm.LLMError) as caught:
+                llm.generate_reply("Test")
+
+        self.assertIn("HTTP 503", str(caught.exception))
+        self.assertNotIsInstance(caught.exception, http.client.HTTPException)
+
+    def test_success_body_transport_error_is_wrapped(self):
+        class BrokenResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                raise http.client.IncompleteRead(b"{", 12)
+
+        with (
+            patch.dict("os.environ", self.base_env(), clear=True),
+            patch(
+                "llm.urllib.request.urlopen",
+                return_value=BrokenResponse(),
+            ),
+        ):
+            with self.assertRaisesRegex(llm.LLMError, "OpenRouter request failed"):
+                llm.generate_reply("Test")
 
     def test_invalid_response_is_rejected(self):
         with (
