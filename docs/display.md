@@ -2,6 +2,18 @@
 
 Stand: 06.10.2026. Das vorhandene **Adafruit mini PiTFT 1,3″ (240 × 240, ST7789)** ist am Raspberry Pi Zero 2 W zusammen mit dem bestehenden WM8960-Aufbau grundsätzlich lauffähig.
 
+## Oberfläche und Arbeitsschritte
+
+Seit dem 07.10.2026 zeigt die Anzeige **Zuhören → Erkennen → Denken → Synthese
+→ Rendern → Ausgabe** mit passenden Symbolen, kurzen Beschreibungen und der
+verstrichenen Zeit je Schritt.
+
+![Vorschau der sechs Arbeitsschritte auf dem PiTFT](images/display-steps-preview.png)
+
+Die Vorschau wurde mit dem Display-Code und den Schriftarten des Pi gerendert;
+sie ist kein Foto des Geräts. Die einzelnen Ansichten sind 240 × 240 Pixel groß.
+[Zahnrad-Animation und technische Details](display-work-steps.md#thinking-animation).
+
 ## Bestätigter Stand
 
 SPI0 war zunächst deaktiviert. In `/boot/firmware/config.txt` wurde nur `dtparam=spi=on` aktiviert; die vorhandene WM8960-Konfiguration blieb unverändert:

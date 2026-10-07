@@ -6,6 +6,23 @@ loading the voice model from warming it up. Each step has a short description,
 an elapsed-seconds counter, and a small icon. The thinking gear rotates once in
 eight seconds. Five dots identify the response phase, not a completion estimate.
 
+## Interface preview
+
+Rendered with the display code and the Pi's actual fonts; these are interface
+previews, not photographs of the physical screen. Each individual screen is
+240 × 240 pixels.
+
+![Six display states: listening, recognition, thinking, synthesis, rendering and playback](images/display-steps-preview.png)
+
+### Thinking animation
+
+The gear turns slowly while the assistant waits for the LLM response. The
+counter shows elapsed time in the current step.
+
+![Animated thinking screen with a rotating gear and elapsed seconds](images/display-thinking.gif)
+
+## Implementation and validation
+
 Rendering is capped at four frames per second; fonts are cached. Only the changed rectangle is converted/transferred to SPI, using Pillow image differences. Repeated unchanged frames are skipped. Preview
 rendering on the Pi measured 10.48 ms per frame, excluding SPI transfer.
 Only fixed phase names and timestamps are published to the runtime progress
