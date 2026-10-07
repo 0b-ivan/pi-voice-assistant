@@ -126,13 +126,13 @@ with wave.open(args.f, 'wb') as audio:
         self.report = self.root / 'report.json'
         self.env = dict(os.environ, PYTHONPATH=str(self.root))
 
-    def command(self, repeats=2, timeout=20):
+    def command(self, repeats=2, timeout=60):
         return [sys.executable, str(SCRIPT), '--piper-python', sys.executable,
                 '--model', str(self.model), '--output', str(self.report),
                 '--repeats', str(repeats), '--idle-seconds', '1',
                 '--timeout', str(timeout)]
 
-    def alternating_command(self, timeout=20):
+    def alternating_command(self, timeout=60):
         self.vosk_model = self.root / 'vosk-model'
         self.vosk_model.mkdir(exist_ok=True)
         self.input = self.root / 'capture.wav'
@@ -184,7 +184,7 @@ class KaldiRecognizer:
     def test_alternation_keeps_models_and_reuses_the_same_pcm_input(self):
         command = self.alternating_command()
         original = self.input.read_bytes()
-        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=20)
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         report = json.loads(self.report.read_text())
         self.assertEqual(report['mode'], 'alternating')
@@ -208,7 +208,7 @@ class KaldiRecognizer:
         command = self.alternating_command()
         for state in ('active', 'activating', 'unknown'):
             self.env['TEST_SERVICE'] = state
-            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
             self.assertIn('PTT must be inactive', json.loads(self.report.read_text())['error'])
             self.assertFalse((self.root / 'order').exists())
@@ -216,7 +216,7 @@ class KaldiRecognizer:
     def test_input_cannot_be_overwritten_by_report(self):
         command = self.alternating_command() + ['--output', str(self.input)]
         original = self.input.read_bytes()
-        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.input.read_bytes(), original)
 
@@ -224,27 +224,43 @@ class KaldiRecognizer:
         command = self.alternating_command()
         for audio in (b'not wav', self.input.read_bytes()[:-100]):
             self.input.write_bytes(audio)
-            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
             self.assertIn('error', json.loads(self.report.read_text()))
             self.assertFalse((self.root / 'order').exists())
 
-    def test_alternating_timeout_kills_native_worker_and_preserves_report(self):
-        command = self.alternating_command(timeout=2)
-        self.env['TEST_VOSK_HANG'] = '1'
-        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
-        self.assertIn('exceeded', json.loads(self.report.read_text())['error'])
-        heartbeat = self.vosk_model / 'heartbeat'
+    def run_timeout_after_heartbeat(self, command, heartbeat):
+        # Slow Pis may need more than the old 1–2 s simply to start Python.
+        # Arm the simulated timeout only after the actual hanging child is
+        # alive. The real process-group cleanup and report saving still run.
+        real_monotonic = time.monotonic
+        startup_deadline = real_monotonic() + 60
+        def clock():
+            now = real_monotonic()
+            if heartbeat.exists():
+                return now + 61
+            if now >= startup_deadline:
+                self.fail('Fixture did not become ready within 60 seconds')
+            return now
+        with patch.object(sys, 'argv', command[1:]), patch.dict(os.environ, self.env), patch.object(
+            profile.time, 'monotonic', side_effect=clock
+        ):
+            self.assertEqual(profile.main(), 1)
         self.assertTrue(heartbeat.exists())
+        self.assertIn('exceeded', json.loads(self.report.read_text())['error'])
         stamp = heartbeat.stat().st_mtime_ns
         time.sleep(.1)
         self.assertEqual(heartbeat.stat().st_mtime_ns, stamp)
 
+    def test_alternating_timeout_kills_native_worker_and_preserves_report(self):
+        command = self.alternating_command(timeout=60)
+        self.env['TEST_VOSK_HANG'] = '1'
+        self.run_timeout_after_heartbeat(command, self.vosk_model / 'heartbeat')
+
     def test_comparison_loads_once_in_resident_worker_and_cleans_audio(self):
         text = '-- Grüße Ivan, ich bin bereit.'
         result = subprocess.run(self.command() + ['--text=  ' + text + '  '], env=self.env,
-                                capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         report = json.loads(self.report.read_text())
         self.assertNotIn('error', report)
@@ -271,28 +287,19 @@ class KaldiRecognizer:
 
     def test_timeout_kills_cli_descendant_and_saves_partial_report(self):
         self.env['TEST_HANG'] = '1'
-        result = subprocess.run(self.command(repeats=1, timeout=1), env=self.env,
-                                capture_output=True, text=True, timeout=8)
-        self.assertEqual(result.returncode, 1, result.stderr)
-        report = json.loads(self.report.read_text())
-        self.assertIn('exceeded', report['error'])
-        heartbeat = Path(str(self.model) + '.heartbeat')
-        self.assertTrue(heartbeat.exists())
-        time.sleep(.05)
-        stamp = heartbeat.stat().st_mtime_ns
-        time.sleep(.1)
-        self.assertEqual(heartbeat.stat().st_mtime_ns, stamp)
+        self.run_timeout_after_heartbeat(
+            self.command(repeats=1, timeout=60), Path(str(self.model) + '.heartbeat'))
 
     def test_missing_model_is_rejected_before_workers_start(self):
         self.model.unlink()
         result = subprocess.run(self.command(), env=self.env,
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 2)
         self.assertFalse(self.report.exists())
 
     def test_multiline_text_is_rejected_before_workers_start(self):
         result = subprocess.run(self.command() + ['--text', 'Hallo\nIvan'], env=self.env,
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 2)
         self.assertIn('single line', result.stderr)
         self.assertFalse(self.report.exists())
