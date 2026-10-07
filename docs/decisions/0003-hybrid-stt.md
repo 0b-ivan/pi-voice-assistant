@@ -1,6 +1,6 @@
 # ADR 0003: Vosk-only STT, OpenRouter nur für das LLM
 
-Datum 05.10.2026. Aktualisiert 06.10.2026. Status: angenommen; frühere Hybrid-STT-Entscheidung ersetzt.
+Datum 05.10.2026. Aktualisiert 06.10.2026. Status: für den Normalbetrieb durch [ADR 0004](0004-servitor-server.md) ersetzt; gilt weiter für den lokalen Fallback und für Betrieb ohne `ASSISTANT_BASE_URL`.
 
 ## Entscheidung
 

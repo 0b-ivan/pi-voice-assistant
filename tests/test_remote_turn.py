@@ -51,7 +51,9 @@ class ConfigTests(unittest.TestCase):
                        {'ASSISTANT_BASE_URL': 'ftp://host'},
                        {'ASSISTANT_AUDIO_FORMAT': 'mp3'},
                        {'ASSISTANT_CF_ACCESS_CLIENT_ID': 'only-id'},
-                       {'ASSISTANT_CONNECT_TIMEOUT_SECONDS': '0'}):
+                       {'ASSISTANT_CONNECT_TIMEOUT_SECONDS': '0'},
+                       {'ASSISTANT_BASE_URL': 'http://host:notaport'},
+                       {'ASSISTANT_BASE_URL': 'http://host:99999'}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 load_remote_config({**base, **change})
 
@@ -144,6 +146,43 @@ class RemoteTurnTests(LiveServerCase):
         job = self.turn()
         self.assertEqual(job.error_code, 'no_speech')
         self.assertFalse(job.fallback_allowed)
+
+    def test_upload_limits_still_fall_back_locally(self):
+        for code in ('too_short', 'too_large'):
+            job = RemoteTurnJob.__new__(RemoteTurnJob)
+            job.error, job.error_code = 'limit', code
+            self.assertTrue(job.fallback_allowed)
+
+    def test_stalled_connect_is_cancelled_on_timeout(self):
+        release = threading.Event()
+
+        class Stalled:
+            def __init__(self, *args):
+                release.wait(5)
+                self.sock = Mock()
+                self.closed = False
+
+            def connect(self):
+                pass
+
+            def putrequest(self, *args, **kwargs):
+                pass
+
+            putheader = endheaders = putrequest
+
+            def close(self):
+                self.closed = True
+
+        created = []
+        uplink = RemoteTurnUplink(self.config(), connect=lambda *a: created.append(Stalled()) or created[-1])
+        uplink.finish()
+        with self.assertRaises(Exception):
+            uplink.wait_uploaded(0.1)
+        self.assertTrue(uplink.cancelled)
+        release.set()
+        uplink.thread.join(5)
+        self.assertTrue(created[0].closed)
+        self.assertIsNone(uplink.connection)
 
     def test_wrong_token_is_reported(self):
         job = self.turn(self.config(token='y' * 40))

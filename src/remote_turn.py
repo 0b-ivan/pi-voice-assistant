@@ -28,8 +28,9 @@ from voice_controls import _terminate_process_group
 FORMATS = ('wav', 'opus')
 MAX_RESPONSE_LINE = 16 * 1024 * 1024
 MAX_AUDIO_BYTES = 8 * 1024 * 1024
-# Server-side 'user' problems: a local retry would not hear anything either.
-NO_FALLBACK_CODES = {'too_short', 'no_speech', 'too_large'}
+# Only "heard nothing" is final. Upload limits (too_short/too_large) differ
+# between Pi and server, so the saved capture still goes to local Vosk.
+NO_FALLBACK_CODES = {'no_speech'}
 
 _END = object()
 _CANCEL = object()
@@ -82,7 +83,11 @@ def load_remote_config(env=None):
         return None
     for url in urls:
         parts = urllib.parse.urlsplit(url)
-        if parts.scheme not in ('http', 'https') or not parts.hostname:
+        try:
+            parts.port  # raises ValueError for non-numeric or out-of-range ports
+        except ValueError:
+            parts = None
+        if parts is None or parts.scheme not in ('http', 'https') or not parts.hostname:
             raise ValueError('ASSISTANT_BASE_URL entries must be http(s)://host[:port]')
     token = env.get('ASSISTANT_TOKEN', '').strip()
     if len(token) < 32:
@@ -230,6 +235,9 @@ class RemoteTurnUplink:
     def wait_uploaded(self, timeout):
         self.thread.join(timeout)
         if self.thread.is_alive():
+            # Possibly still in DNS/connect: cancel so a late connection is
+            # closed by _open() instead of being published and left open.
+            self.cancel()
             raise RemoteTurnError('upload', 'network', 'upload did not finish in time')
         if self.cancelled:
             raise RemoteTurnError('upload', 'cancelled', 'cancelled')

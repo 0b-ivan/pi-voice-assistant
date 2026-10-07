@@ -22,6 +22,7 @@ fi
 install -d -m 0755 /opt/pi-voice-assistant/src /opt/pi-voice-assistant/scripts
 install -m 0644 "${repo_root}/src/ptt.py" /opt/pi-voice-assistant/src/ptt.py
 install -m 0644 "${repo_root}/src/llm.py" /opt/pi-voice-assistant/src/llm.py
+install -m 0644 "${repo_root}/src/remote_turn.py" /opt/pi-voice-assistant/src/remote_turn.py
 install -m 0644 "${repo_root}/src/transcribe.py" /opt/pi-voice-assistant/src/transcribe.py
 install -m 0644 "${repo_root}/src/piper_worker.py" /opt/pi-voice-assistant/src/piper_worker.py
 install -m 0644 "${repo_root}/src/runtime_metrics.py" /opt/pi-voice-assistant/src/runtime_metrics.py
