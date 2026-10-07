@@ -134,6 +134,23 @@ class ControllerTests(unittest.TestCase):
         self.tick(down='A')
         self.recorder.start.assert_called_once()
 
+    def test_b_discards_llm_result_without_speaking(self):
+        job = self.job()
+        self.c.job_stage = 'llm'
+        job.result = ('NICHT SPRECHEN.', 'openai/gpt-5.4-mini')
+
+        self.tick(down='B')
+        job.cancel.assert_called_once()
+
+        job.done.is_set.return_value = True
+        self.tick()
+
+        self.assertIsNone(self.c.job)
+        names = [e['event'] for e in self.events()]
+        self.assertIn('llm_discarded', names)
+        self.assertNotIn('llm_response', names)
+        self.speech.start.assert_not_called()
+
     def test_volume_and_status_stay_usable_during_stt(self):
         self.job()
         with patch('ptt.change_volume') as volume:
@@ -240,6 +257,22 @@ class ControllerTests(unittest.TestCase):
         self.speech.start.assert_not_called()
         self.tick(down='A')
         self.recorder.start.assert_called_once()
+
+    def test_completed_speech_logs_playback_total_latency(self):
+        self.speech.poll.return_value = 0
+        self.c.speech_started_at = time.monotonic() - 0.05
+
+        self.tick()
+
+        latency = [
+            e for e in self.events()
+            if e['event'] == 'latency'
+            and e.get('stage') == 'tts'
+            and e.get('metric') == 'playback_total'
+        ]
+        self.assertTrue(latency)
+        self.assertGreaterEqual(latency[-1]['latency_ms'], 0)
+        self.assertIsNone(self.c.speech_started_at)
 
     def test_held_a_at_service_start_requires_release(self):
         self.c = VoiceController(self.recorder, self.speech, .04, 30)
@@ -353,8 +386,24 @@ class ResidentSpeechTests(unittest.TestCase):
                 profile="servitor",
             )
 
-            speech.start("Systemstatus")
-            self.assertEqual(self._wait_result(speech), 0)
+            output = StringIO()
+            with redirect_stdout(output):
+                speech.start("Systemstatus")
+                self.assertEqual(self._wait_result(speech), 0)
+
+        speech_events = [
+            json.loads(line)
+            for line in output.getvalue().splitlines()
+            if line.startswith("{")
+        ]
+        first_chunk_latency = [
+            event for event in speech_events
+            if event.get("event") == "latency"
+            and event.get("stage") == "tts"
+            and event.get("metric") == "first_chunk"
+        ]
+        self.assertTrue(first_chunk_latency)
+        self.assertGreaterEqual(first_chunk_latency[-1]["latency_ms"], 0)
 
         playback = popen.call_args.args[0]
         self.assertEqual(playback[0], "/usr/bin/ffmpeg")
