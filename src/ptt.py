@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import threading
 import time
@@ -217,11 +218,12 @@ class Recorder:
             event('recording', stt='vosk-live', sample_rate=16000, channels=1)
             return
 
-        self._capture_rate = 48000
-        self._capture_channels = 2
+        isolated = os.environ.get('PTT_MEMORY_MODE') == 'isolated'
+        self._capture_rate = 16000 if isolated else 48000
+        self._capture_channels = 1 if isolated else 2
         self.process = subprocess.Popen([
             '/usr/bin/arecord', '-q', '-D', self.device, '-t', 'raw',
-            '-f', 'S16_LE', '-r', '48000', '-c', '2',
+            '-f', 'S16_LE', '-r', str(self._capture_rate), '-c', str(self._capture_channels),
             '-d', str(math.ceil(self.limit)), str(self.raw)],
             stdin=subprocess.DEVNULL)
         event('recording')
@@ -557,7 +559,7 @@ def main():
         # speak.py invokes Piper in its venv, then playback. Both processes
         # are owned by SpeechOutput's group and ended before new capture/STT.
         speech = SpeechOutput(
-            f"{os.environ.get('PIPER_PYTHON', '/opt/pi-voice-assistant/.venv/bin/python')} "
+            f'{shlex.quote(os.sys.executable)} '
             '/opt/pi-voice-assistant/src/speak.py')
         event('tts_ready', mode='isolated', profile=os.environ.get('TTS_VOICE_PROFILE', 'normal'))
     else:

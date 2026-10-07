@@ -4,6 +4,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
+from pathlib import Path
+from runtime_metrics import phase
 
 from voice_effects import build_playback_command, resolve_voice_profile
 
@@ -57,20 +60,24 @@ def speak(text: str) -> None:
     os.close(fd)
 
     try:
-        subprocess.run(
-            _piper_command(piper_python, model, wav_file, text, profile),
-            input=text,
-            text=True,
-            check=True,
-        )
-        subprocess.run(
-            build_playback_command(
-                wav_file,
-                audio_device,
-                profile=profile,
-            ),
-            check=True,
-        )
+        with phase('tts', 'worker_total'):
+            if os.environ.get('PTT_MEMORY_MODE') == 'isolated':
+                environment = dict(os.environ, VOICE_WORKER_STARTED_AT=str(time.monotonic()))
+                subprocess.run(
+                    [piper_python, str(Path(__file__).with_name('piper_worker.py')),
+                     model, wav_file, profile],
+                    input=text, text=True, check=True, env=environment,
+                )
+            else:
+                subprocess.run(
+                    _piper_command(piper_python, model, wav_file, text, profile),
+                    input=text, text=True, check=True,
+                )
+        with phase('tts', 'playback'):
+            subprocess.run(
+                build_playback_command(wav_file, audio_device, profile=profile),
+                check=True,
+            )
     finally:
         try:
             os.remove(wav_file)

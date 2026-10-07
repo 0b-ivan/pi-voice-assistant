@@ -24,6 +24,8 @@ install -m 0644 "${repo_root}/src/ptt.py" /opt/pi-voice-assistant/src/ptt.py
 install -m 0644 "${repo_root}/src/llm.py" /opt/pi-voice-assistant/src/llm.py
 install -m 0644 "${repo_root}/src/transcribe.py" /opt/pi-voice-assistant/src/transcribe.py
 install -m 0755 "${repo_root}/src/speak.py" /opt/pi-voice-assistant/src/speak.py
+install -m 0644 "${repo_root}/src/runtime_metrics.py" /opt/pi-voice-assistant/src/runtime_metrics.py
+install -m 0644 "${repo_root}/src/piper_worker.py" /opt/pi-voice-assistant/src/piper_worker.py
 install -m 0644 "${repo_root}/src/button_shim.py" /opt/pi-voice-assistant/src/button_shim.py
 install -m 0644 "${repo_root}/src/voice_controls.py" /opt/pi-voice-assistant/src/voice_controls.py
 install -m 0644 "${repo_root}/src/voice_effects.py" /opt/pi-voice-assistant/src/voice_effects.py

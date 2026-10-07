@@ -8,6 +8,9 @@ import os
 from pathlib import Path
 import sys
 import subprocess
+import time
+from contextlib import nullcontext
+from runtime_metrics import phase, process_ready
 import wave
 
 
@@ -104,6 +107,11 @@ def _iter_vosk_pcm(path: Path):
         raise TranscriptionError(f"invalid WAV for Vosk: {exc}") from exc
 
 
+def _stt_phase(metric):
+    return (phase('stt', metric, stream=sys.stderr)
+            if os.environ.get('VOICE_WORKER_TIMINGS') == '1' else nullcontext())
+
+
 def _vosk_module():
     vendor_path = Path(
         os.environ.get("VOSK_PYTHON_PATH", "/opt/pi-voice-assistant/vendor")
@@ -111,7 +119,8 @@ def _vosk_module():
     if vendor_path.is_dir() and str(vendor_path) not in sys.path:
         sys.path.insert(0, str(vendor_path))
     try:
-        import vosk
+        with (_stt_phase('import') if 'vosk' not in sys.modules else nullcontext()):
+            import vosk
     except (ImportError, OSError) as exc:
         raise TranscriptionError(
             "Vosk Python package is unavailable; run scripts/install-vosk.sh"
@@ -132,7 +141,8 @@ def _load_vosk_model():
     vosk = _vosk_module()
     try:
         vosk.SetLogLevel(-1)
-        model = vosk.Model(str(model_path))
+        with _stt_phase('model_load'):
+            model = vosk.Model(str(model_path))
     except Exception as exc:
         raise TranscriptionError(f"failed to load Vosk model {model_path}: {exc}") from exc
 
@@ -218,27 +228,28 @@ def transcribe_vosk(path: str | os.PathLike[str]) -> str:
     audio_path = _audio_path(path)
     model = _load_vosk_model()
 
-    try:
-        vosk = _vosk_module()
-        recognizer = vosk.KaldiRecognizer(model, VOSK_SAMPLE_RATE)
-        parts = []
-        for pcm in _iter_vosk_pcm(audio_path):
-            if recognizer.AcceptWaveform(pcm):
-                text = _result_text(recognizer.Result(), "segment")
-                if text:
-                    parts.append(text)
-        final_text = _result_text(recognizer.FinalResult(), "final")
-        if final_text:
-            parts.append(final_text)
-    except TranscriptionError:
-        raise
-    except Exception as exc:
-        raise TranscriptionError(f"Vosk transcription failed: {exc}") from exc
+    with _stt_phase('recognition'):
+        try:
+            vosk = _vosk_module()
+            recognizer = vosk.KaldiRecognizer(model, VOSK_SAMPLE_RATE)
+            parts = []
+            for pcm in _iter_vosk_pcm(audio_path):
+                if recognizer.AcceptWaveform(pcm):
+                    text = _result_text(recognizer.Result(), "segment")
+                    if text:
+                        parts.append(text)
+            final_text = _result_text(recognizer.FinalResult(), "final")
+            if final_text:
+                parts.append(final_text)
+        except TranscriptionError:
+            raise
+        except Exception as exc:
+            raise TranscriptionError(f"Vosk transcription failed: {exc}") from exc
 
-    text = " ".join(parts).strip()
-    if not text:
-        raise TranscriptionError("Vosk returned no transcript")
-    return text
+        text = " ".join(parts).strip()
+        if not text:
+            raise TranscriptionError("Vosk returned no transcript")
+        return text
 
 
 def transcribe_with_provider(path: str | os.PathLike[str]) -> tuple[str, str]:
@@ -246,7 +257,9 @@ def transcribe_with_provider(path: str | os.PathLike[str]) -> tuple[str, str]:
     if os.environ.get("PTT_MEMORY_MODE", "resident") == "isolated":
         # Never load the native model in the controller. Reap this worker before
         # returning its transcript so subsequent Piper cannot overlap Vosk.
-        environment = dict(os.environ, PTT_MEMORY_MODE="resident")
+        environment = dict(os.environ, PTT_MEMORY_MODE="resident",
+                           VOICE_WORKER_TIMINGS="1",
+                           VOICE_WORKER_STARTED_AT=str(time.monotonic()))
         try:
             result = subprocess.run(
                 [sys.executable, str(Path(__file__).resolve()), str(path)],
@@ -255,6 +268,8 @@ def transcribe_with_provider(path: str | os.PathLike[str]) -> tuple[str, str]:
             )
         except subprocess.TimeoutExpired as exc:
             raise TranscriptionError("isolated Vosk exceeded 120 seconds") from exc
+        if result.stderr:
+            print(result.stderr.rstrip(), file=sys.stderr, flush=True)
         if result.returncode:
             raise TranscriptionError(
                 f"isolated Vosk failed ({result.returncode}): {result.stderr[-2000:]}"
@@ -276,6 +291,8 @@ def main() -> int:
     parser.add_argument("audio", help="WAV file to transcribe")
     args = parser.parse_args()
     try:
+        if os.environ.get('VOICE_WORKER_TIMINGS') == '1':
+            process_ready('stt')
         text, provider = transcribe_with_provider(args.audio)
         print(text)
         print(f"STT_PROVIDER_USED={provider}", file=os.sys.stderr)

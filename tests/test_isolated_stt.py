@@ -64,7 +64,7 @@ class KaldiRecognizer:
                 ptt.main()
             prepare.assert_not_called()
             resident.assert_not_called()
-            self.assertIn('/.venv/bin/python', cli.call_args.args[0])
+            self.assertIn(sys.executable, cli.call_args.args[0])
             self.assertIn('/src/speak.py', cli.call_args.args[0])
             cli.return_value.stop.assert_called_once()
 

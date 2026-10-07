@@ -1,3 +1,4 @@
+import os
 import json
 from io import BytesIO
 import signal
@@ -127,6 +128,17 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('test-device', argv)
         self.assertIn('48000', argv)
         self.assertEqual(argv[-2:], ['1', str(self.r.raw)])
+
+    def test_isolated_capture_uses_native_vosk_format_without_live_model(self):
+        with patch.dict(os.environ, {'PTT_MEMORY_MODE': 'isolated'}), patch(
+            'ptt.subprocess.Popen', return_value=FakeProcess()
+        ) as popen, redirect_stdout(self.output):
+            self.r.start()
+        command = popen.call_args.args[0]
+        self.assertEqual(command[command.index('-r') + 1], '16000')
+        self.assertEqual(command[command.index('-c') + 1], '1')
+        self.assertEqual(command[-1], str(self.r.raw))
+        self.assertIsNone(self.r._pump_thread)
 
     def test_release_publishes_valid_wav_and_contract(self):
         proc = self.r.process = FakeProcess()

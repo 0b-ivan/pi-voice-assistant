@@ -291,3 +291,52 @@ Stabilität den identischen Versuch mit Servitor/Low durchführen.
 
 Rückkehr zum bisherigen Live-Modus: `PTT_MEMORY_MODE=resident` und Dienst
 neu starten. Der bisherige bestätigte OOM bleibt dann ein bekanntes Risiko.
+
+## Getrennte Phasen und direkte Piper-API im isolierten Modus
+
+Hardware-Befund: drei Paris-Antworten mit normaler Stimme benötigen jeweils
+ca. 15 s STT und 22 s TTS insgesamt. Auch lange Antworten endeten erfolgreich;
+das ist Stabilitätsfortschritt, aber noch keine Latenzabnahme.
+
+Der isolierte Modus nimmt jetzt wie Live-Vosk direkt PCM16/16 kHz/Mono auf,
+vermeidet dadurch Downmix/48→16-kHz-Resampling und erzeugt kleinere Dateien.
+Die Aufnahme bleibt WAV-basiert, ohne gleichzeitig geladenen Erkenner.
+Der TTS-Koordinator läuft mit System-Python. Ein einzelner venv-Worker nutzt
+Pipers Python-API statt des CLI-Moduls; der Worker wird vollständig beendet,
+bevor der Koordinator Wiedergabe startet. Vosk/Piper bleiben getrennt.
+Keine zusätzliche Installation, keine größeren Modelle, kein neuer Swap.
+
+Neue `latency`-Metriken im Journal:
+
+| Stage | Metrik | Bedeutung |
+| --- | --- | --- |
+| stt/tts | worker_start | Start des Erkennungs-/Syntheseworkers bis bereit für Imports |
+| stt/tts | import | Laden des jeweiligen Pakets |
+| stt/tts | model_load | Laden des nativen Modells |
+| stt | recognition | Erkennung einschließlich WAV-Verarbeitung und FinalResult |
+| tts | synthesis | Erzeugen des WAV einschließlich Phonemisierung |
+| tts | worker_total | Gesamter Syntheseworker, bis er beendet/reaped ist |
+| tts | playback | Wiedergabeprozess einschließlich Start, DSP und Audioausgabe |
+
+`tts_audio_ready` meldet tatsächliche WAV-Dauer (`audio_duration_ms`).
+`playback` enthält diese gesprochene Dauer, keine reine Startlatenz.
+Phasen geben zusätzlich eigene CPU-Zeit und unter Linux RSS/Swap aus.
+CPU-Zeit des Koordinators in `worker_total` enthält nicht den Kindprozess;
+dessen Phasen melden seine eigene CPU-Zeit. Metriken enthalten keinen Text,
+keinen Key und keine Audiodaten. Vosk-Worker-Metriken werden nach Workerende
+weitergegeben, ohne sie dem Transkript beizumischen. Weitere nicht gemessene
+Koordinator-/Playback-Prozessstartanteile bleiben im Gesamtwert enthalten.
+
+Die API wurde gegen die installierte Zielversion
+[Piper 1.8.0](https://github.com/OHF-Voice/piper1-gpl/blob/v1.8.0/src/piper/voice.py)
+geprüft. Servitor behält explizite Einstellungen und ohne Vorgaben die
+bisherigen CLI-Defaults 1.10/.30/.25; normales Profil behält Piper-Defaults.
+Die Bibliotheks- statt CLI-Phonemisierung des gesamten Textes kann sich bei
+mehrzeiliger Ausgabe in der Pausensetzung unterscheiden. Der DSP ist unverändert.
+Die Pi-Beschleunigung ist noch nicht gemessen und wird nicht zugesichert.
+
+Aktualisieren, Tests ausführen, nur bei `OK` Installer laufen lassen. Bestehende
+Einstellungen `PTT_MEMORY_MODE=isolated`, normal/Low und Mixer beibehalten.
+Danach zweimal Paris testen und das Journal ab `recording` vollständig liefern.
+Bei `capture_ready` sollen 16 kHz und ein Kanal erscheinen. Für spätere
+Servitor-Abnahme Modell/Parameter identisch halten.
