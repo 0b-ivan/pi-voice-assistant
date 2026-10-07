@@ -190,7 +190,6 @@ class ServerTest(unittest.TestCase):
     def test_openrouter_failure_falls_back_to_local_llm(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
         import llm
-        pipeline = ss.RealPipeline(self.tmp.name)
         cases = (
             ('1', None, ('lokal', 'local/q')),
             ('0', None, llm.LLMError),
@@ -205,11 +204,31 @@ class ServerTest(unittest.TestCase):
                                         return_value=('lokal', 'local/q'),
                                         side_effect=local_error), \
                     unittest.mock.patch('sys.stdout'):
+                pipeline = ss.RealPipeline(self.tmp.name)  # fresh retry window
                 if isinstance(expected, tuple):
                     self.assertEqual(pipeline.reply('frage'), expected)
                 else:
                     with self.assertRaisesRegex(expected, '402 no credits'):
                         pipeline.reply('frage')
+
+    def test_openrouter_is_skipped_for_a_while_after_a_failure(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+        import llm
+        now = [100.0]
+        pipeline = ss.RealPipeline(self.tmp.name, clock=lambda: now[0])
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_LOCAL_LLM': '1',
+                                                   'SERVITOR_OPENROUTER_RETRY_SECONDS': '60'}), \
+                unittest.mock.patch('llm.generate_reply',
+                                    side_effect=llm.LLMError('timed out')) as remote, \
+                unittest.mock.patch('llm.generate_local_reply', return_value=('l', 'local/q')), \
+                unittest.mock.patch('sys.stdout'):
+            pipeline.reply('a')
+            now[0] += 30
+            pipeline.reply('b')
+            self.assertEqual(remote.call_count, 1)  # skipped inside the window
+            now[0] += 31
+            pipeline.reply('c')
+            self.assertEqual(remote.call_count, 2)  # retried after it
 
     def raw_turn(self, body_bytes):
         """Send a hand-written chunked body; return the decoded NDJSON events."""

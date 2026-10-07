@@ -86,9 +86,13 @@ class Config:
 class RealPipeline:
     """Resident models; every method is called under the service turn lock."""
 
-    def __init__(self, workdir):
+    def __init__(self, workdir, clock=time.monotonic):
         self.workdir = workdir
         self.voice = None
+        self.clock = clock
+        # After an OpenRouter failure, go straight to the local model for a
+        # while instead of paying the full timeout on every turn of an outage.
+        self.openrouter_retry_at = 0.0
 
     def load(self):
         import transcribe
@@ -115,12 +119,18 @@ class RealPipeline:
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
         from llm import LLMError, generate_local_reply, generate_reply
-        try:
-            return generate_reply(text)
-        except LLMError as exc:
-            if os.environ.get('SERVITOR_LOCAL_LLM') != '1':
-                raise
-            primary = str(exc)
+        local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
+        if local and self.clock() < self.openrouter_retry_at:
+            primary = 'OpenRouter skipped after a recent failure'
+        else:
+            try:
+                return generate_reply(text)
+            except LLMError as exc:
+                if not local:
+                    raise
+                primary = str(exc)
+                retry = float(os.environ.get('SERVITOR_OPENROUTER_RETRY_SECONDS', '60'))
+                self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
             return generate_local_reply(text)

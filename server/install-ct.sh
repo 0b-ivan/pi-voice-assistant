@@ -45,6 +45,8 @@ OPENROUTER_API_KEY=REPLACE_ME
 OPENROUTER_LLM_TIMEOUT_SECONDS=8
 # Offline fallback (server/install-llm.sh): answers when OpenRouter fails.
 SERVITOR_LOCAL_LLM=1
+# After an OpenRouter failure, use the local model directly for this long.
+SERVITOR_OPENROUTER_RETRY_SECONDS=60
 LOCAL_LLM_MODEL_NAME=qwen2.5-3b
 LOCAL_LLM_MAX_TOKENS=120
 ENV
