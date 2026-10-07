@@ -176,6 +176,14 @@ class Recorder:
                 proc.stdout.close()
 
     def start(self):
+        # A timed-out native recognizer still owns its file and result fields.
+        # Never reset them or start a second recognizer before it has exited.
+        if self._pump_thread is not None:
+            if self._pump_thread.is_alive():
+                raise RuntimeError('previous live Vosk audio pump is still draining')
+            self._pump_thread = None
+        if self.process is not None:
+            raise RuntimeError('recording is already active')
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.ready.unlink(missing_ok=True)
         self.raw.unlink(missing_ok=True)
@@ -234,9 +242,9 @@ class Recorder:
                 raise RuntimeError('arecord did not stop within two seconds')
 
             if self._pump_thread is not None:
-                self._pump_thread.join(timeout=2)
+                self._pump_thread.join(timeout=10)
                 if self._pump_thread.is_alive():
-                    raise RuntimeError('live Vosk audio pump did not stop within two seconds')
+                    raise RuntimeError('live Vosk audio pump did not drain within ten seconds')
 
             if not publish:
                 return None
@@ -287,9 +295,10 @@ class Recorder:
             )
             return self.ready
         finally:
-            self.raw.unlink(missing_ok=True)
-            self.partial.unlink(missing_ok=True)
-            self._pump_thread = None
+            if self._pump_thread is None or not self._pump_thread.is_alive():
+                self.raw.unlink(missing_ok=True)
+                self.partial.unlink(missing_ok=True)
+                self._pump_thread = None
 
     def take_live_transcript(self):
         result, error = self._live_result, self._live_error

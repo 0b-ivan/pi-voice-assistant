@@ -98,8 +98,10 @@ def _servitor_synthesis_config(voice):
     except ImportError as exc:
         raise RuntimeError("Piper SynthesisConfig unavailable") from exc
 
-    speaker_id = int(os.environ.get("TTS_PIPER_SPEAKER_ID", "4"))
     num_speakers = getattr(getattr(voice, "config", None), "num_speakers", None)
+    speaker_id = int(os.environ.get(
+        "TTS_PIPER_SPEAKER_ID", "0" if num_speakers == 1 else "4"
+    ))
     if num_speakers is not None and not 0 <= speaker_id < num_speakers:
         raise ValueError(
             f"TTS_PIPER_SPEAKER_ID={speaker_id} outside model speaker range "
@@ -165,6 +167,9 @@ class ResidentSpeechOutput:
         self.runtime_dir = Path(runtime_dir)
         self.runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.profile = resolve_voice_profile(profile)
+        self.playback_mode = os.environ.get("TTS_PLAYBACK_MODE", "stream").strip().lower()
+        if self.playback_mode not in ("stream", "buffered"):
+            raise ValueError("TTS_PLAYBACK_MODE must be stream or buffered")
         self.voice = (loader or _load_piper_voice)(self.model)
         self._popen = popen or subprocess.Popen
         self._synthesis_lock = threading.Lock()
@@ -202,7 +207,7 @@ class ResidentSpeechOutput:
             job = self._job
             if job is None or job.done.is_set():
                 return 0.0
-            if self.profile != "servitor":
+            if self.profile != "servitor" or self.playback_mode == "buffered":
                 return 1.0
             started = job.playback_started_at
             segments = tuple(job.activity_segments)
@@ -387,7 +392,7 @@ class ResidentSpeechOutput:
 
     def _run(self, job, text):
         try:
-            if self.profile == "servitor":
+            if self.profile == "servitor" and self.playback_mode == "stream":
                 self._run_servitor(job, text)
             else:
                 self._run_file(job, text)
@@ -395,6 +400,7 @@ class ResidentSpeechOutput:
             if self._current(job):
                 job.error = str(exc)
                 job.result = 1
+                _speech_event("speech_error", message=str(exc))
         finally:
             job.done.set()
 

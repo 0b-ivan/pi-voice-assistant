@@ -159,6 +159,12 @@ def build_stream_playback_command(
         "-hide_banner",
         "-loglevel",
         "warning",
+        # PCM format is known. Default stream analysis can wait for seconds of
+        # audio (or EOF), defeating sentence-at-a-time Piper synthesis.
+        "-probesize",
+        "32",
+        "-analyzeduration",
+        "1",
         "-f",
         "s16le",
         "-ar",

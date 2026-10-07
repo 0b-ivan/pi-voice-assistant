@@ -72,10 +72,15 @@ class VoiceEffectsTests(unittest.TestCase):
         )
         self.assertEqual(command[0], "/usr/bin/ffmpeg")
         self.assertEqual(
-            command[4:12],
+            command[8:16],
             ["-f", "s16le", "-ar", "22050", "-ac", "1", "-i", "pipe:0"],
         )
         self.assertIn("-filter_complex", command)
+        input_index = command.index("-i")
+        self.assertEqual(command[command.index("-probesize") + 1], "32")
+        self.assertEqual(command[command.index("-analyzeduration") + 1], "1")
+        self.assertLess(command.index("-probesize"), input_index)
+        self.assertLess(command.index("-analyzeduration"), input_index)
         self.assertEqual(command[-3:], ["-f", "alsa", "test-device"])
 
     def test_servitor_ffmpeg_path_can_be_overridden(self):

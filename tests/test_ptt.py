@@ -168,6 +168,29 @@ class RecorderTests(unittest.TestCase):
         self.assertTrue(proc.killed)
         self.assertFalse(self.r.partial.exists())
 
+    def test_slow_pump_retains_capture_ownership_until_it_exits(self):
+        pump = unittest.mock.Mock()
+        pump.is_alive.return_value = True
+        self.r._pump_thread = pump
+        self.r.process = FakeProcess()
+        self.wav()
+        with self.assertRaisesRegex(RuntimeError, 'did not drain'):
+            self.r.finish('release')
+        pump.join.assert_called_once_with(timeout=10)
+        self.assertIs(self.r._pump_thread, pump)
+        self.assertTrue(self.r.raw.exists())
+        with patch('ptt.subprocess.Popen') as popen:
+            with self.assertRaisesRegex(RuntimeError, 'still draining'):
+                self.r.start()
+            popen.assert_not_called()
+        self.assertIs(self.r._pump_thread, pump)
+        pump.is_alive.return_value = False
+        with patch('ptt.subprocess.Popen', return_value=FakeProcess()), redirect_stdout(self.output):
+            self.r.start()
+        self.assertIsNone(self.r._pump_thread)
+        self.assertIsNone(self.r.take_live_transcript())
+        self.assertFalse(self.r.raw.exists())
+
     def test_unaligned_pcm_is_rejected(self):
         self.r.process = FakeProcess()
         self.wav()

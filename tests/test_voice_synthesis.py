@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from voice_controls import _synthesize_voice
+from voice_controls import _synthesize_voice, _servitor_synthesis_config
 
 
 class VoiceSynthesisTests(unittest.TestCase):
@@ -67,6 +67,20 @@ class VoiceSynthesisTests(unittest.TestCase):
         )
         voice.synthesize.assert_called_once()
         self.assertEqual(voice.synthesize.call_args.args[0], "Eins. Zwei.")
+
+    def test_single_speaker_default_and_explicit_invalid_speaker(self):
+        config_module = ModuleType("piper.config")
+        config_module.SynthesisConfig = lambda **kwargs: SimpleNamespace(**kwargs)
+        voice = SimpleNamespace(config=SimpleNamespace(num_speakers=1))
+        with patch.dict(sys.modules, {"piper.config": config_module}), patch.dict(
+            os.environ, {}, clear=True
+        ):
+            config, silence = _servitor_synthesis_config(voice)
+            self.assertEqual(config.speaker_id, 0)
+            self.assertEqual(silence, 0.32)
+            os.environ["TTS_PIPER_SPEAKER_ID"] = "4"
+            with self.assertRaisesRegex(ValueError, 'outside model speaker range'):
+                _servitor_synthesis_config(voice)
 
     def test_normal_profile_keeps_default_piper_path(self):
         voice = Mock()

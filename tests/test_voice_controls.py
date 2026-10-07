@@ -420,6 +420,31 @@ class ResidentSpeechTests(unittest.TestCase):
         self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
         self.assertFalse(list(Path(self.tmp.name).glob("speech-effect-*.wav")))
 
+    def test_buffered_servitor_finishes_synthesis_before_playback(self):
+        voice = Mock()
+        synthesized = threading.Event()
+        def synthesize(_voice, text, audio, profile):
+            self.assertEqual(profile, "servitor")
+            self._write_audio(text, audio)
+            synthesized.set()
+        proc = Mock()
+        proc.wait.return_value = 0
+        def popen(command, **kwargs):
+            self.assertTrue(synthesized.is_set())
+            self.assertNotIn("pipe:0", command)
+            self.assertTrue(Path(command[command.index("-i") + 1]).exists())
+            self.assertIn("-filter_complex", command)
+            return proc
+        with patch.dict(os.environ, {"TTS_PLAYBACK_MODE": "buffered"}), patch(
+            "voice_controls._synthesize_voice", side_effect=synthesize
+        ):
+            speech = ResidentSpeechOutput(
+                "/models/test.onnx", "test-device", self.tmp.name,
+                loader=Mock(return_value=voice), popen=popen, profile="servitor")
+            speech.start("Hallo")
+            self.assertEqual(self._wait_result(speech), 0)
+        self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
+
     def test_cancelled_synthesis_never_starts_playback(self):
         started, release = threading.Event(), threading.Event()
         voice = Mock()
