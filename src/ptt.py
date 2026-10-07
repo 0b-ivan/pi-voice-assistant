@@ -520,7 +520,8 @@ class VoiceController:
         elif job.transcript:
             event('remote_fallback', target='llm')
             self._start_llm(job.transcript)
-        elif job.error_stage in ('upload', 'recognize', 'stream') and capture is not None:
+        elif (job.error_stage in ('upload', 'recognize', 'stream', 'internal')
+              and capture is not None):
             event('remote_fallback', target='stt')
             event('processing', path=str(capture))
             self._start_local_stt(capture)

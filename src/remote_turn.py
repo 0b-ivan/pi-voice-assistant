@@ -170,7 +170,9 @@ class RemoteTurnUplink:
             connection.putrequest('POST', f'{path}/v1/turn?format={self.config.audio_format}',
                                   skip_accept_encoding=True)
             connection.putheader('Authorization', f'Bearer {self.config.token}')
-            if self.config.access_client_id:
+            # Access credentials only travel encrypted (Internet path), never
+            # to a plain-HTTP LAN endpoint configured alongside it.
+            if self.config.access_client_id and urllib.parse.urlsplit(url).scheme == 'https':
                 connection.putheader('CF-Access-Client-Id', self.config.access_client_id)
                 connection.putheader('CF-Access-Client-Secret', self.config.access_client_secret)
             connection.putheader('Content-Type', 'application/octet-stream')

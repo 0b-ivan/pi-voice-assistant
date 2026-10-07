@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 import wave
@@ -229,6 +230,31 @@ class ServerTest(unittest.TestCase):
             now[0] += 31
             pipeline.reply('c')
             self.assertEqual(remote.call_count, 2)  # retried after it
+
+    def test_incomplete_headers_time_out_before_auth(self):
+        import socket
+        self.service.config.idle_timeout = 0.3
+        with socket.create_connection(('127.0.0.1', self.server.server_address[1]), 5) as sock:
+            sock.settimeout(3)
+            sock.sendall(b'POST /v1/turn HTTP/1.1\r\nHost: x\r\n')  # never finished
+            started = time.monotonic()
+            self.assertEqual(sock.recv(1024), b'')  # server closed the connection
+            self.assertLess(time.monotonic() - started, 2)
+
+    def test_vosk_failure_during_upload_is_a_recognize_error(self):
+        def broken(_pcm):
+            raise RuntimeError('vosk crashed')
+        original = self.pipeline.recognizer
+
+        def recognizer():
+            rec = original()
+            rec.accept_pcm = broken
+            return rec
+        self.pipeline.recognizer = recognizer
+        _, data = self.request('/v1/turn', b'\1' * 16000)
+        last = self.events(data)[-1]
+        self.assertEqual((last['event'], last['stage'], last['code']),
+                         ('error', 'recognize', 'stt'))
 
     def raw_turn(self, body_bytes):
         """Send a hand-written chunked body; return the decoded NDJSON events."""

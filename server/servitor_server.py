@@ -231,7 +231,10 @@ class Service:
                     pending += chunk
                     usable = len(pending) - len(pending) % 2
                     if usable:
-                        recognizer.accept_pcm(pending[:usable])
+                        try:
+                            recognizer.accept_pcm(pending[:usable])
+                        except Exception as exc:
+                            raise TurnError('recognize', 'stt', str(exc)) from exc
                         pending = pending[usable:]
                 upload_end = time.monotonic()
                 if received < PCM_RATE * 2 // 5:
@@ -321,6 +324,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     @property
     def service(self):
         return self.server.service
+
+    @property
+    def timeout(self):
+        # StreamRequestHandler.setup() applies this to the accepted socket, so
+        # a client that never finishes its request line/headers times out
+        # before authentication and rate limiting are even reached.
+        return self.server.service.config.idle_timeout
 
     def log_message(self, fmt, *args):
         sys.stderr.write('%s %s\n' % (self.address_string(), fmt % args))

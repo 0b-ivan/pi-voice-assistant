@@ -184,6 +184,42 @@ class RemoteTurnTests(LiveServerCase):
         self.assertTrue(created[0].closed)
         self.assertIsNone(uplink.connection)
 
+    def test_access_credentials_only_sent_over_https(self):
+        sent = {}
+
+        class Recording:
+            def __init__(self, url):
+                self.url, self.sock, self.headers = url, Mock(), {}
+                sent[url] = self.headers
+
+            def connect(self):
+                pass
+
+            def putrequest(self, *args, **kwargs):
+                pass
+
+            def putheader(self, name, value):
+                self.headers[name] = value
+
+            def endheaders(self):
+                pass
+
+            def close(self):
+                pass
+
+        env = {'ASSISTANT_TOKEN': TOKEN, 'ASSISTANT_CF_ACCESS_CLIENT_ID': 'id',
+               'ASSISTANT_CF_ACCESS_CLIENT_SECRET': 'secret'}
+        for url in ('http://172.22.9.107:8765', 'https://servitor.example.org'):
+            config = load_remote_config({**env, 'ASSISTANT_BASE_URL': url})
+            uplink = RemoteTurnUplink(config, connect=lambda u, _t: Recording(u))
+            uplink.cancel()
+            uplink.thread.join(5)
+            uplink._request(url)
+        self.assertNotIn('CF-Access-Client-Secret', sent['http://172.22.9.107:8765'])
+        self.assertEqual(sent['https://servitor.example.org']['CF-Access-Client-Secret'],
+                         'secret')
+        self.assertIn('Authorization', sent['http://172.22.9.107:8765'])
+
     def test_wrong_token_is_reported(self):
         job = self.turn(self.config(token='y' * 40))
         self.assertEqual(job.error_code, 'unauthorized')
@@ -351,6 +387,13 @@ class RemoteControllerTests(unittest.TestCase):
             self.finish(job)
         worker.assert_not_called()
         self.assertIn('stt_error', [e['event'] for e in self.events()])
+
+    def test_internal_server_error_falls_back_to_local_stt(self):
+        job = FakeJob(error='boom', error_stage='internal', error_code='internal')
+        with patch('ptt.TranscriptionJob') as worker:
+            self.finish(job)
+        worker.assert_called_once()
+        self.assertEqual(self.c.job_stage, 'stt')
 
     def test_cancel_drops_open_uplink(self):
         self.c.cancel(False, 1.0)

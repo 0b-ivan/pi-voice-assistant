@@ -22,6 +22,7 @@ Fällt der Server aus, setzt der Pi lokal dort fort, wo der Server aufgehört ha
 - Mikrofon-Audio verlässt den Pi jetzt, aber nur zum eigenen CT 107: im LAN direkt, später über Cloudflare mit Access-Service-Token. OpenRouter erhält weiterhin nur Text.
 - Vosk bleibt der einzige STT-Anbieter (auf dem Server und im Fallback).
 - Der Zugriff ist per Bearer-Token geschützt; das Token steht nur in `/etc/pi-voice-assistant.env` bzw. `/etc/servitor-voice.env`.
+- Restrisiko: Im LAN gehen Token und Audio unverschlüsselt per HTTP an CT 107. Wer im IoT-Netz mitlesen kann, sieht beides. Akzeptiert, weil der Weg nur im eigenen Netz verläuft; Cloudflare-Access-Zugangsdaten werden nur über HTTPS gesendet.
 
 ## Folgen
 
