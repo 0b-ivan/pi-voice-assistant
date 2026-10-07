@@ -72,7 +72,28 @@ Fällt OpenRouter aus (kein Internet, keine Credits, Rate-Limit, Timeout, 5xx), 
 | Kein Internet, erste Frage | lokal nach 8 s Timeout | 10,8 s |
 | Kein Internet, folgende Fragen (60-s-Fenster) | lokal | 1,1 s |
 
-Benchmark mit [`server/bench-local-llm.py`](../server/bench-local-llm.py): ca. 10 Token/s, Median 1,8–3,3 s. **Die inhaltliche Qualität des 3B-Modells ist schwach** (z. B. „Hauptstadt Australiens: Sydney“, „ein Tag hat 60 Minuten“). Es ist eine Notlösung, damit der Servitor offline antwortet; die Modellwahl ist offen.
+**Modellwahl 08.10.2026** mit [`server/bench-local-llm.py`](../server/bench-local-llm.py) (8 Fragen, warmer Lauf, CT 107 mit 4 Kernen):
+
+| Modell (Q4_K_M) | richtig | Median | Max | Anmerkung |
+|---|---|---|---|---|
+| Qwen2.5-3B-Instruct | ~4/8 | 2,7 s | 7,8 s | „ein Tag hat 60 Minuten“, 17×23 = 481 |
+| Gemma 3 4B | ~5/8 | 7,2 s | 9,6 s | 17×23 = 746; Sliding-Window-Attention verhindert Prompt-Cache, jede Antwort ≥ 6 s |
+| **Qwen3-4B-Instruct-2507** (gewählt) | ~6,5/8 | 3,0 s | 11,2 s | 1440 Minuten, 391, Canberra richtig; Tokio-Uhrzeit falsch; lange Erklärungen bis 11 s |
+
+Mit Qwen3 4B und ungültigem OpenRouter-Key: Serverzeit 2,5–3,9 s. `llama-server` belegt ca. 2,1 GB fest (für AVX2 umsortierte Gewichte) plus freigebbaren Dateicache.
+
+### Größeres Vosk-Modell: verworfen
+
+[`server/bench-vosk.py`](../server/bench-vosk.py) vergleicht Modelle auf 20 mit Piper synthetisierten Fragen (zwei Sprecher, zwei Sprechtempi):
+
+| Modell | WER | RAM | Ergebnis |
+|---|---|---|---|
+| `vosk-model-small-de-0.15` (aktiv) | 8,1 % | 225 MB | – |
+| `vosk-model-de-0.21` ohne `rescore`/`rnnlm` | 10,5 % | 790 MB | nicht besser (teils nur Schreibweise „wieviel“) |
+| `vosk-model-de-0.21` ohne `rescore` | – | – | OOM bei 5 GB Container-RAM |
+| `vosk-model-de-0.21` vollständig | – | > 4,6 GB | OOM, auch ohne laufendes LLM |
+
+Der Nutzen käme erst mit dem 2,1 GB großen `rescore`-Sprachmodell, für das der Host keinen RAM frei hat. Typische Restfehler des kleinen Modells: „ein Tag“ → „ein paar“, „nenne“ → „wenn die“. Eine bessere Erkennung bräuchte ein anderes Verfahren (z. B. Whisper), nicht ein größeres Vosk-Modell.
 
 ## Statusansage und Antwortpfad
 
