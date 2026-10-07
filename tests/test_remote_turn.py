@@ -338,13 +338,26 @@ class RemoteControllerTests(unittest.TestCase):
 
     def test_failed_upload_falls_back_to_local_stt(self):
         self.recorder.finish.return_value = Path('/tmp/capture.wav')
-        self.recorder.take_uplink.return_value = Mock(error='connection refused')
+        self.recorder.take_uplink.return_value = Mock(error='connection refused', rejection=None)
         with patch('ptt.TranscriptionJob') as job:
             self.c.submit('release')
         job.assert_called_once()
         self.assertEqual(self.c.job_stage, 'stt')
         names = [e['event'] for e in self.events()]
         self.assertIn('remote_fallback', names)
+
+    def test_early_rejection_keeps_its_code(self):
+        from remote_turn import RemoteTurnError
+        self.recorder.finish.return_value = Path('/tmp/capture.wav')
+        self.recorder.take_uplink.return_value = Mock(
+            error='Broken pipe',
+            rejection=RemoteTurnError('upload', 'unauthorized', 'HTTP 401 unauthorized'))
+        with patch('ptt.TranscriptionJob') as job:
+            self.c.submit('release')
+        job.assert_called_once()  # local fallback still runs
+        error = next(e for e in self.events() if e['event'] == 'remote_error')
+        self.assertEqual((error['code'], error['message']),
+                         ('unauthorized', 'HTTP 401 unauthorized'))
 
     def test_progress_maps_to_display_and_audio_is_played(self):
         job = FakeJob(result=dict(audio=Path('/tmp/remote-reply.wav'), host='h'), events=[

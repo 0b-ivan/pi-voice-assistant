@@ -434,7 +434,12 @@ class VoiceController:
                 self.job_started_at = time.monotonic()
                 return
             uplink.cancel()
-            event('remote_error', stage='upload', code='network', message=uplink.error)
+            # Keep the server's reason (unauthorized/rate_limited/busy) when it
+            # rejected the upload early; otherwise it was the network.
+            rejection = getattr(uplink, 'rejection', None)
+            event('remote_error', stage='upload',
+                  code=rejection.code if rejection is not None else 'network',
+                  message=rejection.message if rejection is not None else uplink.error)
             event('remote_fallback', target='stt')
         self._start_local_stt(capture)
 
