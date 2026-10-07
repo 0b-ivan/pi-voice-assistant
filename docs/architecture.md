@@ -48,6 +48,17 @@ Während der Server erreichbar ist, läuft auf dem Pi keine zusätzliche Live-Vo
 
 **Hardware-Messung 07.10.2026** (Pi Zero 2 W, LAN, WAV, Frage „Wie hoch ist der Eiffelturm?“, 3,6 s Aufnahme): Server nach Upload-Ende 1,67 s (STT-Abschluss 0,05 s, LLM 0,95 s, Synthese 0,48 s, Render 0,19 s). Loslassen bis Wiedergabestart ca. 2,0–2,5 s, vorher lokal ca. 13,7 s. Stimme unverändert; das Display durchlief alle Schritte. Diese Messung lief noch mit mitlaufender lokaler Vosk-Erkennung.
 
+**SSH-Test 07.10.2026, Stand #37** mit [`scripts/test-remote-turn.py`](../scripts/test-remote-turn.py) (gleiche Uplink-/Job-Klassen wie `pi-ptt`, 1,61 s Frage in Echtzeit gestreamt, Zeiten ab Upload-Ende):
+
+| Fall | Ergebnis |
+|---|---|
+| WAV, LAN | Audio bereit nach 1,48 s (Server 1,27 s), Wiedergabe auf dem WM8960 vollständig |
+| Opus, LAN | Server 1,34 s, aber Audio erst nach 6,64 s bereit: die ffmpeg-Dekodierung kostet auf dem Pi Zero ca. 5 s |
+| Server nicht erreichbar | `upload/network` nach 3 ms, lokaler Fallback erlaubt |
+| Erste URL tot, zweite CT 107 | Umschalten nach 1,5 s Connect-Timeout, Audio nach 2,1 s (im echten Betrieb überlappt der Timeout mit der Aufnahme) |
+
+Folgerung: Im LAN bleibt `ASSISTANT_AUDIO_FORMAT=wav`. Für den späteren Internetweg ist Opus erst sinnvoll, wenn die Dekodierung auf dem Pi schneller wird (z. B. residenter Decoder statt ffmpeg-Prozess).
+
 ## Statusansage und Antwortpfad
 
 SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest normierte Systemlast, CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.
