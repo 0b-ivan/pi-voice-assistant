@@ -143,3 +143,30 @@ class HybridControllerTests(unittest.TestCase):
                 controller.tick(held, (False,)*5, stamp)
         recorder.start.assert_not_called()
         prepare.assert_not_called()
+
+
+class SynthesisScratchTests(unittest.TestCase):
+    def test_scratch_is_released_even_when_piper_fails(self):
+        import tempfile
+        import threading
+        from voice_controls import ResidentSpeechOutput
+
+        class FailingVoice:
+            def synthesize(self, *args, **kwargs):
+                raise RuntimeError('piper failed')
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, {'PTT_MEMORY_MODE': 'resident'}, clear=True):
+            output = ResidentSpeechOutput('model.onnx', 'dev', tmp,
+                                          loader=lambda _model: FailingVoice(), profile='normal')
+            job = Mock()
+            output._job = job
+            output._synthesis_lock = threading.Lock()
+            with patch('voice_controls._release_synthesis_scratch') as release, \
+                    patch('voice_controls._synthesize_voice', side_effect=RuntimeError('piper')):
+                import wave
+                # wave may raise its own error while closing the empty file.
+                with self.assertRaises((RuntimeError, wave.Error)):
+                    output._run_file(job, 'Hallo')
+            release.assert_called_once()
+            self.assertEqual(list(Path(tmp).iterdir()), [])

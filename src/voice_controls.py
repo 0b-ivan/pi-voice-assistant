@@ -218,8 +218,8 @@ class ResidentSpeechOutput:
                 with phase('tts', 'warmup'):
                     with wave.open(name, 'wb') as audio:
                         _synthesize_voice(self.voice, 'Bereit.', audio, self.profile)
-                _release_synthesis_scratch()
             finally:
+                _release_synthesis_scratch()
                 Path(name).unlink(missing_ok=True)
 
     @property
@@ -426,10 +426,13 @@ class ResidentSpeechOutput:
             with self._synthesis_lock:
                 if not self._current(job):
                     return
-                with phase('tts', 'synthesis'):
-                    with wave.open(str(path), 'wb') as audio:
-                        _synthesize_voice(self.voice, text, audio, self.profile)
-                _release_synthesis_scratch()
+                try:
+                    with phase('tts', 'synthesis'):
+                        with wave.open(str(path), 'wb') as audio:
+                            _synthesize_voice(self.voice, text, audio, self.profile)
+                finally:
+                    # Also after a Piper error: hybrid mode preloads Vosk next.
+                    _release_synthesis_scratch()
             if not self._current(job):
                 return
             with wave.open(str(path), 'rb') as audio:

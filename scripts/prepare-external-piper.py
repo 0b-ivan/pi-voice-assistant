@@ -28,7 +28,8 @@ del model
 restored = onnx.load(target)
 after = {tensor.name: hashlib.sha256(numpy_helper.to_array(tensor).tobytes()).hexdigest()
          for tensor in restored.graph.initializer}
-assert before == after, 'Converted tensor values differ'
+if before != after:  # explicit: an assert would vanish under python -O
+    raise SystemExit('Converted tensor values differ; not writing a report')
 shutil.copyfile(str(source)+'.json', str(target)+'.json')
 report = dict(source=str(source), target=str(target),
               verified_initializers=len(before), nodes=len(restored.graph.node),
