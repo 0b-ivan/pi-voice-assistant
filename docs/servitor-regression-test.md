@@ -401,3 +401,22 @@ Tests ausführen und installieren. Kurze Hauptstadtfrage und drei kurze Sätze
 wiederholen. Zusätzlich subjektive Wartezeit bis zum ersten Ton und xruns erfassen.
 Keine Änderung von Gain, Filtern, Threads oder Prepacking aus diesen Messungen
 ableiten, bevor die getrennten Phasen vorliegen. PR bleibt bis Hardwareabnahme Draft.
+
+### FFmpeg-Dateivergleich ohne ALSA oder Sprachmodelle
+
+`scripts/diagnose-servitor-file.py INPUT.wav` verarbeitet dieselbe PCM-WAV
+nacheinander ohne DSP, mit unverändertem Servitor-DSP und mit demselben DSP
+bei einem Filterthread. Ausgabe: Gesamtprozesszeit, FFmpeg `-benchmark`
+(CPU-Zeit und Peak-RSS), Ausgabedauer und PCM-Hash. Temporäre Ausgabedateien
+werden entfernt, Eingabe bleibt erhalten. Kein ALSA, keine hörbare Wiedergabe.
+FFmpeg-Versionen können Peak-RSS plattformabhängig unterschiedlich ausgeben;
+macOS-Builds teils falsch beschriftet, daher Pi-Werte verwenden.
+Gleiche Hashes bestätigen identische PCM-Ausgabe der beiden Threadvarianten
+für genau diese Eingabe; unterschiedlicher Hash bedarf Klangprüfung.
+
+Pi-Test: Dienst stoppen, einmal via piper_worker.py eine kurze Sprachdatei
+unter /tmp erzeugen (Profil servitor), Worker endet vor FFmpeg. Dann
+`python3 scripts/diagnose-servitor-file.py /tmp/pi-servitor-dsp.wav` ausführen.
+Dienst anschließend wieder starten. Dieser Test verändert keine Dienstoptionen.
+Die Messung enthält Dateiausgabe statt Echtzeit-ALSA; sie trennt DSP von der
+Audiogeräte-Ausgabe, bestätigt aber keine xrun-freie Wiedergabe.
