@@ -22,6 +22,28 @@ GPIO17 oder optional SHIM A
 
 Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Das Vosk-Modell wird beim Dienststart vorgewärmt, damit der erste PTT-Zyklus keinen Modell-Load bezahlen muss.
 
+## Servitor-Server (CT 107) mit lokalem Fallback
+
+Ist `ASSISTANT_BASE_URL` gesetzt ([Vorlage](../config/client.env.example)), streamt der Pi die Aufnahme schon während des Tastendrucks als chunked `POST /v1/turn` an den [Servitor-Dienst](../server/servitor_server.py). Erkennung, LLM, Synthese und DSP laufen dort; der Pi spielt nur die fertige WAV ab (Opus wird vorher mit ffmpeg dekodiert). [`src/remote_turn.py`](../src/remote_turn.py) kapselt den Client.
+
+```text
+PTT gedrückt → arecord 16 kHz mono → Pump-Thread
+   ├─ capture.part.pcm (für den Fallback)
+   └─ Uplink-Thread → chunked POST /v1/turn (nie blockierend)
+PTT los → Abschlusschunk → NDJSON lesen → Display → aplay remote-reply.wav
+```
+
+| Server-Ereignis | Pi-Event / Display |
+|---|---|
+| `stage: recognize` | Fortschritt `stt/live_finalize` → ERKENNEN |
+| `transcript` | `transcript` → DENKEN |
+| `stage: think` | `llm_start` → DENKEN |
+| `reply` | `llm_response` → SYNTHESE |
+| `stage: synthesize` / `render` | Fortschritt `tts/synthesis` → SYNTHESE, `tts/dsp_render` → RENDERN |
+| `audio` + `done` | `speech_started`, Fortschritt `tts/playback` → AUSGABE |
+
+Der Fallback setzt dort an, wo der Server ausgefallen ist: Verbindung/Upload → lokale Vosk-Erkennung der mitgeschriebenen Aufnahme; LLM-Fehler → lokales LLM mit dem Server-Transkript; Synthese-/Renderfehler → lokale Piper-Ausgabe der Server-Antwort. „Keine Sprache erkannt“ wird nicht lokal wiederholt. Das Token steht nur in `/etc/pi-voice-assistant.env` und wird nie geloggt.
+
 ## Statusansage und Antwortpfad
 
 SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest normierte Systemlast, CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.

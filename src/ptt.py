@@ -13,11 +13,12 @@ import time
 import wave
 
 from llm import configured_model, generate_reply
+from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
 from system_status import build_status_text
 from transcribe import (
     LiveVoskRecognizer, RemoteLiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider, prepare_vosk_worker, stop_prepared_vosk
 )
-from runtime_metrics import phase
+from runtime_metrics import display_progress, phase
 from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
 
 
@@ -138,11 +139,13 @@ class Button:
 
 
 class Recorder:
-    def __init__(self, directory, device, limit, live_vosk_factory=None):
+    def __init__(self, directory, device, limit, live_vosk_factory=None, uplink_factory=None):
         self.directory = Path(directory)
         self.device = device
         self.limit = limit
         self.live_vosk_factory = live_vosk_factory
+        self.uplink_factory = uplink_factory
+        self._uplink = None
         self.process = None
         self.raw = self.directory / 'capture.part.pcm'
         self.partial = self.directory / 'capture.part.wav'
@@ -154,8 +157,8 @@ class Recorder:
         self._capture_channels = 2
         self._live_recognizer = None
 
-    def _pump_live_audio(self, proc, recognizer):
-        recognizer_ok = True
+    def _pump_live_audio(self, proc, recognizer, uplink=None):
+        recognizer_ok = recognizer is not None
         try:
             with self.raw.open('wb') as sink:
                 while True:
@@ -163,6 +166,8 @@ class Recorder:
                     if not chunk:
                         break
                     sink.write(chunk)
+                    if uplink is not None:
+                        uplink.accept_pcm(chunk)
                     if recognizer_ok:
                         try:
                             recognizer.accept_pcm(chunk)
@@ -171,6 +176,8 @@ class Recorder:
                             recognizer_ok = False
                             if hasattr(recognizer, 'cancel'):
                                 recognizer.cancel()
+            if uplink is not None:
+                uplink.finish()
             if recognizer_ok:
                 try:
                     self._live_result = (recognizer.finish(), 'vosk')
@@ -196,6 +203,7 @@ class Recorder:
         self._live_result = None
         self._live_error = None
         self._pump_thread = None
+        self.drop_uplink()
 
         recognizer = None
         if self.live_vosk_factory is not None:
@@ -204,7 +212,15 @@ class Recorder:
             except (OSError, TranscriptionError) as exc:
                 self._live_error = str(exc)
 
-        if recognizer is not None:
+        uplink = None
+        if self.uplink_factory is not None:
+            try:
+                uplink = self.uplink_factory()
+            except (OSError, ValueError) as exc:
+                event('remote_error', stage='connect', code='client', message=str(exc))
+        self._uplink = uplink
+
+        if recognizer is not None or uplink is not None:
             self._live_recognizer = recognizer
             self._capture_rate = 16000
             self._capture_channels = 1
@@ -215,12 +231,14 @@ class Recorder:
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
             self._pump_thread = threading.Thread(
                 target=self._pump_live_audio,
-                args=(self.process, recognizer),
-                name='vosk-live',
+                args=(self.process, recognizer, uplink),
+                name='vosk-live' if recognizer is not None else 'remote-pump',
                 daemon=True,
             )
             self._pump_thread.start()
-            event('recording', stt='vosk-live', sample_rate=16000, channels=1)
+            fields = dict(remote=True) if uplink is not None else {}
+            event('recording', stt='vosk-live' if recognizer is not None else 'remote',
+                  sample_rate=16000, channels=1, **fields)
             return
 
         isolated = os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
@@ -248,6 +266,8 @@ class Recorder:
                 proc.wait(timeout=2)
                 raise RuntimeError('arecord did not stop within two seconds')
 
+            if not publish:
+                self.drop_uplink()
             if not publish and self._live_recognizer is not None:
                 if hasattr(self._live_recognizer, 'cancel'):
                     self._live_recognizer.cancel()
@@ -312,6 +332,15 @@ class Recorder:
                 self._pump_thread = None
                 self._live_recognizer = None
 
+    def take_uplink(self):
+        uplink, self._uplink = self._uplink, None
+        return uplink
+
+    def drop_uplink(self):
+        uplink = self.take_uplink()
+        if uplink is not None:
+            uplink.cancel()
+
     def take_live_transcript(self):
         result, error = self._live_result, self._live_error
         self._live_result = None
@@ -322,13 +351,16 @@ class Recorder:
 
     def close(self):
         self.finish('shutdown', publish=False)
+        self.drop_uplink()
         self.ready.unlink(missing_ok=True)
 
 
 class VoiceController:
     """One capture/STT/LLM slot, with A and GPIO17 combined as hold-to-talk."""
-    def __init__(self, recorder, speech, debounce, limit, probe=False):
+    def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False):
         self.recorder, self.speech, self.probe = recorder, speech, probe
+        self.remote = remote
+        self.remote_capture = None
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -372,15 +404,40 @@ class VoiceController:
         self.speech.stop()
         self.speech_started_at = None
         self.recorder.finish('cancel', publish=False)
+        if self.remote:
+            self.recorder.drop_uplink()
         if self.job is not None:
             self.job.cancel()
         self.ptt.resync(held, now)
         event('cancelled')
 
     def submit(self, reason):
-        capture = self.recorder.finish(reason)
+        try:
+            capture = self.recorder.finish(reason)
+        except BaseException:
+            if self.remote:
+                self.recorder.drop_uplink()
+            raise
+        uplink = self.recorder.take_uplink() if self.remote else None
+        if capture is None:
+            if uplink is not None:
+                uplink.cancel()
+            return
+        event('processing', path=str(capture))
+        if uplink is not None:
+            if uplink.error is None:
+                self.remote_capture = capture
+                self.job = RemoteTurnJob(uplink, capture.parent)
+                self.job_stage = 'remote'
+                self.job_started_at = time.monotonic()
+                return
+            uplink.cancel()
+            event('remote_error', stage='upload', code='network', message=uplink.error)
+            event('remote_fallback', target='stt')
+        self._start_local_stt(capture)
+
+    def _start_local_stt(self, capture):
         if capture is not None:
-            event('processing', path=str(capture))
             try:
                 live_result = self.recorder.take_live_transcript()
             except TranscriptionError as exc:
@@ -392,6 +449,81 @@ class VoiceController:
                 self.job = TranscriptionJob(transcribe_with_provider, capture)
             self.job_stage = 'stt'
             self.job_started_at = time.monotonic()
+
+    def _start_llm(self, text):
+        self.job = TranscriptionJob(generate_reply, text)
+        self.job_stage = 'llm'
+        self.job_started_at = time.monotonic()
+        event('llm_start', model=configured_model())
+
+    def _start_speech(self, text, **fields):
+        try:
+            event('speech_started', **fields)
+            self.speech.start(text)
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+
+    def _remote_progress(self, item):
+        """Map server NDJSON events onto the existing journal/display events."""
+        kind = item.get('event')
+        if kind == 'stage':
+            stage = item.get('stage')
+            if stage == 'recognize':
+                display_progress('stt', 'live_finalize')
+            elif stage == 'think':
+                event('llm_start', model='remote')
+            elif stage == 'synthesize':
+                display_progress('tts', 'synthesis')
+            elif stage == 'render':
+                display_progress('tts', 'dsp_render')
+        elif kind == 'transcript':
+            text = str(item.get('text', ''))
+            event('transcript', text=text, provider='remote')
+            print(f'ERKANNT: {text}', flush=True)
+        elif kind == 'reply':
+            text = str(item.get('text', ''))
+            event('llm_response', text=text, model=item.get('model'))
+            print(f'SERVITOR: {text}', flush=True)
+        elif kind == 'audio':
+            event('remote_audio', format=item.get('format'),
+                  duration_ms=item.get('duration_ms'), bytes=item.get('bytes'))
+        elif kind == 'done':
+            event('latency', stage='remote', metric='server',
+                  timings=item.get('timings') or {})
+
+    def _finish_remote(self, job):
+        capture, self.remote_capture = self.remote_capture, None
+        for item in job.drain():
+            self._remote_progress(item)
+        if job.cancelled:
+            event('transcript_discarded')
+            return
+        if job.error is None:
+            event('remote_done', host=job.result.get('host'))
+            try:
+                event('speech_started', source='remote')
+                display_progress('tts', 'playback')
+                self.speech.play(job.result['audio'])
+                self.speech_started_at = time.monotonic()
+            except (OSError, RuntimeError, ValueError) as exc:
+                event('speech_error', message=str(exc))
+            return
+        event('remote_error', stage=job.error_stage, code=job.error_code, message=job.error)
+        if not job.fallback_allowed:
+            event('stt_error', message=job.error)
+        elif job.reply:
+            event('remote_fallback', target='tts')
+            self._start_speech(job.reply, source='assistant', model=job.model)
+        elif job.transcript:
+            event('remote_fallback', target='llm')
+            self._start_llm(job.transcript)
+        elif job.error_stage in ('upload', 'recognize', 'stream') and capture is not None:
+            event('remote_fallback', target='stt')
+            event('processing', path=str(capture))
+            self._start_local_stt(capture)
+        else:
+            event('stt_error', message=job.error)
 
     def tick(self, gpio_pressed, shim_pressed, now):
         held = gpio_pressed or shim_pressed[0]
@@ -446,6 +578,9 @@ class VoiceController:
                 )
                 self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
+        if self.job is not None and self.job_stage == 'remote' and not self.job.done.is_set():
+            for item in self.job.drain():
+                self._remote_progress(item)
         if self.job is not None and self.job.done.is_set():
             job, self.job = self.job, None
             stage, self.job_stage = self.job_stage, None
@@ -457,7 +592,9 @@ class VoiceController:
                     latency_ms=round((time.monotonic() - started_at) * 1000),
                 )
 
-            if job.cancelled:
+            if stage == 'remote':
+                self._finish_remote(job)
+            elif job.cancelled:
                 event('transcript_discarded' if stage == 'stt' else 'llm_discarded')
             elif job.error is not None:
                 event('stt_error' if stage == 'stt' else 'llm_error', message=job.error)
@@ -465,20 +602,12 @@ class VoiceController:
                 text, provider = job.result
                 event('transcript', text=text, provider=provider)
                 print(f'ERKANNT: {text}', flush=True)
-                self.job = TranscriptionJob(generate_reply, text)
-                self.job_stage = 'llm'
-                self.job_started_at = time.monotonic()
-                event('llm_start', model=configured_model())
+                self._start_llm(text)
             elif stage == 'llm':
                 reply, model = job.result
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
-                try:
-                    event('speech_started', source='assistant', model=model)
-                    self.speech.start(reply)
-                    self.speech_started_at = time.monotonic()
-                except (OSError, RuntimeError, ValueError) as exc:
-                    event('speech_error', message=str(exc))
+                self._start_speech(reply, source='assistant', model=model)
             else:
                 event('llm_error', message='unknown processing stage')
 
@@ -559,11 +688,23 @@ def main():
                   sample_rate=16000, channels=1)
     if not args.probe and memory_mode == 'hybrid':
         live_vosk_factory = RemoteLiveVoskRecognizer
+    uplink_factory = None
+    if not args.probe:
+        try:
+            remote_config = load_remote_config()
+        except ValueError as exc:
+            # A broken remote setting must not take the local assistant down.
+            event('remote_error', stage='config', code='config', message=str(exc))
+            remote_config = None
+        if remote_config is not None:
+            uplink_factory = lambda: RemoteTurnUplink(remote_config)
+            event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
         os.environ.get('PTT_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'),
         limit,
         live_vosk_factory=live_vosk_factory,
+        uplink_factory=uplink_factory,
     )
     settings = gpiod.LineSettings(direction=Direction.INPUT,
                                   active_low=active_low == '1',
@@ -608,7 +749,11 @@ def main():
             speech = SpeechOutput(fallback_command)
         else:
             event('tts_ready', mode='resident', model=model, profile=speech.profile)
-    controller = VoiceController(recorder, speech, debounce, limit, args.probe)
+    if uplink_factory is not None:
+        speech = RemoteCapableSpeech(
+            speech, os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'))
+    controller = VoiceController(recorder, speech, debounce, limit, args.probe,
+                                 remote=uplink_factory is not None)
     shim = None
     if shim_enabled == '1':
         try:
