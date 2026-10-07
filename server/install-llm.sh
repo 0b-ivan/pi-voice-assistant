@@ -9,7 +9,7 @@ B=/opt/servitor-voice
 L=$B/llm
 SRC=$(cd "$(dirname "$0")" && pwd)
 LLAMA_TAG=v0.5.0
-LLAMA_COMMIT=c13fcbf684171d5e0bca3fc5c34be6a99174b05f
+LLAMA_COMMIT=7fe450e19305b828c199d602c23a8337aaa1f03b  # v0.5.0^{} (peeled)
 HF=https://huggingface.co
 
 case "${1:-3b}" in
