@@ -429,6 +429,7 @@ class ResidentSpeechTests(unittest.TestCase):
 
     def test_buffered_servitor_finishes_synthesis_before_playback(self):
         voice = Mock()
+        output = StringIO()
         synthesized = threading.Event()
         def synthesize(_voice, text, audio, profile):
             self.assertEqual(profile, "servitor")
@@ -442,7 +443,7 @@ class ResidentSpeechTests(unittest.TestCase):
             self.assertTrue(Path(command[command.index("-i") + 1]).exists())
             self.assertIn("-filter_complex", command)
             return proc
-        with patch.dict(os.environ, {"TTS_PLAYBACK_MODE": "buffered"}), patch(
+        with redirect_stdout(output), patch.dict(os.environ, {"TTS_PLAYBACK_MODE": "buffered"}), patch(
             "voice_controls._synthesize_voice", side_effect=synthesize
         ):
             speech = ResidentSpeechOutput(
@@ -450,6 +451,13 @@ class ResidentSpeechTests(unittest.TestCase):
                 loader=Mock(return_value=voice), popen=popen, profile="servitor")
             speech.start("Hallo")
             self.assertEqual(self._wait_result(speech), 0)
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        metrics = [event["metric"] for event in events if event["event"] == "latency"]
+        self.assertLess(metrics.index("synthesis"), metrics.index("playback"))
+        ready = next(event for event in events if event["event"] == "tts_audio_ready")
+        self.assertGreater(ready["audio_duration_ms"], 0)
+        self.assertEqual(ready["profile"], "servitor")
+        self.assertEqual(ready["playback_mode"], "buffered")
         self.assertFalse(list(Path(self.tmp.name).glob("speech-*.wav")))
 
     def test_cancelled_synthesis_never_starts_playback(self):

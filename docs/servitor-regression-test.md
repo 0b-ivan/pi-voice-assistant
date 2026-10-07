@@ -382,3 +382,22 @@ Vergleich beeinflussen; erst bei erkennbarem Nutzen in umgekehrter Reihenfolge
 wiederholen. Persistente Auswahl erst nach Messung in `/etc/pi-ptt.env`
 setzen und Dienst neu starten. Rücknahme: `TTS_PIPER_GRAPH_OPTIMIZATION=all`.
 Die drei WAVs sind synthetisches Paris und können danach gelöscht werden.
+
+### Residenter Servitor: Synthese und Wiedergabe unterscheiden
+
+Pi-Hardwaretest: normal/resident absolvierte kurze und längere Antworten ohne
+sichtbaren OOM; zusätzlicher 1-GiB-Disk-Swap war aktiv, bisher ungenutzt.
+Servitor/buffered meldete anschließend einen ALSA-xrun. Modell blieb Thorsten Low.
+STT 11–79 ms und LLM 1,3–1,7 s erklären die neue Wartezeit nicht.
+
+Der residente Dateipfad meldet nun `synthesis`, `tts_audio_ready` mit WAV-Dauer,
+Profil und Wiedergabemodus sowie `playback` (Warten auf den Wiedergabeprozess).
+`playback_total` enthält weiterhin Synthese und komplette Ausgabe.
+Weder Prozessstart noch WAV-Bereitschaft messen den ersten hörbaren ALSA-Ton.
+CPU/RSS/Swap der Phasen betreffen den Dienst, nicht den FFmpeg-Kindprozess.
+
+Für den nächsten Test resident/servitor/buffered unverändert lassen, aktualisieren,
+Tests ausführen und installieren. Kurze Hauptstadtfrage und drei kurze Sätze
+wiederholen. Zusätzlich subjektive Wartezeit bis zum ersten Ton und xruns erfassen.
+Keine Änderung von Gain, Filtern, Threads oder Prepacking aus diesen Messungen
+ableiten, bevor die getrennten Phasen vorliegen. PR bleibt bis Hardwareabnahme Draft.

@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import wave
+from runtime_metrics import phase
 
 def _speech_event(name, **fields):
     import json
@@ -364,10 +365,19 @@ class ResidentSpeechOutput:
             with self._synthesis_lock:
                 if not self._current(job):
                     return
-                with wave.open(str(path), "wb") as audio:
-                    _synthesize_voice(self.voice, text, audio, self.profile)
+                with phase("tts", "synthesis"):
+                    with wave.open(str(path), "wb") as audio:
+                        _synthesize_voice(self.voice, text, audio, self.profile)
             if not self._current(job):
                 return
+
+            with wave.open(str(path), "rb") as audio:
+                _speech_event(
+                    "tts_audio_ready",
+                    audio_duration_ms=round(audio.getnframes() * 1000 / audio.getframerate()),
+                    sample_rate=audio.getframerate(), channels=audio.getnchannels(),
+                    profile=self.profile, playback_mode=self.playback_mode,
+                )
 
             proc = self._popen(
                 build_playback_command(
@@ -383,7 +393,10 @@ class ResidentSpeechOutput:
                     _terminate_process_group(proc)
                     return
                 job.process = proc
-            code = proc.wait()
+            # This measures process playback, including FFmpeg setup and DSP.
+            # Launching the process does not prove that ALSA has emitted sound.
+            with phase("tts", "playback"):
+                code = proc.wait()
             if self._current(job):
                 job.result = code
         finally:
