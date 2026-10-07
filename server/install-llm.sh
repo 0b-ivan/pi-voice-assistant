@@ -3,7 +3,7 @@
 # downloads a verified GGUF model as the offline LLM fallback for the Servitor
 # service. Idempotent: an existing build/model with the right hash is kept.
 #
-#   sh server/install-llm.sh [3b|1.5b]
+#   sh server/install-llm.sh [3b|1.5b|gemma4b|qwen4b]
 set -eu
 B=/opt/servitor-voice
 L=$B/llm
@@ -21,7 +21,16 @@ case "${1:-3b}" in
     MODEL=qwen2.5-1.5b-instruct-q4_k_m.gguf
     URL=$HF/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/$MODEL
     SHA=6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e ;;
-  *) echo "usage: $0 [3b|1.5b]" >&2; exit 2 ;;
+  gemma4b)
+    MODEL=gemma-3-4b-it-Q4_K_M.gguf
+    URL=$HF/ggml-org/gemma-3-4b-it-GGUF/resolve/main/$MODEL
+    SHA=882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863 ;;
+  qwen4b)
+    # Instruct-2507: no thinking mode, so no hidden reasoning tokens.
+    MODEL=Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+    URL=$HF/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/$MODEL
+    SHA=3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597 ;;
+  *) echo "usage: $0 [3b|1.5b|gemma4b|qwen4b]" >&2; exit 2 ;;
 esac
 
 install -d -o root -g root -m 0755 "$L" "$L/bin" "$L/models"

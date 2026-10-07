@@ -23,6 +23,9 @@ QUESTIONS = (
     'Was ist die Hauptstadt von Australien?',
     'Erkläre kurz, was ein Raspberry Pi ist.',
     'Wie viele Minuten hat ein Tag?',
+    'Wie viel ist siebzehn mal dreiundzwanzig?',
+    'Was ist der Unterschied zwischen Wetter und Klima?',
+    'Nenne drei Planeten unseres Sonnensystems.',
 )
 
 
