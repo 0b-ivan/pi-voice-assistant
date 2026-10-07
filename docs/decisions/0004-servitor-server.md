@@ -27,4 +27,5 @@ Fällt der Server aus, setzt der Pi lokal dort fort, wo der Server aufgehört ha
 
 - Gemessen am 07.10.2026: Loslassen bis Wiedergabestart ca. 2,0–2,5 s, Server 1,67 s ([Architektur](../architecture.md#servitor-server-ct-107-mit-lokalem-fallback)).
 - Netz- oder Serverausfall kostet Latenz, aber keine Funktion.
+- Ohne Internet oder ohne OpenRouter-Guthaben antwortet ein lokales LLM auf CT 107 (llama.cpp, Qwen2.5-3B); der gesamte Durchlauf bleibt dann im Homelab. Dessen Antwortqualität ist deutlich geringer als die von OpenRouter.
 - Die Proxmox-Firewall bleibt deaktiviert (Docker auf dem Host); Port 8765 ist im LAN offen und nur per Token nutzbar.

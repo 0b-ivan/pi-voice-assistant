@@ -59,6 +59,21 @@ Während der Server erreichbar ist, läuft auf dem Pi keine zusätzliche Live-Vo
 
 Folgerung: Im LAN bleibt `ASSISTANT_AUDIO_FORMAT=wav`. Für den späteren Internetweg ist Opus erst sinnvoll, wenn die Dekodierung auf dem Pi schneller wird (z. B. residenter Decoder statt ffmpeg-Prozess).
 
+### Offline-LLM auf CT 107
+
+Fällt OpenRouter aus (kein Internet, keine Credits, Rate-Limit, Timeout, 5xx), antwortet ein lokales Modell im Container. [`server/install-llm.sh`](../server/install-llm.sh) baut `llama-server` aus llama.cpp `v0.5.0` (für die AVX2-CPU des Hosts) und lädt ein per SHA-256 geprüftes Qwen2.5-3B-Instruct (Q4_K_M, 2,1 GB). [`servitor-llm.service`](../server/servitor-llm.service) betreibt es nur auf `127.0.0.1:8766`. Der Sprachdienst fragt OpenRouter mit 8 s Timeout und nach einem Fehler 60 s lang direkt das lokale Modell. Das `reply`-Event nennt das Modell (`local/qwen2.5-3b`), das Journal `llm_fallback` mit Grund. CT 107 hat dafür 4 Kerne und 5 GB RAM (llama-server ca. 1,4 GB belegt).
+
+**Messung 08.10.2026** (Serverzeit inkl. STT/TTS):
+
+| Fall | Antwort von | Server |
+|---|---|---|
+| Normal | OpenRouter | 1,1–2,2 s |
+| Ungültiger Key (wie keine Credits) | lokal | 1,9 s |
+| Kein Internet, erste Frage | lokal nach 8 s Timeout | 10,8 s |
+| Kein Internet, folgende Fragen (60-s-Fenster) | lokal | 1,1 s |
+
+Benchmark mit [`server/bench-local-llm.py`](../server/bench-local-llm.py): ca. 10 Token/s, Median 1,8–3,3 s. **Die inhaltliche Qualität des 3B-Modells ist schwach** (z. B. „Hauptstadt Australiens: Sydney“, „ein Tag hat 60 Minuten“). Es ist eine Notlösung, damit der Servitor offline antwortet; die Modellwahl ist offen.
+
 ## Statusansage und Antwortpfad
 
 SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest normierte Systemlast, CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.
