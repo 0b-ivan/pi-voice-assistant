@@ -13,6 +13,7 @@ import urllib.request
 
 DEFAULT_LLM_MODEL = "openai/gpt-5.4-mini"
 DEFAULT_LLM_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_LOCAL_LLM_URL = "http://127.0.0.1:8766/v1/chat/completions"
 
 SERVITOR_SYSTEM_PROMPT = (
     "Du bist SERVITOR, der Sprachkern eines lokalen Raspberry-Pi-Assistenten. "
@@ -69,11 +70,11 @@ def _http_error_message(exc):
     return f"HTTP {getattr(exc, 'code', 'error')}"
 
 
-def _extract_text(payload):
+def _extract_text(payload, label="OpenRouter"):
     try:
         content = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise LLMError("OpenRouter response is missing assistant content") from exc
+        raise LLMError(f"{label} response is missing assistant content") from exc
 
     if isinstance(content, str):
         text = content.strip()
@@ -87,30 +88,16 @@ def _extract_text(payload):
         text = ""
 
     if not text:
-        raise LLMError("OpenRouter returned an empty assistant response")
+        raise LLMError(f"{label} returned an empty assistant response")
     return text
 
 
-def generate_reply(prompt):
-    """Return a reply and model from one non-streaming OpenRouter request."""
-    prompt = str(prompt).strip()
-    if not prompt:
-        raise LLMError("LLM prompt must not be empty")
-
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key or "REPLACE_ME" in api_key:
-        raise LLMError("OPENROUTER_API_KEY is not configured")
-
-    model = configured_model()
-    timeout = _float_env("OPENROUTER_LLM_TIMEOUT_SECONDS", 15.0, 1.0, 120.0)
-    max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
-    url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
-
+def _chat(url, prompt, model, timeout, limit, headers, label):
     body = json.dumps(
         {
             "model": model,
             "stream": False,
-            "max_completion_tokens": max_tokens,
+            **limit,
             "messages": [
                 {"role": "system", "content": SERVITOR_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -122,24 +109,60 @@ def generate_reply(prompt):
         url,
         data=body,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers={"Content-Type": "application/json", **headers},
     )
 
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
-        raise LLMError(f"OpenRouter request failed: {_http_error_message(exc)}") from exc
+        raise LLMError(f"{label} request failed: {_http_error_message(exc)}") from exc
     except (http.client.HTTPException, urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
         reason = getattr(exc, "reason", exc)
-        raise LLMError(f"OpenRouter request failed: {reason}") from exc
+        raise LLMError(f"{label} request failed: {reason}") from exc
 
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
-        raise LLMError("OpenRouter returned invalid JSON") from exc
+        raise LLMError(f"{label} returned invalid JSON") from exc
 
-    return _extract_text(payload), model
+    return _extract_text(payload, label)
+
+
+def _prompt(prompt):
+    prompt = str(prompt).strip()
+    if not prompt:
+        raise LLMError("LLM prompt must not be empty")
+    return prompt
+
+
+def generate_reply(prompt):
+    """Return a reply and model from one non-streaming OpenRouter request."""
+    prompt = _prompt(prompt)
+
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key or "REPLACE_ME" in api_key:
+        raise LLMError("OPENROUTER_API_KEY is not configured")
+
+    model = configured_model()
+    timeout = _float_env("OPENROUTER_LLM_TIMEOUT_SECONDS", 15.0, 1.0, 120.0)
+    max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
+    url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
+    text = _chat(url, prompt, model, timeout, {"max_completion_tokens": max_tokens},
+                 {"Authorization": f"Bearer {api_key}"}, "OpenRouter")
+    return text, model
+
+
+def local_model_name():
+    name = os.environ.get("LOCAL_LLM_MODEL_NAME", "").strip()
+    return f"local/{name or 'llama.cpp'}"
+
+
+def generate_local_reply(prompt):
+    """Offline fallback: OpenAI-compatible llama.cpp server on loopback."""
+    prompt = _prompt(prompt)
+    url = os.environ.get("LOCAL_LLM_URL", DEFAULT_LOCAL_LLM_URL).strip() or DEFAULT_LOCAL_LLM_URL
+    timeout = _float_env("LOCAL_LLM_TIMEOUT_SECONDS", 40.0, 1.0, 300.0)
+    max_tokens = _int_env("LOCAL_LLM_MAX_TOKENS", 120, 16, 1024)
+    model = local_model_name()
+    return _chat(url, prompt, model, timeout, {"max_tokens": max_tokens}, {}, "Local LLM"), model

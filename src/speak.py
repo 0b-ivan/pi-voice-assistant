@@ -4,8 +4,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
+from pathlib import Path
+from runtime_metrics import phase
 
-from voice_effects import build_playback_command, resolve_voice_profile
+from voice_effects import build_playback_command, build_render_command, resolve_voice_profile
 
 DEFAULT_MODEL = "/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx"
 DEFAULT_SERVITOR_MODEL = (
@@ -56,26 +59,41 @@ def speak(text: str) -> None:
     fd, wav_file = tempfile.mkstemp(prefix="pi-tts-", suffix=".wav")
     os.close(fd)
 
+    rendered_file = None
     try:
-        subprocess.run(
-            _piper_command(piper_python, model, wav_file, text, profile),
-            input=text,
-            text=True,
-            check=True,
-        )
-        subprocess.run(
-            build_playback_command(
-                wav_file,
-                audio_device,
-                profile=profile,
-            ),
-            check=True,
-        )
+        with phase('tts', 'worker_total'):
+            if os.environ.get('PTT_MEMORY_MODE') == 'isolated':
+                environment = dict(os.environ, VOICE_WORKER_STARTED_AT=str(time.monotonic()))
+                subprocess.run(
+                    [piper_python, str(Path(__file__).with_name('piper_worker.py')),
+                     model, wav_file, profile],
+                    input=text, text=True, check=True, env=environment,
+                )
+            else:
+                subprocess.run(
+                    _piper_command(piper_python, model, wav_file, text, profile),
+                    input=text, text=True, check=True,
+                )
+        if profile == 'servitor' and os.environ.get('TTS_DSP_MODE') == 'buffered':
+            fd, rendered_file = tempfile.mkstemp(prefix='pi-dsp-', suffix='.wav')
+            os.close(fd)
+            with phase('tts', 'dsp_render'):
+                subprocess.run(build_render_command(wav_file, rendered_file),
+                               check=True, timeout=120)
+            playback = ['/usr/bin/aplay', '-q', '-D', audio_device,
+                        '-B', '500000', rendered_file]
+        else:
+            playback = build_playback_command(wav_file, audio_device, profile=profile)
+        with phase('tts', 'playback'):
+            subprocess.run(playback, check=True)
+
     finally:
-        try:
-            os.remove(wav_file)
-        except FileNotFoundError:
-            pass
+        for target in (wav_file, rendered_file):
+            if target:
+                try:
+                    os.remove(target)
+                except FileNotFoundError:
+                    pass
 
 
 def main() -> int:

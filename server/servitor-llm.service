@@ -1,0 +1,25 @@
+[Unit]
+Description=Servitor offline LLM fallback (llama.cpp server, loopback only)
+After=network.target
+
+[Service]
+Type=simple
+User=servitor
+Group=servitor
+# Loopback only; the voice service is the sole client. One slot, prompt cache
+# so the fixed Servitor system prompt is evaluated once.
+ExecStart=/opt/servitor-voice/llm/bin/llama-server \
+  --model /opt/servitor-voice/llm/models/current.gguf \
+  --host 127.0.0.1 --port 8766 \
+  --ctx-size 2048 --parallel 1 --threads 4 \
+  --cache-reuse 256 --no-webui
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

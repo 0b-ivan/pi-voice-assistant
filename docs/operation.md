@@ -26,11 +26,18 @@ Die Logs enthalten Transkripte, LLM-Antworten und Statusmeldungen, auch wenn WAV
 | Datei | Zweck |
 |---|---|
 | `/etc/pi-ptt.env` | GPIO, 40 ms Entprellung, 30 s Aufnahmelimit, Audiogerät, optionaler SHIM und Status-Sprachbefehl |
-| `/etc/pi-voice-assistant.env` | Vosk/STT, OpenRouter-LLM, Piper-/Servitor-Modell und DSP-/Sprechparameter; echter API-Key nur hier |
+| `/etc/pi-voice-assistant.env` | Vosk/STT, OpenRouter-LLM, Piper-/Servitor-Modell und DSP-/Sprechparameter, Servitor-Server (`ASSISTANT_*`); echte Schlüssel nur hier |
 | `/boot/firmware/config.txt` | Bestehendes WM8960-Overlay, I²C/I²S |
 | `/etc/modules-load.d/pi-voice-i2c.conf` | Bei aktiviertem SHIM `i2c-dev` beim Boot laden |
 
-`config/client.env.example` ist ein ungenutzter früherer Backend-Entwurf und wird vom Dienst nicht geladen.
+**Servitor-Server (CT 107):** Die Werte aus [`config/client.env.example`](../config/client.env.example) werden an `/etc/pi-voice-assistant.env` angehängt. `ASSISTANT_TOKEN` ist derselbe Wert wie `SERVITOR_API_TOKEN` in `/etc/servitor-voice.env` auf CT 107; ihn direkt übertragen, ohne ihn anzuzeigen, etwa:
+
+```sh
+ssh root@172.22.2.11 "pct exec 107 -- sed -n 's/^SERVITOR_API_TOKEN=//p' /etc/servitor-voice.env" \
+  | ssh obivan@172.22.9.128 'read -r T; …'   # in eine Temp-Datei schreiben, dann per sudo tee übernehmen
+```
+
+Leeres `ASSISTANT_BASE_URL` schaltet auf rein lokalen Betrieb zurück. Beim Start meldet das Journal `remote_ready` mit Host und Format; Fallbacks erscheinen als `remote_error`/`remote_fallback`. Siehe [Architektur](architecture.md#servitor-server-ct-107-mit-lokalem-fallback) und [ADR 0004](decisions/0004-servitor-server.md).
 
 Für den integrierten Assistentenpfad mindestens:
 

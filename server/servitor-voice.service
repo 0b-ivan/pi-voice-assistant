@@ -1,0 +1,24 @@
+[Unit]
+Description=Servitor voice service (Vosk, OpenRouter, Piper, Servitor DSP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=servitor
+Group=servitor
+EnvironmentFile=/etc/servitor-voice.env
+ExecStart=/opt/servitor-voice/.venv/bin/python /opt/servitor-voice/repo/server/servitor_server.py
+RuntimeDirectory=servitor-voice
+RuntimeDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/servitor-voice
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

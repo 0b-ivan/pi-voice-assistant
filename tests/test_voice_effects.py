@@ -72,7 +72,7 @@ class VoiceEffectsTests(unittest.TestCase):
         )
         self.assertEqual(command[0], "/usr/bin/ffmpeg")
         self.assertEqual(
-            command[4:12],
+            command[command.index("-f"):command.index("-f") + 8],
             ["-f", "s16le", "-ar", "22050", "-ac", "1", "-i", "pipe:0"],
         )
         self.assertIn("-filter_complex", command)

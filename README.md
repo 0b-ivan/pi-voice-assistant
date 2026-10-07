@@ -12,7 +12,7 @@ Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mi
 | Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 resident; `normal` nutzt `de_DE-thorsten-low`, `servitor` nutzt `de_DE-thorsten_emotional-medium` (Speaker 4) plus gestreamten FFmpeg-Live-DSP. SHIM E spricht kompakte dynamische Telemetrie; Verarbeitung blinkt Rot↔Gelb, Sprachpausen sind Türkis und Sprachsegmente Orange. |
 | Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): frischer Prozess 17–22 s, resident 1,12–1,20 s. Kontrollierter Vosk/Piper-Wechsel stabilisierte sich bei 5,89 s STT / 1,26 s TTS; kombinierter Peak-RSS 254,7 MiB, zram physisch ~57 MiB, kein Writeback-I/O |
 | LLM | `src/llm.py` kapselt OpenRouter vollständig getrennt von GPIO/Audio; API-Key nur aus Environment, nicht-streamend, mit Timeout und Fehlerbehandlung. |
-| Display | Adafruit mini PiTFT 1,3″: strukturierte Live-Zustände BEREIT/ZUHÖREN/VERSTEHEN/DENKEN/SPRECHEN/FEHLER. |
+| Display | Adafruit mini PiTFT 1,3″: [animierte Arbeitsschritte](docs/display-work-steps.md#interface-preview) für Aufnahme, Erkennung, Denken, Synthese, Rendering und Ausgabe. |
 | Noch offen | Hardware-Abnahme des vollständigen Antwortloops und reale Latenzmessung; Akku/Abschaltung und Kamera. |
 
 ## Einrichten und betreiben
