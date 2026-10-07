@@ -3,14 +3,18 @@
 set -eu
 B=/opt/servitor-voice
 SRC=$(cd "$(dirname "$0")" && pwd)
-install -d -o root -g root -m 0755 "$B/repo/server" "$B/repo/src"
-install -o root -g root -m 0644 "$SRC/servitor_server.py" "$B/repo/server/servitor_server.py"
-# The server imports transcribe/llm/voice_controls/voice_effects from the
-# matching src tree; replace it as a whole so no stale module survives.
-rm -f "$B/repo/src/"*.py
-install -o root -g root -m 0644 "$SRC/../src/"*.py "$B/repo/src/"
+if [ "$SRC" != "$B/repo/server" ]; then
+  # Copy from another checkout. Run from $B/repo itself (git checkout of the
+  # wanted commit) the files are already in place.
+  install -d -o root -g root -m 0755 "$B/repo/server" "$B/repo/src"
+  install -o root -g root -m 0644 "$SRC/servitor_server.py" "$B/repo/server/servitor_server.py"
+  # The server imports transcribe/llm/voice_controls/voice_effects from the
+  # matching src tree; replace it as a whole so no stale module survives.
+  rm -f "$B/repo/src/"*.py
+  install -o root -g root -m 0644 "$SRC/../src/"*.py "$B/repo/src/"
+fi
 if git -C "$SRC/.." rev-parse HEAD >/dev/null 2>&1; then
-  git -C "$SRC/.." rev-parse HEAD > "$B/repo/DEPLOYED"
+  git -C "$SRC/.." rev-parse HEAD > "$B/DEPLOYED"
 fi
 install -o root -g root -m 0644 "$SRC/servitor-voice.service" /etc/systemd/system/servitor-voice.service
 if [ ! -f /etc/servitor-voice.env ]; then
