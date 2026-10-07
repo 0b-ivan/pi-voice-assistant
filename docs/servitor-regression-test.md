@@ -220,3 +220,21 @@ Direkten Eingang nur diagnostisch verwenden: lokal verkürzte er die
 vollständige Ausgabe von 109.916 auf 109.888 Bytes. Deshalb ist diese
 Variante keine freigegebene Produktionskorrektur. Die 5-s-Grenze ist ein
 Diagnosefenster, keine Abnahmegrenze für Sprachlatenz.
+
+### Pi-Diagnose vom 2026-10-07
+
+FFmpeg 7.1.5-0+deb13u1+rpt2 lieferte mit dem aktuellen Aufruf 12.068 Bytes
+vor EOF nach ca. 3,6 s; insgesamt 109.916 Bytes. Ausgangs-Flushen und kleine
+Leseoperationen brachten keine relevante Verbesserung. Ohne DSP waren es
+ca. 3,15 s. Die feste Zwei-Sekunden-Testfrist war deshalb kein belastbarer
+Nachweis eines EOF-Stalls. Der Integrationstest wartet nun bis zu 10 s,
+protokolliert seine Wartezeit und prüft weiterhin Audio vor EOF sowie
+bytegleiche vollständige Ausgabe. Das bedeutet keine Abnahme der Pi-Latenz.
+
+Nächster Schritt: Diagnose mit gestopptem `pi-ptt.service` wiederholen,
+Speicher vorher/nachher erfassen und anschließend den Dienst wieder starten.
+So lässt sich Belastung durch resident Vosk/Piper von FFmpeg-Startkosten
+besser unterscheiden. Die fünf bisherigen Durchgänge allein beweisen
+weder CPU-Sättigung noch aktiven Swap-Sturm. Im geposteten Kernel-Ausschnitt
+sind keine SD-I/O-/Dateisystemfehler enthalten; die zuvor beschädigte
+Git-Kopie bleibt als gesonderter Befund bestehen.
