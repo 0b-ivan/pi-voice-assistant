@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import threading
 import time
@@ -14,8 +15,9 @@ import wave
 from llm import configured_model, generate_reply
 from system_status import build_status_text
 from transcribe import (
-    LiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider
+    LiveVoskRecognizer, RemoteLiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider, prepare_vosk_worker, stop_prepared_vosk
 )
+from runtime_metrics import phase
 from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
 
 
@@ -150,6 +152,7 @@ class Recorder:
         self._live_error = None
         self._capture_rate = 48000
         self._capture_channels = 2
+        self._live_recognizer = None
 
     def _pump_live_audio(self, proc, recognizer):
         recognizer_ok = True
@@ -166,6 +169,8 @@ class Recorder:
                         except (OSError, TranscriptionError) as exc:
                             self._live_error = str(exc)
                             recognizer_ok = False
+                            if hasattr(recognizer, 'cancel'):
+                                recognizer.cancel()
             if recognizer_ok:
                 try:
                     self._live_result = (recognizer.finish(), 'vosk')
@@ -176,6 +181,14 @@ class Recorder:
                 proc.stdout.close()
 
     def start(self):
+        # A timed-out native recognizer still owns its file and result fields.
+        # Never reset them or start a second recognizer before it has exited.
+        if self._pump_thread is not None:
+            if self._pump_thread.is_alive():
+                raise RuntimeError('previous live Vosk audio pump is still draining')
+            self._pump_thread = None
+        if self.process is not None:
+            raise RuntimeError('recording is already active')
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.ready.unlink(missing_ok=True)
         self.raw.unlink(missing_ok=True)
@@ -192,6 +205,7 @@ class Recorder:
                 self._live_error = str(exc)
 
         if recognizer is not None:
+            self._live_recognizer = recognizer
             self._capture_rate = 16000
             self._capture_channels = 1
             self.process = subprocess.Popen([
@@ -209,11 +223,12 @@ class Recorder:
             event('recording', stt='vosk-live', sample_rate=16000, channels=1)
             return
 
-        self._capture_rate = 48000
-        self._capture_channels = 2
+        isolated = os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
+        self._capture_rate = 16000 if isolated else 48000
+        self._capture_channels = 1 if isolated else 2
         self.process = subprocess.Popen([
             '/usr/bin/arecord', '-q', '-D', self.device, '-t', 'raw',
-            '-f', 'S16_LE', '-r', '48000', '-c', '2',
+            '-f', 'S16_LE', '-r', str(self._capture_rate), '-c', str(self._capture_channels),
             '-d', str(math.ceil(self.limit)), str(self.raw)],
             stdin=subprocess.DEVNULL)
         event('recording')
@@ -233,10 +248,14 @@ class Recorder:
                 proc.wait(timeout=2)
                 raise RuntimeError('arecord did not stop within two seconds')
 
+            if not publish and self._live_recognizer is not None:
+                if hasattr(self._live_recognizer, 'cancel'):
+                    self._live_recognizer.cancel()
             if self._pump_thread is not None:
-                self._pump_thread.join(timeout=2)
+                with phase('stt', 'live_finalize'):
+                    self._pump_thread.join(timeout=10)
                 if self._pump_thread.is_alive():
-                    raise RuntimeError('live Vosk audio pump did not stop within two seconds')
+                    raise RuntimeError('live Vosk audio pump did not drain within ten seconds')
 
             if not publish:
                 return None
@@ -287,9 +306,11 @@ class Recorder:
             )
             return self.ready
         finally:
-            self.raw.unlink(missing_ok=True)
-            self.partial.unlink(missing_ok=True)
-            self._pump_thread = None
+            if self._pump_thread is None or not self._pump_thread.is_alive():
+                self.raw.unlink(missing_ok=True)
+                self.partial.unlink(missing_ok=True)
+                self._pump_thread = None
+                self._live_recognizer = None
 
     def take_live_transcript(self):
         result, error = self._live_result, self._live_error
@@ -396,18 +417,20 @@ class VoiceController:
                 except (OSError, subprocess.SubprocessError) as exc:
                     event('mixer_error', message=str(exc))
             elif name == 'E':
-                if self.recorder.process is not None or action == 'start':
-                    event('status_skipped', reason='recording')
+                if (self.recorder.process is not None or action == 'start'
+                        or (os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
+                            and self.job is not None)):
+                    event('status_skipped', reason='recording_or_processing')
                 else:
                     text = build_status_text(
                         processing=self.job is not None,
                         stt_provider=os.environ.get('STT_PROVIDER'),
                     )
                     try:
-                        self.speech.start(text)
-                        self.speech_started_at = time.monotonic()
                         event('status', text=text)
                         event('speech_started', source='status')
+                        self.speech.start(text)
+                        self.speech_started_at = time.monotonic()
                     except (OSError, RuntimeError, ValueError) as exc:
                         event('speech_error', message=str(exc))
         code = self.speech.poll()
@@ -451,9 +474,9 @@ class VoiceController:
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
                 try:
+                    event('speech_started', source='assistant', model=model)
                     self.speech.start(reply)
                     self.speech_started_at = time.monotonic()
-                    event('speech_started', source='assistant', model=model)
                 except (OSError, RuntimeError, ValueError) as exc:
                     event('speech_error', message=str(exc))
             else:
@@ -462,7 +485,8 @@ class VoiceController:
             self.ptt.resync(held, now)
             action = None
         if action == 'start':
-            if self.job is not None:
+            if (self.job is not None or (os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
+                    and getattr(self.speech, 'synthesizing', False))):
                 event('busy', reason='processing')
             else:
                 self.speech.stop()
@@ -474,7 +498,14 @@ class VoiceController:
             self.submit('process_exit')
             self.ptt.resync(held, now)
 
+        if (not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
+                and self.job is None and not self.speech.active
+                and not getattr(self.speech, 'synthesizing', False)
+                and self.recorder.process is None):
+            prepare_vosk_worker()
+
     def close(self):
+        stop_prepared_vosk()
         if self.job is not None:
             self.job.cancel()
         self.speech.stop()
@@ -507,11 +538,16 @@ def main():
     if shim_enabled not in ('0', '1'):
         parser.error('PTT_BUTTON_SHIM must be 0 or 1')
     runtime_dir = os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')
+    memory_mode = os.environ.get('PTT_MEMORY_MODE', 'resident')
+    if memory_mode not in ('resident', 'isolated', 'hybrid'):
+        parser.error('PTT_MEMORY_MODE must be resident, isolated or hybrid')
     live_vosk_factory = None
     if not args.probe:
         provider = os.environ.get('STT_PROVIDER', 'vosk').strip().lower()
         if provider != 'vosk':
             parser.error('STT_PROVIDER must be vosk; OpenRouter is LLM-only')
+        event('memory_mode', mode=memory_mode)
+    if not args.probe and memory_mode == 'resident':
         event('stt_loading', provider='vosk', mode='live')
         try:
             prepare_vosk()
@@ -521,6 +557,8 @@ def main():
             live_vosk_factory = LiveVoskRecognizer
             event('stt_ready', provider='vosk', mode='live',
                   sample_rate=16000, channels=1)
+    if not args.probe and memory_mode == 'hybrid':
+        live_vosk_factory = RemoteLiveVoskRecognizer
     recorder = Recorder(
         runtime_dir,
         os.environ.get('PTT_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'),
@@ -537,6 +575,13 @@ def main():
     if args.probe:
         # Probe mode must never load a TTS model or touch the audio device.
         speech = SpeechOutput('/usr/bin/true')
+    elif memory_mode == 'isolated':
+        # speak.py invokes Piper in its venv, then playback. Both processes
+        # are owned by SpeechOutput's group and ended before new capture/STT.
+        speech = SpeechOutput(
+            f'{shlex.quote(os.sys.executable)} '
+            '/opt/pi-voice-assistant/src/speak.py')
+        event('tts_ready', mode='isolated', profile=os.environ.get('TTS_VOICE_PROFILE', 'normal'))
     else:
         profile = os.environ.get('TTS_VOICE_PROFILE', 'normal')
         if profile.strip().lower() == 'servitor':

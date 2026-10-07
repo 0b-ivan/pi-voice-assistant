@@ -76,6 +76,19 @@ SERVITOR_FILTER_GRAPH = (
 )
 
 
+# PR #26's free-running aura is only used with fully buffered file rendering.
+# Live playback keeps its PCM-clocked source to avoid independent-source stalls.
+SERVITOR_REFERENCE_FILTER_GRAPH = SERVITOR_FILTER_GRAPH.replace(
+    "asplit=6[main0][metal0][choir0][tracer0][sawphase0][machine0];",
+    "asplit=5[main0][metal0][choir0][tracer0][sawphase0];",
+).replace(
+    "[machine0]aeval=0.060*(2*(t*220-floor(t*220))-1)"
+    "+0.030*(2*(t*440-floor(t*440))-1),",
+    "aevalsrc=0.060*(2*(t*220-floor(t*220))-1)"
+    "+0.030*(2*(t*440-floor(t*440))-1):s=24000,",
+)
+
+
 def resolve_voice_profile(profile=None):
     value = (
         os.environ.get("TTS_VOICE_PROFILE", DEFAULT_VOICE_PROFILE)
@@ -159,6 +172,12 @@ def build_stream_playback_command(
         "-hide_banner",
         "-loglevel",
         "warning",
+        # PCM format is known. Default stream analysis can wait for seconds of
+        # audio (or EOF), defeating sentence-at-a-time Piper synthesis.
+        "-probesize",
+        "32",
+        "-analyzeduration",
+        "1",
         "-f",
         "s16le",
         "-ar",
@@ -169,3 +188,16 @@ def build_stream_playback_command(
         "pipe:0",
         *_ffmpeg_output_args(audio_device),
     ]
+
+
+def build_render_command(source, target, ffmpeg_bin=None):
+    """Finish Servitor DSP before ALSA playback; optionally restore PR #26 aura."""
+    aura = os.environ.get("TTS_SERVITOR_AURA", "pcm").strip().lower()
+    if aura not in ("pcm", "reference"):
+        raise ValueError("TTS_SERVITOR_AURA must be pcm or reference")
+    graph = SERVITOR_REFERENCE_FILTER_GRAPH if aura == "reference" else SERVITOR_FILTER_GRAPH
+    executable = ffmpeg_bin or os.environ.get("TTS_FFMPEG_BIN", DEFAULT_FFMPEG_BIN)
+    return [executable, "-hide_banner", "-loglevel", "warning", "-nostdin",
+            "-filter_complex_threads", "1", "-i", str(source),
+            "-filter_complex", graph, "-map", "[out]",
+            "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", "-y", str(target)]

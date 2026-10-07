@@ -2,6 +2,8 @@
 """PiTFT boot and live voice status display for the Pi Voice Assistant."""
 
 import json
+import math
+from functools import lru_cache
 import os
 from pathlib import Path
 import shutil
@@ -33,11 +35,11 @@ VOICE_EVENT_STATES = {
     "transcript": "DENKEN",
     "transcript_discarded": "BEREIT",
     "llm_start": "DENKEN",
-    "llm_response": "SPRECHEN",
+    "llm_response": "SYNTHESE",
     "llm_discarded": "BEREIT",
     "cancelled": "BEREIT",
-    "status": "SPRECHEN",
-    "speech_started": "SPRECHEN",
+    "status": "SYNTHESE",
+    "speech_started": "SYNTHESE",
     "speech_finished": "BEREIT",
     "stt_error": "FEHLER",
     "llm_error": "FEHLER",
@@ -53,6 +55,111 @@ VOICE_COLORS = {
     "SPRECHEN": (255, 140, 0),
     "FEHLER": (255, 70, 70),
 }
+
+
+PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/display-progress.json'))
+ANIMATION_INTERVAL_SECONDS = 0.25
+# state, description, icon, position in the five-step response sequence
+PHASE_DETAILS = {
+    ('tts', 'import'): ('STARTET', 'Sprachsystem laden', 'gear', 0),
+    ('tts', 'model_load'): ('STARTET', 'Stimm-Modell laden', 'gear', 0),
+    ('tts', 'warmup'): ('STARTET', 'Stimme vorbereiten', 'wave', 0),
+    ('tts', 'worker_total'): ('SYNTHESE', 'Sprachausgabe starten', 'wave', 3),
+    ('tts', 'synthesis'): ('SYNTHESE', 'Stimme erzeugen', 'wave', 3),
+    ('tts', 'dsp_render'): ('RENDERN', 'Audioeffekte berechnen', 'sliders', 4),
+    ('tts', 'playback'): ('AUSGABE', 'Audio abspielen', 'speaker', 5),
+    ('stt', 'live_finalize'): ('ERKENNEN', 'Aufnahme auswerten', 'scan', 1),
+    ('stt', 'recognition'): ('ERKENNEN', 'Sprache in Text', 'scan', 1),
+}
+STATE_DETAILS = {
+    'BEREIT': ('Zum Sprechen halten', 'ready', 0),
+    'ZUHÖREN': ('Sprache aufnehmen', 'mic', 0),
+    'VERSTEHEN': ('Sprache in Text', 'scan', 1),
+    'DENKEN': ('Antwort abwarten', 'gear', 2),
+    'SYNTHESE': ('Stimme erzeugen', 'wave', 3),
+    'SPRECHEN': ('Audio abspielen', 'speaker', 5),
+    'FEHLER': ('Vorgang fehlgeschlagen', 'error', 0),
+    'STARTET': ('Sprachsystem starten', 'gear', 0),
+}
+VOICE_COLORS.update(SYNTHESE=(80, 210, 235), RENDERN=(190, 140, 255),
+                    AUSGABE=(255, 140, 0), ERKENNEN=(255, 200, 0))
+
+
+def read_progress(path=None):
+    try:
+        value = json.loads((PROGRESS_FILE if path is None else Path(path)).read_text())
+        if not isinstance(value, dict):
+            return None
+        if (value.get('stage'), value.get('metric')) not in PHASE_DETAILS:
+            return None
+        stamp = value.get('timestamp')
+        if isinstance(stamp, bool) or not isinstance(stamp, (int, float)) or not math.isfinite(stamp):
+            return None
+        return value
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def screen_details(state, event, progress):
+    """A later controller event (especially cancel/error) supersedes old work."""
+    stamp = event['timestamp'] if event else 0
+    if (progress and state != 'FEHLER' and event
+            and progress['timestamp'] >= stamp):
+        state, description, icon, step = PHASE_DETAILS[(progress['stage'], progress['metric'])]
+        return state, description, icon, step, progress['timestamp']
+    description, icon, step = STATE_DETAILS.get(state, ('', 'gear', 0))
+    if event and event['event'] == 'stt_loading':
+        description = 'Spracherkennung laden'
+    elif event and event['event'] == 'tts_loading':
+        description = 'Stimm-Modell laden'
+    return state, description, icon, step, stamp
+
+
+def draw_activity_icon(draw, kind, center, color, tick):
+    x, y = center
+    angle = tick * math.tau / 32  # One quiet rotation every eight seconds.
+    if kind == 'gear':
+        points = []
+        for i in range(64):
+            radius = 17 if i % 8 in (0, 1, 6, 7) else 21
+            a = angle + i * math.tau / 64
+            points.append((x + math.cos(a)*radius, y + math.sin(a)*radius))
+        draw.polygon(points, fill=color)
+        draw.ellipse((x-9, y-9, x+9, y+9), fill='black')
+        draw.ellipse((x-3, y-3, x+3, y+3), fill=color)
+    elif kind in ('wave', 'sliders'):
+        for i in range(5):
+            xx = x-16+i*8
+            height = 5 + int(12 * (1+math.sin(tick*.45+i*1.3))/2)
+            draw.line((xx, y-17, xx, y+17), fill=(55,65,75), width=2)
+            if kind == 'sliders':
+                yy = y-12+height
+                draw.rounded_rectangle((xx-3, yy-4, xx+3, yy+4), radius=2, fill=color)
+            else:
+                draw.line((xx, y-height, xx, y+height), fill=color, width=4)
+    elif kind == 'speaker':
+        draw.polygon([(x-18,y-6),(x-11,y-6),(x-3,y-14),(x-3,y+14),(x-11,y+6),(x-18,y+6)], fill=color)
+        for radius in (12, 20):
+            if radius == 12 or tick % 4 < 3:
+                draw.arc((x-radius,y-radius,x+radius,y+radius), -55,55,fill=color,width=2)
+    elif kind == 'mic':
+        draw.rounded_rectangle((x-6,y-18,x+6,y+5),radius=6,outline=color,width=2)
+        draw.arc((x-12,y-7,x+12,y+13),0,180,fill=color,width=2)
+        draw.line((x,y+13,x,y+20),fill=color,width=2)
+        draw.line((x-7,y+20,x+7,y+20),fill=color,width=2)
+        draw.ellipse((x+15,y-17,x+19,y-13),fill=color if tick%4<2 else (65,35,35))
+    elif kind == 'scan':
+        draw.rounded_rectangle((x-15,y-19,x+15,y+19),radius=3,outline=color,width=2)
+        for offset in (-10,-2,6):
+            draw.line((x-8,y+offset,x+8,y+offset),fill=(100,100,100),width=2)
+        yy = y-14+(tick%12)*2.5
+        draw.line((x-18,yy,x+18,yy),fill=color,width=2)
+    elif kind == 'error':
+        draw.polygon([(x,y-20),(x-21,y+17),(x+21,y+17)],outline=color,width=2)
+        draw.text((x-5,y-12),'!',font=font(24),fill=color)
+    else:
+        draw.ellipse((x-19,y-19,x+19,y+19),outline=color,width=2)
+        draw.line((x-10,y,x-3,y+7,x+11,y-9),fill=color,width=3)
 
 
 def load_env():
@@ -73,6 +180,7 @@ def load_env():
     return values
 
 
+@lru_cache(maxsize=12)
 def font(size):
     from PIL import ImageFont
 
@@ -270,38 +378,47 @@ def render_boot(display, states):
     display.image(image, 180)
 
 
-def render_voice(display, state, network):
+def render_voice(display, state, network, details=None, tick=0, elapsed=0):
     from PIL import Image, ImageDraw
-
-    image = Image.new("RGB", (WIDTH, HEIGHT), "black")
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
-
-    title_font = font(20)
-    state_font = font(27 if len(state) <= 9 else 23)
-    small_font = font(13)
+    description, icon, step = details or STATE_DETAILS.get(state, ('', 'gear', 0))
     color = VOICE_COLORS.get(state, (220, 220, 220))
-
-    draw.text((12, 10), "PI ASSISTANT", font=title_font, fill="white")
-    draw.line((12, 40, 228, 40), fill=(90, 90, 90), width=1)
-
-    box = draw.textbbox((0, 0), state, font=state_font)
-    text_width = box[2] - box[0]
-    draw.text(
-        ((WIDTH - text_width) // 2, 101),
-        state,
-        font=state_font,
-        fill=color,
-    )
-
-    draw.line((12, 197, 228, 197), fill=(90, 90, 90), width=1)
-    draw.text((12, 209), "VOICE LIVE", font=small_font, fill=(170, 170, 170))
-    draw.text(
-        (143, 209),
-        "NET OK" if network else "OFFLINE",
-        font=small_font,
-        fill=(120, 220, 160) if network else (180, 180, 180),
-    )
+    draw.text((12, 10), 'PI ASSISTANT', font=font(20), fill='white')
+    draw.line((12, 40, 228, 40), fill=(65,65,65))
+    draw.text((12, 53), 'AKTUELLER SCHRITT', font=font(11), fill=(135,145,150))
+    draw_activity_icon(draw, icon, (34, 101), color, tick)
+    draw.text((65, 87), state, font=font(22 if len(state)<10 else 19), fill=color)
+    draw.text((12, 139), description, font=font(14), fill=(215,220,225))
+    if state not in ('BEREIT', 'FEHLER'):
+        draw.text((12, 165), f'Seit {max(0, int(elapsed))} s', font=font(12), fill=(145,155,165))
+    if step:
+        for i in range(1,6):
+            xx = 160+(i-1)*14
+            draw.ellipse((xx,170,xx+6,176), fill=color if i<=step else (45,45,45))
+    draw.line((12,197,228,197), fill=(65,65,65))
+    draw.text((12,209), 'VOICE LIVE', font=font(13), fill=(170,170,170))
+    draw.text((143,209), 'NET OK' if network else 'OFFLINE', font=font(13),
+              fill=(120,220,160) if network else (180,180,180))
     display.image(image, 180)
+
+
+class PartialDisplay:
+    """Transfer only changed pixels; avoid converting a full frame each tick."""
+    def __init__(self, hardware):
+        self.hardware = hardware
+        self.previous = None
+
+    def image(self, image, rotation=0):
+        from PIL import ImageChops
+        oriented = image.rotate(rotation, expand=True) if rotation else image
+        box = (0, 0, oriented.width, oriented.height)
+        if self.previous is not None and self.previous.size == oriented.size:
+            box = ImageChops.difference(oriented, self.previous).getbbox()
+        if box is None:
+            return
+        self.hardware.image(oriented.crop(box), rotation=0, x=box[0], y=box[1])
+        self.previous = oriented.copy()
 
 
 def main():
@@ -328,6 +445,7 @@ def main():
         y_offset=80,
     )
 
+    display = PartialDisplay(display)
     states = None
     voice_state = None
     last_event = None
@@ -380,15 +498,20 @@ def main():
             )
             error_until = None
 
-        if states is None or not is_ready(states) or voice_state in (None, "STARTET"):
+        if states is None or not is_ready(states) or voice_state is None:
             screen = ("boot", tuple(sorted((states or {}).items())))
             if screen != previous_screen and states is not None:
                 render_boot(display, states)
                 previous_screen = screen
         else:
-            screen = ("voice", voice_state, states["network"])
+            current = screen_details(voice_state, current_event, read_progress())
+            shown, description, icon, step, started = current
+            tick = int(now / ANIMATION_INTERVAL_SECONDS) if shown not in ('BEREIT', 'FEHLER') else 0
+            elapsed = max(0, time.time() - started)
+            screen = ('voice', current, states['network'], tick)
             if screen != previous_screen:
-                render_voice(display, voice_state, states["network"])
+                render_voice(display, shown, states['network'],
+                             (description, icon, step), tick, elapsed)
                 previous_screen = screen
 
         time.sleep(EVENT_INTERVAL_SECONDS)

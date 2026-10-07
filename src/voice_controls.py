@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import wave
+from runtime_metrics import phase
 
 def _speech_event(name, **fields):
     import json
@@ -17,6 +18,7 @@ def _speech_event(name, **fields):
 
 from voice_effects import (
     build_playback_command,
+    build_render_command,
     build_stream_playback_command,
     resolve_voice_profile,
 )
@@ -80,7 +82,24 @@ def _load_piper_voice(model):
     except (ImportError, OSError) as exc:
         raise RuntimeError(f"failed to import Piper from {site_packages}: {exc}") from exc
     try:
-        return PiperVoice.load(model)
+        if os.environ.get('PTT_MEMORY_MODE') != 'hybrid':
+            return PiperVoice.load(model)
+        # External tensors remain clean file-backed pages; do not retain a CPU
+        # activation arena while the isolated Vosk model is loaded.
+        if not Path(model).with_suffix('.weights').is_file():
+            raise RuntimeError('hybrid mode requires the prepared external-weight model')
+        import json
+        import onnxruntime as ort
+        from piper.config import PiperConfig
+        options = ort.SessionOptions()
+        options.enable_cpu_mem_arena = False
+        options.intra_op_num_threads = 4
+        options.inter_op_num_threads = 1
+        options.add_session_config_entry('session.intra_op.allow_spinning', '0')
+        with open(str(model) + '.json', encoding='utf-8') as source:
+            config = PiperConfig.from_dict(json.load(source))
+        return PiperVoice(config=config, session=ort.InferenceSession(
+            str(model), sess_options=options, providers=['CPUExecutionProvider']))
     except Exception as exc:
         raise RuntimeError(f"failed to load Piper model {model}: {exc}") from exc
 
@@ -98,8 +117,10 @@ def _servitor_synthesis_config(voice):
     except ImportError as exc:
         raise RuntimeError("Piper SynthesisConfig unavailable") from exc
 
-    speaker_id = int(os.environ.get("TTS_PIPER_SPEAKER_ID", "4"))
     num_speakers = getattr(getattr(voice, "config", None), "num_speakers", None)
+    speaker_id = int(os.environ.get(
+        "TTS_PIPER_SPEAKER_ID", "0" if num_speakers == 1 else "4"
+    ))
     if num_speakers is not None and not 0 <= speaker_id < num_speakers:
         raise ValueError(
             f"TTS_PIPER_SPEAKER_ID={speaker_id} outside model speaker range "
@@ -143,6 +164,22 @@ def _synthesize_voice(voice, text, audio, profile):
         raise RuntimeError("Piper produced no audio chunks")
 
 
+def _release_synthesis_scratch():
+    if os.environ.get('PTT_MEMORY_MODE') != 'hybrid':
+        return
+    import gc
+    gc.collect()
+    if sys.platform.startswith('linux'):
+        import ctypes
+        ctypes.CDLL(None).malloc_trim(0)
+
+
+def _stop_standby_stt():
+    if os.environ.get('PTT_MEMORY_MODE') == 'hybrid':
+        from transcribe import stop_prepared_vosk
+        stop_prepared_vosk()
+
+
 class _SpeechJob:
     def __init__(self):
         self.done = threading.Event()
@@ -156,7 +193,7 @@ class _SpeechJob:
 
 
 class ResidentSpeechOutput:
-    """Keep Piper loaded and stream Servitor PCM to FFmpeg as soon as it exists."""
+    """Keep Piper loaded; support streamed or completed-file playback."""
 
     def __init__(self, model, audio_device, runtime_dir, loader=None, popen=None,
                  profile=None):
@@ -165,11 +202,29 @@ class ResidentSpeechOutput:
         self.runtime_dir = Path(runtime_dir)
         self.runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.profile = resolve_voice_profile(profile)
-        self.voice = (loader or _load_piper_voice)(self.model)
+        self.playback_mode = os.environ.get("TTS_PLAYBACK_MODE", "stream").strip().lower()
+        if self.playback_mode not in ("stream", "buffered"):
+            raise ValueError("TTS_PLAYBACK_MODE must be stream or buffered")
+        with phase('tts', 'model_load'):
+            self.voice = (loader or _load_piper_voice)(self.model)
         self._popen = popen or subprocess.Popen
         self._synthesis_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._job = None
+        if os.environ.get('PTT_MEMORY_MODE') == 'hybrid':
+            fd, name = tempfile.mkstemp(prefix='warmup-', suffix='.wav', dir=self.runtime_dir)
+            os.close(fd)
+            try:
+                with phase('tts', 'warmup'):
+                    with wave.open(name, 'wb') as audio:
+                        _synthesize_voice(self.voice, 'Bereit.', audio, self.profile)
+                _release_synthesis_scratch()
+            finally:
+                Path(name).unlink(missing_ok=True)
+
+    @property
+    def synthesizing(self):
+        return self._synthesis_lock.locked()
 
     @property
     def active(self):
@@ -202,7 +257,7 @@ class ResidentSpeechOutput:
             job = self._job
             if job is None or job.done.is_set():
                 return 0.0
-            if self.profile != "servitor":
+            if self.profile != "servitor" or self.playback_mode == "buffered":
                 return 1.0
             started = job.playback_started_at
             segments = tuple(job.activity_segments)
@@ -348,46 +403,65 @@ class ResidentSpeechOutput:
         if self._current(job):
             job.result = code
 
+    def _run_owned(self, job, command, metric, timeout=None):
+        proc = self._popen(command, stdin=subprocess.DEVNULL, start_new_session=True)
+        with self._state_lock:
+            if self._job is not job:
+                _terminate_process_group(proc)
+                return None
+            job.process = proc
+        with phase('tts', metric):
+            try:
+                return proc.wait() if timeout is None else proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _terminate_process_group(proc)
+                raise
+
     def _run_file(self, job, text):
-        path = None
+        path = rendered = None
         try:
-            fd, name = tempfile.mkstemp(
-                prefix="speech-", suffix=".wav", dir=self.runtime_dir
-            )
+            fd, name = tempfile.mkstemp(prefix='speech-', suffix='.wav', dir=self.runtime_dir)
             os.close(fd)
             path = Path(name)
             with self._synthesis_lock:
                 if not self._current(job):
                     return
-                with wave.open(str(path), "wb") as audio:
-                    _synthesize_voice(self.voice, text, audio, self.profile)
+                with phase('tts', 'synthesis'):
+                    with wave.open(str(path), 'wb') as audio:
+                        _synthesize_voice(self.voice, text, audio, self.profile)
+                _release_synthesis_scratch()
             if not self._current(job):
                 return
-
-            proc = self._popen(
-                build_playback_command(
-                    path,
-                    self.audio_device,
-                    profile=self.profile,
-                ),
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            with self._state_lock:
-                if self._job is not job:
-                    _terminate_process_group(proc)
+            with wave.open(str(path), 'rb') as audio:
+                _speech_event('tts_audio_ready',
+                    audio_duration_ms=round(audio.getnframes()*1000/audio.getframerate()),
+                    sample_rate=audio.getframerate(), channels=audio.getnchannels(),
+                    profile=self.profile, playback_mode=self.playback_mode)
+            if self.profile == 'servitor' and os.environ.get('TTS_DSP_MODE') == 'buffered':
+                fd, name = tempfile.mkstemp(prefix='speech-dsp-', suffix='.wav', dir=self.runtime_dir)
+                os.close(fd)
+                rendered = Path(name)
+                code = self._run_owned(job, build_render_command(path, rendered), 'dsp_render', 120)
+                if not self._current(job):
                     return
-                job.process = proc
-            code = proc.wait()
+                if code != 0:
+                    raise RuntimeError(f'Servitor rendering failed ({code})')
+                playback = ['/usr/bin/aplay', '-q', '-D', self.audio_device,
+                            '-B', '500000', str(rendered)]
+            else:
+                playback = build_playback_command(path, self.audio_device, profile=self.profile)
             if self._current(job):
-                job.result = code
+                code = self._run_owned(job, playback, 'playback')
+                if self._current(job):
+                    job.result = code
         finally:
-            if path is not None:
-                path.unlink(missing_ok=True)
+            for target in (path, rendered):
+                if target is not None:
+                    target.unlink(missing_ok=True)
 
     def _run(self, job, text):
         try:
-            if self.profile == "servitor":
+            if self.profile == "servitor" and self.playback_mode == "stream":
                 self._run_servitor(job, text)
             else:
                 self._run_file(job, text)
@@ -395,6 +469,7 @@ class ResidentSpeechOutput:
             if self._current(job):
                 job.error = str(exc)
                 job.result = 1
+                _speech_event("speech_error", message=str(exc))
         finally:
             job.done.set()
 
@@ -403,6 +478,7 @@ class ResidentSpeechOutput:
         if not text:
             return
         self.stop()
+        _stop_standby_stt()
         job = _SpeechJob()
         with self._state_lock:
             self._job = job
@@ -444,6 +520,7 @@ class SpeechOutput:
 
     def start(self, text):
         self.stop()
+        _stop_standby_stt()
         self.process = subprocess.Popen(
             [*self.command, text], stdin=subprocess.DEVNULL,
             start_new_session=True)
