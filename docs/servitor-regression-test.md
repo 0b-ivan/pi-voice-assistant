@@ -340,3 +340,45 @@ Einstellungen `PTT_MEMORY_MODE=isolated`, normal/Low und Mixer beibehalten.
 Danach zweimal Paris testen und das Journal ab `recording` vollständig liefern.
 Bei `capture_ready` sollen 16 kHz und ein Kanal erscheinen. Für spätere
 Servitor-Abnahme Modell/Parameter identisch halten.
+
+## Piper-Ladezeit eingrenzen: ONNX-Optimierungsstufe
+
+Pi-Messung (normal/Low): Vosk import 1,62 s, model_load 7,72 s,
+recognition 3,90 s. Piper import 2,07 s, model_load 16,87 s (CPU 15,25 s),
+synthesis 0,96 s, Audio 0,736 s, playback 0,812 s. In den gemessenen
+Worker-Phasen war kein Swap belegt. Die lange Piper-Ladezeit enthält also
+viel CPU-Arbeit; ob ONNX-Graphoptimierung ihr Hauptanteil ist, bleibt zu messen.
+
+Der isolierte Worker unterstützt `TTS_PIPER_GRAPH_OPTIMIZATION=all|basic|disabled`.
+Standard `all` verwendet unverändert `PiperVoice.load`. Die anderen Werte
+bauen genau eine CPU-Inferenzsession mit passender Original-JSON-Konfiguration,
+Piper 1.8.0 und der ausgewählten SessionOption. Modell, Syntheseparameter und
+DSP werden nicht geändert. Geringere Optimierung kann Laden verkürzen und
+Synthese verlangsamen. Auswahl hat keine Wirkung auf residenten Piper.
+
+[ONNX Runtime](https://onnxruntime.ai/docs/performance/model-optimizations/graph-optimizations.html)
+dokumentiert den Initialisierungsaufwand der Graphoptimierung und die
+umschaltbaren Stufen. Nachgewiesener Nutzen auf dem Pi steht noch aus.
+
+Zuerst ohne Lautsprecherausgabe direkt drei kurze WAVs erzeugen. Nach Update,
+Tests und Installation den Dienst stoppen, damit keine parallele Sprachfrage
+zusätzliche Modelle lädt. Danach wieder starten:
+
+```bash
+sudo systemctl stop pi-ptt.service
+for level in all basic disabled; do
+  printf 'Paris.' | TTS_PIPER_GRAPH_OPTIMIZATION="$level" \
+    /opt/pi-voice-assistant/.venv/bin/python \
+    /opt/pi-voice-assistant/src/piper_worker.py \
+    /opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx \
+    "/tmp/pi-piper-$level.wav" normal
+done
+sudo systemctl start pi-ptt.service
+```
+
+`tts_worker_config` kennzeichnet jede Stufe. Vergleichen: `model_load`,
+`synthesis`, RSS/Swap und Audiodauer. Aufwärmung des Dateicaches kann den
+Vergleich beeinflussen; erst bei erkennbarem Nutzen in umgekehrter Reihenfolge
+wiederholen. Persistente Auswahl erst nach Messung in `/etc/pi-ptt.env`
+setzen und Dienst neu starten. Rücknahme: `TTS_PIPER_GRAPH_OPTIMIZATION=all`.
+Die drei WAVs sind synthetisches Paris und können danach gelöscht werden.
