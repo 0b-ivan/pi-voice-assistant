@@ -47,7 +47,7 @@ OPENROUTER_LLM_TIMEOUT_SECONDS=8
 SERVITOR_LOCAL_LLM=1
 # After an OpenRouter failure, use the local model directly for this long.
 SERVITOR_OPENROUTER_RETRY_SECONDS=60
-LOCAL_LLM_MODEL_NAME=qwen2.5-3b
+LOCAL_LLM_MODEL_NAME=qwen3-4b
 LOCAL_LLM_MAX_TOKENS=120
 ENV
   chown root:servitor /etc/servitor-voice.env

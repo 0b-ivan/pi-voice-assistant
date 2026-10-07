@@ -3,7 +3,7 @@
 # downloads a verified GGUF model as the offline LLM fallback for the Servitor
 # service. Idempotent: an existing build/model with the right hash is kept.
 #
-#   sh server/install-llm.sh [3b|1.5b|gemma4b|qwen4b]
+#   sh server/install-llm.sh [qwen4b|3b|1.5b|gemma4b]   (default qwen4b, see docs)
 set -eu
 B=/opt/servitor-voice
 L=$B/llm
@@ -12,7 +12,7 @@ LLAMA_TAG=v0.5.0
 LLAMA_COMMIT=7fe450e19305b828c199d602c23a8337aaa1f03b  # v0.5.0^{} (peeled)
 HF=https://huggingface.co
 
-case "${1:-3b}" in
+case "${1:-qwen4b}" in
   3b)
     MODEL=qwen2.5-3b-instruct-q4_k_m.gguf
     URL=$HF/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/$MODEL
