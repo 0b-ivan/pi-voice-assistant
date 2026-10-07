@@ -20,7 +20,7 @@ import servitor_server as ss  # noqa: E402
 from test_servitor_server import FakePipeline, TOKEN  # noqa: E402
 from ptt import Recorder, VoiceController  # noqa: E402
 from remote_turn import (  # noqa: E402
-    RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config,
+    NO_FALLBACK_CODES, RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config,
 )
 
 
@@ -294,7 +294,7 @@ class FakeJob:
 
     @property
     def fallback_allowed(self):
-        return self.error is not None and self.error_code not in ('no_speech', 'too_short')
+        return self.error is not None and self.error_code not in NO_FALLBACK_CODES
 
 
 class RemoteControllerTests(unittest.TestCase):

@@ -26,6 +26,10 @@ class TranscriptionError(RuntimeError):
     """Raised when local STT cannot produce a transcript."""
 
 
+class NoSpeechError(TranscriptionError):
+    """Recognition worked but heard no words; retrying elsewhere won't help."""
+
+
 def _provider() -> str:
     provider = os.environ.get("STT_PROVIDER", "vosk").strip().lower()
     if provider != "vosk":
@@ -222,7 +226,7 @@ class LiveVoskRecognizer:
             self.parts.append(final_text)
         text = " ".join(self.parts).strip()
         if not text:
-            raise TranscriptionError("Vosk returned no transcript")
+            raise NoSpeechError("Vosk returned no transcript")
         return text
 
 

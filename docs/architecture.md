@@ -61,7 +61,7 @@ Folgerung: Im LAN bleibt `ASSISTANT_AUDIO_FORMAT=wav`. Für den späteren Intern
 
 ### Offline-LLM auf CT 107
 
-Fällt OpenRouter aus (kein Internet, keine Credits, Rate-Limit, Timeout, 5xx), antwortet ein lokales Modell im Container. [`server/install-llm.sh`](../server/install-llm.sh) baut `llama-server` aus llama.cpp `v0.5.0` (für die AVX2-CPU des Hosts) und lädt ein per SHA-256 geprüftes Qwen2.5-3B-Instruct (Q4_K_M, 2,1 GB). [`servitor-llm.service`](../server/servitor-llm.service) betreibt es nur auf `127.0.0.1:8766`. Der Sprachdienst fragt OpenRouter mit 8 s Timeout und nach einem Fehler 60 s lang direkt das lokale Modell. Das `reply`-Event nennt das Modell (`local/qwen2.5-3b`), das Journal `llm_fallback` mit Grund. CT 107 hat dafür 4 Kerne und 5 GB RAM (llama-server ca. 1,4 GB belegt).
+Fällt OpenRouter aus (kein Internet, keine Credits, Rate-Limit, Timeout, 5xx), antwortet ein lokales Modell im Container. [`server/install-llm.sh`](../server/install-llm.sh) baut `llama-server` aus llama.cpp `v0.5.0` (für die AVX2-CPU des Hosts) und lädt ein per SHA-256 geprüftes Qwen3-4B-Instruct-2507 (Q4_K_M, 2,5 GB; Auswahl siehe unten). [`servitor-llm.service`](../server/servitor-llm.service) betreibt es nur auf `127.0.0.1:8766`. Der Sprachdienst fragt OpenRouter mit 8 s Timeout und nach einem Fehler 60 s lang direkt das lokale Modell. Das `reply`-Event nennt das Modell (`local/qwen3-4b`), das Journal `llm_fallback` mit Grund. CT 107 hat dafür 4 Kerne und 5 GB RAM (llama-server ca. 2,1 GB fest belegt).
 
 **Messung 08.10.2026** (Serverzeit inkl. STT/TTS):
 

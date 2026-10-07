@@ -170,3 +170,31 @@ class SynthesisScratchTests(unittest.TestCase):
                     output._run_file(job, 'Hallo')
             release.assert_called_once()
             self.assertEqual(list(Path(tmp).iterdir()), [])
+
+
+class StreamPlaybackProgressTests(unittest.TestCase):
+    def test_streamed_servitor_playback_advances_display_to_output(self):
+        import tempfile
+        from types import SimpleNamespace
+        from voice_controls import ResidentSpeechOutput
+
+        chunk = SimpleNamespace(audio_int16_bytes=b'\0\0', sample_rate=22050,
+                                sample_width=2, sample_channels=1)
+        voice = Mock()
+        voice.synthesize.return_value = [chunk]
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, {'PTT_MEMORY_MODE': 'resident',
+                                        'TTS_PLAYBACK_MODE': 'stream'}, clear=True):
+            output = ResidentSpeechOutput('m.onnx', 'dev', tmp, loader=lambda _m: voice,
+                                          popen=Mock(), profile='servitor')
+            job = Mock()
+            output._job = job
+            # Stop right after FFmpeg starts: a newer job "replaced" this one.
+            output._current = Mock(side_effect=[True, True])
+            output._state_lock = __import__('threading').Lock()
+            with patch('voice_controls._servitor_synthesis_config', return_value=(None, 0.3)), \
+                    patch('voice_controls._terminate_process_group'), \
+                    patch('voice_controls.display_progress') as progress:
+                output._job = object()
+                output._run_servitor(job, 'Hallo')
+            progress.assert_called_once_with('tts', 'playback')

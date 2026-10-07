@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 import wave
-from runtime_metrics import phase
+from runtime_metrics import display_progress, phase
 
 def _speech_event(name, **fields):
     import json
@@ -342,6 +342,9 @@ class ResidentSpeechOutput:
                 stdin=subprocess.PIPE,
                 start_new_session=True,
             )
+            # Streamed playback has no phase('tts', 'playback') block; tell the
+            # display explicitly, or it stays on SYNTHESE while audio plays.
+            display_progress('tts', 'playback')
             _speech_event(
                 "tts_playback_start",
                 profile=self.profile,

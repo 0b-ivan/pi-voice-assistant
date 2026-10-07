@@ -13,6 +13,8 @@ import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'server'))
 import servitor_server as ss  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+from transcribe import NoSpeechError  # noqa: E402
 
 TOKEN = 'x' * 40
 
@@ -27,7 +29,7 @@ class FakeRecognizer:
 
     def finish(self):
         if self.owner.transcript is None:
-            raise RuntimeError('Vosk returned no transcript')
+            raise NoSpeechError('Vosk returned no transcript')
         return self.owner.transcript
 
 
@@ -255,6 +257,20 @@ class ServerTest(unittest.TestCase):
         last = self.events(data)[-1]
         self.assertEqual((last['event'], last['stage'], last['code']),
                          ('error', 'recognize', 'stt'))
+
+    def test_broken_finalization_is_stt_not_no_speech(self):
+        original = self.pipeline.recognizer
+
+        def recognizer():
+            rec = original()
+            def finish():
+                raise RuntimeError('live Vosk finalization failed: native error')
+            rec.finish = finish
+            return rec
+        self.pipeline.recognizer = recognizer
+        _, data = self.request('/v1/turn', b'\1' * 16000)
+        last = self.events(data)[-1]
+        self.assertEqual((last['stage'], last['code']), ('recognize', 'stt'))
 
     def raw_turn(self, body_bytes):
         """Send a hand-written chunked body; return the decoded NDJSON events."""

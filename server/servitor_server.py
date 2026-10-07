@@ -243,7 +243,11 @@ class Service:
                 try:
                     text = timed('stt_finalize', recognizer.finish)
                 except Exception as exc:
-                    raise TurnError('recognize', 'no_speech', str(exc)) from exc
+                    # Only an empty transcript is final for the Pi; a broken
+                    # finalization must still let it retry with local Vosk.
+                    from transcribe import NoSpeechError
+                    code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
+                    raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
                 emit(dict(event='stage', stage='think'))
                 try:
