@@ -97,6 +97,9 @@ class LLMTests(unittest.TestCase):
             def read(self, *_args):
                 raise http.client.IncompleteRead(b"{", 12)
 
+            def close(self):
+                pass
+
         error = urllib.error.HTTPError(
             llm.DEFAULT_LLM_URL,
             503,
