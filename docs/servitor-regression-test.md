@@ -194,3 +194,29 @@ sudo systemctl start pi-ptt.service
 
 Kein Pi ist mit dieser Arbeitsumgebung verbunden. Hörvergleich, ALSA und
 reale Vosk/Piper-Latenz/Speicheraufnahme sind deshalb noch nicht abgenommen.
+
+## Diagnose bei fehlender Ausgabe vor EOF auf dem Pi
+
+Wenn nur `test_dsp_outputs_audio_before_input_eof_and_preserves_pcm`
+fehlschlägt, den Test nicht überspringen und noch nicht installieren.
+Der Fehler allein beweist nicht, ob Eingang, Testausgang oder CPU/Swap die
+Ausgabe verzögert. Folgender Vergleich verwendet eine Sekunde synthetisches
+PCM und hält den Eingang bis zu fünf Sekunden offen. Ein temporärer
+Dateiausgang vermeidet Rückstau der Test-Ausgangspipe. Kein ALSA, kein Mixer,
+keine Sprachmodelle und keine Änderung der laufenden Dienstkonfiguration.
+
+```bash
+cd ~/pi-voice-assistant-audio-test
+git pull --ff-only
+python3 scripts/diagnose-tts-stream.py
+free -h
+vmstat 1 5
+```
+
+Das Skript zeigt FFmpeg-Version, Bytes vor EOF, Wartezeit, Exitstatus und
+Fehlerausgabe für unveränderten Aufruf, sofortiges Ausgangs-Flushen,
+kleinere Pipe-Leseoperationen, direkten Eingang und einen Pfad ohne DSP.
+Direkten Eingang nur diagnostisch verwenden: lokal verkürzte er die
+vollständige Ausgabe von 109.916 auf 109.888 Bytes. Deshalb ist diese
+Variante keine freigegebene Produktionskorrektur. Die 5-s-Grenze ist ein
+Diagnosefenster, keine Abnahmegrenze für Sprachlatenz.
