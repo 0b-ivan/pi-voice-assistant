@@ -47,6 +47,12 @@ class TurnError(Exception):
         self.stage, self.code, self.message = stage, code, message
 
 
+def _temporary_wav(prefix, directory):
+    fd, name = tempfile.mkstemp(prefix=prefix, suffix='.wav', dir=directory)
+    os.close(fd)  # reopened by name; never keep the mkstemp descriptor
+    return Path(name)
+
+
 def _env_int(name, default, minimum, maximum):
     value = int(os.environ.get(name, str(default)))
     if not minimum <= value <= maximum:
@@ -67,6 +73,10 @@ class Config:
         self.idle_timeout = float(env.get('SERVITOR_UPLOAD_IDLE_TIMEOUT', '10'))
         self.rate_limit = int(env.get('SERVITOR_RATE_LIMIT_PER_MINUTE', '20'))
         self.workdir = env.get('SERVITOR_WORKDIR') or tempfile.gettempdir()
+        # CF-Connecting-IP is only believed from these peers (local cloudflared).
+        self.trusted_proxies = {
+            value.strip() for value in
+            env.get('SERVITOR_TRUSTED_PROXIES', '127.0.0.1,::1').split(',') if value.strip()}
 
     @property
     def max_bytes(self):
@@ -99,7 +109,7 @@ class RealPipeline:
 
     def synthesize(self, text):
         from voice_controls import _synthesize_voice
-        target = Path(tempfile.mkstemp(prefix='syn-', suffix='.wav', dir=self.workdir)[1])
+        target = _temporary_wav('syn-', self.workdir)
         try:
             with wave.open(str(target), 'wb') as output:
                 _synthesize_voice(self.voice, text, output, 'servitor')
@@ -110,7 +120,7 @@ class RealPipeline:
 
     def render(self, source):
         from voice_effects import build_render_command
-        target = Path(tempfile.mkstemp(prefix='dsp-', suffix='.wav', dir=self.workdir)[1])
+        target = _temporary_wav('dsp-', self.workdir)
         try:
             subprocess.run(build_render_command(source, target), check=True,
                            timeout=60, stdin=subprocess.DEVNULL,
@@ -242,7 +252,12 @@ def read_chunked(stream, limit):
         line = stream.readline(66)
         if not line.endswith(b'\n'):
             raise TurnError('upload', 'bad_request', 'malformed chunk header')
-        size = int(line.split(b';', 1)[0].strip() or b'x', 16)
+        try:
+            size = int(line.split(b';', 1)[0].strip(), 16)
+        except ValueError:
+            raise TurnError('upload', 'bad_request', 'malformed chunk size') from None
+        if size < 0:
+            raise TurnError('upload', 'bad_request', 'malformed chunk size')
         if size == 0:
             while stream.readline(1024) not in (b'\r\n', b'\n', b''):
                 pass
@@ -253,7 +268,8 @@ def read_chunked(stream, limit):
         data = stream.read(size)
         if len(data) != size:
             raise TurnError('upload', 'bad_request', 'truncated chunk')
-        stream.readline(4)
+        if stream.readline(4) not in (b'\r\n', b'\n'):
+            raise TurnError('upload', 'bad_request', 'missing chunk terminator')
         yield data
 
 
@@ -280,8 +296,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sys.stderr.write('%s %s\n' % (self.address_string(), fmt % args))
 
     def _client(self):
-        # Cloudflare forwards the real client; LAN requests use the socket peer.
-        return self.headers.get('CF-Connecting-IP') or self.client_address[0]
+        # Behind a trusted local cloudflared the header names the real client;
+        # any other peer could forge it, so LAN requests use the socket peer.
+        peer = self.client_address[0]
+        forwarded = self.headers.get('CF-Connecting-IP', '').strip()
+        if forwarded and peer in self.service.config.trusted_proxies:
+            return forwarded
+        return peer
 
     def _json(self, status, payload, extra=None):
         body = (json.dumps(payload) + '\n').encode()
@@ -305,6 +326,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
         self.close_connection = True  # never reuse a connection with an unread body
+        self.connection.settimeout(self.service.config.idle_timeout)
         if not self.service.authorized(self.headers.get('Authorization')):
             return self._json(401, dict(error='unauthorized'))
         if not self.service.limiter.allow(self._client()):
@@ -331,9 +353,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if chunked:
                 return self._json(411, dict(error='length required'))
             try:
-                text = str(json.loads(self.rfile.read(length))['text']).strip()
+                raw = self.rfile.read(length)
+            except (OSError, TimeoutError):
+                return
+            if len(raw) != length:
+                return self._json(400, dict(error='truncated body'))
+            try:
+                text = json.loads(raw)['text']
             except (ValueError, KeyError, TypeError):
-                return self._json(400, dict(error='expected JSON {"text": ...}'))
+                text = None
+            if not isinstance(text, str):
+                return self._json(400, dict(error='expected JSON {"text": "..."}'))
+            text = text.strip()
             if not text:
                 return self._json(400, dict(error='text must not be empty'))
             body = iter(())
@@ -343,7 +374,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not self.service.turn_lock.acquire(blocking=False):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
         try:
-            self.connection.settimeout(self.service.config.idle_timeout)
             self.send_response(200)
             self.send_header('Content-Type', 'application/x-ndjson')
             self.send_header('Cache-Control', 'no-store')

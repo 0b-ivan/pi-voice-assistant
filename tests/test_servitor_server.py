@@ -1,11 +1,13 @@
 import base64
 import http.client
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'server'))
@@ -48,7 +50,9 @@ class FakePipeline:
         return f'Antwort auf {text}', 'test/model'
 
     def _wav(self, prefix, rate):
-        path = Path(tempfile.mkstemp(prefix=prefix, suffix='.wav', dir=self.workdir)[1])
+        fd, name = tempfile.mkstemp(prefix=prefix, suffix='.wav', dir=self.workdir)
+        os.close(fd)
+        path = Path(name)
         with wave.open(str(path), 'wb') as out:
             out.setnchannels(1)
             out.setsampwidth(2)
@@ -182,6 +186,52 @@ class ServerTest(unittest.TestCase):
     def test_short_token_refused(self):
         with self.assertRaises(ValueError):
             ss.Config({'SERVITOR_API_TOKEN': 'short'})
+
+    def raw_turn(self, body_bytes):
+        """Send a hand-written chunked body; return the decoded NDJSON events."""
+        import socket
+        with socket.create_connection(('127.0.0.1', self.server.server_address[1]), 5) as sock:
+            sock.sendall(b'POST /v1/turn HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer '
+                         + TOKEN.encode() + b'\r\nTransfer-Encoding: chunked\r\n\r\n'
+                         + body_bytes)
+            response = http.client.HTTPResponse(sock)
+            response.begin()
+            return self.events(response.read())
+
+    def test_malformed_chunks_are_bad_requests(self):
+        for body in (b'zz\r\n', b'4\r\n\1\1\1\1XX0\r\n\r\n'):
+            with self.subTest(body=body):
+                last = self.raw_turn(body)[-1]
+                self.assertEqual((last['event'], last['code']), ('error', 'bad_request'))
+
+    def test_speak_requires_string_text(self):
+        for payload in ({'text': None}, {'text': ['a']}, {'text': 5}):
+            with self.subTest(payload=payload):
+                response, _ = self.request('/v1/speak', json.dumps(payload).encode())
+                self.assertEqual(response.status, 400)
+
+    def test_forwarded_ip_only_trusted_from_configured_proxy(self):
+        handler = ss.Handler.__new__(ss.Handler)
+        handler.server = self.server
+        handler.headers = {'CF-Connecting-IP': '203.0.113.9'}
+        handler.client_address = ('172.22.9.128', 5000)
+        self.assertEqual(handler._client(), '172.22.9.128')
+        handler.client_address = ('127.0.0.1', 5000)
+        self.assertEqual(handler._client(), '203.0.113.9')
+
+    def test_real_pipeline_temp_files_do_not_leak_descriptors(self):
+        pipeline = ss.RealPipeline(self.tmp.name)
+        pipeline.voice = object()
+        fd_dir = '/proc/self/fd' if os.path.isdir('/proc/self/fd') else '/dev/fd'
+        before = len(os.listdir(fd_dir))
+        with unittest.mock.patch.dict(sys.modules, voice_controls=unittest.mock.Mock()), \
+                unittest.mock.patch.dict(sys.modules, voice_effects=unittest.mock.Mock()), \
+                unittest.mock.patch('servitor_server.subprocess.run'), \
+                unittest.mock.patch('servitor_server.wave.open'):
+            for _ in range(5):
+                pipeline.synthesize('x').unlink()
+                pipeline.render(Path('in.wav')).unlink()
+        self.assertEqual(len(os.listdir(fd_dir)), before)
 
 
 if __name__ == '__main__':
