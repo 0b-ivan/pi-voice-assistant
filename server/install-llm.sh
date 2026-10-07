@@ -14,19 +14,23 @@ HF=https://huggingface.co
 
 case "${1:-qwen4b}" in
   3b)
+    LABEL=qwen2.5-3b
     MODEL=qwen2.5-3b-instruct-q4_k_m.gguf
     URL=$HF/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/$MODEL
     SHA=626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d ;;
   1.5b)
+    LABEL=qwen2.5-1.5b
     MODEL=qwen2.5-1.5b-instruct-q4_k_m.gguf
     URL=$HF/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/$MODEL
     SHA=6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e ;;
   gemma4b)
+    LABEL=gemma-3-4b
     MODEL=gemma-3-4b-it-Q4_K_M.gguf
     URL=$HF/ggml-org/gemma-3-4b-it-GGUF/resolve/main/$MODEL
     SHA=882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863 ;;
   qwen4b)
     # Instruct-2507: no thinking mode, so no hidden reasoning tokens.
+    LABEL=qwen3-4b
     MODEL=Qwen3-4B-Instruct-2507-Q4_K_M.gguf
     URL=$HF/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/$MODEL
     SHA=3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597 ;;
@@ -60,4 +64,31 @@ install -o root -g root -m 0644 "$SRC/servitor-llm.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable servitor-llm.service >/dev/null
 systemctl restart servitor-llm.service
+
+# Enable the fallback in the voice service. install-ct.sh keeps an existing
+# env file, so an upgraded CT would otherwise leave llama-server unused.
+# Missing settings are added; explicit operator values stay untouched. Only
+# the model label follows the model installed here.
+E=${SERVITOR_ENV_FILE:-/etc/servitor-voice.env}
+if [ -f "$E" ]; then
+  changed=0
+  for setting in SERVITOR_LOCAL_LLM=1 OPENROUTER_LLM_TIMEOUT_SECONDS=8 \
+      SERVITOR_OPENROUTER_RETRY_SECONDS=60 LOCAL_LLM_MAX_TOKENS=120; do
+    if ! grep -q "^${setting%%=*}=" "$E"; then
+      echo "$setting" >> "$E"
+      changed=1
+    fi
+  done
+  if ! grep -qx "LOCAL_LLM_MODEL_NAME=$LABEL" "$E"; then
+    sed -i '/^LOCAL_LLM_MODEL_NAME=/d' "$E"
+    echo "LOCAL_LLM_MODEL_NAME=$LABEL" >> "$E"
+    changed=1
+  fi
+  if [ "$changed" = 1 ] && systemctl is-enabled --quiet servitor-voice.service 2>/dev/null; then
+    systemctl restart servitor-voice.service
+    echo "updated $E and restarted servitor-voice"
+  fi
+else
+  echo "warning: $E missing; run install-ct.sh to enable the fallback" >&2
+fi
 echo "installed llama-server $LLAMA_TAG with $MODEL"
