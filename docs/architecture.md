@@ -84,7 +84,7 @@ Mit Qwen3 4B und ungültigem OpenRouter-Key: Serverzeit 2,5–3,9 s. `llama-serv
 
 ### Größeres Vosk-Modell: verworfen
 
-[`server/bench-vosk.py`](../server/bench-vosk.py) vergleicht Modelle auf 20 mit Piper synthetisierten Fragen (zwei Sprecher, zwei Sprechtempi):
+[`server/bench-stt.py`](../server/bench-stt.py) vergleicht Modelle auf 20 mit Piper synthetisierten Fragen (zwei Sprecher, zwei Sprechtempi):
 
 | Modell | WER | RAM | Ergebnis |
 |---|---|---|---|
