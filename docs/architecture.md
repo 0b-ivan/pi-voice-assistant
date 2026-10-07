@@ -95,6 +95,19 @@ Mit Qwen3 4B und ungültigem OpenRouter-Key: Serverzeit 2,5–3,9 s. `llama-serv
 
 Der Nutzen käme erst mit dem 2,1 GB großen `rescore`-Sprachmodell, für das der Host keinen RAM frei hat. Typische Restfehler des kleinen Modells: „ein Tag“ → „ein paar“, „nenne“ → „wenn die“. Eine bessere Erkennung bräuchte ein anderes Verfahren (z. B. Whisper), nicht ein größeres Vosk-Modell.
 
+### Whisper als Erkenner: auf synthetischer Sprache kein Gewinn
+
+[`server/bench-stt.py`](../server/bench-stt.py) mit denselben 20 Piper-Clips (Groß-/Kleinschreibung, Satzzeichen und Ziffern normalisiert; [`server/install-whisper.sh`](../server/install-whisper.sh), faster-whisper 1.2.1, CPU int8, `beam_size=1`, CT 107 mit 4 Kernen), 08.10.2026:
+
+| Erkenner | WER | Wartezeit nach Loslassen | RAM |
+|---|---|---|---|
+| Vosk `small-de-0.15` (aktiv, streamt mit) | 6,5 % | 0,04 s | 233 MB |
+| Whisper base | 24,2 % | 0,69 s | 409 MB |
+| Whisper small | 8,9 % | 1,93 s | ~1 GB |
+| Whisper large-v3-turbo | 5,6 % | 9,70 s | 2,5 GB |
+
+Whisper erkennt erst nach dem Loslassen; nur large-v3-turbo ist genauer, aber zu langsam. Die Fehlerarten unterscheiden sich: Whisper verschreibt eher harmlos („Eifelturm“, „Tokyo“), Vosk liegt eher inhaltlich daneben („stell einen Timer“ → „still einen keine“). Saubere Synthese begünstigt Vosk; die Entscheidung braucht Aufnahmen echter Stimme über das WM8960-Mikrofon. Whisper small bleibt dafür auf CT 107 installiert (getrennte Venv, vom Dienst nicht genutzt).
+
 ## Statusansage und Antwortpfad
 
 SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest normierte Systemlast, CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.
