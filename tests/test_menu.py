@@ -120,6 +120,23 @@ class ControllerMenuTests(unittest.TestCase):
         self.assertNotIn('menu_index', self.status())
         self.recorder.start.assert_called_once()
 
+    def test_lore_item_cycles_and_reaches_snapshot(self):
+        self.press(pitft='D')
+        self.c.menu.index = ITEMS.index('lore')
+        self.assertEqual(self.c.lore, 'light')
+        self.press(down='E')
+        self.assertEqual((self.c.lore, self.status()['opt_lore']), ('full', 'full'))
+        self.assertEqual(self.c.status_snapshot()['lore'], 'full')
+        self.press(down='E')
+        self.press(down='E')
+        self.assertEqual(self.c.lore, 'light')
+
+    def test_local_llm_gets_lore_level(self):
+        with patch('ptt.TranscriptionJob') as job:
+            self.c._start_llm('wie hoch ist der eiffelturm')
+        function = job.call_args.args[0]
+        self.assertEqual(function.keywords, {'lore': 'light'})
+
     def test_menu_status_item_speaks(self):
         self.press(pitft='D')
         self.c.menu.index = ITEMS.index('status')

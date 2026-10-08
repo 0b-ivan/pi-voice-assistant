@@ -57,7 +57,20 @@ class AnswerTests(unittest.TestCase):
         self.assertEqual(intents.answer("battery", self.NOW, snapshot),
                          "Energiespeicher 83 Prozent. Ladung aktiv.")
         self.assertEqual(intents.answer("battery", self.NOW, {}), "Energiedaten nicht verfügbar.")
-        self.assertIn("SERVITOR", intents.answer("identity", self.NOW))
+        self.assertIn("Servitor Proximus", intents.answer("identity", self.NOW))
+
+    def test_lore_levels_change_wording_not_facts(self):
+        off = intents.answer("time", self.NOW, {"lore": "off"})
+        full = intents.answer("time", self.NOW, {"lore": "full"})
+        self.assertEqual(off, "Zeitindex: 14 Uhr 32.")
+        self.assertIn("14 Uhr 32.", full)
+        self.assertIn("Omnissiah", full)
+        self.assertIn("Donnerstag, der achte Oktober 2026.",
+                      intents.answer("date", self.NOW, {"lore": "full"}))
+        self.assertIn("Adeptus Mechanicus", intents.answer("identity", self.NOW, {"lore": "full"}))
+        self.assertNotIn("Omnissiah", intents.answer("identity", self.NOW, {"lore": "off"}))
+        self.assertIn("Heilige Ölung", intents.answer("battery", self.NOW,
+                                                      {"lore": "full", "battery_pct": 50}))
 
 
 if __name__ == "__main__":

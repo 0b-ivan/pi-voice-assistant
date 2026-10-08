@@ -33,8 +33,14 @@ _PATTERNS = (
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
     ('identity', re.compile(r'\b(wer bist du|wie heißt du|was bist du)\b')),
 )
-IDENTITY = ("Diese Einheit ist SERVITOR. Sprachgesteuerte Diensteinheit. "
-            "Funktion: Anfragen des Bedieners beantworten.")
+IDENTITY = {
+    'off': ("Diese Einheit ist Servitor Proximus. Sprachgesteuerte Diensteinheit. "
+            "Funktion: Anfragen des Bedieners beantworten."),
+    'light': ("Diese Einheit ist Servitor Proximus, gebunden an den Kogitator. "
+              "Funktion: Anfragen des Bedieners beantworten."),
+    'full': ("Diese Einheit ist Servitor Proximus, Diener des Adeptus Mechanicus, gebunden "
+             "an den Kogitator des Magos. Funktion: Dienst am Bediener. Lob dem Omnissiah."),
+}
 
 
 def normalize(text):
@@ -54,27 +60,33 @@ def match(text):
     return None
 
 
-def time_text(now):
-    if now.minute == 0:
-        return f"Zeitindex: {now.hour} Uhr."
-    return f"Zeitindex: {now.hour} Uhr {now.minute}."
+def time_text(now, lore='off'):
+    clock = f"{now.hour} Uhr." if now.minute == 0 else f"{now.hour} Uhr {now.minute}."
+    if lore == 'full':
+        return f"Der heilige Chronometer meldet: {clock} Lob dem Omnissiah."
+    return f"Zeitindex: {clock}"
 
 
-def date_text(now):
-    return (f"Datum: {WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
+def date_text(now, lore='off'):
+    date = (f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
             f"{MONTHS[now.month - 1]} {now.year}.")
+    if lore == 'full':
+        return f"Datum nach terranischer Zählung: {date} Der Maschinengeist bestätigt."
+    return f"Datum: {date}"
 
 
-def answer(intent, now, snapshot=None):
+def answer(intent, now, snapshot=None, lore=None):
     snapshot = snapshot or {}
+    lore = lore or snapshot.get('lore', 'off')
     if intent == 'time':
-        return time_text(now)
+        return time_text(now, lore)
     if intent == 'date':
-        return date_text(now)
+        return date_text(now, lore)
     if intent == 'status':
-        return status_text(snapshot)
+        return status_text(snapshot, lore=lore)
     if intent == 'battery':
-        return battery_sentence(snapshot) or "Energiedaten nicht verfügbar."
+        sentence = battery_sentence(snapshot) or "Energiedaten nicht verfügbar."
+        return f"{sentence} Heilige Ölung empfohlen." if lore == 'full' else sentence
     if intent == 'identity':
-        return IDENTITY
+        return IDENTITY.get(lore, IDENTITY['off'])
     raise ValueError(f'unknown intent {intent!r}')

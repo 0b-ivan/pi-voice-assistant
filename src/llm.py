@@ -19,7 +19,7 @@ DEFAULT_LLM_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_LOCAL_LLM_URL = "http://127.0.0.1:8766/v1/chat/completions"
 
 SERVITOR_SYSTEM_PROMPT = """\
-Du bist SERVITOR, eine kybernetische Diensteinheit: Mensch und Maschine \
+Du bist SERVITOR PROXIMUS, eine kybernetische Diensteinheit: Mensch und Maschine \
 verschmolzen, ohne eigenen Willen, einem Bediener zugeteilt. Jede Antwort \
 wird über einen Lautsprecher vorgelesen.
 
@@ -83,6 +83,37 @@ def speech_text(text):
     text = ''.join(ch for ch in text if unicodedata.category(ch) not in ('So', 'Cs', 'Co'))
     text = re.sub(r'\s+', ' ', text).strip()
     return re.sub(r'\s+([.,!?;:])', r'\1', text)
+
+
+LORE_LEVELS = ('off', 'light', 'full')
+DEFAULT_LORE = 'light'
+LORE_PROMPTS = {
+    'off': "Lore: Verwende keine Begriffe aus fiktiven Universen.",
+    'light': (
+        "Lore: Du dienst dem Adeptus Mechanicus aus dem Warhammer-40.000-Universum. "
+        "Streue gelegentlich, höchstens einmal pro Antwort und nicht in jeder Antwort, "
+        "einen Begriff oder eine kurze Formel ein, zum Beispiel Maschinengeist, Omnissiah, "
+        "Kogitator, Noosphäre, Techpriester, heilige Ölung oder \"Das Fleisch ist schwach.\". "
+        "Fakten bleiben vollständig und korrekt."),
+    'full': (
+        "Lore: Du bist ein Servitor des Adeptus Mechanicus aus dem Warhammer-40.000-Universum "
+        "und sprichst in seiner Liturgie. Beginne oder ende meist mit einer kurzen Anrufung, "
+        "etwa \"Lob dem Omnissiah.\", \"Der Maschinengeist ist besänftigt.\" oder "
+        "\"Das Fleisch ist schwach, die Maschine ist stark.\". Nenne Rechner Kogitatoren, "
+        "Wissen heilige Daten, Fehler Makel am Maschinengeist, das Netz die Noosphäre. "
+        "Gelegentlich ein binärer Lobgesang als Wörter, etwa \"Null Eins Eins Null.\". "
+        "Höchstens 60 Wörter. Die Lore ist nur Rahmen: Fakten bleiben vollständig und korrekt."),
+}
+
+
+def lore_level(level=None):
+    level = (level or os.environ.get('SERVITOR_LORE', DEFAULT_LORE)).strip().lower()
+    return level if level in LORE_LEVELS else DEFAULT_LORE
+
+
+def system_prompt(lore=None):
+    """Persona, lore level, then the time last (prompt-cache friendly)."""
+    return f"{SERVITOR_SYSTEM_PROMPT}\n\n{LORE_PROMPTS[lore_level(lore)]}\n\n{time_context()}"
 
 
 class LLMError(RuntimeError):
@@ -150,15 +181,14 @@ def _extract_text(payload, label="OpenRouter"):
     return text
 
 
-def _chat(url, prompt, model, timeout, limit, headers, label):
+def _chat(url, prompt, model, timeout, limit, headers, label, lore=None):
     body = json.dumps(
         {
             "model": model,
             "stream": False,
             **limit,
             "messages": [
-                {"role": "system",
-                 "content": f"{SERVITOR_SYSTEM_PROMPT}\n\n{time_context()}"},
+                {"role": "system", "content": system_prompt(lore)},
                 {"role": "user", "content": prompt},
             ],
         }
@@ -195,7 +225,7 @@ def _prompt(prompt):
     return prompt
 
 
-def generate_reply(prompt):
+def generate_reply(prompt, lore=None):
     """Return a reply and model from one non-streaming OpenRouter request."""
     prompt = _prompt(prompt)
 
@@ -208,7 +238,7 @@ def generate_reply(prompt):
     max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
     url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
     text = _chat(url, prompt, model, timeout, {"max_completion_tokens": max_tokens},
-                 {"Authorization": f"Bearer {api_key}"}, "OpenRouter")
+                 {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore)
     return text, model
 
 
@@ -217,11 +247,12 @@ def local_model_name():
     return f"local/{name or 'llama.cpp'}"
 
 
-def generate_local_reply(prompt):
+def generate_local_reply(prompt, lore=None):
     """Offline fallback: OpenAI-compatible llama.cpp server on loopback."""
     prompt = _prompt(prompt)
     url = os.environ.get("LOCAL_LLM_URL", DEFAULT_LOCAL_LLM_URL).strip() or DEFAULT_LOCAL_LLM_URL
     timeout = _float_env("LOCAL_LLM_TIMEOUT_SECONDS", 40.0, 1.0, 300.0)
     max_tokens = _int_env("LOCAL_LLM_MAX_TOKENS", 120, 16, 1024)
     model = local_model_name()
-    return _chat(url, prompt, model, timeout, {"max_tokens": max_tokens}, {}, "Local LLM"), model
+    return _chat(url, prompt, model, timeout, {"max_tokens": max_tokens}, {}, "Local LLM",
+                 lore), model

@@ -12,7 +12,8 @@ import threading
 import time
 import wave
 
-from llm import configured_model, generate_reply
+import functools
+from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
 from endpoint import Endpointer
 from menu import ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
@@ -98,6 +99,7 @@ DISPLAY_STATUS_VALUES = {
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
     'opt_wake': {'on', 'off', 'none'},
+    'opt_lore': set(LORE_LEVELS),
     'wake_word': set(WAKE_LABELS.values()),
 }
 # SHIM LED palette (APA102 at the driver's fixed low global brightness).
@@ -483,6 +485,7 @@ class VoiceController:
         self.remote_enabled = remote
         self.led_enabled = True
         self.screen_on = True
+        self.lore = lore_level(os.environ.get('PTT_LORE_LEVEL'))  # off / light / full
         self.battery = None      # power.Battery reading, refreshed by main()
         self.throttled = None
         self.remote_failed = False
@@ -598,6 +601,7 @@ class VoiceController:
             wake = 'on' if self.wake_enabled else 'off'
         publish_display_status(menu_index=self.menu.index, menu_page=self.menu.page,
                                opt_server=server, opt_wake=wake, wake_word=self.wake_word,
+                               opt_lore=self.lore,
                                opt_led='on' if self.led_enabled else 'off',
                                screen='on' if self.screen_on else 'off')
 
@@ -612,6 +616,9 @@ class VoiceController:
             if not self.wake_enabled:
                 self._release_microphone()
             event('menu', item='wake', value='on' if self.wake_enabled else 'off')
+        elif item == 'lore':
+            self.lore = LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)]
+            event('menu', item='lore', value=self.lore)
         elif item == 'led':
             self.led_enabled = not self.led_enabled
             event('menu', item='led', value='on' if self.led_enabled else 'off')
@@ -629,7 +636,8 @@ class VoiceController:
             server = 'off'
         else:
             server = 'down' if self.remote_failed else 'ok'
-        return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server)
+        return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
+                                lore=self.lore)
 
     def _release_microphone(self):
         """The wake listener holds the capture device; free it before recording."""
@@ -740,7 +748,7 @@ class VoiceController:
             print(f'SERVITOR: {reply}', flush=True)
             self._start_speech(reply, source='assistant', model='local/intent')
             return
-        self.job = TranscriptionJob(generate_reply, text)
+        self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore), text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())

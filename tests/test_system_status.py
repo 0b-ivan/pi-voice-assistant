@@ -71,6 +71,18 @@ class StatusTextTests(unittest.TestCase):
         self.assertEqual(ss.status_text({}, processing=True), "Direktive in Bearbeitung.")
         self.assertEqual(ss.status_text({}), "Status nominal. Befehl erwartet.")
 
+    def test_lore_levels(self):
+        light = ss.status_text(dict(self.NOMINAL, lore="light"))
+        self.assertTrue(light.endswith("Maschinengeist ruhig. Befehl erwartet."))
+        full = ss.status_text(dict(self.NOMINAL, lore="full"))
+        self.assertTrue(full.startswith("Status-Litanei beginnt."))
+        self.assertTrue(full.endswith("Lob dem Omnissiah."))
+        warned = ss.status_text(dict(self.NOMINAL, lore="full", throttled=1))
+        self.assertIn("Makel am Maschinengeist erkannt. Warnung: Unterspannung.", warned)
+        self.assertTrue(ss.status_text(dict(self.NOMINAL, lore="off")).endswith("Befehl erwartet."))
+        self.assertEqual(ss.sanitize_snapshot({"lore": "full"}), {"lore": "full"})
+        self.assertEqual(ss.sanitize_snapshot({"lore": "chaos"}), {})
+
     def test_battery_sentence(self):
         self.assertEqual(ss.battery_sentence(dict(battery_pct=64)),
                          "Energiespeicher 64 Prozent. Akkubetrieb.")

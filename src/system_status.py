@@ -149,7 +149,8 @@ SNAPSHOT_FIELDS = {
     'throttled': (int, 0, 0xFFFFFFFF),
 }
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
-SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline')}
+SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
+                   'lore': ('off', 'light', 'full')}
 
 
 def sanitize_snapshot(value):
@@ -174,7 +175,7 @@ def sanitize_snapshot(value):
     return clean
 
 
-def collect_snapshot(battery=None, throttled=None, server=None,
+def collect_snapshot(battery=None, throttled=None, server=None, lore=None,
                      thermal_path=THERMAL_PATH, meminfo_path=MEMINFO_PATH,
                      loadavg_path=LOADAVG_PATH, uptime_path=UPTIME_PATH,
                      disk_path="/", disk_usage=shutil.disk_usage, cpu_count=os.cpu_count):
@@ -186,6 +187,7 @@ def collect_snapshot(battery=None, throttled=None, server=None,
         disk_free_pct=_disk_free_percent(disk_path, disk_usage=disk_usage),
         throttled=throttled,
         server=server,
+        lore=lore,
     )
     text = _read_text(uptime_path)
     try:
@@ -223,7 +225,7 @@ def battery_sentence(snapshot):
     return f"Energiespeicher {percent} Prozent. Akkubetrieb."
 
 
-def status_text(snapshot, processing=False):
+def status_text(snapshot, processing=False, lore=None):
     """Servitor status for button E and the spoken "status" question.
 
     Warnings first, then what matters day to day: energy, temperature,
@@ -252,8 +254,13 @@ def status_text(snapshot, processing=False):
     if snapshot.get('server') == 'down':
         warnings.append("Server nicht erreichbar. Lokaler Betrieb.")
 
+    lore = lore or snapshot.get('lore', 'off')
     if processing:
         parts = ["Direktive in Bearbeitung."]
+    elif lore == 'full':
+        parts = ["Status-Litanei beginnt."]
+        if any(w.startswith("Warnung") for w in warnings):
+            parts.append("Makel am Maschinengeist erkannt.")
     elif any(w.startswith("Warnung") for w in warnings):
         parts = ["Status eingeschränkt."]
     else:
@@ -278,5 +285,10 @@ def status_text(snapshot, processing=False):
     if uptime is not None:
         parts.append(f"Laufzeit {_uptime_from_seconds(uptime)}.")
     if not processing:
-        parts.append("Befehl erwartet.")
+        if lore == 'full':
+            parts.append("Der Maschinengeist ist besänftigt. Lob dem Omnissiah.")
+        elif lore == 'light' and not any(w.startswith("Warnung") for w in warnings):
+            parts.append("Maschinengeist ruhig. Befehl erwartet.")
+        else:
+            parts.append("Befehl erwartet.")
     return " ".join(parts)

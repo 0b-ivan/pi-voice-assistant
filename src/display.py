@@ -68,6 +68,7 @@ MENU_LABELS = (
     ('info', 'Systeminfo'),
     ('server', 'Server nutzen'),
     ('wake', 'Aktivierungswort'),
+    ('lore', 'Lore-Stufe'),
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
     ('status', 'Status ansagen'),
@@ -155,6 +156,7 @@ def read_status(path=None):
         status['menu_page'] = value['menu_page']
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
                          ('opt_wake', ('on', 'off', 'none')),
+                         ('opt_lore', ('off', 'light', 'full')),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off'))):
         if value.get(key) in allowed:
@@ -662,6 +664,8 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
+    if item == 'lore':
+        return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
     if item == 'wake':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_wake'), '')
     return ''
@@ -680,9 +684,9 @@ def render_menu(display, status, info=None):
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
     for row, (item, label) in enumerate(MENU_LABELS):
-        y = 46 + row * 21
+        y = 45 + row * 19
         if row == selected:
-            draw.rectangle((10, y - 2, 230, y + 18), fill=(40, 32, 70))
+            draw.rectangle((10, y - 1, 230, y + 17), fill=(40, 32, 70))
             draw.text((14, y), '›', font=font(15), fill=accent)
         color = accent if row == selected else (215, 220, 225)
         draw.text((28, y), label, font=font(15), fill=color)
