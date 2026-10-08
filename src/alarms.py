@@ -19,6 +19,9 @@ ALARMS = {
     'network': (5, 'Netzwerk getrennt'),
     'internet': (6, 'Internet getrennt'),
     'server': (7, 'Server nicht erreichbar'),
+    'dns': (8, 'DNS gestört'),
+    'wifi_weak': (9, 'WLAN-Signal schwach'),
+    'latency': (10, 'Netz langsam'),
 }
 # Three battery warnings, the last one announces the shutdown.
 BATTERY_STAGES = (15, 10, 6)
@@ -28,10 +31,27 @@ CPU_ON, CPU_OFF, CPU_SUSTAIN = 90, 70, 60.0         # % load, seconds
 MEMORY_ON, MEMORY_OFF, SWAP_ON = 8, 15, 85          # % free RAM, % swap used
 TEMP_ON, TEMP_OFF = 75, 70                          # °C
 LINK_FAILURES = 2
+WIFI_ON, WIFI_OFF = -80, -72                         # dBm
+SLOW_ON, SLOW_OFF = 400, 200                         # ms TCP connect to the Internet
+NET_SUSTAIN = 60.0                                   # seconds a network problem must last
+UPDATE_REMINDER = 24 * 3600.0                        # repeat pending updates at most daily
 
 SHUTDOWN_NOW = "Energiespeicher erschöpft. Herunterfahren."
 SHUTDOWN_CANCELLED = "Herunterfahren abgebrochen."
 SHUTDOWN_FAILED = "Herunterfahren nicht möglich. Bitte manuell ausschalten."
+def memory_phrase(present, facts, lore):
+    """Memory stick plugged in or pulled out."""
+    full = lore == 'full'
+    if not present:
+        return ("Gedächtniskern entfernt. Erinnerungen verloren. Das Fleisch vergisst, "
+                "nun auch die Maschine." if full
+                else "Gedächtniskern entfernt. Keine Erinnerungen verfügbar.")
+    count = (" Mehr als 100 Einträge geladen." if facts and facts > 100
+             else f" {facts} Einträge geladen." if facts else " Kern ist leer.")
+    return ("Gedächtniskern verbunden. Erinnerungen kehren zurück." + count if full
+            else "Gedächtniskern verbunden." + count)
+
+
 # Spoken when the unit wakes from sleep, per lore level.
 WAKE_PHRASES = {
     'off': "Aktiviert. Systeme werden vorbereitet.",
@@ -75,6 +95,9 @@ def _phrase(key, snapshot, lore, recovered=False):
         return {
             'internet': "Internetverbindung wiederhergestellt.",
             'network': "Netzwerkverbindung wiederhergestellt.",
+            'dns': "Namensauflösung wiederhergestellt.",
+            'wifi_weak': "WLAN-Signal wieder stabil.",
+            'latency': "Netzwerk wieder schnell.",
             'server': ("Verbindung zum Kogitator wiederhergestellt. Lob dem Omnissiah."
                        if full else "Server wieder erreichbar."),
         }[key]
@@ -99,6 +122,13 @@ def _phrase(key, snapshot, lore, recovered=False):
                     "Warnung. Verbindung zur Noosphäre verloren. Lokaler Betrieb."),
         'server': ("Warnung. Verbindung zum Server verloren. Lokaler Betrieb.",
                    "Warnung. Verbindung zum Kogitator verloren. Lokaler Betrieb."),
+        'dns': ("Warnung. Namensauflösung gestört. Internetdienste eingeschränkt.",
+                "Warnung. Die Namen der Noosphäre lösen sich nicht auf. Internetdienste "
+                "eingeschränkt."),
+        'wifi_weak': ("Warnung. WLAN-Signal schwach.",
+                      "Warnung. Das Signal der Noosphäre ist schwach."),
+        'latency': ("Warnung. Netzwerk langsam. Antworten verzögert.",
+                    "Warnung. Die Noosphäre ist träge. Antworten verzögert."),
     }
     return texts[key][1 if full else 0]
 
@@ -126,7 +156,7 @@ class AlarmMonitor:
             out.append(_phrase(key, snapshot, lore))
         elif not on and state.active:
             state.active = False
-            if key in ('server', 'network', 'internet'):
+            if key in ('server', 'network', 'internet', 'dns', 'wifi_weak', 'latency'):
                 out.append(_phrase(key, snapshot, lore, recovered=True))
 
     def shutdown_due(self, now):
@@ -156,6 +186,61 @@ class AlarmMonitor:
             out.append(_battery_phrase(target, percent, lore))
             if target == len(BATTERY_STAGES):
                 self.shutdown_at = now + SHUTDOWN_DELAY
+
+    def _sustained(self, key, bad, good, now):
+        """True once ``bad`` held for NET_SUSTAIN; stays on until ``good``."""
+        state = self.states[key]
+        if bad:
+            state.extra.setdefault('since', now)
+        elif good or not state.active:
+            state.extra.pop('since', None)
+        if state.active:
+            return not good
+        return bad and now - state.extra.get('since', now) >= NET_SUSTAIN
+
+    def _network_quality(self, snapshot, now, out, lore, links):
+        """WLAN signal, latency and DNS from the network watch (Pi only)."""
+        if not links:  # WLAN off, reconnecting or no network: other alarms speak
+            for key in ('dns', 'wifi_weak', 'latency'):
+                self.states[key].active = False
+                self.states[key].extra.clear()
+            return
+        dbm = snapshot.get('wifi_dbm')
+        if dbm is not None:
+            self._set('wifi_weak', self._sustained('wifi_weak', dbm <= WIFI_ON, dbm > WIFI_OFF, now),
+                      now, out, snapshot, lore)
+        latency = snapshot.get('net_ms')
+        if latency is not None:
+            self._set('latency', self._sustained('latency', latency >= SLOW_ON, latency < SLOW_OFF,
+                                                 now), now, out, snapshot, lore)
+        dns = snapshot.get('dns')
+        if dns is not None:
+            self._set('dns', self._sustained('dns', dns == 'fail', dns == 'ok', now),
+                      now, out, snapshot, lore)
+
+    def updates_notice(self, snapshot, now, lore='off'):
+        """Sentence when new updates appear, else a reminder once a day."""
+        from system_status import updates_sentence
+        sentence = updates_sentence(snapshot)
+        key = (snapshot.get('updates', 0) + snapshot.get('server_updates', 0),
+               snapshot.get('updates_security', 0) + snapshot.get('server_updates_security', 0))
+        store = getattr(self, 'notice_store', None)
+        if not hasattr(self, '_updates'):
+            # What was announced before a service restart (``now`` is wall time then).
+            self._updates = (store.load() if store else None) or ((0, 0), None)
+        last_key, last_at = self._updates
+        if sentence is None:
+            self._updates = (key, None)
+            return None
+        more = key[0] > last_key[0] or key[1] > last_key[1]
+        if not more and last_at is not None and 0 <= now - last_at < UPDATE_REMINDER:
+            return None
+        self._updates = (key, now)
+        if store:
+            store.save(key, now)
+        if lore == 'full':
+            return sentence + " Die Riten der Wartung sind fällig."
+        return sentence
 
     def update(self, snapshot, now, network=None, server=None, lore='off', internet=None):
         """network/internet: True/False/None (unknown or WLAN switched off on
@@ -189,6 +274,7 @@ class AlarmMonitor:
             on = (load >= CPU_ON and sustained) or (cpu.active and load >= CPU_OFF)
             self._set('cpu', on, now, out, snapshot, lore)
 
+        self._network_quality(snapshot, now, out, lore, links=network is True)
         for key, failed, known in (('network', network is False, network is not None),
                                    ('internet', internet is False, internet is not None),
                                    ('server', server == 'down', server in ('ok', 'down'))):

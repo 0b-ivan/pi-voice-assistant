@@ -141,7 +141,7 @@ alle Bausteine und die Zahlen 0–100 über `/v1/speak` in der Servitor-Stimme (
 
 **WLAN** lässt sich über `PTT_WLAN=on|off` (beim Dienststart) und das Menü schalten (`rfkill`, udev-Regel [`deploy/90-rfkill-netdev.rules`](../deploy/90-rfkill-netdev.rules)). Ohne LAN-Kabel ist der Pi dann offline: lokaler Betrieb, keine Server-/Netzalarme, Status „WLAN deaktiviert“.
 
-**Sprachkern AUTO/LOKAL** (Menü, `PTT_LLM_MODE`): bei LOKAL antwortet CT 107 nur mit dem lokalen Modell, OpenRouter wird nie gefragt; im Fallback auf dem Pi gibt es dann nur die Antworten ohne LLM.
+**Sprachkern AUTO/FREI/LOKAL** (Menü, `PTT_LLM_MODE=auto|free|local`): AUTO nutzt `OPENROUTER_LLM_MODEL` (Mistral Medium 3.5), FREI das wenig eingeschränkte `OPENROUTER_FREE_MODEL` (Dolphin Mistral 24B Venice), beide mit lokalem Ersatz bei Ausfall. Bei LOKAL antwortet CT 107 nur mit dem lokalen Modell, OpenRouter wird nie gefragt; im Fallback auf dem Pi gibt es dann nur die Antworten ohne LLM. Der Persona-Prompt verbietet kein Thema und weist das Modell an, nicht auszuweichen oder zu moralisieren; Grenzen setzen nur noch Modell und OpenRouter selbst.
 
 **Speicher:** Der Vosk-Bereitschaftsprozess (~190 MB) wird freigegeben, solange CT 107 erreichbar ist (verfügbarer RAM 50 → ~220 MB), und bei Serverausfall wieder vorgeladen.
 

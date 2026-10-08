@@ -45,13 +45,13 @@ class FakePipeline:
     def recognizer(self):
         return FakeRecognizer(self)
 
-    def reply(self, text, lore=None, mode=None):
-        self.lore, self.mode = lore, mode
+    def reply(self, text, lore=None, mode=None, memory=None):
+        self.lore, self.mode, self.memory = lore, mode, memory
         if self.fail_llm:
             raise RuntimeError('OpenRouter request failed: timeout')
         if self.block:
             self.block.wait(5)
-        return f'Antwort auf {text}', 'test/model'
+        return f'Antwort auf {text}{getattr(self, "suffix", "")}', 'test/model'
 
     def _wav(self, prefix, rate):
         fd, name = tempfile.mkstemp(prefix=prefix, suffix='.wav', dir=self.workdir)
@@ -118,6 +118,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(data), {'ok': True, 'ready': True})
 
+    def test_status_needs_token_and_reports_updates(self):
+        self.service.updates = dict(pending=2, security=1, lists_age_days=0)
+        response, _ = self.request('/v1/status', method='GET', token=None)
+        self.assertEqual(response.status, 401)
+        response, data = self.request('/v1/status', method='GET')
+        self.assertEqual(json.loads(data)['updates'], dict(pending=2, security=1, lists_age_days=0))
+
     def test_turn_requires_token(self):
         response, _ = self.request('/v1/turn', b'\0' * 16000, token='wrong' * 10)
         self.assertEqual(response.status, 401)
@@ -142,7 +149,16 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.pipeline.accepted, 16000)
 
     def test_too_large_upload(self):
-        response, _ = self.request('/v1/turn', b'\0' * (16000 * 2 * 3))
+        # Announce the size only: the server answers 413 without reading the
+        # body, so actually sending it raced with the close (broken pipe in CI).
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.putrequest('POST', '/v1/turn')
+        conn.putheader('Authorization', f'Bearer {TOKEN}')
+        conn.putheader('Content-Length', str(16000 * 2 * 3))
+        conn.endheaders()
+        response = conn.getresponse()
+        response.read()
+        conn.close()
         self.assertEqual(response.status, 413)
         _, data = self.request('/v1/turn', b'\0' * (16000 * 2 * 3), chunked=True)
         self.assertEqual(self.events(data)[-1]['code'], 'too_large')
@@ -164,7 +180,29 @@ class ServerTest(unittest.TestCase):
                          ['synthesize', 'render'])
         self.assertEqual(self.pipeline.accepted, 0)
 
+    def test_second_turn_waits_for_a_short_busy_server(self):
+        self.pipeline.block = threading.Event()
+        threading.Timer(0.3, self.pipeline.block.set).start()
+        results = {}
+        first = threading.Thread(target=lambda: results.update(
+            first=self.request('/v1/turn', b'\1' * 16000)))
+        first.start()
+        for _ in range(100):
+            if self.service.turn_lock.locked():
+                break
+            threading.Event().wait(0.02)
+        response, _ = self.request('/v1/turn', b'\1' * 16000)
+        first.join()
+        self.assertEqual((response.status, results['first'][0].status), (200, 200))
+
+    def test_turn_waits_while_the_server_loads(self):
+        self.service.ready = False
+        threading.Timer(0.3, lambda: setattr(self.service, 'ready', True)).start()
+        response, _ = self.request('/v1/turn', b'\1' * 16000)
+        self.assertEqual(response.status, 200)
+
     def test_second_turn_is_rejected_while_busy(self):
+        self.service.config.busy_wait = 0.1
         self.pipeline.block = threading.Event()
         results = {}
         first = threading.Thread(target=lambda: results.update(
@@ -288,6 +326,59 @@ class ServerTest(unittest.TestCase):
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertIn('Omnissiah', reply['text'])
+
+    def turn_with_memory(self, state, copy=None):
+        import memory
+        headers = {'Authorization': f'Bearer {TOKEN}',
+                   'X-Servitor-Status': json.dumps({'memory': state})}
+        if copy is not None:
+            headers['X-Servitor-Memory'] = memory.encode_header(copy)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+        data = conn.getresponse().read()
+        conn.close()
+        return self.events(data)
+
+    def test_memory_copy_reaches_llm_and_learned_lines_are_not_spoken(self):
+        copy = dict(facts=['Bediener heißt Ivan'], directives=['Städte heißen Makropolen'],
+                    history=[dict(q='hallo', a='Gruß.')], total_facts=1)
+        self.pipeline.suffix = ' MERKE: Bediener mag Kaffee.'
+        events = self.turn_with_memory('on', copy)
+        self.assertEqual(self.pipeline.memory['facts'], ['Bediener heißt Ivan'])
+        self.assertEqual(self.pipeline.memory['history'], [dict(q='hallo', a='Gruß')])
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertNotIn('MERKE', reply['text'])
+        learned = [e for e in events if e['event'] == 'memory']
+        self.assertEqual(learned, [dict(event='memory', op='add_fact',
+                                        text='Bediener mag Kaffee', learned=True)])
+
+    def test_memory_command_without_llm_and_without_stick(self):
+        self.pipeline.transcript = 'installiere humor erweiterung'
+        events = self.turn_with_memory('on', dict(facts=[], directives=[], history=[]))
+        self.assertIn(dict(event='memory', op='add_directive',
+                           text='Humor-Erweiterung installiert'), events)
+        self.assertEqual(next(e for e in events if e['event'] == 'reply')['model'],
+                         'local/memory')
+        events = self.turn_with_memory('off')
+        self.assertFalse([e for e in events if e['event'] == 'memory'])
+        self.assertIn('Kein Gedächtnisspeicher', next(e for e in events if e['event'] == 'reply')['text'])
+
+    def test_pi_without_memory_support_is_unchanged(self):
+        import llm
+        self.pipeline.transcript = 'merk dir dass ich ivan heiße'
+        events = self.request('/v1/turn', b'\1' * 16000)[1]
+        reply = next(e for e in self.events(events) if e['event'] == 'reply')
+        self.assertEqual(reply['model'], 'test/model')
+        self.assertIs(self.pipeline.memory, llm.NO_MEMORY)
+
+    def test_free_mode_uses_the_free_model(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+        import llm
+        pipeline = ss.RealPipeline(self.tmp.name)
+        with unittest.mock.patch('llm.generate_reply', return_value=('f', 'x')) as remote:
+            pipeline.reply('frage', mode='free')
+            pipeline.reply('frage', mode='auto')
+        self.assertEqual([c.kwargs['model'] for c in remote.call_args_list], [llm.free_model(), None])
 
     def test_local_mode_skips_openrouter(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))

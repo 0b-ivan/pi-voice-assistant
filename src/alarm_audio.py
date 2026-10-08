@@ -58,7 +58,7 @@ def known_pieces():
     """Every fragment an alarm can consist of, plus the numbers."""
     from alarms import (ALARMS, BATTERY_STAGES, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED,
                         SHUTDOWN_NOW, WAKE_PHRASES, _battery_phrase, _phrase,
-                        power_source_phrase)
+                        AlarmMonitor, memory_phrase, power_source_phrase)
     snapshot = dict(battery_pct=1, temp_c=1, load_pct=1)
     texts = [SHUTDOWN_NOW, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED, *WAKE_PHRASES.values()]
     for lore in ('off', 'full'):  # alarm wording only knows full lore or not
@@ -68,6 +68,17 @@ def known_pieces():
         texts += [_battery_phrase(stage, 1, lore) for stage in range(1, len(BATTERY_STAGES) + 1)]
         texts += [power_source_phrase(plugged, percent, lore)
                   for plugged in (True, False) for percent in (1, None)]
+        texts += [memory_phrase(present, facts, lore)
+                  for present in (True, False) for facts in (1, 0, 101)]
+        texts += [_phrase(key, snapshot, lore, recovered=True)
+                  for key in ('dns', 'wifi_weak', 'latency')]
+        texts += [AlarmMonitor().updates_notice(dict(updates=pi, updates_security=ps,
+                                                     server_updates=sv,
+                                                     server_updates_security=ss), 0, lore)
+                  for pi in (0, 1, 2) for ps in (0, 1) for sv in (0, 1, 2) for ss in (0, 1)
+                  if (pi or not ps) and (sv or not ss) and (pi or sv)]
+    from maintenance import phrases
+    texts += phrases()
     pieces = {piece for text in texts for piece, _ in fragments(text)}
     return sorted(pieces | {str(n) for n in NUMBERS})
 
@@ -172,7 +183,7 @@ def build(directory=None, force=False, prune=False, out=None, pace=PACE):
                 audio = _render(url, config.token, piece, USER_AGENT)
                 break
             except urllib.error.HTTPError as exc:
-                if exc.code != 429:
+                if exc.code not in (429, 503):  # rate limit, server still loading
                     raise
                 time.sleep(float(exc.headers.get('Retry-After') or 30))
             except (OSError, RuntimeError):

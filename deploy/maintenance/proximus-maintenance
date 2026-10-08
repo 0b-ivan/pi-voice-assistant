@@ -1,0 +1,46 @@
+#!/bin/sh
+# Proximus maintenance worker, run as root by proximus-update.service /
+# proximus-reboot.service when the voice service drops a request file into
+# /run/proximus-maintenance/requests (see docs/maintenance.md). It only knows
+# two fixed actions and takes no input from the request.
+set -u
+DIR=/run/proximus-maintenance
+STATUS="$DIR/status.json"
+action="${1:-}"
+rm -f "$DIR/requests/$action"
+
+write() { # state upgraded reboot code
+    printf '{"action":"%s","state":"%s","at":%s,"upgraded":%s,"reboot":%s,"code":%s}\n' \
+        "$action" "$1" "$(date +%s)" "$2" "$3" "$4" > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
+}
+
+reboot_needed() {
+    [ -e /run/reboot-required ] && return 0
+    running="$(uname -r)"
+    flavor="${running##*-}"
+    newest="$(ls -d /lib/modules/*-"$flavor" 2>/dev/null | sed 's|.*/||' | sort -V | tail -n 1)"
+    [ -n "$newest" ] && [ "$newest" != "$running" ]
+}
+
+case "$action" in
+update)
+    write running 0 false 0
+    export DEBIAN_FRONTEND=noninteractive
+    if ! apt-get update -q; then write failed 0 false 1; exit 1; fi
+    count="$(apt-get -s upgrade | grep -c '^Inst' || true)"
+    apt-get -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade
+    code=$?
+    if reboot_needed; then reboot=true; else reboot=false; fi
+    if [ "$code" -eq 0 ]; then write done "$count" "$reboot" 0; else write failed "$count" "$reboot" "$code"; fi
+    exit "$code"
+    ;;
+reboot)
+    write rebooting 0 false 0
+    sleep 3
+    exec systemctl reboot
+    ;;
+*)
+    echo "usage: $0 update|reboot" >&2
+    exit 2
+    ;;
+esac

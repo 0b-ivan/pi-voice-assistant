@@ -1,0 +1,7 @@
+[Unit]
+Description=Proximus maintenance: reboot (requested by the voice service)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proximus-maintenance reboot
+Nice=10

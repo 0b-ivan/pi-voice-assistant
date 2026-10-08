@@ -77,6 +77,7 @@ MENU_LABELS = (
     ('alarms', 'Alarme'),
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
+    ('maintenance', 'Wartung'),
     ('status', 'Status ansagen'),
     ('close', 'Schließen'),
 )
@@ -163,13 +164,22 @@ def read_status(path=None):
                          ('opt_wake', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
-                         ('opt_llm', ('auto', 'local')),
+                         ('opt_llm', ('auto', 'free', 'local')),
                          ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off')),
-                         ('power', ('awake', 'rest', 'sleep'))):
+                         ('power', ('awake', 'rest', 'sleep')),
+                         ('memory', ('on', 'off')),
+                         ('maint', ('on', 'off')),
+                         ('maint_confirm', MAINT_ITEMS),
+                         ('maint_pi', MAINT_STATES), ('maint_server', MAINT_STATES)):
         if value.get(key) in allowed:
             status[key] = value[key]
+    for key, high in (('maint_index', len(MAINT_ITEMS) - 1), ('upd_pi', 9999), ('upd_pi_sec', 9999),
+                      ('upd_srv', 9999), ('upd_srv_sec', 9999)):
+        item = value.get(key)
+        if isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= high:
+            status[key] = item
     return status
 
 
@@ -615,8 +625,19 @@ def read_envelope(path=None):
     return None
 
 
+MEMORY_ON = (0, 200, 170)
+
+
 def _draw_header(draw, info):
     draw.text((12, 12), DEVICE_NAME, font=font(17), fill='white')
+    if info.get('memory') in ('on', 'off'):
+        # Memory core: filled diamond with the stick, grey outline without.
+        x = 18 + draw.textlength(DEVICE_NAME, font=font(17))
+        diamond = ((x, 23), (x + 5, 18), (x + 10, 23), (x + 5, 28))
+        if info['memory'] == 'on':
+            draw.polygon(diamond, fill=MEMORY_ON)
+        else:
+            draw.polygon(diamond, outline=(90, 90, 90))
     right_edge = 228
     if info.get('battery'):
         right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
@@ -751,7 +772,7 @@ def _menu_value(item, status):
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
     if item == 'llm':
-        return {'auto': 'AUTO', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
+        return {'auto': 'AUTO', 'free': 'FREI', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
     if item in ('wlan', 'alarms'):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
@@ -759,6 +780,64 @@ def _menu_value(item, status):
     if item == 'wake':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_wake'), '')
     return ''
+
+
+MAINT_ITEMS = ('update_pi', 'update_server', 'reboot_pi', 'reboot_server', 'exit')
+MAINT_LABELS = ('Pi aktualisieren', 'Server aktualisieren', 'Pi neu starten', 'Server neu starten',
+                'Wartung beenden')
+MAINT_STATES = ('running', 'done', 'failed', 'rebooting')
+MAINT_STATE_TEXT = {'running': ('läuft …', (255, 190, 60)), 'done': ('fertig', (120, 220, 160)),
+                    'failed': ('Fehler', (255, 90, 90)), 'rebooting': ('Neustart', (255, 190, 60))}
+
+
+def _updates_line(count, security):
+    if count is None:
+        return 'unbekannt', (150, 150, 150)
+    if not count:
+        return 'aktuell', (120, 220, 160)
+    text = f'{count} Updates' + (f' · {security} Sich.' if security else '')
+    return text, (255, 110, 90) if security else (255, 190, 60)
+
+
+def render_maintenance(display, status, info=None):
+    """Maintenance mode: pending updates, actions, confirmation with E."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    accent = (255, 170, 40)
+    draw.text((12, 12), 'WARTUNG', font=font(17), fill=accent)
+    if info.get('battery'):
+        draw_battery(draw, 228, 14, info['battery'])
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    for row, (name, prefix) in enumerate((('Pi', 'pi'), ('Server', 'srv'))):
+        y = 46 + row * 18
+        draw.text((12, y), name, font=font(12), fill=(135, 145, 150))
+        state = status.get('maint_pi' if prefix == 'pi' else 'maint_server')
+        if state in ('running', 'rebooting'):
+            text, color = MAINT_STATE_TEXT[state]
+        else:
+            text, color = _updates_line(status.get(f'upd_{prefix}'), status.get(f'upd_{prefix}_sec'))
+        _right(draw, 228, y, text, 12, color)
+    draw.line((12, 84, 228, 84), fill=(65, 65, 65))
+    selected = status.get('maint_index', 0)
+    for row, label in enumerate(MAINT_LABELS):
+        y = 90 + row * 21
+        if row == selected:
+            draw.rectangle((10, y - 1, 230, y + 18), fill=(70, 45, 10))
+            draw.text((14, y), '›', font=font(15), fill=accent)
+        draw.text((28, y), label, font=font(15),
+                  fill=accent if row == selected else (215, 220, 225))
+    pending = status.get('maint_confirm')
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    if pending:
+        draw.rectangle((10, 200, 230, 228), fill=(110, 20, 20))
+        label = MAINT_LABELS[MAINT_ITEMS.index(pending)]
+        draw.text((14, 203), f'{label}?', font=font(12), fill='white')
+        _right(draw, 226, 214, 'E = Ja · B = Nein', 11, (255, 210, 210))
+    else:
+        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
 
 
 def render_menu(display, status, info=None):
@@ -836,7 +915,7 @@ def deployed_version(path=None):
         return None
 
 
-def system_info_rows(env=None, battery=None):
+def system_info_rows(env=None, battery=None, memory=None):
     env = load_env() if env is None else env
     urls = [u.strip() for u in env.get('ASSISTANT_BASE_URL', '').split(',') if u.strip()]
     server = None
@@ -849,6 +928,7 @@ def system_info_rows(env=None, battery=None):
         ('Laufzeit', uptime_text()),
         ('RAM frei', None if mem is None else f'{mem} MB'),
         ('Server', server or 'keiner'),
+        ('Gedächtnis', {'on': 'verbunden', 'off': 'fehlt'}.get(memory)),
         ('Version', deployed_version()),
     ]
     if battery:
@@ -863,8 +943,8 @@ def render_info(display, rows):
     draw = ImageDraw.Draw(image)
     draw.text((12, 12), 'SYSTEMINFO', font=font(17), fill='white')
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
-    for row, (label, value) in enumerate(rows[:6]):
-        y = 50 + row * 24
+    for row, (label, value) in enumerate(rows[:7]):
+        y = 48 + row * 22
         draw.text((12, y), label, font=font(12), fill=(135, 145, 150))
         _right(draw, 228, y, value, 13, (215, 220, 225))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
@@ -1043,10 +1123,17 @@ def main():
             previous_screen = None  # redraw at once when the screen comes back
             time.sleep(SLEEP_POLL_SECONDS)
             continue
-        if status.get('menu_index') is not None and states is not None and is_ready(states):
+        if status.get('maint') == 'on':  # takes the screen even over a stale menu
+            screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
+            if screen != previous_screen:
+                render_maintenance(display, status, dict(battery=battery))
+                previous_screen = screen
+        elif status.get('menu_index') is not None and states is not None and is_ready(states):
             if status['menu_page'] == 'info':
                 if info_rows is None or now >= next_info:
-                    info_rows, next_info = system_info_rows(battery=battery), now + 2.0
+                    info_rows, next_info = (system_info_rows(battery=battery,
+                                                             memory=status.get('memory')),
+                                            now + 2.0)
                 screen = ('info', tuple(info_rows))
                 if screen != previous_screen:
                     render_info(display, info_rows)
@@ -1073,6 +1160,7 @@ def main():
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery, volume=volume_overlay(status),
                         alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
+                        memory=status.get('memory'),
                         wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
                               if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
@@ -1083,7 +1171,8 @@ def main():
                 # Temperature and WLAN dBm wobble constantly; at rest they may
                 # lag up to a minute, so the screen is redrawn about once a minute.
                 screen = ('rest', states['network'], info['clock'], shown_info['battery'],
-                          info.get('alarm'), info.get('server'), info.get('wlan'))
+                          info.get('alarm'), info.get('server'), info.get('wlan'),
+                          info.get('memory'))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info)
                     previous_screen = screen

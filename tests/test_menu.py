@@ -135,7 +135,7 @@ class ControllerMenuTests(unittest.TestCase):
         with patch('ptt.TranscriptionJob') as job:
             self.c._start_llm('wie hoch ist der eiffelturm')
         function = job.call_args.args[0]
-        self.assertEqual(function.keywords, {'lore': 'light'})
+        self.assertEqual(function.keywords, {'lore': 'light', 'memory': None, 'model': None})
 
     def test_menu_status_item_speaks(self):
         self.press(pitft='D')

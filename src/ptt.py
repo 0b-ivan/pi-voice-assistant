@@ -13,9 +13,13 @@ import time
 import wave
 
 import functools
-from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
+from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
 import alarm_audio
-from alarms import ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor
+import maintenance
+import memory as memory_core
+import sysmon
+from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor,
+                    memory_phrase)
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
 import wlan as wlan_radio
@@ -93,6 +97,8 @@ WAKE_ECHO_PAUSE = 0.6
 # Display status: fixed identifiers and numbers only, never transcripts or
 # reply text. route/last_route: 'server' (CT 107) or 'pi'; last_llm:
 # 'openrouter' or 'offline' (local model on the server).
+# Language core: OpenRouter default model, low-restriction model, local only.
+LLM_MODES = ('auto', 'free', 'local')
 DISPLAY_STATUS_VALUES = {
     'route': {'server', 'pi'},
     'last_route': {'server', 'pi'},
@@ -103,11 +109,17 @@ DISPLAY_STATUS_VALUES = {
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
     'power': {'awake', 'rest', 'sleep'},
+    'memory': {'on', 'off'},
+    'maint': {'on', 'off'},
+    'maint_index': set(range(len(maintenance.ITEMS))),
+    'maint_confirm': set(maintenance.ITEMS),
+    'maint_pi': set(maintenance.STATES),
+    'maint_server': set(maintenance.STATES),
     'opt_wake': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
-    'opt_llm': {'auto', 'local'},
+    'opt_llm': set(LLM_MODES),
     'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
 }
@@ -166,6 +178,9 @@ def publish_display_status(**fields):
                 continue
         elif key == 'menu_index':
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(MENU_ITEMS):
+                continue
+        elif key in ('upd_pi', 'upd_pi_sec', 'upd_srv', 'upd_srv_sec'):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 9999:
                 continue
         elif key == 'volume_at':
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
@@ -520,8 +535,16 @@ class VoiceController:
         self.sleep_wlan_off = os.environ.get('PTT_SLEEP_WLAN', 'keep') == 'off'
         self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
         self.listen_after_greeting = False  # wake word woke us: listen after the greeting
+        self.memory = memory_core.MemoryCore()
+        self.memory_present = self.memory.present()
+        self.turn_transcript = None
+        self.network_watch = self.update_watch = None  # sysmon watches, started by main()
+        self.maint = maintenance.Mode()
+        self.alarms.notice_store = maintenance.NoticeStore()
+        self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
-        self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
+        mode = os.environ.get('PTT_LLM_MODE', 'auto').strip().lower()
+        self.llm_mode = mode if mode in LLM_MODES else 'auto'
         self.shutting_down = False
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
@@ -649,6 +672,9 @@ class VoiceController:
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
+        if item == 'maintenance':
+            self._maintenance_op('enter', speak=True)
+            return
         if item == 'server' and self.remote:
             self.remote_enabled = not self.remote_enabled
             self.recorder.uplink_enabled = self.remote_enabled
@@ -662,7 +688,7 @@ class VoiceController:
             self.lore = LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)]
             event('menu', item='lore', value=self.lore)
         elif item == 'llm':
-            self.llm_mode = 'local' if self.llm_mode == 'auto' else 'auto'
+            self.llm_mode = LLM_MODES[(LLM_MODES.index(self.llm_mode) + 1) % len(LLM_MODES)]
             event('menu', item='llm', value=self.llm_mode)
         elif item == 'wlan':
             self.set_wlan(not self.wlan_on)
@@ -696,7 +722,13 @@ class VoiceController:
         server = self.server_state()
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
                                 lore=self.lore, wlan='on' if self.wlan_on else 'off',
-                                llm_mode=self.llm_mode)
+                                llm_mode=self.llm_mode,
+                                extra=dict(sysmon.snapshot_fields(
+                                    getattr(self.network_watch, 'result', None)
+                                    if self.wlan_on else None,
+                                    getattr(self.update_watch, 'result', None)),
+                                    memory='on' if self.memory_present else 'off',
+                                    maintenance='on' if self.maint.active else 'off'))
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
@@ -709,14 +741,170 @@ class VoiceController:
                                    network=network if links else None,
                                    server=self.server_state() if links else 'off',
                                    lore=self.lore, internet=internet)
+        texts += self._check_memory()
+        maintenance_texts = self._check_maintenance()  # spoken even with alarms muted
+        if self.power != 'sleep':  # maintenance can wait until someone is around
+            # Wall clock: the last announcement survives service restarts.
+            notice = self.alarms.updates_notice(self.status_snapshot(), time.time(), self.lore)
+            if notice:
+                texts.append(notice)
         for text in texts:
             event('alarm', text=text, active=self.alarms.active)
         if self.alarms_enabled:
             self.alarm_queue.extend(texts)
+        self.alarm_queue.extend(maintenance_texts)
         active = self.alarms.active
         publish_display_status(alarm=active[0] if active else None)
         if self.alarms.shutdown_due(now) and not self.shutting_down:
             self.shutdown()
+
+    # --- Maintenance mode ---------------------------------------------------
+
+    def _publish_maintenance(self):
+        jobs = {target: (self._maintenance_state(target) or {}).get('state')
+                for target in maintenance.TARGETS}
+        snapshot = self.status_snapshot() if self.maint.active else {}
+        publish_display_status(upd_pi=snapshot.get('updates'),
+                               upd_pi_sec=snapshot.get('updates_security'),
+                               upd_srv=snapshot.get('server_updates'),
+                               upd_srv_sec=snapshot.get('server_updates_security'))
+        publish_display_status(maint='on' if self.maint.active else 'off',
+                               maint_index=self.maint.index if self.maint.active else None,
+                               maint_confirm=self.maint.pending,
+                               maint_pi=jobs['pi'], maint_server=jobs['server'])
+
+    def _maintenance_state(self, target):
+        cache = getattr(self, '_maint_status', {})
+        return cache.get(target)
+
+    def _say(self, text):
+        try:
+            self._say_alarm([text], source='maintenance')
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+
+    def _maintenance_op(self, op, speak=True):
+        """Voice or menu: enter/exit or ask to confirm an action. Returns the sentence."""
+        if op == 'enter':
+            self.maint.enter()
+            # From the menu, confirm() has already closed it: publish either way,
+            # or the display keeps showing the stale menu.
+            self.menu.close()
+            self._publish_menu()
+            text = maintenance.ENTER_TEXT
+        elif op == 'exit':
+            self.maint.exit()
+            text = maintenance.EXIT_TEXT
+        elif not self.maint.active:
+            text = maintenance.NEED_MODE_TEXT
+        else:
+            self.maint.index = maintenance.ITEMS.index(op)
+            self.maint.ask(op)
+            text = maintenance.confirm_prompt(op, self.status_snapshot())
+        event('maintenance', op=op, active=self.maint.active)
+        self._publish_maintenance()
+        if speak:
+            self._say(text)
+        return text
+
+    def _maintenance_buttons(self, confirm, cancel):
+        if cancel:
+            if self.maint.pending is not None:
+                self.maint.pending = None
+                self._say(maintenance.CANCEL_TEXT)
+            else:
+                self._maintenance_op('exit')
+        elif confirm:
+            item = self.maint.take_confirmed()
+            if item is not None:
+                self._run_maintenance(item)
+            else:
+                chosen = maintenance.ITEMS[self.maint.index]
+                if chosen == 'exit':
+                    self._maintenance_op('exit')
+                else:
+                    self._maintenance_op(chosen)
+        self._publish_maintenance()
+
+    def _run_maintenance(self, item):
+        action, target = maintenance.split(item)
+        if target == 'pi':
+            try:
+                maintenance.request(action)
+                outcome = 'accepted'
+            except OSError:
+                outcome = 'not_installed'
+        else:
+            outcome = maintenance.request_server(action)
+        event('maintenance_run', action=action, target=target, outcome=outcome)
+        if outcome == 'accepted':
+            self.maint_jobs[target] = time.time()
+            self._say(maintenance.START_TEXT[(action, target)])
+        else:
+            self._say(maintenance.FAIL_TEXT[outcome])
+
+    def _check_maintenance(self):
+        """Every ~10 s: follow running actions and announce their result."""
+        if self.maint.expired():
+            self._publish_maintenance()
+        if self.maint.idle_too_long() and not self.maint_jobs:
+            self.maint.exit()
+            event('maintenance', op='exit', active=False, reason='idle')
+            self._publish_maintenance()  # or the display keeps the WARTUNG screen
+        if not self.maint_jobs and not self.maint.active:
+            return []
+        cache = getattr(self, '_maint_status', {})
+        out = []
+        for target in maintenance.TARGETS:
+            data = (maintenance.status() if target == 'pi'
+                    else maintenance.server_status())
+            cache[target] = data
+            started = self.maint_jobs.get(target)
+            if (started is not None and data and data.get('at', 0) >= int(started) - 1
+                    and data['state'] in ('done', 'failed')):
+                del self.maint_jobs[target]
+                event('maintenance_done', target=target, **data)
+                out.append(maintenance.result_text(target, data, self.lore))
+                if self.update_watch is not None:
+                    self.update_watch.refresh()
+        self._maint_status = cache
+        self._publish_maintenance()
+        return out
+
+    def _check_memory(self):
+        """Announce plugging or pulling the memory stick."""
+        present = self.memory.present()
+        publish_display_status(memory='on' if present else 'off')
+        if present == self.memory_present:
+            return []
+        self.memory_present = present
+        counts = self.memory.counts() if present else None
+        event('memory_core', present=present, **(counts or {}))
+        if present and counts is None:
+            return []  # plugged but not readable yet: next check
+        return [memory_phrase(present, (counts or {}).get('facts'), self.lore)]
+
+    def _memory_command(self, text):
+        """Local fallback: memory commands answered and applied on the Pi."""
+        command = memory_core.command(intents.normalize(text))
+        if command is None:
+            return None
+        op, argument = command
+        context = self.memory.context()
+        reply = memory_core.reply(op, argument, context, self.lore)
+        if context is not None and op in ('add_fact', 'add_directive', 'forget'):
+            self.memory.apply(dict(op=op, text=argument))
+            event('memory', op=op)
+        return reply
+
+    def _learn(self, reply):
+        """Strip MERKE/DIREKTIVE lines from an LLM reply and store them."""
+        spoken, learned = memory_core.split_learned(reply)
+        for op, value in learned:
+            if self.memory.apply(dict(op=op, text=value)):
+                event('memory', op=op, learned=True)
+        return spoken
 
     def shutdown(self):
         """Battery empty: say so, then power off (polkit rule for obivan)."""
@@ -812,6 +1000,14 @@ class VoiceController:
                 if self.remote:
                     self.recorder.drop_uplink()
                 event('wake_timeout')
+        shadow = getattr(self.wake, 'take_shadow', lambda: ([], []))()
+        if isinstance(shadow, tuple) and len(shadow) == 2:
+            hits, peaks = shadow
+            for word, score in hits:
+                event('wake_shadow', word=word, score=score)
+            for peak in peaks:
+                if max(peak.values(), default=0) >= 0.05:  # skip plain room noise
+                    event('wake_shadow_peak', **{k: round(v, 3) for k, v in peak.items()})
         detector = getattr(self.wake, 'detector', None)
         if detector is not None and now >= self.wake_stats_at:
             self.wake_stats_at = now + 60.0
@@ -854,6 +1050,10 @@ class VoiceController:
     def _pitft_input(self, pitft_pressed, now):
         up = self.pitft[0].update(pitft_pressed[0], now) == 'start'
         down = self.pitft[1].update(pitft_pressed[1], now) == 'start'
+        if (up or down) and self.maint.active and self.power == 'awake':
+            self.maint.move(-1 if up else 1)
+            self._publish_maintenance()
+            return
         if up or down:
             if self.power != 'awake':
                 self._wake_up(now)  # first press only wakes the display
@@ -894,6 +1094,18 @@ class VoiceController:
             self.job_started_at = time.monotonic()
 
     def _start_llm(self, text):
+        self.turn_transcript = text
+        op = maintenance.command(intents.normalize(text))
+        if op is not None:
+            reply = self._maintenance_op(op, speak=False)
+            event('llm_response', text=reply, model='local/maintenance')
+            self._start_speech(reply, source='assistant', model='local/maintenance')
+            return
+        reply = self._memory_command(text)
+        if reply is not None:
+            event('llm_response', text=reply, model='local/memory')
+            self._start_speech(reply, source='assistant', model='local/memory')
+            return
         intent = intents.match(text)
         if intent is None and self.llm_mode == 'local':
             # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
@@ -909,7 +1121,10 @@ class VoiceController:
             print(f'SERVITOR: {reply}', flush=True)
             self._start_speech(reply, source='assistant', model='local/intent')
             return
-        self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore), text)
+        context = self.memory.context()
+        model = free_model() if self.llm_mode == 'free' else None
+        self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore,
+                                                      memory=context, model=model), text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
@@ -938,10 +1153,19 @@ class VoiceController:
                 display_progress('tts', 'dsp_render')
         elif kind == 'transcript':
             text = str(item.get('text', ''))
+            self.turn_transcript = text
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
+        elif kind == 'maintenance':
+            if item.get('op') in maintenance.ITEMS + ('enter',):
+                self._maintenance_op(item['op'], speak=False)  # the server's reply speaks
+        elif kind == 'memory':
+            if self.memory.apply(item):
+                event('memory', op=item.get('op'), learned=bool(item.get('learned')))
         elif kind == 'reply':
             text = str(item.get('text', ''))
+            if self.turn_transcript:
+                self.memory.remember_turn(self.turn_transcript, text)
             self.turn_llm = llm_kind(item.get('model'))
             event('llm_response', text=text, model=item.get('model'))
             print(f'SERVITOR: {text}', flush=True)
@@ -1008,6 +1232,9 @@ class VoiceController:
                     event('button', button=name, action='start')
             return
         self._pitft_input(pitft_pressed, now)
+        if self.maint.active and not self.menu.open and ('B' in commands or 'E' in commands):
+            self._maintenance_buttons('E' in commands, 'B' in commands)
+            commands = [name for name in commands if name not in 'BE']
         if 'B' in commands and self.menu.open:
             # B leaves the menu first; a second press cancels as usual.
             self.menu.close()
@@ -1078,6 +1305,8 @@ class VoiceController:
                 self._start_llm(text)
             elif stage == 'llm':
                 reply, model = job.result
+                reply = self._learn(reply)
+                self.memory.remember_turn(self.turn_transcript or '', reply)
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
@@ -1130,7 +1359,7 @@ class VoiceController:
     def _busy(self):
         return (self.recorder.process is not None or self.job is not None
                 or self.speech.active or getattr(self.speech, 'synthesizing', False)
-                or self.menu.open or bool(self.alarm_queue))
+                or self.menu.open or bool(self.alarm_queue) or self.maint.active)
 
     def _wake_up(self, now):
         self.last_activity = now
@@ -1227,8 +1456,11 @@ def main():
             remote_config = None
         if remote_config is not None:
             def uplink_factory():
-                status = controller_ref[0].status_snapshot() if controller_ref else None
-                return RemoteTurnUplink(remote_config, status=status)
+                controller = controller_ref[0] if controller_ref else None
+                status = controller.status_snapshot() if controller else None
+                memory_copy = (memory_core.encode_header(controller.memory.context())
+                               if controller else None)
+                return RemoteTurnUplink(remote_config, status=status, memory=memory_copy)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
@@ -1289,6 +1521,17 @@ def main():
         wake_dir = Path(os.environ.get('PTT_WAKE_MODEL_DIR',
                                        '/opt/pi-voice-assistant/models/wakeword'))
         threshold = float(os.environ.get('PTT_WAKE_THRESHOLD', '0.5'))
+        # Candidate words are scored in the shadow (logged, never trigger),
+        # e.g. a freshly trained proximus.onnx, until they are good enough.
+        shadows = {}
+        for name in os.environ.get('PTT_WAKE_SHADOW', 'proximus').split(','):
+            name = name.strip()
+            if name and name != wake_word and (wake_dir / f'{name}.onnx').is_file():
+                try:
+                    meta = json.loads((wake_dir / f'{name}.json').read_text())
+                    shadows[name] = float(meta.get('threshold', 0.7))
+                except (OSError, ValueError, TypeError):
+                    shadows[name] = 0.7
         if not (wake_dir / f'{wake_word}.onnx').is_file():
             event('wake_error', message=f'model {wake_word} missing in {wake_dir}')
         else:
@@ -1299,13 +1542,14 @@ def main():
                 if site.is_dir() and str(site) not in os.sys.path:
                     os.sys.path.insert(0, str(site))
                 from wakeword import Detector, WakeWord
-                return Detector(WakeWord(wake_dir, wake_word, gate=True), threshold=threshold)
+                return Detector(WakeWord(wake_dir, wake_word, gate=True, shadows=list(shadows)),
+                                threshold=threshold, shadow_thresholds=shadows)
             from wake_listener import WakeListener
             wake = WakeListener(os.environ.get('PTT_AUDIO_DEVICE',
                                                'plughw:CARD=wm8960soundcard,DEV=0'),
                                 detector_factory)
             wake_label = WAKE_LABELS.get(wake_word)
-            event('wake_ready', word=wake_word, threshold=threshold)
+            event('wake_ready', word=wake_word, threshold=threshold, shadow=shadows)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
                                  remote=uplink_factory is not None,
                                  wake=wake, wake_word=wake_label)
@@ -1321,6 +1565,8 @@ def main():
         controller.server_probe = ServerProbe(interval=15.0).start()
     if not args.probe:
         controller.internet_probe = InternetProbe().start()
+        controller.network_watch = sysmon.network_watch().start()
+        controller.update_watch = sysmon.update_watch().start()
     battery_monitor = Battery()
     next_power = 0.0
     shim = None

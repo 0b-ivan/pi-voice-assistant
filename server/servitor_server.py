@@ -38,6 +38,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import intents  # noqa: E402
+import maintenance  # noqa: E402
+import memory  # noqa: E402
+from llm import NO_MEMORY  # noqa: E402
 from system_status import sanitize_snapshot  # noqa: E402
 
 PCM_RATE = 16000
@@ -78,6 +81,10 @@ class Config:
         self.workdir = env.get('SERVITOR_WORKDIR') or tempfile.gettempdir()
         # CT 107 runs on UTC; spoken times and dates are for the user's clock.
         self.timezone = env.get('SERVITOR_TIMEZONE', 'Europe/Berlin')
+        # Wait briefly instead of refusing: a refused turn falls back to the
+        # much slower Pi. Short /v1/speak jobs and a restart (~10 s) fit in.
+        self.busy_wait = float(env.get('SERVITOR_BUSY_WAIT_SECONDS', '8'))
+        self.loading_wait = float(env.get('SERVITOR_LOADING_WAIT_SECONDS', '15'))
         # CF-Connecting-IP is only believed from these peers (local cloudflared).
         self.trusted_proxies = {
             value.strip() for value in
@@ -126,19 +133,21 @@ class RealPipeline:
             return 'offline'
         return 'openrouter'
 
-    def reply(self, text, lore=None, mode=None):
+    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
-        from llm import LLMError, generate_local_reply, generate_reply
+        from llm import LLMError, free_model, generate_local_reply, generate_reply
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
+        # "FREI": the low-restriction model; otherwise the configured one.
+        chosen = free_model() if mode == 'free' else None
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
-            return generate_local_reply(text, lore=lore)
+            return generate_local_reply(text, lore=lore, memory=memory)
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
-                return generate_reply(text, lore=lore)
+                return generate_reply(text, lore=lore, memory=memory, model=chosen)
             except LLMError as exc:
                 if not local:
                     raise
@@ -147,7 +156,7 @@ class RealPipeline:
                 self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
-            return generate_local_reply(text, lore=lore)
+            return generate_local_reply(text, lore=lore, memory=memory)
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
@@ -212,6 +221,9 @@ class Service:
         self.config, self.pipeline = config, pipeline
         self.turn_lock = threading.Lock()
         self.limiter = RateLimiter(config.rate_limit)
+        self.updates = None  # sysmon.pending_updates(), refreshed in the background
+        self.maintenance_dir = maintenance.DIR
+        self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.ready = False
 
     def authorized(self, header):
@@ -226,11 +238,24 @@ class Service:
         except (zoneinfo.ZoneInfoNotFoundError, ValueError):
             return datetime.datetime.now()
 
-    def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None):
+    @staticmethod
+    def _maintenance_reply(op, device):
+        active = device.get('maintenance') == 'on'
+        if op == 'enter':
+            return maintenance.ENTER_TEXT
+        if op == 'exit':
+            return maintenance.EXIT_TEXT
+        if not active:
+            return maintenance.NEED_MODE_TEXT
+        return maintenance.confirm_prompt(op, device)
+
+    def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
-        time, date or status are answered from it without the LLM."""
+        time, date or status are answered from it without the LLM.
+        ``memory_copy``: the Pi's memory core (None: stick absent, NO_MEMORY:
+        Pi without memory support). Changes go back as ``memory`` events."""
         timings = {}
         temporary = []
 
@@ -275,7 +300,22 @@ class Service:
                     raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
                 intent = intents.match(text)
-                if intent is not None:
+                command = (memory.command(intents.normalize(text))
+                           if memory_copy is not NO_MEMORY else None)
+                service_op = maintenance.command(intents.normalize(text))
+                if service_op is not None and memory_copy is not NO_MEMORY:
+                    # Only Pis that know maintenance send a memory state too.
+                    answer = self._maintenance_reply(service_op, device or {})
+                    emit(dict(event='maintenance', op=service_op))
+                    model = 'local/maintenance'
+                elif command is not None:
+                    op, argument = command
+                    lore = (device or {}).get('lore')
+                    answer = memory.reply(op, argument, memory_copy, lore or 'off')
+                    if memory_copy is not None and op in ('add_fact', 'add_directive', 'forget'):
+                        emit(dict(event='memory', op=op, text=memory.clean_text(argument)))
+                    model = 'local/memory'
+                elif intent is not None:
                     snapshot = dict(device or {}, server='ok')
                     state = getattr(self.pipeline, 'llm_state', None)
                     if state is not None:
@@ -287,9 +327,15 @@ class Service:
                     try:
                         lore = (device or {}).get('lore')
                         mode = (device or {}).get('llm_mode')
-                        answer, model = timed('llm', self.pipeline.reply, text, lore, mode)
+                        answer, model = timed('llm', self.pipeline.reply, text, lore, mode,
+                                              memory_copy)
                     except Exception as exc:
                         raise TurnError('think', 'llm', str(exc)) from exc
+                    # Facts/directives the model picked up are never spoken.
+                    answer, learned = memory.split_learned(answer)
+                    if memory_copy not in (None, NO_MEMORY):
+                        for op, value in learned:
+                            emit(dict(event='memory', op=op, text=value, learned=True))
                 emit(dict(event='reply', text=answer, model=model))
             else:
                 upload_end = time.monotonic()
@@ -395,13 +441,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path.split('?', 1)[0] == '/health':
+        path = self.path.split('?', 1)[0]
+        if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
+        elif path == '/v1/status':
+            # Maintenance data only with the token (the URL is public).
+            if not self.service.authorized(self.headers.get('Authorization')):
+                return self._json(401, dict(error='unauthorized'))
+            state = getattr(self.service.pipeline, 'llm_state', None)
+            self._json(200, dict(updates=self.service.updates,
+                                 llm=state() if state else None,
+                                 maintenance=maintenance.status(self.service.maintenance_dir)))
         else:
             self._json(404, dict(error='not found'))
 
+    def _maintenance(self):
+        """Update or reboot CT 107 on request of the Pi (button-confirmed there)."""
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        if self.client_address[0] in self.service.config.trusted_proxies:
+            # Through the public tunnel: never. Only the LAN path may ask.
+            return self._json(403, dict(error='maintenance only on the LAN'))
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            data = json.loads(self.rfile.read(min(length, 1024)) or b'{}')
+        except (ValueError, OSError):
+            return self._json(400, dict(error='expected JSON {"action": "update|reboot"}'))
+        action = data.get('action') if isinstance(data, dict) else None
+        if action not in maintenance.ACTIONS:
+            return self._json(400, dict(error='action must be update or reboot'))
+        if not maintenance.installed(self.service.maintenance_dir):
+            return self._json(503, dict(error='maintenance worker not installed'))
+        now = time.monotonic()
+        last = self.service.maintenance_at
+        if last is not None and now - last < maintenance.SERVER_MIN_INTERVAL:
+            return self._json(429, dict(error='too soon'), {'Retry-After': str(
+                int(maintenance.SERVER_MIN_INTERVAL - (now - last)) + 1)})
+        maintenance.request(action, self.service.maintenance_dir)
+        self.service.maintenance_at = now
+        print(json.dumps(dict(event='maintenance_request', action=action)), flush=True)
+        return self._json(202, dict(accepted=action))
+
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == '/v1/maintenance':
+            return self._maintenance()
         if url.path not in ('/v1/turn', '/v1/speak'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
@@ -411,6 +496,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(401, dict(error='unauthorized'))
         if not self.service.limiter.allow(self._client()):
             return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
+        deadline = time.monotonic() + self.service.config.loading_wait
+        while not self.service.ready and time.monotonic() < deadline:
+            time.sleep(0.2)
         if not self.service.ready:
             return self._json(503, dict(error='loading'), {'Retry-After': '5'})
         fmt = urllib.parse.parse_qs(url.query).get('format', ['wav'])[0]
@@ -457,8 +545,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 device = sanitize_snapshot(json.loads(header))
             except ValueError:
                 device = None
+        state = (device or {}).get('memory')
+        memory_copy = (memory.decode_header(self.headers.get('X-Servitor-Memory', ''))
+                       if state == 'on' else None if state == 'off' else NO_MEMORY)
 
-        if not self.service.turn_lock.acquire(blocking=False):
+        if not self.service.turn_lock.acquire(timeout=max(0.0, self.service.config.busy_wait)):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
         try:
             self.send_response(200)
@@ -474,7 +565,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
 
             try:
-                self.service.run_turn(body, emit, fmt, text=text, device=device)
+                self.service.run_turn(body, emit, fmt, text=text, device=device,
+                                      memory_copy=memory_copy)
             except TurnError as exc:
                 emit(dict(event='error', stage=exc.stage, code=exc.code, message=exc.message))
             except (OSError, TimeoutError):
@@ -515,6 +607,15 @@ def main():
               flush=True)
 
     threading.Thread(target=load, daemon=True).start()
+
+    def watch_updates():
+        import sysmon
+        while True:
+            service.updates = sysmon.pending_updates()
+            print(json.dumps(dict(event='updates', **(service.updates or {}))), flush=True)
+            time.sleep(6 * 3600)
+
+    threading.Thread(target=watch_updates, daemon=True).start()
     print(json.dumps(dict(event='listening', bind=config.bind, port=config.port)), flush=True)
     server.serve_forever()
 

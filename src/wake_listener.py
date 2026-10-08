@@ -21,6 +21,7 @@ class WakeListener:
         self.thread = None
         self.error = None
         self._detected = False
+        self._stopping = False
         self._lock = threading.Lock()
 
     @property
@@ -31,6 +32,7 @@ class WakeListener:
         if self.running:
             return
         self.error = None
+        self._stopping = False
         self.thread = threading.Thread(target=self._run, name='wake-listener', daemon=True)
         self.thread.start()
 
@@ -52,7 +54,10 @@ class WakeListener:
                     self._detected = True
                     return
         except Exception as exc:  # reported to the controller, never fatal
-            self.error = str(exc)
+            # stop() closes the pipe under a blocked read ("read of closed
+            # file"): that is the requested stop, not an error.
+            if not self._stopping:
+                self.error = str(exc)
         finally:
             self._kill()
 
@@ -72,11 +77,21 @@ class WakeListener:
 
     def stop(self):
         """Free the microphone; returns once arecord is gone."""
+        self._stopping = True
         self._kill()
         if self.thread is not None:
             self.thread.join(timeout=2)
             if not self.thread.is_alive():
                 self.thread = None
+
+    def take_shadow(self):
+        """Shadow-word hits and loud-stretch peak scores since the last call."""
+        detector = self.detector
+        if detector is None or not getattr(detector, 'shadow_thresholds', None):
+            return [], []
+        hits, detector.shadow_hits = detector.shadow_hits, []
+        peaks, detector.wakeword.segment_peaks = detector.wakeword.segment_peaks, []
+        return hits, peaks
 
     def take_detection(self):
         detected, self._detected = self._detected, False

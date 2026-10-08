@@ -41,7 +41,9 @@ TTS_PIPER_NOISE_SCALE=0.30
 TTS_PIPER_NOISE_W_SCALE=0.25
 TTS_PIPER_SENTENCE_SILENCE=0.32
 TTS_FFMPEG_BIN=/usr/bin/ffmpeg
-OPENROUTER_LLM_MODEL=openai/gpt-5.4-mini
+OPENROUTER_LLM_MODEL=mistralai/mistral-medium-3-5
+# Menu "Sprachkern FREI": few content restrictions.
+OPENROUTER_FREE_MODEL=cognitivecomputations/dolphin-mistral-24b-venice-edition
 OPENROUTER_API_KEY=REPLACE_ME
 # Short enough that the offline fallback still answers within the Pi's 25 s.
 OPENROUTER_LLM_TIMEOUT_SECONDS=8
