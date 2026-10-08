@@ -79,6 +79,8 @@ def known_pieces():
                   if (pi or not ps) and (sv or not ss) and (pi or sv)]
     from maintenance import phrases
     texts += phrases()
+    import enroll
+    texts += enroll.phrases()
     pieces = {piece for text in texts for piece, _ in fragments(text)}
     return sorted(pieces | {str(n) for n in NUMBERS})
 

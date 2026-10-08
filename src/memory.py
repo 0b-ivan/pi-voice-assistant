@@ -193,8 +193,37 @@ class MemoryCore:
             if budget < 0:
                 break
             facts.append(item['text'])
-        return dict(facts=facts[::-1], directives=directives, history=history,
-                    total_facts=len(data['facts']))
+        context = dict(facts=facts[::-1], directives=directives, history=history,
+                       total_facts=len(data['facts']))
+        prints = self.voiceprints()
+        if prints:
+            context['voiceprints'] = prints
+        return context
+
+    # --- Voiceprint (written by the enrollment session) -------------------
+
+    @property
+    def voice_dir(self):
+        return self.root / 'voice'
+
+    def voiceprints(self):
+        """[{'name', 'print'}] of the enrolled operator (base64 int8), or []."""
+        try:
+            data = json.loads((self.voice_dir / 'voiceprint.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return []
+        if not isinstance(data, dict) or not isinstance(data.get('print'), str):
+            return []
+        return [dict(name=clean_text(data.get('name') or 'Bediener')[:40], print=data['print'])]
+
+    def save_voiceprint(self, name, print_, count):
+        self.voice_dir.mkdir(exist_ok=True)
+        path = self.voice_dir / 'voiceprint.json'
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(dict(name=clean_text(name)[:40] or 'Bediener',
+                                             print=print_, count=count,
+                                             at=int(self.clock()))), encoding='utf-8')
+        temporary.replace(path)
 
 
 _STOPWORDS = {'dass', 'mich', 'mein', 'meine', 'meinen', 'bitte', 'alles', 'über', 'nicht',
@@ -243,10 +272,29 @@ def decode_header(value):
         if isinstance(item, dict) and isinstance(item.get('q'), str) and isinstance(item.get('a'), str):
             history.append(dict(q=clean_text(item['q']), a=clean_text(item['a'])))
     total = data.get('total_facts')
-    return dict(facts=texts(data.get('facts'), MAX_FACTS),
-                directives=texts(data.get('directives'), MAX_DIRECTIVES),
-                history=history,
-                total_facts=total if isinstance(total, int) and total >= 0 else 0)
+    prints = []
+    for item in data.get('voiceprints', [])[:3] if isinstance(data.get('voiceprints'), list) else []:
+        if (isinstance(item, dict) and isinstance(item.get('print'), str)
+                and len(item['print']) <= 1500 and isinstance(item.get('name'), str)):
+            prints.append(dict(name=clean_text(item['name'])[:40], print=item['print']))
+    result = dict(facts=texts(data.get('facts'), MAX_FACTS),
+                  directives=texts(data.get('directives'), MAX_DIRECTIVES),
+                  history=history,
+                  total_facts=total if isinstance(total, int) and total >= 0 else 0)
+    if prints:
+        result['voiceprints'] = prints
+    return result
+
+
+def unknown_speaker(context):
+    """An operator is enrolled and the server did not recognize this voice."""
+    return bool(context) and context.get('speaker') == 'unknown'
+
+
+def guest_view(context):
+    """What an unrecognized voice may use: directives only, nothing personal."""
+    return dict(facts=[], directives=context.get('directives', []), history=[],
+                total_facts=0, speaker='unknown')
 
 
 # --- Commands (LLM-free; run on the server and in the Pi's local fallback) ---
@@ -316,6 +364,8 @@ def reply(op, argument, context, lore='off'):
     full = lore == 'full'
     if context is None:
         return ABSENT.get(lore, ABSENT['light'])
+    if unknown_speaker(context):
+        return GUEST_TEXT
     if op == 'add_fact':
         return ("Heilige Daten im Gedächtniskern versiegelt." if full
                 else "Gespeichert im Gedächtniskern.")
@@ -355,12 +405,26 @@ LEARN_INSTRUCTION = (
     "werden nicht vorgelesen.")
 
 
+GUEST_TEXT = ("Stimme nicht als Bediener erkannt. Persönliche Daten nur für den Bediener.")
+
+
 def prompt_section(context):
     """Memory part of the system prompt (None: stick absent)."""
     if context is None:
         return ("Gedächtnis: Kein Gedächtniskern angeschlossen. Du erinnerst dich an nichts "
                 "aus früheren Gesprächen und kannst nichts speichern.")
+    if unknown_speaker(context):
+        parts = ["Sprecher: Die Stimme gehört nicht dem Bediener. Gib keine persönlichen "
+                 "Daten über den Bediener preis und schreibe keine MERKE- oder "
+                 "DIREKTIVE-Zeilen."]
+        if context.get('directives'):
+            parts.append("Direktiven des Bedieners, immer befolgen:\n"
+                         + '\n'.join(f'- {d}' for d in context['directives']))
+        return '\n\n'.join(parts)
     parts = [LEARN_INSTRUCTION]
+    if context.get('speaker'):
+        parts.append(f"Sprecher: an der Stimme erkannt als {context['speaker']}, der Bediener. "
+                     "Sprich ihn bei Gelegenheit mit Namen an.")
     if context.get('directives'):
         parts.append("Direktiven des Bedieners, immer befolgen, solange Fakten korrekt bleiben "
                      "(eine installierte Erweiterung heißt: zeige diese Eigenschaft in jeder "

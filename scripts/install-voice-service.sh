@@ -29,6 +29,8 @@ install -m 0644 "${repo_root}/src/netprobe.py" /opt/pi-voice-assistant/src/netpr
 install -m 0644 "${repo_root}/src/sysmon.py" /opt/pi-voice-assistant/src/sysmon.py
 install -m 0644 "${repo_root}/src/memory.py" /opt/pi-voice-assistant/src/memory.py
 install -m 0644 "${repo_root}/src/maintenance.py" /opt/pi-voice-assistant/src/maintenance.py
+install -m 0644 "${repo_root}/src/enroll.py" /opt/pi-voice-assistant/src/enroll.py
+install -m 0644 "${repo_root}/src/speaker.py" /opt/pi-voice-assistant/src/speaker.py
 install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/alarm_audio.py
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py

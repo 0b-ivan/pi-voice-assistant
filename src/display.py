@@ -77,6 +77,7 @@ MENU_LABELS = (
     ('alarms', 'Alarme'),
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
+    ('enroll', 'Kennenlernen'),
     ('maintenance', 'Wartung'),
     ('status', 'Status ansagen'),
     ('close', 'Schließen'),
@@ -172,11 +173,14 @@ def read_status(path=None):
                          ('power', ('awake', 'rest', 'sleep')),
                          ('memory', ('on', 'off')),
                          ('maint', ('on', 'off')),
+                         ('enroll', ('intro', 'wake', 'ask', 'process', 'done')),
+                         ('enroll_rec', ('on', 'off')),
                          ('maint_confirm', MAINT_ITEMS),
                          ('maint_pi', MAINT_STATES), ('maint_server', MAINT_STATES)):
         if value.get(key) in allowed:
             status[key] = value[key]
-    for key, high in (('maint_index', len(MAINT_ITEMS) - 1), ('upd_pi', 9999), ('upd_pi_sec', 9999),
+    for key, high in (('enroll_step', 100), ('enroll_total', 100),
+                      ('maint_index', len(MAINT_ITEMS) - 1), ('upd_pi', 9999), ('upd_pi_sec', 9999),
                       ('upd_srv', 9999), ('upd_srv_sec', 9999)):
         item = value.get(key)
         if isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= high:
@@ -800,6 +804,63 @@ def _updates_line(count, security):
     return text, (255, 110, 90) if security else (255, 190, 60)
 
 
+ENROLL_QUESTIONS = (
+    "Wie soll diese Einheit dich nennen?", "Wo lebst du?",
+    "Womit verbringst du deine Arbeitstage?", "Welche Themen interessieren dich besonders?",
+    "Welche Menschen sind dir wichtig?",
+    "Wie soll diese Einheit mit dir sprechen, knapp oder ausführlich?",
+    "Was soll diese Einheit sonst noch über dich wissen?",
+)
+ENROLL_HINTS = ((15, 'wie im Alltag'), (10, 'aus ~2 m Abstand'), (5, 'etwas leiser'), (0, 'normal'))
+
+
+def _wrap(draw, text, size, width):
+    lines, line = [], ''
+    for word in text.split():
+        candidate = f'{line} {word}'.strip()
+        if draw.textlength(candidate, font=font(size)) <= width:
+            line = candidate
+        else:
+            lines.append(line)
+            line = word
+    return lines + [line] if line else lines
+
+
+def render_enroll(display, status, info=None):
+    """Getting to know the operator: what to say now, and when we listen."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    accent = (0, 200, 170)
+    draw.text((12, 12), 'KENNENLERNEN', font=font(17), fill=accent)
+    if info.get('battery'):
+        draw_battery(draw, 228, 14, info['battery'])
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    stage = status.get('enroll')
+    step, total = status.get('enroll_step', 0), status.get('enroll_total', 0)
+    if stage == 'wake':
+        draw.text((12, 52), 'Nach dem Ton sagen:', font=font(13), fill=(170, 175, 180))
+        width = draw.textlength('PROXIMUS', font=font(30))
+        draw.text(((WIDTH - width) / 2, 78), 'PROXIMUS', font=font(30), fill='white')
+        hint = next(text for start, text in ENROLL_HINTS if step - 1 >= start or start == 0)
+        _right(draw, 228, 126, f'{step} / {total} · {hint}', 13, (170, 175, 180))
+    elif stage == 'ask' and 0 <= step < len(ENROLL_QUESTIONS):
+        draw.text((12, 52), f'Frage {step + 1} / {total}', font=font(13), fill=(170, 175, 180))
+        for row, line in enumerate(_wrap(draw, ENROLL_QUESTIONS[step], 17, 216)[:4]):
+            draw.text((12, 76 + row * 24), line, font=font(17), fill='white')
+    else:
+        text = {'intro': 'Sitzung beginnt …', 'process': 'Stimmprofil wird berechnet …',
+                'done': 'Abgeschlossen'}.get(stage, '')
+        draw.text((12, 90), text, font=font(17), fill='white')
+    if status.get('enroll_rec') == 'on':
+        draw.ellipse((12, 160, 28, 176), fill=(230, 40, 40))
+        draw.text((36, 159), 'AUFNAHME', font=font(15), fill=(255, 90, 90))
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    draw.text((12, 209), 'B: abbrechen', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
+
+
 def render_maintenance(display, status, info=None):
     """Maintenance mode: pending updates, actions, confirmation with E."""
     from PIL import Image, ImageDraw
@@ -1127,7 +1188,12 @@ def main():
             previous_screen = None  # redraw at once when the screen comes back
             time.sleep(SLEEP_POLL_SECONDS)
             continue
-        if status.get('maint') == 'on':  # takes the screen even over a stale menu
+        if status.get('enroll'):
+            screen = ('enroll', tuple(sorted(status.items())), battery_view(battery))
+            if screen != previous_screen:
+                render_enroll(display, status, dict(battery=battery))
+                previous_screen = screen
+        elif status.get('maint') == 'on':  # takes the screen even over a stale menu
             screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
             if screen != previous_screen:
                 render_maintenance(display, status, dict(battery=battery))
