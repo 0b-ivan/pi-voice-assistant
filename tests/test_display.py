@@ -285,3 +285,263 @@ class PartialFrameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusInfoTests(unittest.TestCase):
+    def test_read_status_keeps_only_whitelisted_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text('{"route":"server","last_route":"pi","last_llm":"offline",'
+                            '"last_latency_ms":1530,"text":"geheim","route_x":1}')
+            self.assertEqual(display.read_status(path), {
+                "route": "server", "last_route": "pi", "last_llm": "offline",
+                "last_latency_ms": 1530})
+            path.write_text('{"route":"mars","last_latency_ms":true}')
+            self.assertEqual(display.read_status(path), {})
+            path.write_text("kaputt")
+            self.assertEqual(display.read_status(path), {})
+
+    def test_last_answer_text_names_source(self):
+        self.assertIsNone(display.last_answer_text({}))
+        cases = (
+            ({"last_route": "server", "last_llm": "openrouter"}, "Server"),
+            ({"last_route": "server", "last_llm": "offline"}, "Offline-LLM"),
+            ({"last_route": "pi", "last_llm": "openrouter"}, "Pi lokal"),
+        )
+        for status, source in cases:
+            self.assertEqual(display.last_answer_text(dict(status, last_latency_ms=1530)),
+                             f"Zuletzt 1,5 s · {source}")
+
+    def test_server_state(self):
+        class Response:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, _n):
+                return self.body
+
+        env = {"ASSISTANT_BASE_URL": "http://172.22.9.107:8765, https://x.example"}
+        self.assertEqual(display.server_state({}), "off")
+        with patch("urllib.request.urlopen", return_value=Response(b'{"ready": true}')) as get:
+            self.assertEqual(display.server_state(env), "ok")
+        self.assertEqual(get.call_args.args[0], "http://172.22.9.107:8765/health")
+        with patch("urllib.request.urlopen", return_value=Response(b'{"ready": false}')):
+            self.assertEqual(display.server_state(env), "down")
+        with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+            self.assertEqual(display.server_state(env), "down")
+
+    def test_wifi_and_temperature_probes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wireless = Path(tmp) / "wireless"
+            wireless.write_text(
+                "Inter-| sta-|   Quality        |\n"
+                " face | tus | link level noise |\n"
+                " wlan0: 0000   50.  -60.  -256        0\n")
+            self.assertEqual(display.wifi_dbm(wireless), -60)
+            wireless.write_text("header\nheader\n")
+            self.assertIsNone(display.wifi_dbm(wireless))
+            temp = Path(tmp) / "temp"
+            temp.write_text("44008\n")
+            self.assertEqual(display.cpu_temp_c(temp), 44)
+            self.assertIsNone(display.cpu_temp_c(Path(tmp) / "missing"))
+
+    def test_render_voice_with_and_without_info(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        for state, info in (
+            ("BEREIT", None),
+            ("BEREIT", {"server": "down", "last": "Zuletzt 9,8 s · Pi lokal",
+                        "wifi_dbm": -81, "temp_c": 71, "clock": "23:41"}),
+            ("DENKEN", {"server": "ok", "route": "server", "wifi_dbm": -60}),
+        ):
+            capture = Capture()
+            display.render_voice(capture, state, True, info=info)
+            self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+
+class ServerProbeTests(unittest.TestCase):
+    def test_probe_runs_in_background_and_updates_state(self):
+        import threading
+        called = threading.Event()
+
+        def probe():
+            called.set()
+            return "ok"
+
+        server = display.ServerProbe(interval=60, probe=probe)
+        self.assertIsNone(server.state)
+        server.start()
+        self.assertTrue(called.wait(2))
+        for _ in range(100):
+            if server.state == "ok":
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(server.state, "ok")
+
+
+class FakeBus:
+    def __init__(self, registers):
+        self.registers = registers
+        self.closed = False
+        self.writes = []
+
+    def read_byte_data(self, address, register):
+        assert address == 0x57
+        return self.registers[register]
+
+    def write_byte_data(self, *args):  # must never be called: read-only
+        self.writes.append(args)
+
+    def close(self):
+        self.closed = True
+
+
+def pisugar(mv, percent, ctr1=0xF4, temp=75):
+    return {0x22: mv >> 8, 0x23: mv & 0xFF, 0x2A: percent, 0x02: ctr1, 0x04: temp}
+
+
+class BatteryTests(unittest.TestCase):
+    def test_reads_pisugar3_registers_read_only(self):
+        bus = FakeBus(pisugar(3834, 80))
+        battery = display.Battery(bus_factory=lambda: bus).read()
+        self.assertEqual(battery, dict(percent=80, mv=3834, plugged=True, charging=True,
+                                       board_c=35))
+        self.assertTrue(bus.closed)
+        self.assertEqual(bus.writes, [])
+
+    def test_jumpy_percent_is_averaged(self):
+        values = iter([(3861, 83), (3969, 91), (3855, 83), (3852, 82)])
+        monitor = display.Battery(bus_factory=lambda: FakeBus(pisugar(*next(values))))
+        for _ in range(4):
+            battery = monitor.read()
+        self.assertEqual((battery['percent'], battery['mv']), (85, 3884))
+
+    def test_power_states(self):
+        on_battery = display.Battery(bus_factory=lambda: FakeBus(pisugar(3780, 64, 0x40))).read()
+        self.assertEqual((on_battery['plugged'], on_battery['charging']), (False, False))
+        full = display.Battery(bus_factory=lambda: FakeBus(pisugar(4180, 100, 0xC0))).read()
+        self.assertEqual((full['plugged'], full['charging']), (True, False))
+        disabled = display.Battery(bus_factory=lambda: FakeBus(pisugar(3900, 70, 0x80))).read()
+        self.assertEqual((disabled['plugged'], disabled['charging']), (True, False))
+
+    def test_missing_board_or_implausible_values(self):
+        def broken():
+            raise OSError("no device")
+        self.assertIsNone(display.Battery(bus_factory=broken).read())
+        self.assertIsNone(display.Battery(bus_factory=lambda: FakeBus(pisugar(9000, 80))).read())
+        self.assertIsNone(display.Battery(bus_factory=lambda: FakeBus(pisugar(3800, 180))).read())
+
+    def test_throttled_flags(self):
+        ok = SimpleNamespace(stdout="throttled=0x50005\n")
+        self.assertEqual(display.throttled_flags(run=lambda *a, **k: ok), 0x50005)
+        self.assertIsNone(display.throttled_flags(run=lambda *a, **k: SimpleNamespace(stdout="?")))
+
+        def missing(*args, **kwargs):
+            raise OSError("no vcgencmd")
+        self.assertIsNone(display.throttled_flags(run=missing))
+
+    def test_power_line_priorities(self):
+        charging = dict(percent=83, mv=3861, plugged=True, charging=True, board_c=35)
+        low = dict(percent=12, mv=3480, plugged=False, charging=False, board_c=31)
+        self.assertEqual(display.power_line(charging, 0)[0], "Akku 83 % · 3,86 V · lädt")
+        self.assertEqual(display.power_line(low, 0), ("Akku 12 % · 3,48 V · Akkubetrieb",
+                                                      (255, 90, 90)))
+        self.assertEqual(display.power_line(dict(charging, charging=False, percent=100), 0)[0],
+                         "Akku 100 % · 3,86 V · Netz · voll")
+        self.assertEqual(display.power_line(charging, 0x50005)[0], "UNTERSPANNUNG!")
+        self.assertEqual(display.power_line(charging, 0x4)[0], "CPU gedrosselt")
+        self.assertEqual(display.power_line(charging, 0x10000)[0], "Unterspannung seit Start")
+        self.assertIsNone(display.power_line(None, None))
+
+    def test_render_with_battery(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        for battery in (dict(percent=83, mv=3861, plugged=True, charging=True, board_c=35),
+                        dict(percent=5, mv=3300, plugged=False, charging=False, board_c=30)):
+            capture = Capture()
+            display.render_voice(capture, "BEREIT", True,
+                                 info=dict(battery=battery, throttled=0, temp_c=47))
+            self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+
+class BatteryViewTests(unittest.TestCase):
+    def test_view_ignores_invisible_millivolt_changes(self):
+        a = dict(percent=83, mv=3861, plugged=True, charging=True, board_c=35)
+        b = dict(a, mv=3863, board_c=36)
+        self.assertEqual(display.battery_view(a), display.battery_view(b))
+        self.assertNotEqual(display.battery_view(a), display.battery_view(dict(a, mv=3874)))
+        self.assertNotEqual(display.battery_view(a), display.battery_view(dict(a, percent=84)))
+        self.assertIsNone(display.battery_view(None))
+
+
+
+class VolumeOverlayTests(unittest.TestCase):
+    def test_status_and_overlay_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text('{"volume": 35, "volume_at": 1000.0, "volume_limit": "max"}')
+            status = display.read_status(path)
+            self.assertEqual(display.volume_overlay(status, now=1001.0), (35, "max"))
+            self.assertIsNone(display.volume_overlay(status, now=1003.0))
+            path.write_text('{"volume": 150, "volume_at": 1000.0}')
+            self.assertIsNone(display.volume_overlay(display.read_status(path), now=1000.5))
+
+    def test_render_volume_overlay(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        for volume in ((35, None), (100, "max"), (0, "min")):
+            capture = Capture()
+            display.render_voice(capture, "BEREIT", True, info=dict(volume=volume))
+            self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+
+class MenuDisplayTests(unittest.TestCase):
+    def test_read_status_menu_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text('{"menu_index": 1, "menu_page": "list", "opt_server": "off",'
+                            ' "opt_led": "on", "screen": "off"}')
+            status = display.read_status(path)
+            self.assertEqual((status["menu_index"], status["opt_server"], status["screen"]),
+                             (1, "off", "off"))
+            path.write_text('{"menu_index": 99, "menu_page": "list", "screen": "dim"}')
+            self.assertEqual(display.read_status(path), {})
+
+    def test_render_menu_and_info(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        capture = Capture()
+        display.render_menu(capture, dict(menu_index=1, menu_page="list", opt_server="on",
+                                          opt_led="off"))
+        self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+        capture = Capture()
+        display.render_info(capture, [("IP", "172.22.9.128"), ("Version", "abc1234")])
+        self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+    def test_info_helpers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            uptime = Path(tmp) / "uptime"
+            uptime.write_text("22380.5 1000.0\n")
+            self.assertEqual(display.uptime_text(uptime), "6 h 13 min")
+            uptime.write_text("190000 1\n")
+            self.assertEqual(display.uptime_text(uptime), "2 d 4 h")
+            meminfo = Path(tmp) / "meminfo"
+            meminfo.write_text("MemTotal: 425000 kB\nMemAvailable: 115712 kB\n")
+            self.assertEqual(display.mem_available_mb(meminfo), 113)
+            deployed = Path(tmp) / "DEPLOYED"
+            deployed.write_text("6da76a2abcdef\nbranch x\n")
+            self.assertEqual(display.deployed_version(deployed), "6da76a2")

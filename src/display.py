@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import time
 
+from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
+
 
 WIDTH = 240
 HEIGHT = 240
@@ -58,6 +60,25 @@ VOICE_COLORS = {
 
 
 PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/display-progress.json'))
+STATUS_FILE = Path(os.environ.get('PI_DISPLAY_STATUS_FILE', '/run/pi-ptt/display-status.json'))
+SERVER_PROBE_INTERVAL_SECONDS = 10.0
+VOLUME_SHOW_SECONDS = 2.5
+MENU_LABELS = (
+    ('info', 'Systeminfo'),
+    ('server', 'Server nutzen'),
+    ('led', 'Status-LED'),
+    ('screen', 'Display aus'),
+    ('status', 'Status ansagen'),
+    ('close', 'Schließen'),
+)
+DEPLOYED_FILE = Path('/opt/pi-voice-assistant/src/DEPLOYED')
+SERVER_PROBE_TIMEOUT_SECONDS = 0.5
+ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
+SERVER_FOOTER = {
+    'ok': ('CT107 OK', (120, 220, 160)),
+    'down': ('CT107 AUS', (255, 180, 0)),
+    'off': ('NUR PI', (150, 150, 150)),
+}
 ANIMATION_INTERVAL_SECONDS = 0.25
 # state, description, icon, position in the five-step response sequence
 PHASE_DETAILS = {
@@ -98,6 +119,190 @@ def read_progress(path=None):
         return value
     except (OSError, ValueError, TypeError):
         return None
+
+
+def read_status(path=None):
+    """Fixed identifiers/numbers from ptt.py; anything else is dropped."""
+    try:
+        value = json.loads((STATUS_FILE if path is None else Path(path)).read_text())
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    status = {}
+    for key in ('route', 'last_route'):
+        if value.get(key) in ('server', 'pi'):
+            status[key] = value[key]
+    if value.get('last_llm') in ('openrouter', 'offline', 'intent'):
+        status['last_llm'] = value['last_llm']
+    latency = value.get('last_latency_ms')
+    if isinstance(latency, int) and not isinstance(latency, bool) and 0 <= latency < 600_000:
+        status['last_latency_ms'] = latency
+    volume, volume_at = value.get('volume'), value.get('volume_at')
+    if (isinstance(volume, int) and not isinstance(volume, bool) and 0 <= volume <= 100
+            and isinstance(volume_at, (int, float)) and not isinstance(volume_at, bool)):
+        status['volume'] = volume
+        status['volume_at'] = float(volume_at)
+        if value.get('volume_limit') in ('min', 'max'):
+            status['volume_limit'] = value['volume_limit']
+    index = value.get('menu_index')
+    if (isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(MENU_LABELS)
+            and value.get('menu_page') in ('list', 'info')):
+        status['menu_index'] = index
+        status['menu_page'] = value['menu_page']
+    for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
+                         ('screen', ('on', 'off'))):
+        if value.get(key) in allowed:
+            status[key] = value[key]
+    return status
+
+
+def volume_overlay(status, now=None):
+    """(percent, limit) while a volume change is recent, else None."""
+    if 'volume' not in status:
+        return None
+    now = time.time() if now is None else now
+    if not 0 <= now - status['volume_at'] < VOLUME_SHOW_SECONDS:
+        return None
+    return status['volume'], status.get('volume_limit')
+
+
+def last_answer_text(status):
+    """'Zuletzt 1,5 s · Server' — where the answer came from and how fast."""
+    latency = status.get('last_latency_ms')
+    if latency is None:
+        return None
+    if status.get('last_route') == 'pi':
+        source = 'Pi lokal'
+    elif status.get('last_llm') == 'offline':
+        source = 'Offline-LLM'
+    elif status.get('last_llm') == 'intent':
+        source = 'direkt'
+    else:
+        source = 'Server'
+    seconds = f'{latency / 1000:.1f}'.replace('.', ',')
+    return f'Zuletzt {seconds} s · {source}'
+
+
+def server_state(env=None):
+    """'off' without ASSISTANT_BASE_URL, else 'ok'/'down' from GET /health."""
+    import urllib.request
+    env = load_env() if env is None else env
+    urls = [u.strip().rstrip('/') for u in env.get('ASSISTANT_BASE_URL', '').split(',')]
+    urls = [u for u in urls if u]
+    if not urls:
+        return 'off'
+    try:
+        with urllib.request.urlopen(urls[0] + '/health',
+                                    timeout=SERVER_PROBE_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read(256))
+        return 'ok' if isinstance(payload, dict) and payload.get('ready') is True else 'down'
+    except (OSError, ValueError):
+        return 'down'
+
+
+class ServerProbe:
+    """Polls /health in a daemon thread so a slow server never stalls frames."""
+    def __init__(self, interval=SERVER_PROBE_INTERVAL_SECONDS, probe=None):
+        import threading
+        self.interval = interval
+        self.probe = probe or server_state
+        self.state = None
+        self._thread = threading.Thread(target=self._run, name='server-probe', daemon=True)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def _run(self):
+        while True:
+            self.state = self.probe()
+            time.sleep(self.interval)
+
+
+def power_line(battery, throttled):
+    """Idle detail line: power warnings first, then the battery state."""
+    if throttled is not None:
+        if throttled & 0x1:
+            return 'UNTERSPANNUNG!', (255, 70, 70)
+        if throttled & 0x6:
+            return 'CPU gedrosselt', (255, 180, 0)
+        if throttled & 0x10000:
+            return 'Unterspannung seit Start', (255, 180, 0)
+    if not battery:
+        return None
+    volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
+    if battery['charging']:
+        state = 'lädt'
+    elif battery['plugged']:
+        state = 'Netz · voll'
+    else:
+        state = 'Akkubetrieb'
+    color = (255, 90, 90) if battery['percent'] <= 15 and not battery['plugged'] else (145, 155, 165)
+    return f"Akku {battery['percent']} % · {volts} V · {state}", color
+
+
+def battery_view(battery):
+    """The battery values as drawn (percent, 10 mV steps, state)."""
+    if not battery:
+        return None
+    return (battery['percent'], round(battery['mv'] / 10), battery['plugged'],
+            battery['charging'])
+
+
+def battery_color(battery):
+    if battery['charging']:
+        return (80, 210, 235)
+    if battery['percent'] <= 15:
+        return (255, 70, 70)
+    if battery['percent'] <= 40:
+        return (255, 180, 0)
+    return (120, 220, 160)
+
+
+def draw_battery(draw, x_right, y, battery):
+    """Small battery gauge plus percentage, right-aligned at x_right."""
+    color = battery_color(battery)
+    text = f"{battery['percent']}%"
+    text_width = draw.textlength(text, font=font(13))
+    draw.text((x_right - text_width, y), text, font=font(13), fill=color)
+    right = x_right - text_width - 5
+    left = right - 20
+    top = y + 3
+    draw.rectangle((left, top, right - 2, top + 10), outline=color, width=1)
+    draw.rectangle((right - 1, top + 3, right, top + 7), fill=color)
+    fill_width = round(15 * max(0, min(100, battery['percent'])) / 100)
+    if fill_width:
+        draw.rectangle((left + 2, top + 2, left + 2 + fill_width, top + 8), fill=color)
+    if battery['charging']:
+        cx = (left + right) // 2 - 1
+        draw.polygon(((cx + 2, top - 1), (cx - 3, top + 6), (cx, top + 6),
+                      (cx - 2, top + 12), (cx + 4, top + 4), (cx + 1, top + 4)),
+                     fill=(255, 255, 255))
+    return left
+
+
+def cpu_temp_c(path='/sys/class/thermal/thermal_zone0/temp'):
+    try:
+        return round(int(Path(path).read_text().strip()) / 1000)
+    except (OSError, ValueError):
+        return None
+
+
+def wifi_dbm(path='/proc/net/wireless'):
+    try:
+        lines = Path(path).read_text().splitlines()[2:]
+    except OSError:
+        return None
+    for line in lines:
+        name, _, rest = line.partition(':')
+        fields = rest.split()
+        if name.strip() and len(fields) >= 3:
+            try:
+                return int(float(fields[2]))
+            except ValueError:
+                return None
+    return None
 
 
 def screen_details(state, event, progress):
@@ -378,29 +583,203 @@ def render_boot(display, states):
     display.image(image, 180)
 
 
-def render_voice(display, state, network, details=None, tick=0, elapsed=0):
+def _right(draw, x_right, y, text, size, fill):
+    width = draw.textlength(text, font=font(size))
+    draw.text((x_right - width, y), text, font=font(size), fill=fill)
+
+
+def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=None):
+    """info: route, server ('ok'/'down'/'off'), temp_c, wifi_dbm, clock, last."""
     from PIL import Image, ImageDraw
+    info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     description, icon, step = details or STATE_DETAILS.get(state, ('', 'gear', 0))
     color = VOICE_COLORS.get(state, (220, 220, 220))
-    draw.text((12, 10), 'PI ASSISTANT', font=font(20), fill='white')
+    idle = state in ('BEREIT', 'FEHLER')
+    draw.text((12, 12), 'PI ASSISTANT', font=font(17), fill='white')
+    right_edge = 228
+    if info.get('battery'):
+        right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
+    temp = info.get('temp_c')
+    if temp is not None:
+        _right(draw, right_edge, 15, f'{temp}°C', 12,
+               (255, 120, 90) if temp >= 70 else (145, 155, 165))
     draw.line((12, 40, 228, 40), fill=(65,65,65))
-    draw.text((12, 53), 'AKTUELLER SCHRITT', font=font(11), fill=(135,145,150))
+    # Where the work happens: during a turn as published by ptt.py, when idle
+    # where the next turn will go (server reachable or local fallback).
+    if idle:
+        route = 'server' if info.get('server') == 'ok' else 'pi'
+        draw.text((12, 53), 'NÄCHSTE ANFRAGE', font=font(11), fill=(135,145,150))
+    else:
+        route = info.get('route')
+        draw.text((12, 53), 'AKTUELLER SCHRITT', font=font(11), fill=(135,145,150))
+    if route in ROUTE_LABELS:
+        label, label_color = ROUTE_LABELS[route]
+        _right(draw, 228, 53, label, 11, label_color)
     draw_activity_icon(draw, icon, (34, 101), color, tick)
     draw.text((65, 87), state, font=font(22 if len(state)<10 else 19), fill=color)
+    volume = info.get('volume')
+    if volume is not None:
+        # Volume feedback replaces the lower lines for a moment.
+        percent, limit = volume
+        draw.text((12, 139), 'LAUTSTÄRKE', font=font(14), fill=(215, 220, 225))
+        label = {'max': 'MAX', 'min': 'MIN'}.get(limit, f'{percent} %')
+        _right(draw, 228, 139, label, 14, (80, 210, 235))
+        draw.rectangle((12, 164, 228, 178), outline=(80, 210, 235), width=1)
+        width = round(212 * percent / 100)
+        if width:
+            draw.rectangle((14, 166, 14 + width, 176), fill=(80, 210, 235))
+        _draw_footer(draw, network, info)
+        display.image(image, 180)
+        return
     draw.text((12, 139), description, font=font(14), fill=(215,220,225))
-    if state not in ('BEREIT', 'FEHLER'):
+    if not idle:
         draw.text((12, 165), f'Seit {max(0, int(elapsed))} s', font=font(12), fill=(145,155,165))
+    elif info.get('last'):
+        draw.text((12, 161), info['last'], font=font(12), fill=(145,155,165))
+    if idle:
+        power = power_line(info.get('battery'), info.get('throttled'))
+        if power:
+            draw.text((12, 179), power[0], font=font(11), fill=power[1])
     if step:
         for i in range(1,6):
             xx = 160+(i-1)*14
             draw.ellipse((xx,170,xx+6,176), fill=color if i<=step else (45,45,45))
-    draw.line((12,197,228,197), fill=(65,65,65))
-    draw.text((12,209), 'VOICE LIVE', font=font(13), fill=(170,170,170))
-    draw.text((143,209), 'NET OK' if network else 'OFFLINE', font=font(13),
-              fill=(120,220,160) if network else (180,180,180))
+    _draw_footer(draw, network, info)
     display.image(image, 180)
+
+
+def _menu_value(item, status):
+    if item == 'server':
+        return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
+    if item == 'led':
+        return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
+    return ''
+
+
+def render_menu(display, status, info=None):
+    """Menu list: PiTFT buttons move, SHIM E confirms, SHIM B closes."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    accent = (150, 120, 255)
+    draw.text((12, 12), 'MENÜ', font=font(17), fill='white')
+    if info.get('battery'):
+        draw_battery(draw, 228, 14, info['battery'])
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    selected = status.get('menu_index', 0)
+    for row, (item, label) in enumerate(MENU_LABELS):
+        y = 47 + row * 24
+        if row == selected:
+            draw.rectangle((10, y - 2, 230, y + 19), fill=(40, 32, 70))
+            draw.text((14, y), '›', font=font(15), fill=accent)
+        color = accent if row == selected else (215, 220, 225)
+        draw.text((28, y), label, font=font(15), fill=color)
+        value = _menu_value(item, status)
+        if value:
+            value_color = (120, 220, 160) if value == 'AN' else (170, 170, 170)
+            _right(draw, 226, y + 1, value, 13, value_color)
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
+
+
+def uptime_text(path='/proc/uptime'):
+    try:
+        seconds = int(float(Path(path).read_text().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return None
+    days, rest = divmod(seconds, 86400)
+    hours, minutes = rest // 3600, rest % 3600 // 60
+    return f'{days} d {hours} h' if days else f'{hours} h {minutes} min'
+
+
+def mem_available_mb(path='/proc/meminfo'):
+    try:
+        for line in Path(path).read_text().splitlines():
+            if line.startswith('MemAvailable:'):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def ipv4_address():
+    ip = shutil.which('ip')
+    if not ip:
+        return None
+    try:
+        result = subprocess.run([ip, '-4', '-brief', 'address', 'show', 'up'],
+                                capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if fields and fields[0] != 'lo' and len(fields) >= 3:
+            return fields[2].split('/')[0]
+    return None
+
+
+def deployed_version(path=None):
+    try:
+        return (DEPLOYED_FILE if path is None else Path(path)).read_text().split()[0][:7]
+    except (OSError, IndexError):
+        return None
+
+
+def system_info_rows(env=None, battery=None):
+    env = load_env() if env is None else env
+    urls = [u.strip() for u in env.get('ASSISTANT_BASE_URL', '').split(',') if u.strip()]
+    server = None
+    if urls:
+        import urllib.parse
+        server = urllib.parse.urlsplit(urls[0]).hostname
+    mem = mem_available_mb()
+    rows = [
+        ('IP', ipv4_address()),
+        ('Laufzeit', uptime_text()),
+        ('RAM frei', None if mem is None else f'{mem} MB'),
+        ('Server', server or 'keiner'),
+        ('Version', deployed_version()),
+    ]
+    if battery:
+        volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
+        rows.append(('Akku', f"{battery['percent']} % · {volts} V"))
+    return [(label, value) for label, value in rows if value]
+
+
+def render_info(display, rows):
+    from PIL import Image, ImageDraw
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    draw.text((12, 12), 'SYSTEMINFO', font=font(17), fill='white')
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    for row, (label, value) in enumerate(rows[:6]):
+        y = 50 + row * 24
+        draw.text((12, y), label, font=font(12), fill=(135, 145, 150))
+        _right(draw, 228, y, value, 13, (215, 220, 225))
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    draw.text((12, 209), 'E oder ▲▼: zurück', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
+
+
+def _draw_footer(draw, network, info):
+    draw.line((12,197,228,197), fill=(65,65,65))
+    server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
+    draw.text((12, 209), server_text, font=font(13), fill=server_color)
+    if not network:
+        link, link_color = 'OFFLINE', (180, 180, 180)
+    elif info.get('wifi_dbm') is not None:
+        dbm = info['wifi_dbm']
+        link = f'WLAN {dbm}'
+        link_color = (120,220,160) if dbm >= -67 else (255,180,0) if dbm >= -78 else (255,90,90)
+    else:
+        link, link_color = 'NET OK', (120, 220, 160)
+    draw.text((100, 209), link, font=font(13), fill=link_color)
+    if info.get('clock'):
+        _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
 
 
 class PartialDisplay:
@@ -446,7 +825,14 @@ def main():
     )
 
     display = PartialDisplay(display)
+    screen_lit = True
+    info_rows, next_info = None, 0.0
     states = None
+    server = ServerProbe().start()
+    battery_monitor = Battery()
+    battery = None
+    throttled = None
+    next_battery = 0.0
     voice_state = None
     last_event = None
     error_until = None
@@ -459,6 +845,13 @@ def main():
         if states is None or now >= next_probe:
             states = collect_system_states()
             next_probe = now + PROBE_INTERVAL_SECONDS
+        if now >= next_battery:
+            # Temperature and WLAN jitter by one unit; sampling them with the
+            # battery (5 s) instead of every 2 s saves most idle redraws.
+            temp, wifi = cpu_temp_c(), wifi_dbm()
+            battery = battery_monitor.read()
+            throttled = throttled_flags()
+            next_battery = now + BATTERY_SAMPLE_SECONDS
 
         current_event = read_voice_event()
         if current_event is not None and current_event != last_event:
@@ -498,7 +891,25 @@ def main():
             )
             error_until = None
 
-        if states is None or not is_ready(states) or voice_state is None:
+        status = read_status()
+        lit = status.get('screen') != 'off'
+        if lit != screen_lit:
+            backlight.value = lit
+            screen_lit = lit
+        if status.get('menu_index') is not None and states is not None and is_ready(states):
+            if status['menu_page'] == 'info':
+                if info_rows is None or now >= next_info:
+                    info_rows, next_info = system_info_rows(battery=battery), now + 2.0
+                screen = ('info', tuple(info_rows))
+                if screen != previous_screen:
+                    render_info(display, info_rows)
+                    previous_screen = screen
+            else:
+                screen = ('menu', tuple(sorted(status.items())), battery_view(battery))
+                if screen != previous_screen:
+                    render_menu(display, status, dict(battery=battery))
+                    previous_screen = screen
+        elif states is None or not is_ready(states) or voice_state is None:
             screen = ("boot", tuple(sorted((states or {}).items())))
             if screen != previous_screen and states is not None:
                 render_boot(display, states)
@@ -508,10 +919,20 @@ def main():
             shown, description, icon, step, started = current
             tick = int(now / ANIMATION_INTERVAL_SECONDS) if shown not in ('BEREIT', 'FEHLER') else 0
             elapsed = max(0, time.time() - started)
-            screen = ('voice', current, states['network'], tick)
+            # "Server nutzen: AUS" in the menu means Pi-only until switched back.
+            server_shown = 'off' if status.get('opt_server') == 'off' else server.state
+            info = dict(route=status.get('route'), server=server_shown, temp_c=temp,
+                        wifi_dbm=wifi, clock=time.strftime('%H:%M'),
+                        last=last_answer_text(status), throttled=throttled,
+                        battery=battery, volume=volume_overlay(status))
+            # Redraw only when something visible changes: the averaged battery
+            # voltage moves by a few mV on almost every sample.
+            shown_info = dict(info, battery=battery_view(battery))
+            screen = ('voice', current, states['network'], tick,
+                      tuple(sorted(shown_info.items())))
             if screen != previous_screen:
                 render_voice(display, shown, states['network'],
-                             (description, icon, step), tick, elapsed)
+                             (description, icon, step), tick, elapsed, info)
                 previous_screen = screen
 
         time.sleep(EVENT_INTERVAL_SECONDS)

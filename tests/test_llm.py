@@ -63,9 +63,9 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(payload["max_completion_tokens"], 120)
         self.assertNotIn("temperature", payload)
         self.assertEqual(payload["messages"][0]["role"], "system")
-        self.assertEqual(
-            payload["messages"][0]["content"], llm.SERVITOR_SYSTEM_PROMPT
-        )
+        system = payload["messages"][0]["content"]
+        self.assertTrue(system.startswith(llm.SERVITOR_SYSTEM_PROMPT))
+        self.assertIn("Aktueller Zeitpunkt beim Bediener:", system)
         self.assertEqual(
             payload["messages"][1],
             {"role": "user", "content": "Wie ist dein Status?"},
@@ -189,7 +189,7 @@ class LocalLLMTests(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["max_tokens"], 64)
         self.assertNotIn("max_completion_tokens", payload)
-        self.assertEqual(payload["messages"][0]["content"], llm.SERVITOR_SYSTEM_PROMPT)
+        self.assertTrue(payload["messages"][0]["content"].startswith(llm.SERVITOR_SYSTEM_PROMPT))
 
     def test_openrouter_body_keeps_only_max_completion_tokens(self):
         response = FakeResponse({"choices": [{"message": {"content": "OK."}}]})
@@ -210,6 +210,26 @@ class LocalLLMTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(llm.LLMError, "Local LLM request failed"):
                 llm.generate_local_reply("Status?")
+
+
+
+class SpeechTextTests(unittest.TestCase):
+    def test_model_output_becomes_one_speakable_line(self):
+        raw = ("Anfrage verarbeitet.  \nRaspberry Pi – kleiner Computer.\n"
+               "- Punkt eins\n2. Punkt zwei\n**Fett** 😀 `code`")
+        self.assertEqual(llm.speech_text(raw),
+                         "Anfrage verarbeitet. Raspberry Pi, kleiner Computer. "
+                         "Punkt eins Punkt zwei Fett code")
+
+    def test_numbers_and_units_survive(self):
+        self.assertEqual(llm.speech_text("Der Eiffelturm misst 330 Meter, 3,5 Prozent."),
+                         "Der Eiffelturm misst 330 Meter, 3,5 Prozent.")
+
+    def test_time_context(self):
+        import datetime
+        now = datetime.datetime(2026, 10, 8, 9, 5)
+        self.assertEqual(llm.time_context(now),
+                         "Aktueller Zeitpunkt beim Bediener: Donnerstag, 8. Oktober 2026, 9:05 Uhr.")
 
 
 if __name__ == "__main__":

@@ -1,31 +1,25 @@
 # Nächste Aufgaben
 
-Stand 06.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md); diese Liste enthält nur verbleibende Arbeit.
+Stand 08.10.2026. Der Funktionsstand steht in der [README](../README.md); hier steht nur verbleibende Arbeit.
 
-## Jetzt: lokale Sprache zuverlässig betreiben
+## Als Nächstes
 
-1. Textübergabe im aktuellen Piper-Wrapper prüfen/korrigieren: `--` darf nicht Teil des Sprachtexts sein. Die entsprechenden Benchmarkfehler sind seit `d056897` behoben.
-2. Feste Piper-Statusansagen einmal erzeugen und als WAV cachen. [Pi-Messungen](piper-resources.md) zeigen schnelle geladene Synthese, aber deutlichen Speicherdruck neben Vosk; vorerst keinen dauerhaften Piper-Prozess aktivieren.
-3. Wechsel zwischen STT und TTS auf dem Pi testen: nächste Vosk-Erkennung nach dem Swapping, Cache-Treffer ohne Synthese und variable Ansagen. Deren Latenz ist noch nicht gemessen.
-4. SHIM-Dienstabnahme vervollständigen: A gegenüber GPIO17, beide gemeinsam, B während Aufnahme/STT/Ansage, C/D mit ausgelesenen Pegeln, LED-Farben und Reboot mit der aktuellen Version.
-5. Offline-Vosk anhand mehrerer bekannter Sätze bewerten; optionale Command-Grammar nur für feste Kommandos evaluieren. Kein Versprechen, dass sie freie Sprache verbessert.
+- **Spracherkennung mit echter Stimme bewerten:** etwa 10 Sätze über das WM8960-Mikrofon aufnehmen, Vosk small gegen Whisper small auf CT 107 vergleichen (Branch `feat/servitor-whisper-stt`; mit synthetischer Sprache war Vosk small genauso gut und 50-mal schneller nach dem Loslassen). Aufnahmen danach löschen.
+- **Hardware-Abnahme der Bedienung:** PiTFT-Menü, „Display aus“, Status-LED-Farben, C/D mit Wiederholung, E im und außerhalb des Menüs.
+- **Weitere Funktionen ohne LLM:** z. B. Lautstärke per Sprache, Timer/Wecker, „Wiederhole“. Aktionen auf dem Pi brauchen dafür eine Rückmeldung vom Server an den Pi.
+- **Charakter verfeinern** anhand echter Gespräche ([`server/sample-persona.py`](../server/sample-persona.py)).
 
-## Jetzt: vollständigen Sprachloop auf Hardware abnehmen
+## Server und Netz
 
-- Integrierten Pfad Vosk → OpenRouter-LLM → Piper/Servitor → WM8960 auf dem Pi testen.
-- STT-, LLM- und TTS-Latenzen aus den strukturierten `latency`-/TTS-Events messen und die End-to-End-Latenz bewerten.
-- B/Abbruch während LLM und TTS sowie OpenRouter-Timeout/Netzausfall prüfen; der Dienst muss danach weiter nutzbar sein.
-- Wiederholte Interaktionen auf Speicher, zram und Audio-xruns prüfen.
-- Vosk-Qualität mit mehreren bekannten Sätzen und unterschiedlichen Sprechabständen messen; Cloud-STT ist bewusst nicht Teil der Architektur.
+- Zugang über Cloudflare (`servitor.obivan.org`) mit Access-Service-Token als zweite URL; der Client unterstützt das bereits (`ASSISTANT_CF_ACCESS_*`, nur über HTTPS).
+- Opus für den Internetweg erst mit schnellerer Dekodierung auf dem Pi (ffmpeg kostet dort ca. 5 s).
+- LLM-Streaming mit satzweiser Synthese prüfen, um die Zeit bis zum ersten Ton weiter zu senken.
 
 ## Betrieb und Hardware
 
-- Offene Codepunkte aus PR #4/#13 prüfen: dedizierter Dienstbenutzer, Runtime-Pfad und Installer-Preflight.
-- PiSugar2-Revision, Akkukapazität, Laufzeit und kontrolliertes Abschalten testen.
-- SSH/Routertest über LAN und alle drei externen USB-Ports abnehmen.
-- Verbleibende PTT-Grenztests: elektrische Prellimpulse, Aufnahme unter 100 ms, Boot mit gehaltener Taste.
-- Image-Prüfsumme, WLAN-Land/Zeitzone bei nächster Systemaufnahme ergänzen.
-- PiTFT GPIO23/24 sinnvoll belegen; Boot-/Statusdienst und Live-Zustände inklusive `DENKEN` sind umgesetzt. Danach endgültige Montage/Gehäuse.
-- Kamera identifizieren/testen. Wake Word erst später bewerten.
-
-Abnahmekriterium für den ersten antwortenden Assistenten: Taste → verständlicher Text → hörbare deutsche Antwort; nach einem Fehler wieder nutzbar. Der Codepfad ist implementiert, die Hardware-Abnahme dieses vollständigen Ablaufs steht noch aus.
+- PiSugar 3: Akkukapazität, Laufzeit und kontrolliertes Abschalten.
+- Dedizierter Dienstbenutzer statt `obivan`.
+- SSH/Router über LAN und die drei USB-Ports des Hubs abnehmen.
+- PTT-Grenztests: Prellimpulse, Aufnahme unter 100 ms, Boot mit gehaltener Taste.
+- Endgültige Montage/Gehäuse; Kamera identifizieren. Wake Word später.
+- Möglicherweise zeitkritischer Test in der Suite (ein Hänger, ein einmaliger Fehler, nicht reproduzierbar).

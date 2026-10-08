@@ -101,7 +101,7 @@ class RemoteTurnTests(LiveServerCase):
         self.assertIsNone(job.error)
         self.assertEqual(self.pipeline.accepted, 16000)
         self.assertEqual((job.transcript, job.reply, job.model),
-                         ('wie spät ist es', 'Antwort auf wie spät ist es', 'test/model'))
+                         ('wie hoch ist der eiffelturm', 'Antwort auf wie hoch ist der eiffelturm', 'test/model'))
         with wave.open(str(job.result['audio']), 'rb') as audio:
             self.assertEqual(audio.getframerate(), 48000)
         events = job.drain()
@@ -138,7 +138,7 @@ class RemoteTurnTests(LiveServerCase):
         self.pipeline.fail_llm = True
         job = self.turn()
         self.assertEqual((job.error_stage, job.error_code), ('think', 'llm'))
-        self.assertEqual(job.transcript, 'wie spät ist es')
+        self.assertEqual(job.transcript, 'wie hoch ist der eiffelturm')
         self.assertTrue(job.fallback_allowed)
 
     def test_no_speech_is_not_retried_locally(self):
@@ -435,6 +435,113 @@ class PlaybackTests(unittest.TestCase):
         out = RemoteCapableSpeech(speech, 'dev', popen=Mock())
         out.start('Hallo')
         speech.start.assert_called_once_with('Hallo')
+
+
+
+class DisplayStatusTests(RemoteControllerTests):
+    def status(self):
+        path = Path(self.tmp.name) / 'display-status.json'
+        return json.loads(path.read_text())
+
+    def setUp(self):
+        super().setUp()
+        import ptt
+        ptt._display_status.clear()
+        env = patch.dict(os.environ, {'PTT_DISPLAY_STATUS_PATH':
+                                      str(Path(self.tmp.name) / 'display-status.json')})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_server_turn_publishes_route_and_last_answer(self):
+        self.recorder.finish.return_value = Path('/tmp/capture.wav')
+        self.recorder.take_uplink.return_value = Mock(error=None)
+        with patch('ptt.RemoteTurnJob'):
+            self.c.submit('release')
+        self.assertEqual(self.status()['route'], 'server')
+        job = FakeJob(result=dict(audio=Path('/tmp/r.wav'), host='h'), events=[
+            dict(event='reply', text='Antwort', model='local/qwen3-4b')])
+        self.finish_keep_release(job)
+        status = self.status()
+        self.assertEqual((status['last_route'], status['last_llm']), ('server', 'offline'))
+        self.assertIsInstance(status['last_latency_ms'], int)
+        self.assertNotIn('Antwort', json.dumps(status))
+
+    def finish_keep_release(self, job):
+        self.c.job, self.c.job_stage = job, 'remote'
+        self.c.remote_capture = Path('/tmp/capture.wav')
+        self.c.tick(False, (False,) * 5, 1.0)
+
+    def test_fallback_switches_route_to_pi(self):
+        import ptt
+        ptt.publish_display_status(last_llm='offline')  # from an earlier turn
+        self.c.turn_released_at = 0.0
+        job = FakeJob(error='dsp', error_stage='render', error_code='dsp',
+                      transcript='hallo', reply='Antwort', model='openai/x')
+        self.finish_keep_release(job)
+        status = self.status()
+        self.assertEqual((status['route'], status['last_route']), ('pi', 'pi'))
+        self.assertNotIn('last_llm', status)  # no stale value from an earlier turn
+
+    def test_volume_status_fields(self):
+        import ptt
+        ptt.publish_display_status(volume=35, volume_limit='max', volume_at=1000.5)
+        status = self.status()
+        self.assertEqual((status['volume'], status['volume_limit'], status['volume_at']),
+                         (35, 'max', 1000.5))
+        ptt.publish_display_status(volume=101, volume_limit=None, volume_at=True)
+        status = self.status()
+        self.assertEqual(status['volume'], 35)
+        self.assertNotIn('volume_limit', status)
+
+    def test_publish_rejects_unknown_fields_and_values(self):
+        import ptt
+        ptt.publish_display_status(route='mars', last_latency_ms=-1, text='geheim',
+                                   last_llm='offline')
+        self.assertEqual({k: v for k, v in self.status().items()
+                          if k not in ('version', 'timestamp')}, {'last_llm': 'offline'})
+
+
+class LocalIntentTests(RemoteControllerTests):
+    def test_local_fallback_answers_time_without_llm(self):
+        job = FakeJob(error='timeout', error_stage='think', error_code='llm',
+                      transcript='wie spät ist es')
+        with patch('ptt.TranscriptionJob') as worker:
+            self.finish(job)
+        worker.assert_not_called()  # no LLM job
+        spoken = self.speech.start.call_args.args[0]
+        self.assertTrue(spoken.startswith('Zeitindex:'))
+        response = next(e for e in self.events() if e['event'] == 'llm_response')
+        self.assertEqual(response['model'], 'local/intent')
+
+    def test_uplink_sends_status_snapshot_header(self):
+        sent = {}
+
+        class Recording:
+            def __init__(self, url):
+                self.sock = Mock()
+
+            def connect(self):
+                pass
+
+            def putrequest(self, *args, **kwargs):
+                pass
+
+            def putheader(self, name, value):
+                sent[name] = value
+
+            def endheaders(self):
+                pass
+
+            def close(self):
+                pass
+
+        config = load_remote_config({'ASSISTANT_BASE_URL': 'http://h:1', 'ASSISTANT_TOKEN': 'x' * 40})
+        uplink = RemoteTurnUplink(config, connect=lambda u, _t: Recording(u),
+                                  status={'battery_pct': 83})
+        uplink.cancel()
+        uplink.thread.join(5)
+        uplink._request('http://h:1')
+        self.assertEqual(json.loads(sent['X-Servitor-Status']), {'battery_pct': 83})
 
 
 if __name__ == '__main__':

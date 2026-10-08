@@ -1,4 +1,4 @@
-"""Dynamic, dependency-free system status text for Button SHIM E."""
+"""Servitor status: snapshot of the Pi plus the spoken status text."""
 
 import os
 from pathlib import Path
@@ -138,78 +138,145 @@ def _duration_words(value, singular, plural, feminine=False):
     return f"{_de_number(value)} {plural}"
 
 
-def _uptime_words(path=UPTIME_PATH):
-    raw = _read_text(path)
-    if not raw:
-        return None
+SNAPSHOT_FIELDS = {
+    # name: (type, minimum, maximum)
+    'temp_c': (int, -40, 150),
+    'load_pct': (int, 0, 999),
+    'mem_free_pct': (int, 0, 100),
+    'disk_free_pct': (int, 0, 100),
+    'uptime_s': (int, 0, 10 ** 9),
+    'battery_pct': (int, 0, 100),
+    'throttled': (int, 0, 0xFFFFFFFF),
+}
+SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
+SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline')}
+
+
+def sanitize_snapshot(value):
+    """Keep only known fields with plausible values (data may come from the
+    network: the Pi sends its snapshot to the server with every turn)."""
+    if not isinstance(value, dict):
+        return {}
+    clean = {}
+    for name, (kind, low, high) in SNAPSHOT_FIELDS.items():
+        item = value.get(name)
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            continue
+        item = int(item)
+        if low <= item <= high:
+            clean[name] = item
+    for name in SNAPSHOT_FLAGS:
+        if isinstance(value.get(name), bool):
+            clean[name] = value[name]
+    for name, allowed in SNAPSHOT_STATES.items():
+        if value.get(name) in allowed:
+            clean[name] = value[name]
+    return clean
+
+
+def collect_snapshot(battery=None, throttled=None, server=None,
+                     thermal_path=THERMAL_PATH, meminfo_path=MEMINFO_PATH,
+                     loadavg_path=LOADAVG_PATH, uptime_path=UPTIME_PATH,
+                     disk_path="/", disk_usage=shutil.disk_usage, cpu_count=os.cpu_count):
+    """Numbers only, readable without privileges; battery comes from power.Battery."""
+    raw = dict(
+        temp_c=_temperature_c(thermal_path),
+        load_pct=_system_load_percent(loadavg_path, cpu_count=cpu_count),
+        mem_free_pct=_memory_free_percent(meminfo_path),
+        disk_free_pct=_disk_free_percent(disk_path, disk_usage=disk_usage),
+        throttled=throttled,
+        server=server,
+    )
+    text = _read_text(uptime_path)
     try:
-        seconds = int(float(raw.split()[0]))
+        raw['uptime_s'] = int(float(text.split()[0])) if text else None
     except (ValueError, IndexError):
-        return None
+        pass
+    if battery:
+        raw.update(battery_pct=battery.get('percent'),
+                   battery_charging=bool(battery.get('charging')),
+                   battery_plugged=bool(battery.get('plugged')))
+    return sanitize_snapshot({k: v for k, v in raw.items() if v is not None})
+
+
+def _uptime_from_seconds(seconds):
     minutes = max(0, seconds // 60)
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     if days:
-        return (
-            f"{_duration_words(days, 'Tag', 'Tage')} "
-            f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)}"
-        )
+        return (f"{_duration_words(days, 'Tag', 'Tage')} "
+                f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)}")
     if hours:
-        return (
-            f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)} "
-            f"{_duration_words(minutes, 'Minute', 'Minuten', feminine=True)}"
-        )
-    return _duration_words(minutes, "Minute", "Minuten", feminine=True)
+        return (f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)} "
+                f"{_duration_words(minutes, 'Minute', 'Minuten', feminine=True)}")
+    return _duration_words(minutes, 'Minute', 'Minuten', feminine=True)
 
 
-def build_status_text(
-    processing=False,
-    stt_provider=None,
-    thermal_path=THERMAL_PATH,
-    meminfo_path=MEMINFO_PATH,
-    loadavg_path=LOADAVG_PATH,
-    uptime_path=UPTIME_PATH,
-    disk_path="/",
-    disk_usage=shutil.disk_usage,
-    cpu_count=os.cpu_count,
-):
-    """Return a compact Servitor-style status using only locally readable data."""
-    parts = []
-    if processing:
-        parts.append("VERARBEITUNG.")
-    else:
-        parts.append("STATUS NOMINAL.")
+def battery_sentence(snapshot):
+    percent = snapshot.get('battery_pct')
+    if percent is None:
+        return None
+    if snapshot.get('battery_charging'):
+        return f"Energiespeicher {percent} Prozent. Ladung aktiv."
+    if snapshot.get('battery_plugged'):
+        return f"Energiespeicher {percent} Prozent. Netzbetrieb."
+    return f"Energiespeicher {percent} Prozent. Akkubetrieb."
 
-    load = _system_load_percent(loadavg_path, cpu_count=cpu_count)
-    if load is not None:
-        parts.append(f"LAST {load} PROZENT.")
 
-    temperature = _temperature_c(thermal_path)
-    if temperature is not None:
-        parts.append(f"KERN {temperature} GRAD.")
+def status_text(snapshot, processing=False):
+    """Servitor status for button E and the spoken "status" question.
 
-    memory = _memory_free_percent(meminfo_path)
-    if memory is not None:
-        parts.append(f"ARBEITSSPEICHER {memory} FREI.")
-
-    disk = _disk_free_percent(disk_path, disk_usage=disk_usage)
-    if disk is not None:
-        parts.append(f"SPEICHER {disk} FREI.")
-
-    uptime = _uptime_words(uptime_path)
-    if uptime:
-        parts.append(f"LAUFZEIT {uptime}.")
-
-    provider = (stt_provider or "").strip().lower()
-    if provider == "vosk":
-        parts.append("ERKENNUNG LOKAL.")
-    elif provider:
-        parts.append("STT FEHLKONFIGURIERT.")
+    Warnings first, then what matters day to day: energy, temperature,
+    connection and language core. Load and storage only when unusual.
+    """
+    snapshot = sanitize_snapshot(snapshot)
+    warnings = []
+    throttled = snapshot.get('throttled', 0)
+    if throttled & 0x1:
+        warnings.append("Warnung: Unterspannung.")
+    elif throttled & 0x6:
+        warnings.append("Warnung: Rechenleistung gedrosselt.")
+    battery = snapshot.get('battery_pct')
+    low_battery = (battery is not None and battery <= 15
+                   and not snapshot.get('battery_plugged'))
+    if low_battery:
+        warnings.append(f"Warnung: Energiespeicher kritisch, {battery} Prozent.")
+    temperature = snapshot.get('temp_c')
+    hot = temperature is not None and temperature >= 75
+    if hot:
+        warnings.append(f"Warnung: Kerntemperatur {temperature} Grad.")
+    if snapshot.get('mem_free_pct', 100) <= 10:
+        warnings.append("Warnung: Arbeitsspeicher knapp.")
+    if snapshot.get('disk_free_pct', 100) <= 10:
+        warnings.append("Warnung: Datenspeicher knapp.")
+    if snapshot.get('server') == 'down':
+        warnings.append("Server nicht erreichbar. Lokaler Betrieb.")
 
     if processing:
-        parts.append("DIREKTIVE IN BEARBEITUNG.")
+        parts = ["Direktive in Bearbeitung."]
+    elif any(w.startswith("Warnung") for w in warnings):
+        parts = ["Status eingeschränkt."]
     else:
-        parts.append("SERVITOR BEREIT.")
-        parts.append("BEFEHL ERWARTET.")
-
+        parts = ["Status nominal."]
+    parts += warnings
+    if not low_battery:
+        sentence = battery_sentence(snapshot)
+        if sentence:
+            parts.append(sentence)
+    if temperature is not None and not hot:
+        parts.append(f"Kerntemperatur {temperature} Grad.")
+    if snapshot.get('load_pct', 0) >= 80:
+        parts.append(f"Systemlast {snapshot['load_pct']} Prozent.")
+    server = snapshot.get('server')
+    if server == 'ok':
+        parts.append("Verbindung zum Server stabil.")
+        if snapshot.get('llm') == 'offline':
+            parts.append("Sprachkern im Notbetrieb.")
+    elif server == 'off':
+        parts.append("Nur lokaler Betrieb.")
+    uptime = snapshot.get('uptime_s')
+    if uptime is not None:
+        parts.append(f"Laufzeit {_uptime_from_seconds(uptime)}.")
+    if not processing:
+        parts.append("Befehl erwartet.")
     return " ".join(parts)
