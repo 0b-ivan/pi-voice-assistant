@@ -81,6 +81,10 @@ class Config:
         self.workdir = env.get('SERVITOR_WORKDIR') or tempfile.gettempdir()
         # CT 107 runs on UTC; spoken times and dates are for the user's clock.
         self.timezone = env.get('SERVITOR_TIMEZONE', 'Europe/Berlin')
+        # Wait briefly instead of refusing: a refused turn falls back to the
+        # much slower Pi. Short /v1/speak jobs and a restart (~10 s) fit in.
+        self.busy_wait = float(env.get('SERVITOR_BUSY_WAIT_SECONDS', '8'))
+        self.loading_wait = float(env.get('SERVITOR_LOADING_WAIT_SECONDS', '15'))
         # CF-Connecting-IP is only believed from these peers (local cloudflared).
         self.trusted_proxies = {
             value.strip() for value in
@@ -490,6 +494,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(401, dict(error='unauthorized'))
         if not self.service.limiter.allow(self._client()):
             return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
+        deadline = time.monotonic() + self.service.config.loading_wait
+        while not self.service.ready and time.monotonic() < deadline:
+            time.sleep(0.2)
         if not self.service.ready:
             return self._json(503, dict(error='loading'), {'Retry-After': '5'})
         fmt = urllib.parse.parse_qs(url.query).get('format', ['wav'])[0]
@@ -540,7 +547,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         memory_copy = (memory.decode_header(self.headers.get('X-Servitor-Memory', ''))
                        if state == 'on' else None if state == 'off' else NO_MEMORY)
 
-        if not self.service.turn_lock.acquire(blocking=False):
+        if not self.service.turn_lock.acquire(timeout=max(0.0, self.service.config.busy_wait)):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
         try:
             self.send_response(200)

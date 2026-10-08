@@ -171,7 +171,29 @@ class ServerTest(unittest.TestCase):
                          ['synthesize', 'render'])
         self.assertEqual(self.pipeline.accepted, 0)
 
+    def test_second_turn_waits_for_a_short_busy_server(self):
+        self.pipeline.block = threading.Event()
+        threading.Timer(0.3, self.pipeline.block.set).start()
+        results = {}
+        first = threading.Thread(target=lambda: results.update(
+            first=self.request('/v1/turn', b'\1' * 16000)))
+        first.start()
+        for _ in range(100):
+            if self.service.turn_lock.locked():
+                break
+            threading.Event().wait(0.02)
+        response, _ = self.request('/v1/turn', b'\1' * 16000)
+        first.join()
+        self.assertEqual((response.status, results['first'][0].status), (200, 200))
+
+    def test_turn_waits_while_the_server_loads(self):
+        self.service.ready = False
+        threading.Timer(0.3, lambda: setattr(self.service, 'ready', True)).start()
+        response, _ = self.request('/v1/turn', b'\1' * 16000)
+        self.assertEqual(response.status, 200)
+
     def test_second_turn_is_rejected_while_busy(self):
+        self.service.config.busy_wait = 0.1
         self.pipeline.block = threading.Event()
         results = {}
         first = threading.Thread(target=lambda: results.update(
