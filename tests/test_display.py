@@ -274,7 +274,7 @@ class PartialFrameTests(unittest.TestCase):
     def test_failed_transfer_is_retried(self):
         from PIL import Image
         from unittest.mock import Mock
-        hardware = Mock()
+        hardware = Mock(spec=['image'])
         hardware.image.side_effect = [OSError('SPI busy'),None]
         output = display.PartialDisplay(hardware)
         frame = Image.new('RGB',(240,240),'black')

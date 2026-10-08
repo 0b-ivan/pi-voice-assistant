@@ -131,3 +131,12 @@ class RainTests(unittest.TestCase):
         second.putpixel((230, 100), (255, 0, 0))
         partial.image(second)
         self.assertEqual(hw.calls[1:], [(5, 100, (1, 1)), (230, 100, (1, 1))])
+
+    def test_rgb565_matches_the_driver_formula(self):
+        from PIL import Image
+        colours = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (12, 200, 99), (255, 255, 255), (7, 3, 250)]
+        image = Image.new("RGB", (len(colours), 1))
+        image.putdata(colours)
+        expected = b"".join((((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)).to_bytes(2, "big")
+                            for r, g, b in colours)
+        self.assertEqual(display.rgb565(image), expected)

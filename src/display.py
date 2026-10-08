@@ -867,6 +867,19 @@ def _draw_footer(draw, network, info):
         _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
 
 
+def rgb565(image):
+    """Big-endian RGB565 bytes for the ST7789, computed by Pillow in C.
+
+    The Adafruit driver falls back to getpixel() per pixel without numpy
+    (not installed in the display venv), which costs ~10 ms per 1000 px.
+    """
+    r, g, b = image.convert('RGB').split()
+    from PIL import Image, ImageChops
+    high = ImageChops.add(r.point(lambda v: v & 0xF8), g.point(lambda v: v >> 5))
+    low = ImageChops.add(g.point(lambda v: (v & 0x1C) << 3), b.point(lambda v: v >> 3))
+    return Image.merge('LA', (high, low)).tobytes()
+
+
 class PartialDisplay:
     """Transfer only changed pixels; avoid converting a full frame each tick."""
     def __init__(self, hardware):
@@ -890,8 +903,12 @@ class PartialDisplay:
                 box = diff.crop((left, 0, right, oriented.height)).getbbox()
                 if box is not None:
                     boxes.append((left + box[0], box[1], left + box[2], box[3]))
+        block = getattr(self.hardware, '_block', None)
         for box in boxes:
-            self.hardware.image(oriented.crop(box), rotation=0, x=box[0], y=box[1])
+            if block is not None:
+                block(box[0], box[1], box[2] - 1, box[3] - 1, rgb565(oriented.crop(box)))
+            else:
+                self.hardware.image(oriented.crop(box), rotation=0, x=box[0], y=box[1])
         self.previous = oriented.copy()
 
 
