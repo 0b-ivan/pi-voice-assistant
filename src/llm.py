@@ -3,10 +3,13 @@
 This module intentionally contains no GPIO, audio, Piper or recorder logic.
 Configuration and the API key are read from the process environment only.
 """
+import datetime
 import http.client
 import json
 import os
+import re
 import socket
+import unicodedata
 import urllib.error
 import urllib.request
 
@@ -50,6 +53,36 @@ Bediener: Danke.
 SERVITOR: Bestätigt. Einheit bereit für die nächste Direktive.
 Bediener: Erzähl mir einen Witz.
 SERVITOR: Humorprotokoll nicht vorhanden. Alternative: Fakten zu einem Thema nach Wahl."""
+
+
+WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
+MONTHS = ('Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August',
+          'September', 'Oktober', 'November', 'Dezember')
+
+
+def time_context(now=None):
+    """Current local time for the model, e.g. for time-zone questions.
+    Appended after the fixed prompt so llama.cpp's prompt cache still matches."""
+    if now is None:
+        import zoneinfo
+        name = os.environ.get('SERVITOR_TIMEZONE', 'Europe/Berlin')
+        try:
+            now = datetime.datetime.now(zoneinfo.ZoneInfo(name))
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+            now = datetime.datetime.now()
+    zone = f" {now.tzname()}" if now.tzname() else ''
+    return (f"Aktueller Zeitpunkt beim Bediener: {WEEKDAYS[now.weekday()]}, {now.day}. "
+            f"{MONTHS[now.month - 1]} {now.year}, {now.hour}:{now.minute:02d} Uhr{zone}.")
+
+
+def speech_text(text):
+    """Make model output speakable: one line, no markdown, dashes or emoji."""
+    text = re.sub(r'(?m)^\s*(?:[-–•*]|\d+[.)])\s+', '', text)  # list markers
+    text = re.sub(r'[*_#`>|•]+', ' ', text)
+    text = re.sub(r'\s+[–—]\s+|[–—]', ', ', text)
+    text = ''.join(ch for ch in text if unicodedata.category(ch) not in ('So', 'Cs', 'Co'))
+    text = re.sub(r'\s+', ' ', text).strip()
+    return re.sub(r'\s+([.,!?;:])', r'\1', text)
 
 
 class LLMError(RuntimeError):
@@ -111,6 +144,7 @@ def _extract_text(payload, label="OpenRouter"):
     else:
         text = ""
 
+    text = speech_text(text)
     if not text:
         raise LLMError(f"{label} returned an empty assistant response")
     return text
@@ -123,7 +157,8 @@ def _chat(url, prompt, model, timeout, limit, headers, label):
             "stream": False,
             **limit,
             "messages": [
-                {"role": "system", "content": SERVITOR_SYSTEM_PROMPT},
+                {"role": "system",
+                 "content": f"{SERVITOR_SYSTEM_PROMPT}\n\n{time_context()}"},
                 {"role": "user", "content": prompt},
             ],
         }
