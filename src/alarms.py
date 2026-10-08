@@ -29,6 +29,10 @@ MEMORY_ON, MEMORY_OFF, SWAP_ON = 8, 15, 85          # % free RAM, % swap used
 TEMP_ON, TEMP_OFF = 75, 70                          # °C
 LINK_FAILURES = 2
 
+SHUTDOWN_NOW = "Energiespeicher erschöpft. Herunterfahren."
+SHUTDOWN_CANCELLED = "Herunterfahren abgebrochen."
+SHUTDOWN_FAILED = "Herunterfahren nicht möglich. Bitte manuell ausschalten."
+
 
 @dataclass
 class _State:
@@ -133,7 +137,7 @@ class AlarmMonitor:
         state = self.states['battery']
         if plugged or percent > BATTERY_RESET:
             if self.shutdown_at is not None:
-                out.append("Herunterfahren abgebrochen.")
+                out.append(SHUTDOWN_CANCELLED)
             self.battery_stage, self.shutdown_at = 0, None
             state.active = False
             return

@@ -14,7 +14,8 @@ import wave
 
 import functools
 from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
-from alarms import ALARMS, AlarmMonitor
+import alarm_audio
+from alarms import ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, AlarmMonitor
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
 import wlan as wlan_radio
@@ -703,7 +704,7 @@ class VoiceController:
         event('shutdown', reason='battery')
         self.speech.stop()
         try:
-            self.speech.start("Energiespeicher erschöpft. Herunterfahren.")
+            self._say_alarm([SHUTDOWN_NOW])
             deadline = time.monotonic() + 8
             while self.speech.active and time.monotonic() < deadline:
                 time.sleep(0.1)
@@ -715,18 +716,30 @@ class VoiceController:
         except (OSError, subprocess.SubprocessError) as exc:
             self.shutting_down = False
             event('shutdown_error', message=str(exc))
-            self.alarm_queue.append("Herunterfahren nicht möglich. Bitte manuell ausschalten.")
+            self.alarm_queue.append(SHUTDOWN_FAILED)
 
     def _speak_alarms(self):
         if not self.alarm_queue or not self._idle() or self.menu.open:
             return
-        text, self.alarm_queue = ' '.join(self.alarm_queue), []
+        texts, self.alarm_queue = self.alarm_queue, []
         try:
-            event('speech_started', source='alarm')
-            self.speech.start(text)
+            self._say_alarm(texts)
             self.speech_started_at = time.monotonic()
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
+
+    def _say_alarm(self, texts):
+        """Play prerecorded clips (no synthesis, works offline and under
+        load); fall back to live synthesis when a clip is missing."""
+        play = getattr(self.speech, 'play', None)
+        path = (Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'alarm.wav'
+                if play is not None else None)
+        if path is not None and alarm_audio.assemble(texts, path):
+            event('speech_started', source='alarm', clips=True)
+            play(path)
+            return
+        event('speech_started', source='alarm', clips=False)
+        self.speech.start(' '.join(texts))
 
     def set_wlan(self, on):
         try:
