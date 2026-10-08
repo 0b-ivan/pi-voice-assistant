@@ -119,6 +119,27 @@ Neben den Tasten startet **„Hey Jarvis“** eine Anfrage (vortrainiertes openW
 
 **Rechenaufwand auf dem Pi Zero 2 W:** Ungeschaltet 56 % eines Kerns (das Einbettungsmodell kostet 36 von 45 ms je 80-ms-Block); Int8-Quantisierung verwarf zu viel Genauigkeit (0,94 → 0,77). Eine Ruheschaltung rechnet leise Blöcke nur mit dem billigen Mel-Spektrum und einer zwischengespeicherten Stille-Einbettung weiter. Gemessen mit `wake_stats` im Journal: stiller Raum ~16–20 % eines Kerns (16–18 % der Blöcke exakt), belebter Raum (Gespräch/TV) ~35–50 %. RAM: ~33 MB im Dienst. Ohne Aktivierungswort liegt `pi-ptt` bei ~4 %.
 
+## Alarme, Strom und Netz
+
+[`src/alarms.py`](../src/alarms.py) prüft alle 10 s (zusammen mit dem Akku) und spricht Alarme, sobald die Einheit frei ist; der wichtigste aktive Alarm steht rot im Ruhebildschirm, kritische lassen die LED orange blinken. Menü „Alarme AUS“ schaltet die Ansagen stumm (`PTT_ALARMS=0`).
+
+| Auslöser | Verhalten |
+|---|---|
+| Akku (ohne Netzteil) | Warnung 1/2/3 bei 15/10/6 % (direkt auf die passende Stufe, ein Satz); nach der letzten **Herunterfahren nach 60 s** (`systemctl poweroff`, polkit-Regel [`deploy/50-pi-voice-poweroff.rules`](../deploy/50-pi-voice-poweroff.rules)); Netzteil anstecken bricht ab. Läuft auch bei stummen Alarmen. |
+| Stromquelle wechselt | „Netzbetrieb. Energiespeicher N Prozent.“ bzw. „Akkubetrieb. …“ |
+| Unterspannung, Temperatur ≥ 75 °C, RAM ≤ 8 % frei oder Swap ≥ 85 %, Last ≥ 90 % über eine Minute | Alarm mit Abstand zwischen Ein- und Ausschaltschwelle |
+| Netzwerk, Internet (openrouter.ai/1.1.1.1:443 alle 30 s), Server | nach zwei Fehlprüfungen Alarm, Entwarnung bei Rückkehr; bei Netzausfall keine Folgealarme |
+
+**WLAN** lässt sich über `PTT_WLAN=on|off` (beim Dienststart) und das Menü schalten (`rfkill`, udev-Regel [`deploy/90-rfkill-netdev.rules`](../deploy/90-rfkill-netdev.rules)). Ohne LAN-Kabel ist der Pi dann offline: lokaler Betrieb, keine Server-/Netzalarme, Status „WLAN deaktiviert“.
+
+**Sprachkern AUTO/LOKAL** (Menü, `PTT_LLM_MODE`): bei LOKAL antwortet CT 107 nur mit dem lokalen Modell, OpenRouter wird nie gefragt; im Fallback auf dem Pi gibt es dann nur die Antworten ohne LLM.
+
+**Speicher:** Der Vosk-Bereitschaftsprozess (~190 MB) wird freigegeben, solange CT 107 erreichbar ist (verfügbarer RAM 50 → ~220 MB), und bei Serverausfall wieder vorgeladen.
+
+## Display: Servo-Skull
+
+Im Ruhezustand und beim Sprechen zeigt das PiTFT einen Servo-Skull ([`src/skull.py`](../src/skull.py)) mit rot pulsierendem Auge: ruhig atmend im Leerlauf (4 Bilder/s), beim Sprechen im Takt der Lautstärke der Antwort (Hüllkurve der WAV, 50-ms-Schritte, `/run/pi-ptt/speech-envelope.json`). Das Auge wird automatisch gefunden und in 12 Stufen vorberechnet. Das verwendete Pixel-Art-Bild (r/PixelArt, „16-color Warhammer servo skull wallpaper“) liegt **nur auf dem Pi** (`PI_DISPLAY_SKULL`, Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`), nicht in diesem öffentlichen Repository; ohne Datei zeichnet der Code einen eigenen schlichten Schädel. Display-CPU im Leerlauf ~10 % eines Kerns.
+
 ## Sprachausgabe
 
 Im Normalbetrieb erzeugt CT 107 die Stimme (Piper Thorsten Emotional, Speaker 4, Referenz-DSP aus PR #26) und der Pi spielt die fertige WAV nur ab. Lokal auf dem Pi (Statusansage mit E, Fallback) bleibt Piper 1.8.0 resident: `servitor` nutzt dasselbe Modell mit einer Sprechkonfiguration, bei der Wörter nur leicht langsamer sind und zusätzliche Satzpausen den schweren Befehlston erzeugen; `normal` nutzt Thorsten Low.

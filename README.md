@@ -20,6 +20,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | Aktivierungswort | „Hey Jarvis“ startet eine Anfrage, eine Sprechpause beendet sie; läuft auf dem Pi, abschaltbar im Menü. [Architektur](docs/architecture.md#aktivierungswort) |
 | Bedienung | Taste/SHIM A sprechen, B abbrechen, C/D Lautstärke (2 dB, halten wiederholt), E Status bzw. Menü-OK; PiTFT-Tasten öffnen ein Menü. [Button-Bedienung](docs/button-controls.md) |
 | Display | Schritt, Verarbeitungsort SERVER/LOKAL, letzte Antwort, Akku, Temperatur, WLAN, Uhrzeit, Lautstärke, Menü. [Display](docs/display.md) |
+| Alarme | Akku (3 Warnungen, dann Herunterfahren), Stromquelle, Unterspannung, Temperatur, Speicher, CPU, Netzwerk/Internet/Server; abschaltbar. [Architektur](docs/architecture.md#alarme-strom-und-netz) |
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |
 | Hardware | WM8960, SHIM, PiTFT und PiSugar 3 laufen; Akkulaufzeit/Abschaltung und Kamera offen. [Hardware](docs/hardware.md) |
 
