@@ -726,8 +726,10 @@ def main():
         if states is None or now >= next_probe:
             states = collect_system_states()
             next_probe = now + PROBE_INTERVAL_SECONDS
-            temp, wifi = cpu_temp_c(), wifi_dbm()
         if now >= next_battery:
+            # Temperature and WLAN jitter by one unit; sampling them with the
+            # battery (5 s) instead of every 2 s saves most idle redraws.
+            temp, wifi = cpu_temp_c(), wifi_dbm()
             battery = battery_monitor.read()
             throttled = throttled_flags()
             next_battery = now + BATTERY_SAMPLE_SECONDS
