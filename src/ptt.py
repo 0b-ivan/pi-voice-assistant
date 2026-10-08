@@ -120,6 +120,8 @@ LED_LOCAL = (255, 120, 0)        # processing on the Pi (display: LOKAL, amber)
 LED_SPEAKING = (255, 100, 0)
 LED_MENU = (150, 0, 255)
 LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
+SHIM_RETRY_SECONDS = 2.0        # reconnect the Button SHIM after an I2C error ...
+SHIM_RETRY_MAX_SECONDS = 60.0   # ... backing off to this while it keeps failing
 WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
 LED_ALARM = (255, 60, 0)         # slow blink while a critical alarm is active
 CRITICAL_ALARMS = {'undervoltage', 'battery', 'memory', 'temperature'}
@@ -1252,15 +1254,32 @@ def main():
     next_power = 0.0
     shim = None
     led = None
-    if shim_enabled == '1':
+    shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
+
+    def open_shim(now):
+        """(Re)connect the Button SHIM; on failure retry later with backoff,
+        so a transient I2C error (EIO) does not disable it until a restart."""
+        nonlocal shim, led, shim_retry_at, shim_backoff
         try:
             from button_shim import ButtonShim, LedWriter
             shim = ButtonShim()
             if not args.probe:
                 led = LedWriter(shim)
-            event('shim_ready', bus=1, address='0x3f')
-        except (ImportError, OSError) as exc:
-            event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
+        except ImportError as exc:
+            event('shim_error', message=str(exc), fallback='GPIO17')
+            shim_retry_at = None
+            return
+        except OSError as exc:
+            event('shim_error', message=str(exc), fallback='GPIO17',
+                  retry_seconds=shim_backoff)
+            shim_retry_at = now + shim_backoff
+            shim_backoff = min(shim_backoff * 2, SHIM_RETRY_MAX_SECONDS)
+            return
+        event('shim_ready', bus=1, address='0x3f')
+        shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
+
+    if shim_enabled == '1':
+        open_shim(time.monotonic())
 
     # PiTFT buttons (upper, lower): menu. Empty PTT_PITFT_BUTTONS disables them.
     pitft_lines = tuple(int(value) for value in
@@ -1300,6 +1319,8 @@ def main():
                     controller.check_alarms(now)
                     next_power = now + 10.0
                 pressed = (False,) * 5
+                if shim is None and shim_retry_at is not None and now >= shim_retry_at:
+                    open_shim(now)
                 if shim is not None:
                     try:
                         if led is not None and led.error is not None:
@@ -1308,9 +1329,11 @@ def main():
                         if led is not None:
                             led.request(controller.color)
                     except OSError as exc:
-                        event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
+                        event('shim_error', message=str(exc), fallback='GPIO17',
+                              retry_seconds=SHIM_RETRY_SECONDS)
                         stop_shim()
                         controller.cancel(gpio_pressed, now)
+                        shim_retry_at = now + SHIM_RETRY_SECONDS
                 try:
                     controller.tick(gpio_pressed, pressed, now, pitft)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
