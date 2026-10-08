@@ -157,6 +157,34 @@ class LedWriterTests(unittest.TestCase):
         self.assertEqual(shim.color, (19, 0, 0))
         self.assertLessEqual(len(shim.writes), 3)  # coalesced, not 20 writes
 
+    def test_start_with_led_off_writes_nothing_and_survives(self):
+        shim = FakeShim()
+        shim.color = (0, 0, 0)  # ButtonShim switches the LED off in __init__
+        shim.set_color = Mock(side_effect=lambda c: setattr(shim, 'color', c))
+        writer = LedWriter(shim, min_interval=0)
+        time.sleep(0.05)
+        shim.set_color.assert_not_called()
+        writer.request((0, 90, 30))
+        for _ in range(100):
+            if shim.color == (0, 90, 30):
+                break
+            time.sleep(0.01)
+        writer.close()
+        self.assertEqual(shim.color, (0, 90, 30))
+        self.assertIsNone(writer.error)
+
+    def test_unexpected_exception_is_reported(self):
+        shim = FakeShim()
+        shim.set_color = Mock(side_effect=TypeError('bad colour'))
+        writer = LedWriter(shim, min_interval=0)
+        writer.request((1, 2, 3))
+        for _ in range(100):
+            if writer.error is not None:
+                break
+            time.sleep(0.01)
+        writer.close()
+        self.assertIsInstance(writer.error, OSError)
+
     def test_error_is_reported_not_raised(self):
         class Broken(FakeShim):
             def set_color(self, color):

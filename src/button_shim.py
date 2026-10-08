@@ -69,7 +69,7 @@ class LedWriter:
         self.shim = shim
         self.min_interval = min_interval
         self.error = None
-        self._wanted = None
+        self._wanted = shim.color  # nothing to write until a new colour is requested
         self._stopped = False
         self._condition = threading.Condition()
         self._thread = threading.Thread(target=self._run, name='shim-led', daemon=True)
@@ -85,7 +85,8 @@ class LedWriter:
         last_write = 0.0
         while True:
             with self._condition:
-                while not self._stopped and self._wanted == self.shim.color:
+                while not self._stopped and (self._wanted is None
+                                             or self._wanted == self.shim.color):
                     self._condition.wait()
                 if self._stopped:
                     return
@@ -96,8 +97,8 @@ class LedWriter:
                 color = self._wanted
             try:
                 self.shim.set_color(color)
-            except OSError as exc:
-                self.error = exc
+            except Exception as exc:  # reported to the main loop via .error
+                self.error = exc if isinstance(exc, OSError) else OSError(str(exc))
                 return
             last_write = time.monotonic()
 
