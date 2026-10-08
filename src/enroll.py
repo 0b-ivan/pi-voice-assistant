@@ -53,14 +53,29 @@ NEED_STICK = "Kennenlernen braucht den Gedächtniskern. Bitte Stick anschließen
 NEED_SERVER = "Kennenlernen braucht den Server. Verbindung prüfen."
 NO_VOICEPRINT = "Stimmprofil konnte nicht erstellt werden."
 FAILED = "Kennenlern-Sitzung abgebrochen. Mikrofon nicht verfügbar."
+REFINE_INTRO = "Stimmprofil nachtrainieren. Sage nach jedem Signalton Proximus. Abbrechen mit Taste B."
+NO_PROFILE = "Noch kein Stimmprofil vorhanden. Erst Kennenlernen starten."
+NO_MATCH = "Stimme keinem bekannten Profil zuzuordnen. Für eine neue Person Kennenlernen starten."
+REFINE_MATCH = 0.4      # lower than for recognition: we already expect a known voice
+_REFINE = re.compile(r'\b(stimm(e|profil) (nachtrainieren|nach trainieren|verbessern|verfeinern|'
+                     r'trainieren)|nachtrainieren|stimmtraining)\b')
 _COMMAND = re.compile(r'\b(lerne? mich kennen|kennenlernen|kennen lernen|trainingsmodus|'
-                      r'stimmtraining|stimmprofil (anlegen|erstellen))\b')
+                      r'stimmprofil (anlegen|erstellen))\b')
 _NAME_PREFIX = re.compile(r'^(?:du kannst mich |nenn(?:e)? mich |ich heiße |mein name ist |'
                           r'ich bin |sag |einfach )+')
 
 
 def command(text):
-    return 'enroll' if _COMMAND.search(str(text).lower()) else None
+    """'refine' (more samples for an existing voice), 'enroll' (new person) or None."""
+    text = str(text).lower()
+    if _REFINE.search(text):
+        return 'refine'
+    return 'enroll' if _COMMAND.search(text) else None
+
+
+def refined_text(name, total):
+    return f"Stimmprofil {name} verfeinert. {total} Aufnahmen."
+
 
 
 def done_text(facts, voiceprint):
@@ -70,7 +85,8 @@ def done_text(facts, voiceprint):
 
 def phrases():
     """Fixed sentences, for prerecorded clips."""
-    texts = [ANNOUNCE, INTRO, QUESTIONS_INTRO, CANCELLED, FAILED, NEED_STICK, NEED_SERVER, NO_VOICEPRINT,
+    texts = [ANNOUNCE, INTRO, QUESTIONS_INTRO, CANCELLED, FAILED, REFINE_INTRO, NO_PROFILE,
+             NO_MATCH, refined_text('Ivan', 2), NEED_STICK, NEED_SERVER, NO_VOICEPRINT,
              *WAKE_HINTS.values(), *(q for _, q, _, _ in QUESTIONS)]
     texts += [done_text(n, v) for n in (2,) for v in (True, False)]
     return texts
@@ -104,8 +120,8 @@ class Session:
     """Runs the steps; ``io`` provides say(text), beep(), record(path, seconds),
     transcribe(pcm) -> text|None, voiceprint(pcm) -> base64|None, publish(**state)."""
 
-    def __init__(self, core, io, clock=time.time):
-        self.core, self.io, self.clock = core, io, clock
+    def __init__(self, core, io, clock=time.time, mode='enroll'):
+        self.core, self.io, self.clock, self.mode = core, io, clock, mode
         self.cancelled = threading.Event()
         self.thread = None
         self.result = None
@@ -147,7 +163,8 @@ class Session:
         wake_dir.mkdir(parents=True, exist_ok=True)
         answer_dir.mkdir(parents=True, exist_ok=True)
         self.io.publish(stage='intro')
-        self.io.say(INTRO)
+        self.io.say(REFINE_INTRO if self.mode == 'refine' else INTRO)
+        takes = []
         for index in range(WAKE_COUNT):
             self._check()
             if index in WAKE_HINTS:
@@ -155,11 +172,15 @@ class Session:
                 self.io.say(WAKE_HINTS[index])
             self.io.beep()
             self.io.publish(stage='wake', step=index + 1, total=WAKE_COUNT, rec=True)
-            if self.io.record(wake_dir / f'{stamp}-{index + 1:02d}.wav', WAKE_SECONDS) is False:
+            take = wake_dir / f'{stamp}-{index + 1:02d}.wav'
+            if self.io.record(take, WAKE_SECONDS) is False:
                 self._check()
                 raise RuntimeError('microphone unavailable')
+            takes.append(take)
             self.io.publish(stage='wake', step=index + 1, total=WAKE_COUNT, rec=False)
         self._check()
+        if self.mode == 'refine':
+            return self._refine(takes)
         self.io.say(QUESTIONS_INTRO)
         stored, prints, name = 0, [], None
         for number, (key, question, kind, template) in enumerate(QUESTIONS):
@@ -198,6 +219,33 @@ class Session:
                     done_text(stored, False) + " " + NO_VOICEPRINT)
         self.io.publish(stage=None)
         return dict(facts=stored, voiceprint=voiceprint, name=name)
+
+
+    def _refine(self, takes):
+        """Five takes at a time (~10 s) give one embedding; their mean is merged
+        into the profile it matches best."""
+        from speaker import average, decode, encode, identify
+        self.io.publish(stage='process')
+        prints = []
+        for start in range(0, len(takes), 5):
+            pcm = b''.join(pcm_of(path) for path in takes[start:start + 5] if path.is_file())
+            print_ = self.io.voiceprint(pcm) if pcm else None
+            if print_:
+                prints.append(print_)
+        known = [dict(name=p['name'], vector=decode(p['print'])) for p in self.core.voiceprints()]
+        vector = average([decode(p) for p in prints])
+        name, score = identify(vector, known, REFINE_MATCH) if vector else (None, None)
+        self.io.publish(stage='done')
+        if not known:
+            text, total = NO_PROFILE, None
+        elif name is None:
+            text, total = NO_MATCH, None
+        else:
+            total = self.core.save_voiceprint(name, encode(vector), len(prints))
+            text = refined_text(name, total)
+        self.io.say(text)
+        self.io.publish(stage=None)
+        return dict(refined=name, score=None if score is None else round(score, 3), count=total)
 
 
 class _Cancelled(Exception):

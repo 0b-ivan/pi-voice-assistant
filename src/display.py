@@ -78,6 +78,8 @@ MENU_LABELS = (
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
     ('enroll', 'Kennenlernen'),
+    ('refine', 'Stimme nachtrainieren'),
+    ('people', 'Bekannte Personen'),
     ('maintenance', 'Wartung'),
     ('status', 'Status ansagen'),
     ('close', 'Schließen'),

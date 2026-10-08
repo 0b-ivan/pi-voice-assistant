@@ -345,7 +345,7 @@ class Service:
                         and not memory.unknown_speaker(memory_copy)):
                     # Only the operator (or anyone before enrollment) may start it.
                     answer, model = enroll.ANNOUNCE, 'local/enroll'
-                    emit(dict(event='enroll'))
+                    emit(dict(event='enroll', mode=enroll.command(intents.normalize(text))))
                 elif service_op is not None and memory_copy is not NO_MEMORY:
                     # Only Pis that know maintenance send a memory state too.
                     answer = self._maintenance_reply(service_op, device or {})

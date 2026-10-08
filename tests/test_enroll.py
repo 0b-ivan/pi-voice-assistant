@@ -115,10 +115,46 @@ class SessionTests(unittest.TestCase):
 
     def test_commands_and_names(self):
         self.assertEqual(enroll.command("lerne mich kennen"), "enroll")
-        self.assertEqual(enroll.command("starte das stimmtraining"), "enroll")
+        self.assertEqual(enroll.command("starte das stimmtraining"), "refine")
+        self.assertEqual(enroll.command("stimmprofil nachtrainieren"), "refine")
         self.assertIsNone(enroll.command("wie spät ist es"))
         self.assertEqual(enroll.name_from("du kannst mich ivan nennen"), "Ivan Nennen")
         self.assertEqual(enroll.name_from("ich heiße ivan"), "Ivan")
+
+
+class ProfileTests(SessionTests):
+    def test_refine_merges_into_the_matching_profile_and_people_are_listed(self):
+        ivan = speaker.normalize([1.0, 0.5, 0.0, 0.2] * 4)
+        anna = speaker.normalize([-1.0, 0.2, 0.9, 0.0] * 4)
+        self.core.save_voiceprint("Ivan", speaker.encode(ivan), 7)
+        self.core.save_voiceprint("Anna", speaker.encode(anna), 7)
+        io = FakeIO([])                         # its voiceprint() returns Ivan's direction
+        result = enroll.Session(self.core, io, mode="refine").run()
+        self.assertEqual(result["refined"], "Ivan")
+        self.assertEqual(dict(self.core.people()), {"Ivan": 11, "Anna": 7})
+        self.assertIn("Stimmprofil Ivan verfeinert", io.said[-1])
+        reply = memory.reply("list_people", "", self.core.context())
+        self.assertEqual(reply, "2 Personen an der Stimme bekannt: Anna, Ivan.")
+        self.assertEqual(memory.command("wen kennst du"), ("list_people", ""))
+
+    def test_refine_without_matching_profile_changes_nothing(self):
+        other = speaker.normalize([-1.0, 0.2, 0.9, 0.0] * 4)
+        self.core.save_voiceprint("Anna", speaker.encode(other), 7)
+        io = FakeIO([])
+        result = enroll.Session(self.core, io, mode="refine").run()
+        self.assertIsNone(result["refined"])
+        self.assertEqual(io.said[-1], enroll.NO_MATCH)
+        self.assertEqual(dict(self.core.people()), {"Anna": 7})
+
+    def test_first_version_profile_is_moved(self):
+        voice = self.core.voice_dir
+        voice.mkdir(parents=True)
+        (voice / "voiceprint.json").write_text(json.dumps(
+            dict(name="Ivan", print=speaker.encode([1.0, 0.5, 0.0, 0.2] * 4), count=7)))
+        self.assertEqual(self.core.people(), [("Ivan", 7)])
+        self.core.save_voiceprint("Ivan", speaker.encode([1.0, 0.5, 0.0, 0.2] * 4), 4)
+        self.assertFalse((voice / "voiceprint.json").exists())
+        self.assertEqual(self.core.people(), [("Ivan", 11)])
 
 
 class SpeakerTests(unittest.TestCase):

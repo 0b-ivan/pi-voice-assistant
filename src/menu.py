@@ -6,7 +6,7 @@ here: VoiceController owns a Menu and publishes its state for display.py.
 """
 
 ITEMS = ('info', 'server', 'llm', 'wake', 'lore', 'wlan', 'alarms', 'led', 'screen',
-         'enroll', 'maintenance', 'status', 'close')
+         'enroll', 'refine', 'people', 'maintenance', 'status', 'close')
 TIMEOUT_SECONDS = 15.0
 
 
@@ -53,7 +53,7 @@ class Menu:
         item = ITEMS[self.index]
         if item == 'info':
             self.page = 'info'
-        elif item in ('close', 'status', 'screen', 'maintenance', 'enroll'):
+        elif item in ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'people'):
             self.close()
         return item
 
