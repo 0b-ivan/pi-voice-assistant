@@ -162,7 +162,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual([c.args for c in volume.call_args_list], [(-1,), (1,)])
         self.tick()
         self.tick(down='E')
-        self.assertIn('VERARBEITUNG.', self.speech.start.call_args.args[0])
+        self.assertIn('Direktive in Bearbeitung.', self.speech.start.call_args.args[0])
         self.tick()
         self.tick(down='BE')
         self.speech.start.assert_called_once()

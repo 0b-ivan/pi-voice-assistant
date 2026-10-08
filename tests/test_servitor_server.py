@@ -37,7 +37,7 @@ class FakePipeline:
     def __init__(self, workdir):
         self.workdir = workdir
         self.accepted = 0
-        self.transcript = 'wie spät ist es'
+        self.transcript = 'wie hoch ist der eiffelturm'
         self.fail_llm = False
         self.block = None
         self.files = []
@@ -317,6 +317,40 @@ class ServerTest(unittest.TestCase):
                 pipeline.synthesize('x').unlink()
                 pipeline.render(Path('in.wav')).unlink()
         self.assertEqual(len(os.listdir(fd_dir)), before)
+
+
+
+class IntentServerTest(ServerTest):
+    def test_time_is_answered_without_llm_in_local_time(self):
+        self.pipeline.transcript = 'wie spät ist es'
+        self.pipeline.fail_llm = True  # would fail if the LLM were asked
+        import datetime
+        import zoneinfo
+        fixed = datetime.datetime(2026, 10, 8, 4, 7, tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            _, data = self.request('/v1/turn', b'\1' * 16000)
+        events = self.events(data)
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual((reply['text'], reply['model']), ('Zeitindex: 4 Uhr 7.', 'local/intent'))
+        self.assertNotIn('think', [e.get('stage') for e in events])
+        self.assertEqual(events[-1]['event'], 'done')
+
+    def test_server_clock_uses_configured_timezone(self):
+        self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')
+
+    def test_status_uses_device_snapshot_header(self):
+        self.pipeline.transcript = 'wie ist dein status'
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}',
+            'X-Servitor-Status': json.dumps({'battery_pct': 83, 'battery_charging': True,
+                                             'temp_c': 45, 'server': 'down', 'evil': 'x'})})
+        data = conn.getresponse().read()
+        conn.close()
+        reply = next(e for e in self.events(data) if e['event'] == 'reply')
+        self.assertIn('Energiespeicher 83 Prozent. Ladung aktiv.', reply['text'])
+        self.assertIn('Verbindung zum Server stabil.', reply['text'])  # server knows it is up
+        self.assertNotIn('nicht erreichbar', reply['text'])
 
 
 if __name__ == '__main__':

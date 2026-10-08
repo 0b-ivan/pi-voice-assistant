@@ -15,7 +15,10 @@ import wave
 from llm import configured_model, generate_reply
 from menu import ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
-from system_status import build_status_text
+import datetime
+import intents
+from power import Battery, throttled_flags
+from system_status import collect_snapshot, status_text
 from transcribe import (
     LiveVoskRecognizer, RemoteLiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider, prepare_vosk_worker, stop_prepared_vosk
 )
@@ -83,7 +86,7 @@ def publish_display_event(name):
 DISPLAY_STATUS_VALUES = {
     'route': {'server', 'pi'},
     'last_route': {'server', 'pi'},
-    'last_llm': {'openrouter', 'offline'},
+    'last_llm': {'openrouter', 'offline', 'intent'},
     'volume_limit': {'min', 'max'},
     'menu_page': {'list', 'info'},
     'opt_server': {'on', 'off', 'none'},
@@ -113,7 +116,10 @@ def display_status_path():
 
 
 def llm_kind(model):
-    return 'offline' if str(model or '').startswith('local/') else 'openrouter'
+    model = str(model or '')
+    if model == 'local/intent':
+        return 'intent'
+    return 'offline' if model.startswith('local/') else 'openrouter'
 
 
 def publish_display_status(**fields):
@@ -453,6 +459,9 @@ class VoiceController:
         self.remote_enabled = remote
         self.led_enabled = True
         self.screen_on = True
+        self.battery = None      # power.Battery reading, refreshed by main()
+        self.throttled = None
+        self.remote_failed = False
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -532,6 +541,7 @@ class VoiceController:
             # Keep the server's reason (unauthorized/rate_limited/busy) when it
             # rejected the upload early; otherwise it was the network.
             rejection = getattr(uplink, 'rejection', None)
+            self.remote_failed = True
             event('remote_error', stage='upload',
                   code=rejection.code if rejection is not None else 'network',
                   message=rejection.message if rejection is not None else uplink.error)
@@ -580,16 +590,20 @@ class VoiceController:
             event('menu', item=item)
         self._publish_menu()
 
+    def status_snapshot(self):
+        if not self.remote or not self.remote_enabled:
+            server = 'off'
+        else:
+            server = 'down' if self.remote_failed else 'ok'
+        return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server)
+
     def _speak_status(self, action):
         if (self.recorder.process is not None or action == 'start'
                 or (os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
                     and self.job is not None)):
             event('status_skipped', reason='recording_or_processing')
             return
-        text = build_status_text(
-            processing=self.job is not None,
-            stt_provider=os.environ.get('STT_PROVIDER'),
-        )
+        text = status_text(self.status_snapshot(), processing=self.job is not None)
         try:
             event('status', text=text)
             event('speech_started', source='status')
@@ -639,6 +653,15 @@ class VoiceController:
             self.job_started_at = time.monotonic()
 
     def _start_llm(self, text):
+        intent = intents.match(text)
+        if intent is not None:
+            # Time, date, status ...: answered on the Pi, also without network.
+            reply = intents.answer(intent, datetime.datetime.now(), self.status_snapshot())
+            self.turn_llm = 'intent'
+            event('llm_response', text=reply, model='local/intent')
+            print(f'SERVITOR: {reply}', flush=True)
+            self._start_speech(reply, source='assistant', model='local/intent')
+            return
         self.job = TranscriptionJob(generate_reply, text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
@@ -690,6 +713,7 @@ class VoiceController:
             event('transcript_discarded')
             return
         if job.error is None:
+            self.remote_failed = False
             event('remote_done', host=job.result.get('host'))
             try:
                 event('speech_started', source='remote')
@@ -701,6 +725,8 @@ class VoiceController:
                 event('speech_error', message=str(exc))
             return
         event('remote_error', stage=job.error_stage, code=job.error_code, message=job.error)
+        if job.error_stage in ('upload', 'stream'):
+            self.remote_failed = True
         if not job.fallback_allowed:
             event('stt_error', message=job.error)
             self.turn_released_at = None
@@ -888,6 +914,7 @@ def main():
     if not args.probe and memory_mode == 'hybrid':
         live_vosk_factory = RemoteLiveVoskRecognizer
     uplink_factory = None
+    controller_ref = []  # filled once the controller exists (uplink status snapshot)
     if not args.probe:
         try:
             remote_config = load_remote_config()
@@ -896,7 +923,9 @@ def main():
             event('remote_error', stage='config', code='config', message=str(exc))
             remote_config = None
         if remote_config is not None:
-            uplink_factory = lambda: RemoteTurnUplink(remote_config)
+            def uplink_factory():
+                status = controller_ref[0].status_snapshot() if controller_ref else None
+                return RemoteTurnUplink(remote_config, status=status)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
@@ -953,6 +982,9 @@ def main():
             speech, os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'))
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
                                  remote=uplink_factory is not None)
+    controller_ref.append(controller)
+    battery_monitor = Battery()
+    next_power = 0.0
     shim = None
     led = None
     if shim_enabled == '1':
@@ -997,6 +1029,10 @@ def main():
                 pitft = tuple(request.get_value(pin) == Value.ACTIVE for pin in pitft_lines) \
                     or (False, False)
                 now = time.monotonic()
+                if not args.probe and now >= next_power:
+                    controller.battery = battery_monitor.read()
+                    controller.throttled = throttled_flags()
+                    next_power = now + 10.0
                 pressed = (False,) * 5
                 if shim is not None:
                     try:

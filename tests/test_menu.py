@@ -123,7 +123,7 @@ class ControllerMenuTests(unittest.TestCase):
     def test_menu_status_item_speaks(self):
         self.press(pitft='D')
         self.c.menu.index = ITEMS.index('status')
-        with patch('ptt.build_status_text', return_value='STATUS.'):
+        with patch('ptt.status_text', return_value='STATUS.'):
             self.press(down='E')
         self.speech.start.assert_called_once_with('STATUS.')
         self.assertFalse(self.c.menu.open)

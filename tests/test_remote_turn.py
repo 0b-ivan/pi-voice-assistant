@@ -101,7 +101,7 @@ class RemoteTurnTests(LiveServerCase):
         self.assertIsNone(job.error)
         self.assertEqual(self.pipeline.accepted, 16000)
         self.assertEqual((job.transcript, job.reply, job.model),
-                         ('wie spät ist es', 'Antwort auf wie spät ist es', 'test/model'))
+                         ('wie hoch ist der eiffelturm', 'Antwort auf wie hoch ist der eiffelturm', 'test/model'))
         with wave.open(str(job.result['audio']), 'rb') as audio:
             self.assertEqual(audio.getframerate(), 48000)
         events = job.drain()
@@ -138,7 +138,7 @@ class RemoteTurnTests(LiveServerCase):
         self.pipeline.fail_llm = True
         job = self.turn()
         self.assertEqual((job.error_stage, job.error_code), ('think', 'llm'))
-        self.assertEqual(job.transcript, 'wie spät ist es')
+        self.assertEqual(job.transcript, 'wie hoch ist der eiffelturm')
         self.assertTrue(job.fallback_allowed)
 
     def test_no_speech_is_not_retried_locally(self):
@@ -437,9 +437,6 @@ class PlaybackTests(unittest.TestCase):
         speech.start.assert_called_once_with('Hallo')
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class DisplayStatusTests(RemoteControllerTests):
     def status(self):
@@ -502,3 +499,50 @@ class DisplayStatusTests(RemoteControllerTests):
                                    last_llm='offline')
         self.assertEqual({k: v for k, v in self.status().items()
                           if k not in ('version', 'timestamp')}, {'last_llm': 'offline'})
+
+
+class LocalIntentTests(RemoteControllerTests):
+    def test_local_fallback_answers_time_without_llm(self):
+        job = FakeJob(error='timeout', error_stage='think', error_code='llm',
+                      transcript='wie spät ist es')
+        with patch('ptt.TranscriptionJob') as worker:
+            self.finish(job)
+        worker.assert_not_called()  # no LLM job
+        spoken = self.speech.start.call_args.args[0]
+        self.assertTrue(spoken.startswith('Zeitindex:'))
+        response = next(e for e in self.events() if e['event'] == 'llm_response')
+        self.assertEqual(response['model'], 'local/intent')
+
+    def test_uplink_sends_status_snapshot_header(self):
+        sent = {}
+
+        class Recording:
+            def __init__(self, url):
+                self.sock = Mock()
+
+            def connect(self):
+                pass
+
+            def putrequest(self, *args, **kwargs):
+                pass
+
+            def putheader(self, name, value):
+                sent[name] = value
+
+            def endheaders(self):
+                pass
+
+            def close(self):
+                pass
+
+        config = load_remote_config({'ASSISTANT_BASE_URL': 'http://h:1', 'ASSISTANT_TOKEN': 'x' * 40})
+        uplink = RemoteTurnUplink(config, connect=lambda u, _t: Recording(u),
+                                  status={'battery_pct': 83})
+        uplink.cancel()
+        uplink.thread.join(5)
+        uplink._request('http://h:1')
+        self.assertEqual(json.loads(sent['X-Servitor-Status']), {'battery_pct': 83})
+
+
+if __name__ == '__main__':
+    unittest.main()

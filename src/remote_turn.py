@@ -124,8 +124,10 @@ class RemoteTurnUplink:
     order; once the body has started there is no switching to the next one.
     """
 
-    def __init__(self, config, connect=_open_connection):
+    def __init__(self, config, connect=_open_connection, status=None):
         self.config = config
+        # Pi status snapshot (numbers only) so the server can answer "status".
+        self.status = status
         self._connect = connect
         self._queue = queue.SimpleQueue()
         self._lock = threading.Lock()
@@ -178,6 +180,9 @@ class RemoteTurnUplink:
             connection.putheader('Content-Type', 'application/octet-stream')
             connection.putheader('Transfer-Encoding', 'chunked')
             connection.putheader('Accept', 'application/x-ndjson')
+            if self.status:
+                connection.putheader('X-Servitor-Status',
+                                     json.dumps(self.status, separators=(',', ':')))
             connection.endheaders()
         except BaseException:
             connection.close()

@@ -37,6 +37,9 @@ SRC = Path(os.environ.get('SERVITOR_SRC', Path(__file__).resolve().parent.parent
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+import intents  # noqa: E402
+from system_status import sanitize_snapshot  # noqa: E402
+
 PCM_RATE = 16000
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 
@@ -73,6 +76,8 @@ class Config:
         self.idle_timeout = float(env.get('SERVITOR_UPLOAD_IDLE_TIMEOUT', '10'))
         self.rate_limit = int(env.get('SERVITOR_RATE_LIMIT_PER_MINUTE', '20'))
         self.workdir = env.get('SERVITOR_WORKDIR') or tempfile.gettempdir()
+        # CT 107 runs on UTC; spoken times and dates are for the user's clock.
+        self.timezone = env.get('SERVITOR_TIMEZONE', 'Europe/Berlin')
         # CF-Connecting-IP is only believed from these peers (local cloudflared).
         self.trusted_proxies = {
             value.strip() for value in
@@ -114,6 +119,12 @@ class RealPipeline:
     def recognizer(self):
         from transcribe import LiveVoskRecognizer
         return LiveVoskRecognizer()
+
+    def llm_state(self):
+        """'offline' while OpenRouter is being skipped after a failure."""
+        if os.environ.get('SERVITOR_LOCAL_LLM') == '1' and self.clock() < self.openrouter_retry_at:
+            return 'offline'
+        return 'openrouter'
 
     def reply(self, text):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
@@ -204,8 +215,19 @@ class Service:
         expected = f'Bearer {self.config.token}'.encode()
         return hmac.compare_digest((header or '').encode(), expected)
 
-    def run_turn(self, pcm_chunks, emit, fmt, text=None):
-        """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None."""
+    def now(self):
+        import datetime
+        import zoneinfo
+        try:
+            return datetime.datetime.now(zoneinfo.ZoneInfo(self.config.timezone))
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+            return datetime.datetime.now()
+
+    def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None):
+        """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
+
+        ``device`` is the Pi's sanitized status snapshot; questions such as
+        time, date or status are answered from it without the LLM."""
         timings = {}
         temporary = []
 
@@ -249,11 +271,20 @@ class Service:
                     code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
                     raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
-                emit(dict(event='stage', stage='think'))
-                try:
-                    answer, model = timed('llm', self.pipeline.reply, text)
-                except Exception as exc:
-                    raise TurnError('think', 'llm', str(exc)) from exc
+                intent = intents.match(text)
+                if intent is not None:
+                    snapshot = dict(device or {}, server='ok')
+                    state = getattr(self.pipeline, 'llm_state', None)
+                    if state is not None:
+                        snapshot['llm'] = state()
+                    answer = timed('intent', intents.answer, intent, self.now(), snapshot)
+                    model = 'local/intent'
+                else:
+                    emit(dict(event='stage', stage='think'))
+                    try:
+                        answer, model = timed('llm', self.pipeline.reply, text)
+                    except Exception as exc:
+                        raise TurnError('think', 'llm', str(exc)) from exc
                 emit(dict(event='reply', text=answer, model=model))
             else:
                 upload_end = time.monotonic()
@@ -414,6 +445,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = iter(())
         else:
             body = read_chunked(self.rfile, limit) if chunked else read_length(self.rfile, length)
+        device = None
+        header = self.headers.get('X-Servitor-Status', '')
+        if header and len(header) <= 1024:
+            try:
+                device = sanitize_snapshot(json.loads(header))
+            except ValueError:
+                device = None
 
         if not self.service.turn_lock.acquire(blocking=False):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
@@ -431,7 +469,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
 
             try:
-                self.service.run_turn(body, emit, fmt, text=text)
+                self.service.run_turn(body, emit, fmt, text=text, device=device)
             except TurnError as exc:
                 emit(dict(event='error', stage=exc.stage, code=exc.code, message=exc.message))
             except (OSError, TimeoutError):
