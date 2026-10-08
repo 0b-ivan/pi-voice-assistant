@@ -1,6 +1,6 @@
 # Pi Voice Assistant
 
-Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mikrofonen, zwei Lautsprechern und vorhandener PTT-Taste sowie PiSugar2.
+Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mikrofonen, zwei Lautsprechern und vorhandener PTT-Taste sowie PiSugar 3 (Akku).
 
 **Stand 06.10.2026:** Der Sprachloop ist integriert: Taste halten → lokale Vosk-Erkennung → nicht-streamender OpenRouter-LLM-Aufruf → lokale Piper/Thorsten-Servitor-Ausgabe. Die Hardware-Abnahme dieses vollständigen Loops auf dem Pi steht noch aus.
 

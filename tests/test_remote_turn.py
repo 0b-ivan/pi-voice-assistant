@@ -439,3 +439,66 @@ class PlaybackTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DisplayStatusTests(RemoteControllerTests):
+    def status(self):
+        path = Path(self.tmp.name) / 'display-status.json'
+        return json.loads(path.read_text())
+
+    def setUp(self):
+        super().setUp()
+        import ptt
+        ptt._display_status.clear()
+        env = patch.dict(os.environ, {'PTT_DISPLAY_STATUS_PATH':
+                                      str(Path(self.tmp.name) / 'display-status.json')})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_server_turn_publishes_route_and_last_answer(self):
+        self.recorder.finish.return_value = Path('/tmp/capture.wav')
+        self.recorder.take_uplink.return_value = Mock(error=None)
+        with patch('ptt.RemoteTurnJob'):
+            self.c.submit('release')
+        self.assertEqual(self.status()['route'], 'server')
+        job = FakeJob(result=dict(audio=Path('/tmp/r.wav'), host='h'), events=[
+            dict(event='reply', text='Antwort', model='local/qwen3-4b')])
+        self.finish_keep_release(job)
+        status = self.status()
+        self.assertEqual((status['last_route'], status['last_llm']), ('server', 'offline'))
+        self.assertIsInstance(status['last_latency_ms'], int)
+        self.assertNotIn('Antwort', json.dumps(status))
+
+    def finish_keep_release(self, job):
+        self.c.job, self.c.job_stage = job, 'remote'
+        self.c.remote_capture = Path('/tmp/capture.wav')
+        self.c.tick(False, (False,) * 5, 1.0)
+
+    def test_fallback_switches_route_to_pi(self):
+        import ptt
+        ptt.publish_display_status(last_llm='offline')  # from an earlier turn
+        self.c.turn_released_at = 0.0
+        job = FakeJob(error='dsp', error_stage='render', error_code='dsp',
+                      transcript='hallo', reply='Antwort', model='openai/x')
+        self.finish_keep_release(job)
+        status = self.status()
+        self.assertEqual((status['route'], status['last_route']), ('pi', 'pi'))
+        self.assertNotIn('last_llm', status)  # no stale value from an earlier turn
+
+    def test_volume_status_fields(self):
+        import ptt
+        ptt.publish_display_status(volume=35, volume_limit='max', volume_at=1000.5)
+        status = self.status()
+        self.assertEqual((status['volume'], status['volume_limit'], status['volume_at']),
+                         (35, 'max', 1000.5))
+        ptt.publish_display_status(volume=101, volume_limit=None, volume_at=True)
+        status = self.status()
+        self.assertEqual(status['volume'], 35)
+        self.assertNotIn('volume_limit', status)
+
+    def test_publish_rejects_unknown_fields_and_values(self):
+        import ptt
+        ptt.publish_display_status(route='mars', last_latency_ms=-1, text='geheim',
+                                   last_llm='offline')
+        self.assertEqual({k: v for k, v in self.status().items()
+                          if k not in ('version', 'timestamp')}, {'last_llm': 'offline'})

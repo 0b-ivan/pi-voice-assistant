@@ -139,11 +139,28 @@ stt_error / tts_error / speech_error
 
 Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nicht angezeigt; ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
 
+## Statusinformationen mit Servitor-Server
+
+![Neun Display-Zustände mit Verarbeitungsort, Serverstatus, WLAN, Temperatur, Uhrzeit und letzter Antwort](images/display-status-preview.png)
+
+Vorschau mit dem echten Display-Code und den Pi-Schriften, erzeugt mit [`scripts/render-display-preview.py`](../scripts/render-display-preview.py); kein Foto des Bildschirms.
+
+| Stelle | Inhalt |
+|---|---|
+| Kopfzeile rechts | CPU-Temperatur (ab 70 °C rot) und Akku: Symbol mit Füllstand und Prozent, cyan mit Blitz beim Laden, gelb ≤ 40 %, rot ≤ 15 % |
+| Schrittzeile rechts | **SERVER** (cyan) oder **LOKAL** (gelb): wo der aktuelle Durchlauf gerechnet wird; im Ruhezustand („NÄCHSTE ANFRAGE“), wohin die nächste Anfrage geht |
+| Zeile unter der Beschreibung (Ruhe) | letzte Antwort: Wartezeit vom Loslassen bis zum ersten Ton und Herkunft (`Server`, `Offline-LLM` = lokales Modell auf CT 107, `Pi lokal` = Fallback) |
+| Zeile darunter (Ruhe) | Akku-Detail „Akku 83 % · 3,86 V · lädt / Netz · voll / Akkubetrieb“; Vorrang haben Warnungen des Pi: `UNTERSPANNUNG!` (rot), `CPU gedrosselt`, `Unterspannung seit Start` |
+| Menü / Systeminfo | Über die PiTFT-Tasten, siehe [Button-Bedienung](button-controls.md#menü-auf-dem-pitft); „Display aus“ schaltet die Hintergrundbeleuchtung (GPIO22) ab |
+| Lautstärke (C/D) | 2,5 s lang „LAUTSTÄRKE“ mit Balken und Prozent (Bereich −60…0 dB), an den Grenzen MAX/MIN; ersetzt kurz die unteren Zeilen, auch während einer Antwort |
+| Fußzeile links | `CT107 OK` / `CT107 AUS` / `NUR PI` (kein `ASSISTANT_BASE_URL`) |
+| Fußzeile Mitte | WLAN-Signal in dBm (grün ≥ −67, gelb ≥ −78, sonst rot), `NET OK` ohne WLAN-Wert, `OFFLINE` |
+| Fußzeile rechts | Uhrzeit |
+
+Datenquellen: `ptt.py` schreibt `/run/pi-ptt/display-status.json` nur mit festen Werten (`route`, `last_route`: `server`/`pi`; `last_llm`: `openrouter`/`offline`; `last_latency_ms`), nie Transkript oder Antworttext; unbekannte Werte werden verworfen. Der Display-Dienst fragt `GET /health` des ersten `ASSISTANT_BASE_URL` alle 10 s in einem Hintergrund-Thread ab (0,5 s Timeout, ohne Token), liest Temperatur aus `/sys/class/thermal` und das WLAN-Signal aus `/proc/net/wireless`. Den Akku liest er alle 5 s per I²C von der PiSugar 3 (`0x57`, nur Lesezugriffe; Register wie im Herstellertreiber) und mittelt Ladestand und Spannung über eine Minute, weil das Ladestand-Register mit den Ladeimpulsen springt. „lädt“ folgt der Herstellerlogik: Netzteil angesteckt und Laden erlaubt (unter 100 %). Die Spannungswarnungen stammen aus `vcgencmd get_throttled`. Ohne PiSugar bleiben die Akkufelder leer.
+
 ## Nächster Schritt
 
 Noch **nicht implementiert**:
 
-- `DENKEN` am realen LLM-Aufruf
-- Live-`SPRECHEN` für die spätere automatische LLM-Antwort
-- sinnvolle Belegung der beiden PiTFT-Tasten auf GPIO23/24
 - endgültige mechanische Montage im Hardware-Stack
