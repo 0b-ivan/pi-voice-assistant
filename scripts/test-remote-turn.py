@@ -62,7 +62,11 @@ def main():
     print(f'hosts={config.hosts} format={config.audio_format} audio={len(pcm) / 32000:.2f}s',
           flush=True)
 
-    uplink = RemoteTurnUplink(config)
+    from power import Battery, throttled_flags
+    from system_status import collect_snapshot
+    status = collect_snapshot(battery=Battery().read(), throttled=throttled_flags(), server='ok')
+    print(f'status snapshot: {status}', flush=True)
+    uplink = RemoteTurnUplink(config, status=status)
     started = time.monotonic()
     for offset in range(0, len(pcm), 3200):  # 0.1 s blocks, paced like arecord
         uplink.accept_pcm(pcm[offset:offset + 3200])
