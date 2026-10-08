@@ -206,24 +206,54 @@ class MemoryCore:
     def voice_dir(self):
         return self.root / 'voice'
 
+    def _profiles(self):
+        """{name: data} of all voice profiles (voice/profiles/*.json, plus the
+        single-profile file of the first version)."""
+        found = {}
+        paths = sorted((self.voice_dir / 'profiles').glob('*.json'))
+        legacy = self.voice_dir / 'voiceprint.json'
+        for path in ([legacy] if legacy.is_file() else []) + paths:
+            try:
+                data = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, dict) and isinstance(data.get('print'), str):
+                name = clean_text(data.get('name') or 'Bediener')[:40]
+                found[name] = dict(data, name=name, path=str(path))
+        return found
+
     def voiceprints(self):
-        """[{'name', 'print'}] of the enrolled operator (base64 int8), or []."""
-        try:
-            data = json.loads((self.voice_dir / 'voiceprint.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            return []
-        if not isinstance(data, dict) or not isinstance(data.get('print'), str):
-            return []
-        return [dict(name=clean_text(data.get('name') or 'Bediener')[:40], print=data['print'])]
+        """[{'name', 'print'}] of every known person (base64 int8), or []."""
+        return [dict(name=name, print=data['print']) for name, data in self._profiles().items()]
+
+    def people(self):
+        """[(name, recordings)] of the known voices."""
+        return [(name, int(data.get('count') or 0)) for name, data in self._profiles().items()]
 
     def save_voiceprint(self, name, print_, count):
-        self.voice_dir.mkdir(exist_ok=True)
-        path = self.voice_dir / 'voiceprint.json'
+        """Store a person's voiceprint; an existing profile of the same name is
+        refined (weighted mean with the earlier recordings)."""
+        from speaker import decode, encode, normalize
+        name = clean_text(name)[:40] or 'Bediener'
+        old = self._profiles().get(name)
+        total = count
+        if old:
+            before, after = decode(old['print']), decode(print_)
+            weight = int(old.get('count') or 1)
+            if before and after and len(before) == len(after):
+                print_ = encode(normalize([b * weight + a * count for b, a in zip(before, after)]))
+                total = weight + count
+        folder = self.voice_dir / 'profiles'
+        folder.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'bediener'
+        path = folder / f'{slug}.json'
         temporary = path.with_suffix('.tmp')
-        temporary.write_text(json.dumps(dict(name=clean_text(name)[:40] or 'Bediener',
-                                             print=print_, count=count,
+        temporary.write_text(json.dumps(dict(name=name, print=print_, count=total,
                                              at=int(self.clock()))), encoding='utf-8')
         temporary.replace(path)
+        if old and old['path'] != str(path):
+            Path(old['path']).unlink(missing_ok=True)  # moved from the first-version file
+        return total
 
 
 _STOPWORDS = {'dass', 'mich', 'mein', 'meine', 'meinen', 'bitte', 'alles', 'über', 'nicht',
@@ -273,7 +303,7 @@ def decode_header(value):
             history.append(dict(q=clean_text(item['q']), a=clean_text(item['a'])))
     total = data.get('total_facts')
     prints = []
-    for item in data.get('voiceprints', [])[:3] if isinstance(data.get('voiceprints'), list) else []:
+    for item in data.get('voiceprints', [])[:5] if isinstance(data.get('voiceprints'), list) else []:
         if (isinstance(item, dict) and isinstance(item.get('print'), str)
                 and len(item['print']) <= 1500 and isinstance(item.get('name'), str)):
             prints.append(dict(name=clean_text(item['name'])[:40], print=item['print']))
@@ -312,6 +342,8 @@ _STANDING_VERB = re.compile(r'^(?:bitte )?(?:nenne|nenn|sag|sage|sprich|antworte
 _FORGET = re.compile(r'^(?:bitte )?(?:vergiss|lösche|streiche)(?: bitte)?(?: dass| das| die| den)?\s+(.+)$')
 _RECALL = re.compile(r'\b(was weißt du über mich|was hast du dir gemerkt|was weißt du von mir|'
                      r'welche erinnerungen|deine erinnerungen|was ist in deinem gedächtnis)\b')
+_PEOPLE = re.compile(r'\b(wen kennst du|welche (personen|menschen|stimmen|leute) kennst du|'
+                     r'(bekannte|gespeicherte) (personen|stimmen|stimmprofile)|stimmprofile)\b')
 _DIRECTIVES = re.compile(r'\b(welche (direktiven|erweiterungen|module|einstellungen)|'
                          r'deine (direktiven|erweiterungen|module))\b')
 
@@ -323,6 +355,8 @@ def command(text):
         return None
     if _RECALL.search(text):
         return ('recall', '')
+    if _PEOPLE.search(text) and not re.search(r'nachtrain|verbesser|verfeiner', text):
+        return ('list_people', '')
     if _DIRECTIVES.search(text):
         return ('list_directives', '')
     match = _UNINSTALL.match(text)
@@ -387,6 +421,12 @@ def reply(op, argument, context, lore='off'):
         total = context.get('total_facts') or len(facts)
         head = f"{total} Einträge gespeichert. Zuletzt: "
         return head + _list(facts) + "."
+    if op == 'list_people':
+        names = [p['name'] for p in context.get('voiceprints') or []]
+        if not names:
+            return "Noch keine Stimme bekannt. Kennenlernen im Menü starten."
+        noun = 'Person' if len(names) == 1 else 'Personen'
+        return f"{len(names)} {noun} an der Stimme bekannt: " + ", ".join(names) + "."
     if op == 'list_directives':
         directives = context.get('directives') or []
         if not directives:

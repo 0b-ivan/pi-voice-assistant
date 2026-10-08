@@ -632,7 +632,7 @@ class VoiceController:
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.maint = maintenance.Mode()
         self.enroll = None                 # running enroll.Session
-        self.enroll_after_speech = False   # voice command: start once the reply is spoken
+        self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
         self.alarms.notice_store = maintenance.NoticeStore()
         self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
@@ -765,9 +765,14 @@ class VoiceController:
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
-        if item == 'enroll':
+        if item in ('enroll', 'refine'):
             self._publish_menu()
-            self._start_enroll()
+            self._start_enroll(item)
+            return
+        if item == 'people':
+            self._publish_menu()
+            context = self.memory.context()
+            self._say(memory_core.reply('list_people', '', context, self.lore))
             return
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
@@ -972,7 +977,7 @@ class VoiceController:
 
     # --- Getting to know the operator ------------------------------------
 
-    def _start_enroll(self):
+    def _start_enroll(self, mode='enroll'):
         if self.enroll is not None:
             return
         if not self.memory.present():
@@ -986,8 +991,8 @@ class VoiceController:
         if self.menu.open:
             self.menu.close()
             self._publish_menu()
-        self.enroll = enroll.Session(self.memory, EnrollIO())
-        event('enroll', state='start')
+        self.enroll = enroll.Session(self.memory, EnrollIO(), mode=mode)
+        event('enroll', state='start', mode=mode)
         self.enroll.start()
 
     def _check_memory(self):
@@ -1215,7 +1220,7 @@ class VoiceController:
     def _start_llm(self, text):
         self.turn_transcript = text
         if enroll.command(intents.normalize(text)):
-            self.enroll_after_speech = True
+            self.enroll_after_speech = enroll.command(intents.normalize(text))
             reply = enroll.ANNOUNCE
             event('llm_response', text=reply, model='local/enroll')
             self._start_speech(reply, source='assistant', model='local/enroll')
@@ -1282,7 +1287,8 @@ class VoiceController:
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
         elif kind == 'enroll':
-            self.enroll_after_speech = True  # after the server's announcement
+            # after the server's announcement
+            self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
         elif kind == 'maintenance':
             if item.get('op') in maintenance.ITEMS + ('enter',):
                 self._maintenance_op(item['op'], speak=False)  # the server's reply speaks
@@ -1413,8 +1419,8 @@ class VoiceController:
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
             if self.enroll_after_speech:
-                self.enroll_after_speech = False
-                self._start_enroll()
+                mode, self.enroll_after_speech = self.enroll_after_speech, None
+                self._start_enroll(mode)
             if self.listen_after_greeting:
                 self.listen_after_greeting = False
                 if self._idle() and not self.menu.open:
