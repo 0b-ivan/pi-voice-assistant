@@ -783,9 +783,10 @@ class VoiceController:
         """Voice or menu: enter/exit or ask to confirm an action. Returns the sentence."""
         if op == 'enter':
             self.maint.enter()
-            if self.menu.open:
-                self.menu.close()
-                self._publish_menu()
+            # From the menu, confirm() has already closed it: publish either way,
+            # or the display keeps showing the stale menu.
+            self.menu.close()
+            self._publish_menu()
             text = maintenance.ENTER_TEXT
         elif op == 'exit':
             self.maint.exit()

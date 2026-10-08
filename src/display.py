@@ -1123,7 +1123,7 @@ def main():
             previous_screen = None  # redraw at once when the screen comes back
             time.sleep(SLEEP_POLL_SECONDS)
             continue
-        if status.get('maint') == 'on' and status.get('menu_index') is None:
+        if status.get('maint') == 'on':  # takes the screen even over a stale menu
             screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
             if screen != previous_screen:
                 render_maintenance(display, status, dict(battery=battery))

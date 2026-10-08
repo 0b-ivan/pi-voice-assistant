@@ -93,6 +93,15 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("pi", self.c.maint_jobs)
         self.assertNotIn("maint_confirm", self.status())
 
+    def test_entering_from_the_menu_clears_the_menu_on_the_display(self):
+        self.c.menu.show(0)
+        self.c.menu.index = self.ptt.MENU_ITEMS.index("maintenance")
+        self.c._publish_menu()
+        self.c._menu_confirm(1)
+        status = self.status()
+        self.assertEqual(status["maint"], "on")
+        self.assertNotIn("menu_index", status)
+
     def test_b_cancels_then_leaves(self):
         self.c._maintenance_op("enter")
         self.c._maintenance_op("reboot_server", speak=False)
