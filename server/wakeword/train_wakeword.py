@@ -80,19 +80,32 @@ def resample(audio, rate):
 
 
 class Synth:
-    def __init__(self, voices, rng):
-        from piper import PiperVoice
-        self.rng = rng
-        self.voices = {}
-        for stem, (speakers, weight) in voices.items():
-            self.voices[stem] = (PiperVoice.load(str(voice_path(stem))), speakers, weight)
-        weights = np.array([w for _v, _s, w in self.voices.values()], dtype=np.float64)
-        self.p = weights / weights.sum()
+    """One Piper voice in memory at a time (all ten together needed ~1.5 GB
+    and got the training, and once llama-server, OOM-killed on CT 107)."""
 
-    def say(self, text):
+    def __init__(self, voices, rng):
+        self.rng = rng
+        self.voices = voices
+        self.current = (None, None)
+
+    def plan(self, count):
+        """How many clips each voice contributes, by weight."""
+        weights = np.array([w for _s, w in self.voices.values()], dtype=np.float64)
+        shares = np.floor(weights / weights.sum() * count).astype(int)
+        shares[0] += count - shares.sum()
+        return dict(zip(self.voices, shares.tolist()))
+
+    def load(self, stem):
+        from piper import PiperVoice
+        if self.current[0] != stem:
+            self.current = (None, None)  # free the previous voice first
+            self.current = (stem, PiperVoice.load(str(voice_path(stem))))
+        return self.current[1]
+
+    def say(self, stem, text):
         from piper.config import SynthesisConfig
-        stem = list(self.voices)[self.rng.choice(len(self.voices), p=self.p)]
-        voice, speakers, _weight = self.voices[stem]
+        voice = self.load(stem)
+        speakers = self.voices[stem][0]
         config = SynthesisConfig(
             speaker_id=int(self.rng.choice(list(speakers))) if speakers else None,
             length_scale=float(self.rng.uniform(0.75, 1.35)),
@@ -234,15 +247,20 @@ def build_set(name, texts, voices, count, variants, positive, rng, rirs, babble,
     synth = Synth(voices, rng)
     out = np.zeros((count * variants, 16, 96), dtype=np.float16)
     started = time.monotonic()
-    for i in range(count):
-        clip = synth.say(texts[rng.integers(len(texts))])
-        if not positive and len(babble) < 300:
-            babble.append(clip)
-        for j in range(variants):
-            out[i * variants + j] = features(augment(clip, rng, rirs, babble, positive))
-        if (i + 1) % 500 == 0:
-            rate = (i + 1) / (time.monotonic() - started)
-            print(f'{name}: {i + 1}/{count} clips, {rate:.1f}/s', flush=True)
+    i = 0
+    for stem, share in synth.plan(count).items():
+        for _ in range(share):
+            clip = synth.say(stem, texts[rng.integers(len(texts))])
+            if not positive and len(babble) < 300:
+                babble.append(clip)
+            for j in range(variants):
+                out[i * variants + j] = features(augment(clip, rng, rirs, babble, positive))
+            i += 1
+            if i % 500 == 0:
+                rate = i / (time.monotonic() - started)
+                print(f'{name}: {i}/{count} clips ({stem}), {rate:.1f}/s', flush=True)
+    # Voices come in blocks; shuffle so train batches mix them.
+    out = out[rng.permutation(len(out))]
     target.parent.mkdir(exist_ok=True)
     np.save(target, out)
     print(f'{name}: saved {out.shape}', flush=True)
