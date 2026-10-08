@@ -121,6 +121,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(status["maint"], "on")
         self.assertNotIn("menu_index", status)
 
+    def test_idle_exit_clears_the_display(self):
+        now = [0.0]
+        self.c.maint = maintenance.Mode(clock=lambda: now[0])
+        self.c._maintenance_op("enter")
+        self.assertEqual(self.status()["maint"], "on")
+        now[0] = maintenance.IDLE_EXIT_SECONDS + 1
+        self.c._check_maintenance()
+        self.assertFalse(self.c.maint.active)
+        self.assertEqual(self.status()["maint"], "off")
+
     def test_b_cancels_then_leaves(self):
         self.c._maintenance_op("enter")
         self.c._maintenance_op("reboot_server", speak=False)

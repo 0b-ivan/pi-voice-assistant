@@ -848,6 +848,7 @@ class VoiceController:
         if self.maint.idle_too_long() and not self.maint_jobs:
             self.maint.exit()
             event('maintenance', op='exit', active=False, reason='idle')
+            self._publish_maintenance()  # or the display keeps the WARTUNG screen
         if not self.maint_jobs and not self.maint.active:
             return []
         cache = getattr(self, '_maint_status', {})
