@@ -13,6 +13,7 @@ import time
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
 
 
+DEVICE_NAME = os.environ.get('PI_DISPLAY_NAME', 'PROXIMUS')
 WIDTH = 240
 HEIGHT = 240
 ENV_FILE = Path("/etc/pi-voice-assistant.env")
@@ -559,7 +560,7 @@ def render_boot(display, states):
     row_font = font(17)
     small_font = font(13)
 
-    draw.text((12, 8), "PI ASSISTANT", font=title_font, fill="white")
+    draw.text((12, 8), DEVICE_NAME, font=title_font, fill="white")
     draw.line((12, 37, 228, 37), fill=(90, 90, 90), width=1)
 
     rows = [
@@ -604,7 +605,7 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
     description, icon, step = details or STATE_DETAILS.get(state, ('', 'gear', 0))
     color = VOICE_COLORS.get(state, (220, 220, 220))
     idle = state in ('BEREIT', 'FEHLER')
-    draw.text((12, 12), 'PI ASSISTANT', font=font(17), fill='white')
+    draw.text((12, 12), DEVICE_NAME, font=font(17), fill='white')
     right_edge = 228
     if info.get('battery'):
         right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
