@@ -994,6 +994,13 @@ class VoiceController:
                 if self.remote:
                     self.recorder.drop_uplink()
                 event('wake_timeout')
+        shadow = getattr(self.wake, 'take_shadow', lambda: ([], []))()
+        if isinstance(shadow, tuple) and len(shadow) == 2:
+            hits, peaks = shadow
+            for word, score in hits:
+                event('wake_shadow', word=word, score=score)
+            for peak in peaks:
+                event('wake_shadow_peak', **{k: round(v, 3) for k, v in peak.items()})
         detector = getattr(self.wake, 'detector', None)
         if detector is not None and now >= self.wake_stats_at:
             self.wake_stats_at = now + 60.0
@@ -1506,6 +1513,17 @@ def main():
         wake_dir = Path(os.environ.get('PTT_WAKE_MODEL_DIR',
                                        '/opt/pi-voice-assistant/models/wakeword'))
         threshold = float(os.environ.get('PTT_WAKE_THRESHOLD', '0.5'))
+        # Candidate words are scored in the shadow (logged, never trigger),
+        # e.g. a freshly trained proximus.onnx, until they are good enough.
+        shadows = {}
+        for name in os.environ.get('PTT_WAKE_SHADOW', 'proximus').split(','):
+            name = name.strip()
+            if name and name != wake_word and (wake_dir / f'{name}.onnx').is_file():
+                try:
+                    meta = json.loads((wake_dir / f'{name}.json').read_text())
+                    shadows[name] = float(meta.get('threshold', 0.7))
+                except (OSError, ValueError, TypeError):
+                    shadows[name] = 0.7
         if not (wake_dir / f'{wake_word}.onnx').is_file():
             event('wake_error', message=f'model {wake_word} missing in {wake_dir}')
         else:
@@ -1516,13 +1534,14 @@ def main():
                 if site.is_dir() and str(site) not in os.sys.path:
                     os.sys.path.insert(0, str(site))
                 from wakeword import Detector, WakeWord
-                return Detector(WakeWord(wake_dir, wake_word, gate=True), threshold=threshold)
+                return Detector(WakeWord(wake_dir, wake_word, gate=True, shadows=list(shadows)),
+                                threshold=threshold, shadow_thresholds=shadows)
             from wake_listener import WakeListener
             wake = WakeListener(os.environ.get('PTT_AUDIO_DEVICE',
                                                'plughw:CARD=wm8960soundcard,DEV=0'),
                                 detector_factory)
             wake_label = WAKE_LABELS.get(wake_word)
-            event('wake_ready', word=wake_word, threshold=threshold)
+            event('wake_ready', word=wake_word, threshold=threshold, shadow=shadows)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
                                  remote=uplink_factory is not None,
                                  wake=wake, wake_word=wake_label)

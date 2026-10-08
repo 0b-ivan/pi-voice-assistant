@@ -84,6 +84,15 @@ class WakeListener:
             if not self.thread.is_alive():
                 self.thread = None
 
+    def take_shadow(self):
+        """Shadow-word hits and loud-stretch peak scores since the last call."""
+        detector = self.detector
+        if detector is None or not getattr(detector, 'shadow_thresholds', None):
+            return [], []
+        hits, detector.shadow_hits = detector.shadow_hits, []
+        peaks, detector.wakeword.segment_peaks = detector.wakeword.segment_peaks, []
+        return hits, peaks
+
     def take_detection(self):
         detected, self._detected = self._detected, False
         return detected

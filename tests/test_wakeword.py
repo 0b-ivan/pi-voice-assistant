@@ -339,3 +339,21 @@ class StandbyVoskTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ShadowWordTests(unittest.TestCase):
+    def test_shadow_word_is_logged_but_never_triggers(self):
+        import wakeword
+        ww = Mock(shadow_scores={"proximus": 0.0}, segment_peaks=[])
+        scores = iter([(0.1, 0.9), (0.1, 0.95), (0.1, 0.2)])
+
+        def process(pcm):
+            main, shadow = next(scores)
+            ww.shadow_scores = {"proximus": shadow}
+            return main
+
+        ww.process.side_effect = process
+        detector = wakeword.Detector(ww, threshold=0.5, shadow_thresholds={"proximus": 0.7})
+        fired = [detector.feed(b"", t) for t in (1.0, 1.1, 1.2)]
+        self.assertEqual(fired, [False, False, False])
+        self.assertEqual(detector.shadow_hits, [("proximus", 0.95)])

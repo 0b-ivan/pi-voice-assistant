@@ -51,7 +51,7 @@ class WakeWord:
     completed by that call (None while less than 80 ms is buffered)."""
 
     def __init__(self, model_dir, word='hey_jarvis_v0.1', session=_session, seed=0,
-                 gate=False):
+                 gate=False, shadows=()):
         model_dir = Path(model_dir)
         self.word = word
         self._mel = session(model_dir / 'melspectrogram.onnx')
@@ -60,6 +60,11 @@ class WakeWord:
         self._mel_input = self._mel.get_inputs()[0].name
         self._embedding_input = self._embedding.get_inputs()[0].name
         self._classifier_input = self._classifier.get_inputs()[0].name
+        # Shadow words: scored on the same embeddings (cheap), never trigger.
+        self._shadows = {}
+        for name in shadows:
+            classifier = session(model_dir / f'{name}.onnx')
+            self._shadows[name] = (classifier, classifier.get_inputs()[0].name)
         self.gate = gate
         self.reset(seed)
 
@@ -78,6 +83,9 @@ class WakeWord:
         self._silence = None
         self.exact_blocks = self.gated_blocks = 0
         self.last_rms = 0.0
+        self.shadow_scores = {name: 0.0 for name in getattr(self, '_shadows', {})}
+        self._segment_peaks = dict(self.shadow_scores)
+        self.segment_peaks = []   # [{word: peak}] per loud stretch, for evaluation
 
     def _loud(self, block):
         rms = float(np.sqrt(np.mean(block.astype(np.float32) ** 2)))
@@ -130,8 +138,18 @@ class WakeWord:
                 x = np.array(list(self._features)[-FEATURES:], dtype=np.float32)[None, :, :]
                 score = float(np.squeeze(
                     self._classifier.run(None, {self._classifier_input: x})[0]))
+                for name, (classifier, name_input) in self._shadows.items():
+                    value = float(np.squeeze(classifier.run(None, {name_input: x})[0]))
+                    self.shadow_scores[name] = value
+                    self._segment_peaks[name] = max(self._segment_peaks[name], value)
                 self._quiet = GATE_REFRESH  # next quiet block gets a fresh silence embedding
             else:
+                if self._shadows and any(self._segment_peaks.values()):
+                    # A loud stretch just ended: keep its peak shadow scores.
+                    self.segment_peaks.append(dict(self._segment_peaks))
+                    del self.segment_peaks[:-20]
+                    self._segment_peaks = {name: 0.0 for name in self._shadows}
+                self.shadow_scores = {name: 0.0 for name in self._shadows}
                 self.gated_blocks += 1
                 if self._silence is None or self._quiet >= GATE_REFRESH:
                     self._silence = self._embed(self._mel_buffer[-MEL_WINDOW:])
@@ -146,18 +164,35 @@ class WakeWord:
 class Detector:
     """Score threshold with patience (consecutive blocks) and a cooldown."""
 
-    def __init__(self, wakeword, threshold=0.5, patience=2, cooldown=2.0):
+    def __init__(self, wakeword, threshold=0.5, patience=2, cooldown=2.0, shadow_thresholds=None):
         self.wakeword = wakeword
         self.threshold = threshold
         self.patience = patience
         self.cooldown = cooldown
         self._streak = 0
         self._quiet_until = 0.0
+        self.shadow_thresholds = dict(shadow_thresholds or {})
+        self._shadow_streak = {name: 0 for name in self.shadow_thresholds}
+        self._shadow_quiet = {name: 0.0 for name in self.shadow_thresholds}
+        self.shadow_hits = []     # (word, score) the shadow word would have triggered
+
+    def _shadow(self, now):
+        for name, threshold in self.shadow_thresholds.items():
+            score = self.wakeword.shadow_scores.get(name, 0.0)
+            if now < self._shadow_quiet[name]:
+                continue
+            self._shadow_streak[name] = self._shadow_streak[name] + 1 if score >= threshold else 0
+            if self._shadow_streak[name] >= self.patience:
+                self._shadow_streak[name] = 0
+                self._shadow_quiet[name] = now + self.cooldown
+                self.shadow_hits.append((name, round(score, 3)))
 
     def feed(self, pcm, now):
         score = self.wakeword.process(pcm)
         if score is None:
             return False
+        if self.shadow_thresholds:
+            self._shadow(now)
         if now < self._quiet_until:
             self._streak = 0
             return False
