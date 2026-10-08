@@ -149,7 +149,16 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.pipeline.accepted, 16000)
 
     def test_too_large_upload(self):
-        response, _ = self.request('/v1/turn', b'\0' * (16000 * 2 * 3))
+        # Announce the size only: the server answers 413 without reading the
+        # body, so actually sending it raced with the close (broken pipe in CI).
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.putrequest('POST', '/v1/turn')
+        conn.putheader('Authorization', f'Bearer {TOKEN}')
+        conn.putheader('Content-Length', str(16000 * 2 * 3))
+        conn.endheaders()
+        response = conn.getresponse()
+        response.read()
+        conn.close()
         self.assertEqual(response.status, 413)
         _, data = self.request('/v1/turn', b'\0' * (16000 * 2 * 3), chunked=True)
         self.assertEqual(self.events(data)[-1]['code'], 'too_large')
