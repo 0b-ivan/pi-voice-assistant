@@ -102,6 +102,7 @@ DISPLAY_STATUS_VALUES = {
     'opt_server': {'on', 'off', 'none'},
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
+    'power': {'awake', 'rest', 'sleep'},
     'opt_wake': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
     'opt_wlan': {'on', 'off'},
@@ -123,6 +124,10 @@ LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
 SHIM_RETRY_SECONDS = 2.0        # reconnect the Button SHIM after an I2C error ...
 SHIM_RETRY_MAX_SECONDS = 60.0   # ... backing off to this while it keeps failing
 WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
+# Idle power stages: 'rest' dims the display and calms the skull, 'sleep'
+# switches screen and LED off (optionally WLAN); the wake word keeps listening.
+REST_SECONDS = 30.0
+SLEEP_SECONDS = 600.0
 LED_ALARM = (255, 60, 0)         # slow blink while a critical alarm is active
 CRITICAL_ALARMS = {'undervoltage', 'battery', 'memory', 'temperature'}
 # Holding C/D repeats the volume step after a short pause.
@@ -508,6 +513,12 @@ class VoiceController:
         self.alarm_queue = []    # sentences waiting until the unit is idle
         self.wlan_on = True
         self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
+        self.power = 'awake'
+        self.last_activity = time.monotonic()
+        self.rest_after = float(os.environ.get('PTT_REST_SECONDS', REST_SECONDS))
+        self.sleep_after = float(os.environ.get('PTT_SLEEP_SECONDS', SLEEP_SECONDS))
+        self.sleep_wlan_off = os.environ.get('PTT_SLEEP_WLAN', 'keep') == 'off'
+        self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
         self.internet_probe = None  # netprobe.InternetProbe
         self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
         self.shutting_down = False
@@ -536,7 +547,7 @@ class VoiceController:
         if (self.alarms_enabled and CRITICAL_ALARMS.intersection(self.alarms.active)
                 and self.job is None and not self.speech.active):
             return LED_ALARM if int(now) % 2 == 0 else LED_OFF
-        if not self.led_enabled:
+        if not self.led_enabled or self.power == 'sleep':
             return LED_OFF
         if self.menu.open:
             return LED_MENU
@@ -552,7 +563,8 @@ class VoiceController:
                 level = 1.0
             return self._scale(LED_SPEAKING, (0.3, 0.6, 1.0)[min(2, int(level * 3))])
         local = self.remote and (not self.remote_enabled or self.turn_route == 'pi')
-        return LED_READY_LOCAL if local else LED_READY
+        ready = LED_READY_LOCAL if local else LED_READY
+        return self._scale(ready, 0.3) if self.power == 'rest' else ready
 
     def cancel(self, held, now):
         self.speech.stop()
@@ -824,7 +836,9 @@ class VoiceController:
         up = self.pitft[0].update(pitft_pressed[0], now) == 'start'
         down = self.pitft[1].update(pitft_pressed[1], now) == 'start'
         if up or down:
-            if not self.screen_on:
+            if self.power != 'awake':
+                self._wake_up(now)  # first press only wakes the display
+            elif not self.screen_on:
                 self.screen_on = True  # first press only wakes the screen
                 event('menu', item='screen', value='on')
             else:
@@ -1076,6 +1090,8 @@ class VoiceController:
             self._wake_tick(now)
         if not self.probe:
             self._speak_alarms()
+            pressed = action is not None or commands or any(pitft_pressed)
+            self._update_power(now, pressed)
 
         if not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid':
             # The standby Vosk worker (~190 MB of 415) only serves the local
@@ -1087,6 +1103,33 @@ class VoiceController:
                     and not getattr(self.speech, 'synthesizing', False)
                     and self.recorder.process is None):
                 prepare_vosk_worker()
+
+    def _busy(self):
+        return (self.recorder.process is not None or self.job is not None
+                or self.speech.active or getattr(self.speech, 'synthesizing', False)
+                or self.menu.open or bool(self.alarm_queue))
+
+    def _wake_up(self, now):
+        self.last_activity = now
+        self._update_power(now, False)
+
+    def _update_power(self, now, pressed=False):
+        """awake -> rest -> sleep while nothing happens; any activity wakes."""
+        if pressed or self._busy():
+            self.last_activity = now
+        idle = now - self.last_activity
+        power = ('sleep' if idle >= self.sleep_after else
+                 'rest' if idle >= self.rest_after else 'awake')
+        if power == self.power:
+            return
+        previous, self.power = self.power, power
+        event('power', state=power)
+        publish_display_status(power=power)
+        if power == 'sleep' and self.sleep_wlan_off and self.wlan_on:
+            self.wlan_slept = self.set_wlan(False)
+        elif previous == 'sleep' and self.wlan_slept:
+            self.wlan_slept = False
+            self.set_wlan(True)
 
     def close(self):
         if self.wake is not None:

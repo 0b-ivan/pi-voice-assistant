@@ -140,3 +140,34 @@ class RainTests(unittest.TestCase):
         expected = b"".join((((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)).to_bytes(2, "big")
                             for r, g, b in colours)
         self.assertEqual(display.rgb565(image), expected)
+
+
+class RestTests(unittest.TestCase):
+    def test_rest_screen_is_dim_without_rain_or_lens(self):
+        from PIL import Image
+
+        class Capture:
+            def image(self, image, rotation=0):
+                self.picture = image.rotate(rotation)
+
+        s = skull.Skull("/does/not/exist")
+        awake, rest = Capture(), Capture()
+        display.render_skull(awake, s, "BEREIT", "ok", 0.9, dict(server="ok"), frame=7)
+        display.render_rest(rest, s, "ok", dict(server="ok"))
+        # no litanies in the side strips
+        self.assertIsNone(rest.picture.crop((0, 43, 50, 175)).convert("L").point(
+            lambda v: 255 if v > 3 else 0).getbbox())
+        self.assertIsNotNone(awake.picture.crop((0, 43, 50, 175)).getbbox())
+        bright = max(max(px) for px in rest.picture.getdata())
+        self.assertLessEqual(bright, int(255 * display.REST_BRIGHTNESS))
+
+    def test_status_whitelist_accepts_power(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.json"
+            path.write_text(json.dumps({"power": "sleep"}))
+            self.assertEqual(display.read_status(path)["power"], "sleep")
+            path.write_text(json.dumps({"power": "hack"}))
+            self.assertNotIn("power", display.read_status(path))

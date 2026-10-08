@@ -24,6 +24,7 @@ VOICE_EVENT_FILE = Path(
 )
 PROBE_INTERVAL_SECONDS = 2.0
 EVENT_INTERVAL_SECONDS = 0.1
+SLEEP_POLL_SECONDS = 0.3  # screen off: check for wake-ups less often
 ERROR_HOLD_SECONDS = 3.0
 
 VOICE_EVENT_STATES = {
@@ -165,7 +166,8 @@ def read_status(path=None):
                          ('opt_llm', ('auto', 'local')),
                          ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
-                         ('screen', ('on', 'off'))):
+                         ('screen', ('on', 'off')),
+                         ('power', ('awake', 'rest', 'sleep'))):
         if value.get(key) in allowed:
             status[key] = value[key]
     return status
@@ -625,6 +627,28 @@ def _draw_header(draw, info):
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
 
 
+REST_LEVEL = 0.12        # red eye while resting: low and steady
+REST_BRIGHTNESS = 0.35   # whole picture dimmed while resting
+
+
+def render_rest(display, skull, network, info=None):
+    """Idle for a while: dimmed, the red eye low and steady, the other eye
+    dark, no litanies. Only redrawn when clock, battery or alarm change."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    image.paste(skull.frame(REST_LEVEL), ((WIDTH - skull.base.width) // 2, 42))
+    if info.get('alarm'):
+        text = ALARMS[info['alarm']][1]
+        width = draw.textlength(text, font=font(11))
+        draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=(255, 70, 70))
+    _draw_footer(draw, network, info)
+    image = Image.eval(image, lambda v: int(v * REST_BRIGHTNESS))
+    display.image(image, 180)
+
+
 def render_skull(display, skull, state, network, level, info=None, frame=0, details=None):
     """The servo skull: red eye glowing with ``level``, the other eye in the
     status-LED colour, litany streams ("thoughts") falling on both sides."""
@@ -1010,10 +1034,15 @@ def main():
             error_until = None
 
         status = read_status()
-        lit = status.get('screen') != 'off'
+        # Menu "Display aus" or the idle sleep stage: backlight off, no rendering.
+        lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
         if lit != screen_lit:
             backlight.value = lit
             screen_lit = lit
+        if not lit:
+            previous_screen = None  # redraw at once when the screen comes back
+            time.sleep(SLEEP_POLL_SECONDS)
+            continue
         if status.get('menu_index') is not None and states is not None and is_ready(states):
             if status['menu_page'] == 'info':
                 if info_rows is None or now >= next_info:
@@ -1049,7 +1078,16 @@ def main():
             # Redraw only when something visible changes: the averaged battery
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))
-            if skull is not None and shown in SKULL_STATES and info.get('volume') is None:
+            resting = status.get('power') == 'rest' and shown == 'BEREIT'
+            if skull is not None and resting and info.get('volume') is None:
+                # Temperature and WLAN dBm wobble constantly; at rest they may
+                # lag up to a minute, so the screen is redrawn about once a minute.
+                screen = ('rest', states['network'], info['clock'], shown_info['battery'],
+                          info.get('alarm'), info.get('server'), info.get('wlan'))
+                if screen != previous_screen:
+                    render_rest(display, skull, states['network'], info)
+                    previous_screen = screen
+            elif skull is not None and shown in SKULL_STATES and info.get('volume') is None:
                 fps = 4 if shown in ('BEREIT', 'ZUHÖREN') else 10
                 frame = int(now * fps)
                 if shown not in ('AUSGABE', 'SPRECHEN'):

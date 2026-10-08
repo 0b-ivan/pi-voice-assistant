@@ -209,6 +209,54 @@ class ControllerAlarmTests(unittest.TestCase):
         self.assertEqual(self.c.alarms.active, ['internet', 'server'])
 
 
+class PowerStageTests(ControllerAlarmTests):
+    def setUp(self):
+        super().setUp()
+        self.c.rest_after, self.c.sleep_after = 30, 600
+        self.c.last_activity = 0.0
+
+    def status(self):
+        return json.loads((Path(self.tmp.name) / 'status.json').read_text())
+
+    def test_idle_rests_then_sleeps_and_activity_wakes(self):
+        self.c._update_power(10)
+        self.assertEqual(self.c.power, 'awake')
+        self.c._update_power(31)
+        self.assertEqual((self.c.power, self.status()['power']), ('rest', 'rest'))
+        self.assertEqual(self.c.color, self.c._scale(ptt.LED_READY, 0.3))
+        self.c._update_power(601)
+        self.assertEqual((self.c.power, self.status()['power']), ('sleep', 'sleep'))
+        self.assertEqual(self.c.color, ptt.LED_OFF)
+        self.speech.active = True          # e.g. an alarm or the wake word's reply
+        self.c._update_power(700)
+        self.assertEqual(self.c.power, 'awake')
+
+    def test_first_display_button_only_wakes(self):
+        self.c._update_power(601)
+        for now, pressed in ((601.8, False), (601.9, False), (602.0, True), (602.1, True)):
+            self.c._pitft_input((pressed, False), now)
+        self.assertEqual(self.c.power, 'awake')
+        self.assertFalse(self.c.menu.open)
+
+    def test_sleep_can_switch_wlan_off_and_back_on(self):
+        self.c.sleep_wlan_off = True
+        with patch('wlan.set_wlan') as radio:
+            self.c._update_power(601)
+            self.assertFalse(self.c.wlan_on)
+            self.c._wake_up(650)
+            self.assertTrue(self.c.wlan_on)
+        self.assertEqual([call.args for call in radio.call_args_list], [(False,), (True,)])
+
+    def test_wlan_switched_off_by_user_stays_off_after_sleep(self):
+        self.c.sleep_wlan_off = True
+        self.c.wlan_on = False
+        with patch('wlan.set_wlan') as radio:
+            self.c._update_power(601)
+            self.c._wake_up(650)
+        radio.assert_not_called()
+        self.assertFalse(self.c.wlan_on)
+
+
 class ShutdownAndModeTests(ControllerAlarmTests):
     def test_battery_shutdown_powers_off(self):
         for t, pct in ((0, 15), (10, 10), (20, 6)):
