@@ -153,6 +153,31 @@ class WakeListenerTests(unittest.TestCase):
         self.assertFalse(listener.take_detection())
         self.assertFalse(listener.running)
 
+    def test_stop_during_a_blocked_read_is_no_error(self):
+        import threading
+        reading = threading.Event()
+
+        class Stream:
+            def __init__(self):
+                self.closed = threading.Event()
+
+            def read(self, size):
+                reading.set()
+                self.closed.wait(2)
+                raise ValueError('read of closed file')
+
+            def close(self):
+                self.closed.set()
+
+        process = Mock(stdout=Stream())
+        process.poll.return_value = 0
+        listener = WakeListener('dev', lambda: Mock(), popen=Mock(return_value=process))
+        listener.start()
+        self.assertTrue(reading.wait(2))
+        listener.stop()
+        self.assertIsNone(listener.error)
+        self.assertFalse(listener.running)
+
     def test_errors_are_reported(self):
         listener = WakeListener('dev', Mock(side_effect=RuntimeError('model missing')),
                                 popen=Mock())
