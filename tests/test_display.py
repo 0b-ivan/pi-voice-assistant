@@ -545,3 +545,19 @@ class MenuDisplayTests(unittest.TestCase):
             deployed = Path(tmp) / "DEPLOYED"
             deployed.write_text("6da76a2abcdef\nbranch x\n")
             self.assertEqual(display.deployed_version(deployed), "6da76a2")
+
+
+class MenuScrollTests(unittest.TestCase):
+    def test_long_menu_scrolls_and_alarm_line_renders(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        for index in (0, len(display.MENU_LABELS) - 1):
+            capture = Capture()
+            display.render_menu(capture, dict(menu_index=index, menu_page="list",
+                                              opt_wlan="off", opt_alarms="on"))
+            self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+        capture = Capture()
+        display.render_voice(capture, "BEREIT", True, info=dict(alarm="battery", wlan="off"))
+        self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))

@@ -14,7 +14,10 @@ import wave
 
 import functools
 from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
+from alarms import ALARMS, AlarmMonitor
 from endpoint import Endpointer
+from netprobe import network_up
+import wlan as wlan_radio
 from menu import ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
 import datetime
@@ -100,6 +103,9 @@ DISPLAY_STATUS_VALUES = {
     'screen': {'on', 'off'},
     'opt_wake': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
+    'opt_wlan': {'on', 'off'},
+    'opt_alarms': {'on', 'off'},
+    'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
 }
 # SHIM LED palette (APA102 at the driver's fixed low global brightness).
@@ -112,6 +118,8 @@ LED_LOCAL = (255, 120, 0)        # processing on the Pi (display: LOKAL, amber)
 LED_SPEAKING = (255, 100, 0)
 LED_MENU = (150, 0, 255)
 LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
+LED_ALARM = (255, 60, 0)         # slow blink while a critical alarm is active
+CRITICAL_ALARMS = {'undervoltage', 'battery', 'memory', 'temperature'}
 # Holding C/D repeats the volume step after a short pause.
 VOLUME_REPEAT_DELAY = 0.45
 VOLUME_REPEAT_INTERVAL = 0.15
@@ -490,6 +498,10 @@ class VoiceController:
         self.throttled = None
         self.remote_failed = False
         self.server_probe = None  # netprobe.ServerProbe when a server is configured
+        self.alarms = AlarmMonitor()
+        self.alarms_enabled = os.environ.get('PTT_ALARMS', '1') != '0'
+        self.alarm_queue = []    # sentences waiting until the unit is idle
+        self.wlan_on = True
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -512,6 +524,9 @@ class VoiceController:
         if (_display_last_error_at is not None
                 and time.time() - _display_last_error_at < DISPLAY_ERROR_HOLD_SECONDS):
             return LED_RECORDING if int(now * 4) % 2 == 0 else LED_OFF
+        if (self.alarms_enabled and CRITICAL_ALARMS.intersection(self.alarms.active)
+                and self.job is None and not self.speech.active):
+            return LED_ALARM if int(now) % 2 == 0 else LED_OFF
         if not self.led_enabled:
             return LED_OFF
         if self.menu.open:
@@ -603,6 +618,8 @@ class VoiceController:
         publish_display_status(menu_index=self.menu.index, menu_page=self.menu.page,
                                opt_server=server, opt_wake=wake, wake_word=self.wake_word,
                                opt_lore=self.lore,
+                               opt_wlan='on' if self.wlan_on else 'off',
+                               opt_alarms='on' if self.alarms_enabled else 'off',
                                opt_led='on' if self.led_enabled else 'off',
                                screen='on' if self.screen_on else 'off')
 
@@ -620,6 +637,13 @@ class VoiceController:
         elif item == 'lore':
             self.lore = LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)]
             event('menu', item='lore', value=self.lore)
+        elif item == 'wlan':
+            self.set_wlan(not self.wlan_on)
+        elif item == 'alarms':
+            self.alarms_enabled = not self.alarms_enabled
+            if not self.alarms_enabled:
+                self.alarm_queue = []
+            event('menu', item='alarms', value='on' if self.alarms_enabled else 'off')
         elif item == 'led':
             self.led_enabled = not self.led_enabled
             event('menu', item='led', value='on' if self.led_enabled else 'off')
@@ -634,7 +658,7 @@ class VoiceController:
 
     def server_state(self):
         """'off' (none/disabled), 'ok' or 'down'; the probe wins over the last turn."""
-        if not self.remote or not self.remote_enabled:
+        if not self.remote or not self.remote_enabled or not self.wlan_on:
             return 'off'
         probed = getattr(self.server_probe, 'state', None)
         if probed in ('ok', 'down'):
@@ -644,7 +668,44 @@ class VoiceController:
     def status_snapshot(self):
         server = self.server_state()
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
-                                lore=self.lore)
+                                lore=self.lore, wlan='on' if self.wlan_on else 'off')
+
+    def check_alarms(self, now, network=None):
+        """Called every ~10 s by main(); queues alarm sentences to speak."""
+        if network is None and self.wlan_on:
+            network = network_up()
+        texts = self.alarms.update(self.status_snapshot(), now,
+                                   network=network if self.wlan_on else None,
+                                   server=self.server_state(), lore=self.lore)
+        for text in texts:
+            event('alarm', text=text, active=self.alarms.active)
+        if self.alarms_enabled:
+            self.alarm_queue.extend(texts)
+        active = self.alarms.active
+        publish_display_status(alarm=active[0] if active else None)
+
+    def _speak_alarms(self):
+        if not self.alarm_queue or not self._idle() or self.menu.open:
+            return
+        text, self.alarm_queue = ' '.join(self.alarm_queue), []
+        try:
+            event('speech_started', source='alarm')
+            self.speech.start(text)
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+
+    def set_wlan(self, on):
+        try:
+            wlan_radio.set_wlan(on)
+        except (OSError, subprocess.SubprocessError) as exc:
+            event('wlan_error', message=str(exc))
+            return False
+        self.wlan_on = on
+        if self.remote:
+            self.recorder.uplink_enabled = on and self.remote_enabled
+        event('wlan', value='on' if on else 'off')
+        return True
 
     def _release_microphone(self):
         """The wake listener holds the capture device; free it before recording."""
@@ -953,6 +1014,8 @@ class VoiceController:
             self.ptt.resync(held, now)
         if self.wake is not None and not self.probe:
             self._wake_tick(now)
+        if not self.probe:
+            self._speak_alarms()
 
         if not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid':
             # The standby Vosk worker (~190 MB of 415) only serves the local
@@ -1116,6 +1179,12 @@ def main():
                                  remote=uplink_factory is not None,
                                  wake=wake, wake_word=wake_label)
     controller_ref.append(controller)
+    wlan_setting = os.environ.get('PTT_WLAN', '').strip().lower()
+    if wlan_setting in ('on', 'off') and not args.probe:
+        if not controller.set_wlan(wlan_setting == 'on'):
+            controller.wlan_on = wlan_radio.wlan_blocked() is not True
+    elif not args.probe:
+        controller.wlan_on = wlan_radio.wlan_blocked() is not True
     if uplink_factory is not None:
         from netprobe import ServerProbe
         controller.server_probe = ServerProbe(interval=15.0).start()
@@ -1168,6 +1237,7 @@ def main():
                 if not args.probe and now >= next_power:
                     controller.battery = battery_monitor.read()
                     controller.throttled = throttled_flags()
+                    controller.check_alarms(now)
                     next_power = now + 10.0
                 pressed = (False,) * 5
                 if shim is not None:

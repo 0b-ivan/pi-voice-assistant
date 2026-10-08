@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import time
 
+from alarms import ALARMS
 from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
 
@@ -70,6 +71,8 @@ MENU_LABELS = (
     ('server', 'Server nutzen'),
     ('wake', 'Aktivierungswort'),
     ('lore', 'Lore-Stufe'),
+    ('wlan', 'WLAN'),
+    ('alarms', 'Alarme'),
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
     ('status', 'Status ansagen'),
@@ -157,6 +160,8 @@ def read_status(path=None):
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
                          ('opt_wake', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
+                         ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
+                         ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off'))):
         if value.get(key) in allowed:
@@ -613,6 +618,8 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
         draw.text((12, 161), info['last'], font=font(12), fill=(145,155,165))
     if idle:
         power = power_line(info.get('battery'), info.get('throttled'))
+        if info.get('alarm'):
+            power = (ALARMS[info['alarm']][1], (255, 70, 70))
         if power:
             draw.text((12, 179), power[0], font=font(11), fill=power[1])
     if step:
@@ -628,6 +635,8 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
+    if item in ('wlan', 'alarms'):
+        return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
         return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
     if item == 'wake':
@@ -647,10 +656,14 @@ def render_menu(display, status, info=None):
         draw_battery(draw, 228, 14, info['battery'])
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
+    visible = 7  # scroll so the selection stays on screen
+    first = max(0, min(selected - 3, len(MENU_LABELS) - visible))
     for row, (item, label) in enumerate(MENU_LABELS):
-        y = 45 + row * 19
+        if not first <= row < first + visible:
+            continue
+        y = 45 + (row - first) * 21
         if row == selected:
-            draw.rectangle((10, y - 1, 230, y + 17), fill=(40, 32, 70))
+            draw.rectangle((10, y - 1, 230, y + 18), fill=(40, 32, 70))
             draw.text((14, y), '›', font=font(15), fill=accent)
         color = accent if row == selected else (215, 220, 225)
         draw.text((28, y), label, font=font(15), fill=color)
@@ -746,7 +759,9 @@ def _draw_footer(draw, network, info):
     draw.line((12,197,228,197), fill=(65,65,65))
     server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
     draw.text((12, 209), server_text, font=font(13), fill=server_color)
-    if not network:
+    if info.get('wlan') == 'off':
+        link, link_color = 'WLAN AUS', (150, 150, 150)
+    elif not network:
         link, link_color = 'OFFLINE', (180, 180, 180)
     elif info.get('wifi_dbm') is not None:
         dbm = info['wifi_dbm']
@@ -902,6 +917,7 @@ def main():
                         wifi_dbm=wifi, clock=time.strftime('%H:%M'),
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery, volume=volume_overlay(status),
+                        alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
                         wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
                               if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery

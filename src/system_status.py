@@ -146,11 +146,12 @@ SNAPSHOT_FIELDS = {
     'disk_free_pct': (int, 0, 100),
     'uptime_s': (int, 0, 10 ** 9),
     'battery_pct': (int, 0, 100),
+    'swap_used_pct': (int, 0, 100),
     'throttled': (int, 0, 0xFFFFFFFF),
 }
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
 SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
-                   'lore': ('off', 'light', 'full')}
+                   'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off')}
 
 
 def sanitize_snapshot(value):
@@ -175,7 +176,21 @@ def sanitize_snapshot(value):
     return clean
 
 
-def collect_snapshot(battery=None, throttled=None, server=None, lore=None,
+def _swap_used_percent(path=MEMINFO_PATH):
+    values = {}
+    for line in (_read_text(path) or '').splitlines():
+        key, _, rest = line.partition(':')
+        try:
+            values[key] = int(rest.split()[0])
+        except (ValueError, IndexError):
+            continue
+    total = values.get('SwapTotal')
+    if not total or values.get('SwapFree') is None:
+        return None
+    return max(0, min(100, round((total - values['SwapFree']) * 100 / total)))
+
+
+def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=None,
                      thermal_path=THERMAL_PATH, meminfo_path=MEMINFO_PATH,
                      loadavg_path=LOADAVG_PATH, uptime_path=UPTIME_PATH,
                      disk_path="/", disk_usage=shutil.disk_usage, cpu_count=os.cpu_count):
@@ -188,6 +203,8 @@ def collect_snapshot(battery=None, throttled=None, server=None, lore=None,
         throttled=throttled,
         server=server,
         lore=lore,
+        wlan=wlan,
+        swap_used_pct=_swap_used_percent(meminfo_path),
     )
     text = _read_text(uptime_path)
     try:
@@ -251,7 +268,9 @@ def status_text(snapshot, processing=False, lore=None):
         warnings.append("Warnung: Arbeitsspeicher knapp.")
     if snapshot.get('disk_free_pct', 100) <= 10:
         warnings.append("Warnung: Datenspeicher knapp.")
-    if snapshot.get('server') == 'down':
+    if snapshot.get('wlan') == 'off':
+        warnings.append("WLAN deaktiviert. Nur lokaler Betrieb.")
+    elif snapshot.get('server') == 'down':
         warnings.append("Server nicht erreichbar. Lokaler Betrieb.")
 
     lore = lore or snapshot.get('lore', 'off')
@@ -279,7 +298,7 @@ def status_text(snapshot, processing=False, lore=None):
         parts.append("Verbindung zum Server stabil.")
         if snapshot.get('llm') == 'offline':
             parts.append("Sprachkern im Notbetrieb.")
-    elif server == 'off':
+    elif server == 'off' and snapshot.get('wlan') != 'off':
         parts.append("Nur lokaler Betrieb.")
     uptime = snapshot.get('uptime_s')
     if uptime is not None:

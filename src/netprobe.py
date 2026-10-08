@@ -65,3 +65,19 @@ class ServerProbe:
             time.sleep(self.interval)
 
 
+
+
+def network_up():
+    """True if a non-loopback IPv4 address is up, None if it cannot be told."""
+    import shutil
+    import subprocess
+    ip = shutil.which('ip')
+    if not ip:
+        return None
+    try:
+        result = subprocess.run([ip, '-4', '-brief', 'address', 'show', 'up'],
+                                capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return any(line.split()[0] != 'lo' and '/' in line
+               for line in result.stdout.splitlines() if line.split())
