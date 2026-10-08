@@ -181,7 +181,7 @@ def build(directory=None, force=False, prune=False, out=None, pace=PACE):
                 audio = _render(url, config.token, piece, USER_AGENT)
                 break
             except urllib.error.HTTPError as exc:
-                if exc.code != 429:
+                if exc.code not in (429, 503):  # rate limit, server still loading
                     raise
                 time.sleep(float(exc.headers.get('Retry-After') or 30))
             except (OSError, RuntimeError):
