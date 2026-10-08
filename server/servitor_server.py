@@ -38,8 +38,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import intents  # noqa: E402
+import enroll  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
+import speaker  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from system_status import sanitize_snapshot  # noqa: E402
 
@@ -222,6 +224,7 @@ class Service:
         self.turn_lock = threading.Lock()
         self.limiter = RateLimiter(config.rate_limit)
         self.updates = None  # sysmon.pending_updates(), refreshed in the background
+        self.embedder = speaker.Embedder()
         self.maintenance_dir = maintenance.DIR
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.ready = False
@@ -251,7 +254,30 @@ class Service:
             return maintenance.NEED_MODE_TEXT
         return maintenance.confirm_prompt(op, device)
 
-    def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY):
+    def _identify(self, audio, memory_copy, emit):
+        """Compare the turn's voice with the enrolled voiceprint; returns the
+        memory copy the turn may use (guest view for an unknown voice)."""
+        prints = [dict(name=p['name'], vector=speaker.decode(p['print']))
+                  for p in memory_copy.get('voiceprints', [])]
+        prints = [p for p in prints if p['vector']]
+        if not prints or not self.embedder.available:
+            return memory_copy
+        try:
+            embedding = self.embedder.embed(bytes(audio))
+        except Exception as exc:  # never fail a turn over speaker recognition
+            print(json.dumps(dict(event='speaker_error', message=str(exc))), flush=True)
+            return memory_copy
+        if embedding is None:  # very short: no reliable decision, treat as operator
+            return memory_copy
+        name, score = speaker.identify(embedding, prints)
+        emit(dict(event='speaker', known=name is not None,
+                  score=None if score is None else round(score, 3)))
+        if name is None:
+            return memory.guest_view(memory_copy)
+        return dict(memory_copy, speaker=name)
+
+    def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
+                 transcribe_only=False):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
@@ -276,10 +302,15 @@ class Service:
                     raise TurnError('recognize', 'stt', str(exc)) from exc
                 pending = b''
                 received = 0
+                # Keep the audio only when a voice must be recognized.
+                keep = isinstance(memory_copy, dict) and bool(memory_copy.get('voiceprints'))
+                audio = bytearray()
                 for chunk in pcm_chunks:
                     received += len(chunk)
                     if received > self.config.max_bytes:
                         raise TurnError('upload', 'too_large', 'audio exceeds limit')
+                    if keep:
+                        audio += chunk
                     pending += chunk
                     usable = len(pending) - len(pending) % 2
                     if usable:
@@ -301,11 +332,21 @@ class Service:
                     code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
                     raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
+                if transcribe_only:  # enrollment answers: the Pi stores them itself
+                    emit(dict(event='done', timings=timings))
+                    return
+                if keep:
+                    memory_copy = timed('speaker', self._identify, audio, memory_copy, emit)
                 intent = intents.match(text)
                 command = (memory.command(intents.normalize(text))
                            if memory_copy is not NO_MEMORY else None)
                 service_op = maintenance.command(intents.normalize(text))
-                if service_op is not None and memory_copy is not NO_MEMORY:
+                if (enroll.command(intents.normalize(text)) and memory_copy is not NO_MEMORY
+                        and not memory.unknown_speaker(memory_copy)):
+                    # Only the operator (or anyone before enrollment) may start it.
+                    answer, model = enroll.ANNOUNCE, 'local/enroll'
+                    emit(dict(event='enroll'))
+                elif service_op is not None and memory_copy is not NO_MEMORY:
                     # Only Pis that know maintenance send a memory state too.
                     answer = self._maintenance_reply(service_op, device or {})
                     emit(dict(event='maintenance', op=service_op))
@@ -314,7 +355,8 @@ class Service:
                     op, argument = command
                     lore = (device or {}).get('lore')
                     answer = memory.reply(op, argument, memory_copy, lore or 'off')
-                    if memory_copy is not None and op in ('add_fact', 'add_directive', 'forget'):
+                    if (memory_copy is not None and op in ('add_fact', 'add_directive', 'forget')
+                            and not memory.unknown_speaker(memory_copy)):
                         emit(dict(event='memory', op=op, text=memory.clean_text(argument)))
                     model = 'local/memory'
                 elif intent is not None:
@@ -335,7 +377,8 @@ class Service:
                         raise TurnError('think', 'llm', str(exc)) from exc
                     # Facts/directives the model picked up are never spoken.
                     answer, learned = memory.split_learned(answer)
-                    if memory_copy not in (None, NO_MEMORY):
+                    if (memory_copy not in (None, NO_MEMORY)
+                            and not memory.unknown_speaker(memory_copy)):
                         for op, value in learned:
                             emit(dict(event='memory', op=op, text=value, learned=True))
                 emit(dict(event='reply', text=answer, model=model))
@@ -457,6 +500,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self._json(404, dict(error='not found'))
 
+    def _voiceprint(self):
+        """Enrollment: raw 16 kHz mono PCM -> int8 voice embedding."""
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        if not self.service.limiter.allow(self._client()):
+            return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
+        if not self.service.embedder.available:
+            return self._json(503, dict(error='speaker model not installed'))
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+        except ValueError:
+            return self._json(411, dict(error='length required'))
+        if not 0 < length <= PCM_RATE * 2 * 30:
+            return self._json(413, dict(error='1 to 30 s of audio'))
+        pcm = self.rfile.read(length)
+        embedding = self.service.embedder.embed(pcm)
+        if embedding is None:
+            return self._json(400, dict(error='audio shorter than 1 s'))
+        return self._json(200, {'print': speaker.encode(embedding),
+                                'seconds': round(len(pcm) / (PCM_RATE * 2), 1)})
+
     def _maintenance(self):
         """Update or reboot CT 107 on request of the Pi (button-confirmed there)."""
         self.close_connection = True
@@ -492,6 +557,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         if url.path == '/v1/maintenance':
             return self._maintenance()
+        if url.path == '/v1/voiceprint':
+            return self._voiceprint()
         if url.path not in ('/v1/turn', '/v1/speak'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
@@ -507,6 +574,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not self.service.ready:
             return self._json(503, dict(error='loading'), {'Retry-After': '5'})
         fmt = urllib.parse.parse_qs(url.query).get('format', ['wav'])[0]
+        transcribe_only = urllib.parse.parse_qs(url.query).get('mode', [''])[0] == 'transcribe'
         if fmt not in FORMATS:
             return self._json(400, dict(error='format must be wav or opus'))
 
@@ -571,7 +639,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             try:
                 self.service.run_turn(body, emit, fmt, text=text, device=device,
-                                      memory_copy=memory_copy)
+                                      memory_copy=memory_copy, transcribe_only=transcribe_only)
             except TurnError as exc:
                 emit(dict(event='error', stage=exc.stage, code=exc.code, message=exc.message))
             except (OSError, TimeoutError):

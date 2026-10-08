@@ -22,6 +22,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | Display | Schritt, Verarbeitungsort SERVER/LOKAL, letzte Antwort, Akku, Temperatur, WLAN, Uhrzeit, Lautstärke, Menü. [Display](docs/display.md) |
 | Alarme | Akku (3 Warnungen, dann Herunterfahren), Stromquelle, Unterspannung, Temperatur, Speicher, CPU, Netzwerk/Internet/Server; abschaltbar. [Architektur](docs/architecture.md#alarme-strom-und-netz) |
 | Gedächtnis | Fakten, Direktiven („nenne Städte nur noch Makropolen“, „installiere die Humor-Erweiterung“) und Verlauf auf einem USB-Stick; ohne Stick kein Gedächtnis; lernt selbst mit. [Gedächtnis](docs/memory.md) |
+| Kennenlernen | Menü „Kennenlernen“: 20 Stimmproben „Proximus“, Fragen zur Person, Stimmprofil; danach erkennt der Server den Bediener an der Stimme und gibt Fremden keine persönlichen Daten. [Kennenlernen](docs/memory.md#kennenlernen-und-stimmerkennung) |
 | Wartung und Netz | Meldet wartende Updates (Pi und CT 107), WLAN-Signal, Latenz, DNS; „Wie ist das Netzwerk?“, „Gibt es Updates?“. [Gedächtnis, Wartung, Netz](docs/memory.md#systemwartung) |
 | Wartungsmodus | Menü „Wartung“ oder Sprache; Updates und Neustarts für Pi und CT 107, jede Aktion mit Taste E bestätigt. [Wartungsmodus](docs/maintenance.md) |
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |

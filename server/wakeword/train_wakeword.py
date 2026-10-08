@@ -282,6 +282,29 @@ def build(args):
               args.negatives // 8, 1, False, rng, rirs, babble, features)
 
 
+def build_real(args):
+    """The operator's own recordings (enrollment, proximus/voice/wake/*.wav):
+    each clip in many augmented variants; every fifth clip is held out."""
+    rng = np.random.default_rng(args.seed)
+    rirs = load_rirs()
+    features = Features()
+    clips = []
+    for path in sorted(Path(args.real).glob('*.wav')):
+        data, rate = read_wav(path)
+        if rate == RATE and len(data):
+            clips.append(data * 32767)
+    if not clips:
+        raise SystemExit(f'no 16 kHz WAV files in {args.real}')
+    test = clips[::5]
+    train = [clip for i, clip in enumerate(clips) if i % 5]
+    for name, chosen, copies in (('positive_real', train, args.copies),
+                                 ('positive_real_test', test, 4)):
+        out = np.stack([features(augment(clip, rng, rirs, [], True))
+                        for clip in chosen for _ in range(copies)]).astype(np.float16)
+        np.save(ROOT / 'features' / f'{name}.npy', out[rng.permutation(len(out))])
+        print(f'{name}: {len(chosen)} clips -> {out.shape}', flush=True)
+
+
 def make_model(torch):
     nn = torch.nn
     return nn.Sequential(nn.Flatten(), nn.Linear(16 * 96, 64), nn.LayerNorm(64), nn.ReLU(),
@@ -314,6 +337,12 @@ def train(args):
     pos = torch.from_numpy(np.load(feat / 'positive_train.npy').astype(np.float32))
     adv = torch.from_numpy(np.load(feat / 'adversarial.npy').astype(np.float32))
     pos_test = torch.from_numpy(np.load(feat / 'positive_test.npy').astype(np.float32))
+    # The operator's voice (build_real), if recorded: half of every positive batch.
+    real = real_test = None
+    if (feat / 'positive_real.npy').is_file():
+        real = torch.from_numpy(np.load(feat / 'positive_real.npy').astype(np.float32))
+        real_test = torch.from_numpy(np.load(feat / 'positive_real_test.npy').astype(np.float32))
+        print(f'real recordings: {len(real)} train, {len(real_test)} test windows', flush=True)
     adv_test = torch.from_numpy(np.load(feat / 'adversarial_test.npy').astype(np.float32))
     acav = np.load(ROOT / 'data' / 'openwakeword_features_ACAV100M_2000_hrs_16bit.npy', mmap_mode='r')
     validation = np.load(ROOT / 'data' / 'validation_set_features.npy', mmap_mode='r')
@@ -352,7 +381,12 @@ def train(args):
         # neighbouring windows overlap and come from the same recording.
         rows = np.sort(rng.choice(acav.shape[0], third, replace=False))
         general = torch.from_numpy(np.asarray(acav[rows], dtype=np.float32))
-        p = pos[torch.randint(len(pos), (third,))]
+        if real is not None:
+            half = third // 2
+            p = torch.cat([pos[torch.randint(len(pos), (third - half,))],
+                           real[torch.randint(len(real), (half,))]])
+        else:
+            p = pos[torch.randint(len(pos), (third,))]
         a = adv[torch.randint(len(adv), (third,))]
         x = torch.cat([p, a, general])
         y = torch.cat([torch.ones(third), torch.zeros(2 * third)])
@@ -365,7 +399,8 @@ def train(args):
         optimizer.step()
         scheduler.step()
         if step % args.eval_every == 0 or step == args.steps:
-            positive = scores(pos_test)
+            # With recordings of the operator, choose by recall on their voice.
+            positive = scores(real_test) if real_test is not None else scores(pos_test)
             adversarial = scores(adv_test)
             val = validation_scores()
             fph = {t: round(false_positives_per_hour(val, t), 2) for t in THRESHOLDS}
@@ -404,7 +439,9 @@ def main():
     global ROOT
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('step', choices=('build', 'train'))
+    parser.add_argument('step', choices=('build', 'real', 'train'))
+    parser.add_argument('--real', type=Path, help='folder with the operator\'s recordings')
+    parser.add_argument('--copies', type=int, default=60, help='augmented variants per real clip')
     parser.add_argument('--positives', type=int, default=12000)
     parser.add_argument('--negatives', type=int, default=10000)
     parser.add_argument('--steps', type=int, default=30000)
@@ -424,7 +461,7 @@ def main():
         if ROOT != data_root and not link.exists():
             ROOT.mkdir(parents=True, exist_ok=True)
             link.symlink_to(data_root / sub)
-    build(args) if args.step == 'build' else train(args)
+    {'build': build, 'real': build_real, 'train': train}[args.step](args)
 
 
 if __name__ == '__main__':

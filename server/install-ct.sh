@@ -13,6 +13,17 @@ if [ "$SRC" != "$B/repo/server" ]; then
   rm -f "$B/repo/src/"*.py
   install -o root -g root -m 0644 "$SRC/../src/"*.py "$B/repo/src/"
 fi
+# Speaker recognition (src/speaker.py): sherpa-onnx and the CAM++ VoxCeleb model.
+"$B/.venv/bin/pip" install -q sherpa-onnx==1.13.8
+SPEAKER="$B/models/speaker/campplus.onnx"
+SPEAKER_SHA=357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b
+if ! echo "$SPEAKER_SHA  $SPEAKER" | sha256sum -c --status 2>/dev/null; then
+  install -d -m 0755 "$B/models/speaker"
+  curl -fsSL -o "$SPEAKER.tmp" \
+    https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx
+  echo "$SPEAKER_SHA  $SPEAKER.tmp" | sha256sum -c --status
+  mv "$SPEAKER.tmp" "$SPEAKER"
+fi
 if git -C "$SRC/.." rev-parse HEAD >/dev/null 2>&1; then
   git -C "$SRC/.." rev-parse HEAD > "$B/DEPLOYED"
 fi

@@ -15,6 +15,7 @@ import wave
 import functools
 from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
 import alarm_audio
+import enroll
 import maintenance
 import memory as memory_core
 import sysmon
@@ -112,6 +113,10 @@ DISPLAY_STATUS_VALUES = {
     'power': {'awake', 'rest', 'sleep'},
     'memory': {'on', 'off'},
     'maint': {'on', 'off'},
+    'enroll': {'intro', 'wake', 'ask', 'process', 'done'},
+    'enroll_rec': {'on', 'off'},
+    'enroll_step': set(range(0, 101)),
+    'enroll_total': set(range(0, 101)),
     'maint_index': set(range(len(maintenance.ITEMS))),
     'maint_confirm': set(maintenance.ITEMS),
     'maint_pi': set(maintenance.STATES),
@@ -160,6 +165,70 @@ def llm_kind(model):
     if model == 'local/intent':
         return 'intent'
     return 'offline' if model.startswith('local/') else 'openrouter'
+
+
+class EnrollIO:
+    """Hardware side of enroll.Session: clips through aplay, arecord, server."""
+
+    def __init__(self, runtime=None):
+        self.runtime = Path(runtime or os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt'))
+        self.output = os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0')
+        self.input = os.environ.get('PTT_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0')
+        self.process = None
+        self.beep_path = self.runtime / 'enroll-beep.wav'
+        enroll.beep_wav(self.beep_path)
+
+    def _run(self, args, timeout):
+        self.process = subprocess.Popen(args, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        start_new_session=True)
+        try:
+            self.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+        finally:
+            self.process = None
+
+    def abort(self):
+        process = self.process
+        if process is not None and process.poll() is None:
+            process.terminate()
+
+    def _play(self, path, timeout=60):
+        self._run(['/usr/bin/aplay', '-q', '-D', self.output, str(path)], timeout)
+
+    def say(self, text):
+        path = self.runtime / 'enroll-say.wav'
+        if not alarm_audio.assemble([text], path):
+            config = load_remote_config()
+            if config is None:
+                return
+            try:
+                from remote_turn import USER_AGENT
+                path.write_bytes(alarm_audio._render(config.base_urls[0], config.token, text,
+                                                     USER_AGENT))
+            except (OSError, RuntimeError, ValueError):
+                return
+        self._play(path)
+
+    def beep(self):
+        self._play(self.beep_path, 5)
+
+    def record(self, path, seconds):
+        self._run(['/usr/bin/arecord', '-q', '-D', self.input, '-t', 'wav', '-f', 'S16_LE',
+                   '-r', '16000', '-c', '1', '-d', str(seconds), str(path)], seconds + 5)
+
+    def transcribe(self, pcm):
+        return enroll.transcribe(pcm)
+
+    def voiceprint(self, pcm):
+        return enroll.voiceprint(pcm)
+
+    def publish(self, stage=None, step=None, total=None, rec=None):
+        publish_display_status(enroll=stage, enroll_step=step if stage else None,
+                               enroll_total=total if stage else None,
+                               enroll_rec=(('on' if rec else 'off') if rec is not None else None)
+                               if stage else None)
 
 
 def publish_display_status(**fields):
@@ -541,6 +610,8 @@ class VoiceController:
         self.turn_transcript = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.maint = maintenance.Mode()
+        self.enroll = None                 # running enroll.Session
+        self.enroll_after_speech = False   # voice command: start once the reply is spoken
         self.alarms.notice_store = maintenance.NoticeStore()
         self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
@@ -673,6 +744,10 @@ class VoiceController:
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
+        if item == 'enroll':
+            self._publish_menu()
+            self._start_enroll()
+            return
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
             return
@@ -873,6 +948,26 @@ class VoiceController:
         self._maint_status = cache
         self._publish_maintenance()
         return out
+
+    # --- Getting to know the operator ------------------------------------
+
+    def _start_enroll(self):
+        if self.enroll is not None:
+            return
+        if not self.memory.present():
+            self._say(enroll.NEED_STICK)
+            return
+        if not self.remote or self.server_state() != 'ok':
+            self._say(enroll.NEED_SERVER)
+            return
+        self.speech.stop()
+        self._release_microphone()
+        if self.menu.open:
+            self.menu.close()
+            self._publish_menu()
+        self.enroll = enroll.Session(self.memory, EnrollIO())
+        event('enroll', state='start')
+        self.enroll.start()
 
     def _check_memory(self):
         """Announce plugging or pulling the memory stick."""
@@ -1098,6 +1193,12 @@ class VoiceController:
 
     def _start_llm(self, text):
         self.turn_transcript = text
+        if enroll.command(intents.normalize(text)):
+            self.enroll_after_speech = True
+            reply = enroll.ANNOUNCE
+            event('llm_response', text=reply, model='local/enroll')
+            self._start_speech(reply, source='assistant', model='local/enroll')
+            return
         op = maintenance.command(intents.normalize(text))
         if op is not None:
             reply = self._maintenance_op(op, speak=False)
@@ -1159,6 +1260,8 @@ class VoiceController:
             self.turn_transcript = text
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
+        elif kind == 'enroll':
+            self.enroll_after_speech = True  # after the server's announcement
         elif kind == 'maintenance':
             if item.get('op') in maintenance.ITEMS + ('enter',):
                 self._maintenance_op(item['op'], speak=False)  # the server's reply speaks
@@ -1225,6 +1328,17 @@ class VoiceController:
         action = self.ptt.update(held, now)
         commands = [name for i, name in enumerate('BCDE', 1)
                     if self.commands[name].update(shim_pressed[i], now) == 'start']
+        if self.enroll is not None and not self.probe:
+            if self.enroll.running:
+                # The session owns microphone and speaker; only B (cancel) counts.
+                if 'B' in commands:
+                    self.enroll.cancel()
+                self.last_activity = now
+                return
+            event('enroll', **(self.enroll.result or {}))
+            self.enroll = None
+            self.ptt.resync(held, now)
+            self.wake_resume_at = now + WAKE_ECHO_PAUSE
         if self.probe:
             if action:
                 event('button', button='PTT', action=action)
@@ -1277,6 +1391,9 @@ class VoiceController:
                 self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
+            if self.enroll_after_speech:
+                self.enroll_after_speech = False
+                self._start_enroll()
             if self.listen_after_greeting:
                 self.listen_after_greeting = False
                 if self._idle() and not self.menu.open:
