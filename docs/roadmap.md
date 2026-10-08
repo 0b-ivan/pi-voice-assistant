@@ -12,7 +12,7 @@ Stand 08.10.2026. Der Funktionsstand steht in der [README](../README.md); hier s
 
 ## Server und Netz
 
-- Zugang über Cloudflare (`servitor.obivan.org`) mit Access-Service-Token als zweite URL; der Client unterstützt das bereits (`ASSISTANT_CF_ACCESS_*`, nur über HTTPS).
+- ~~Zugang über Cloudflare als zweite URL~~: erledigt 08.10.2026, `https://proximus.obivan.org` (nur Bearer-Token). Ein Access-Service-Token bleibt optional möglich (`ASSISTANT_CF_ACCESS_*`).
 - Opus für den Internetweg erst mit schnellerer Dekodierung auf dem Pi (ffmpeg kostet dort ca. 5 s).
 - LLM-Streaming mit satzweiser Synthese prüfen, um die Zeit bis zum ersten Ton weiter zu senken.
 

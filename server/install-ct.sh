@@ -28,6 +28,8 @@ SERVITOR_PORT=8765
 SERVITOR_WORKDIR=/run/servitor-voice
 SERVITOR_MAX_AUDIO_SECONDS=30
 SERVITOR_RATE_LIMIT_PER_MINUTE=20
+# cloudflared on CT 100 (proximus.obivan.org): trust its CF-Connecting-IP.
+SERVITOR_TRUSTED_PROXIES=127.0.0.1,::1,172.22.2.100
 SERVITOR_PIPER_MODEL=$B/tts/de_DE-thorsten_emotional-medium.onnx
 VOSK_MODEL_PATH=$B/models/vosk-model-small-de-0.15
 STT_PROVIDER=vosk
