@@ -58,6 +58,9 @@ class RemoteConfig:
         return [urllib.parse.urlsplit(url).netloc for url in self.base_urls]
 
 
+USER_AGENT = 'pi-voice-assistant/1'
+
+
 def _status_error(response):
     try:
         detail = json.loads(response.read(512) or b'{}').get('error', '')
@@ -173,6 +176,8 @@ class RemoteTurnUplink:
             connection.putrequest('POST', f'{path}/v1/turn?format={self.config.audio_format}',
                                   skip_accept_encoding=True)
             connection.putheader('Authorization', f'Bearer {self.config.token}')
+            # Cloudflare rejects requests without a browser-like or named agent (error 1010).
+            connection.putheader('User-Agent', USER_AGENT)
             # Access credentials only travel encrypted (Internet path), never
             # to a plain-HTTP LAN endpoint configured alongside it.
             if self.config.access_client_id and urllib.parse.urlsplit(url).scheme == 'https':
