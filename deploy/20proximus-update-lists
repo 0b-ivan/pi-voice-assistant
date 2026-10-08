@@ -1,0 +1,3 @@
+// Proximus: refresh package lists daily so pending updates can be reported.
+// Nothing is installed automatically.
+APT::Periodic::Update-Package-Lists "1";

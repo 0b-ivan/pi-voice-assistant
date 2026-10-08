@@ -148,11 +148,20 @@ SNAPSHOT_FIELDS = {
     'battery_pct': (int, 0, 100),
     'swap_used_pct': (int, 0, 100),
     'throttled': (int, 0, 0xFFFFFFFF),
+    'wifi_dbm': (int, -120, 0),
+    'net_ms': (int, 0, 60000),
+    'lan_ms': (int, 0, 60000),
+    'updates': (int, 0, 9999),
+    'updates_security': (int, 0, 9999),
+    'server_updates': (int, 0, 9999),
+    'server_updates_security': (int, 0, 9999),
+    'apt_age_days': (int, 0, 3650),
 }
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
 SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
                    'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off'),
-                   'llm_mode': ('auto', 'local'), 'memory': ('on', 'off')}
+                   'llm_mode': ('auto', 'local'), 'memory': ('on', 'off'),
+                   'dns': ('ok', 'fail')}
 
 
 def sanitize_snapshot(value):
@@ -306,6 +315,11 @@ def status_text(snapshot, processing=False, lore=None):
             parts.append("Sprachkern im Notbetrieb.")
     elif server == 'off' and snapshot.get('wlan') != 'off':
         parts.append("Nur lokaler Betrieb.")
+    if snapshot.get('memory') == 'off':
+        parts.append("Gedächtniskern fehlt.")
+    maintenance = updates_sentence(snapshot, short=True)
+    if maintenance:
+        parts.append(maintenance)
     uptime = snapshot.get('uptime_s')
     if uptime is not None:
         parts.append(f"Laufzeit {_uptime_from_seconds(uptime)}.")
@@ -316,4 +330,83 @@ def status_text(snapshot, processing=False, lore=None):
             parts.append("Maschinengeist ruhig. Befehl erwartet.")
         else:
             parts.append("Befehl erwartet.")
+    return " ".join(parts)
+
+
+WIFI_WEAK_DBM = -78
+SLOW_MS = 400
+STALE_LISTS_DAYS = 7
+
+
+def _wifi_quality(dbm):
+    return 'gut' if dbm >= -67 else 'mittel' if dbm > WIFI_WEAK_DBM else 'schwach'
+
+
+def network_text(snapshot, lore=None):
+    """Spoken network report from the Pi's measurements."""
+    snapshot = sanitize_snapshot(snapshot)
+    lore = lore or snapshot.get('lore', 'off')
+    if snapshot.get('wlan') == 'off':
+        return "WLAN deaktiviert. Keine Netzwerkverbindung."
+    parts = ["Netzwerkbericht." if lore != 'full' else "Abtastung der Noosphäre."]
+    dbm = snapshot.get('wifi_dbm')
+    if dbm is not None:
+        parts.append(f"WLAN-Signal minus {abs(dbm)} dBm, {_wifi_quality(dbm)}.")
+    lan = snapshot.get('lan_ms')
+    server = snapshot.get('server')
+    if server == 'ok':
+        parts.append(f"Server erreichbar, {lan} Millisekunden." if lan is not None
+                     else "Server erreichbar.")
+    elif server == 'down':
+        parts.append("Server nicht erreichbar.")
+    net = snapshot.get('net_ms')
+    if net is None:
+        parts.append("Internet nicht erreichbar.")
+    else:
+        slow = " Verbindung langsam." if net >= SLOW_MS else ""
+        parts.append(f"Internet erreichbar, Latenz {net} Millisekunden.{slow}")
+    if snapshot.get('dns') == 'fail':
+        parts.append("Namensauflösung gestört.")
+    elif snapshot.get('dns') == 'ok':
+        parts.append("Namensauflösung in Ordnung.")
+    if lore == 'full':
+        parts.append("Die Noosphäre ist vermessen.")
+    return " ".join(parts)
+
+
+def _count(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def updates_sentence(snapshot, short=False):
+    """Pending updates of the Pi and the server, or None if nothing is due."""
+    texts = []
+    for prefix, name in (('updates', 'Pi'), ('server_updates', 'Server')):
+        pending = snapshot.get(prefix)
+        if not pending:
+            continue
+        security = snapshot.get(f'{prefix}_security', 0)
+        text = f"{name}: {_count(pending, 'Aktualisierung', 'Aktualisierungen')}"
+        if security:
+            text += f", davon {security} sicherheitsrelevant"
+        texts.append(text)
+    if not texts:
+        return None
+    return ("Wartung empfohlen. " if short else "Systemwartung erforderlich. ") + \
+        ". ".join(texts) + "."
+
+
+def updates_text(snapshot, lore=None):
+    snapshot = sanitize_snapshot(snapshot)
+    lore = lore or snapshot.get('lore', 'off')
+    sentence = updates_sentence(snapshot)
+    if 'updates' not in snapshot and 'server_updates' not in snapshot:
+        return "Wartungsdaten noch nicht erhoben."
+    parts = [sentence or "Keine Aktualisierungen ausstehend."]
+    age = snapshot.get('apt_age_days')
+    if age is not None and age >= STALE_LISTS_DAYS:
+        parts.append(f"Paketlisten sind {age} Tage alt, Angaben unsicher.")
+    if lore == 'full':
+        parts.append("Die Riten der Wartung sind fällig." if sentence
+                     else "Der Maschinengeist ist rein.")
     return " ".join(parts)

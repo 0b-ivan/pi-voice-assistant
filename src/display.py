@@ -167,7 +167,8 @@ def read_status(path=None):
                          ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off')),
-                         ('power', ('awake', 'rest', 'sleep'))):
+                         ('power', ('awake', 'rest', 'sleep')),
+                         ('memory', ('on', 'off'))):
         if value.get(key) in allowed:
             status[key] = value[key]
     return status
@@ -615,8 +616,19 @@ def read_envelope(path=None):
     return None
 
 
+MEMORY_ON = (0, 200, 170)
+
+
 def _draw_header(draw, info):
     draw.text((12, 12), DEVICE_NAME, font=font(17), fill='white')
+    if info.get('memory') in ('on', 'off'):
+        # Memory core: filled diamond with the stick, grey outline without.
+        x = 18 + draw.textlength(DEVICE_NAME, font=font(17))
+        diamond = ((x, 23), (x + 5, 18), (x + 10, 23), (x + 5, 28))
+        if info['memory'] == 'on':
+            draw.polygon(diamond, fill=MEMORY_ON)
+        else:
+            draw.polygon(diamond, outline=(90, 90, 90))
     right_edge = 228
     if info.get('battery'):
         right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
@@ -836,7 +848,7 @@ def deployed_version(path=None):
         return None
 
 
-def system_info_rows(env=None, battery=None):
+def system_info_rows(env=None, battery=None, memory=None):
     env = load_env() if env is None else env
     urls = [u.strip() for u in env.get('ASSISTANT_BASE_URL', '').split(',') if u.strip()]
     server = None
@@ -849,6 +861,7 @@ def system_info_rows(env=None, battery=None):
         ('Laufzeit', uptime_text()),
         ('RAM frei', None if mem is None else f'{mem} MB'),
         ('Server', server or 'keiner'),
+        ('Gedächtnis', {'on': 'verbunden', 'off': 'fehlt'}.get(memory)),
         ('Version', deployed_version()),
     ]
     if battery:
@@ -863,8 +876,8 @@ def render_info(display, rows):
     draw = ImageDraw.Draw(image)
     draw.text((12, 12), 'SYSTEMINFO', font=font(17), fill='white')
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
-    for row, (label, value) in enumerate(rows[:6]):
-        y = 50 + row * 24
+    for row, (label, value) in enumerate(rows[:7]):
+        y = 48 + row * 22
         draw.text((12, y), label, font=font(12), fill=(135, 145, 150))
         _right(draw, 228, y, value, 13, (215, 220, 225))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
@@ -1046,7 +1059,9 @@ def main():
         if status.get('menu_index') is not None and states is not None and is_ready(states):
             if status['menu_page'] == 'info':
                 if info_rows is None or now >= next_info:
-                    info_rows, next_info = system_info_rows(battery=battery), now + 2.0
+                    info_rows, next_info = (system_info_rows(battery=battery,
+                                                             memory=status.get('memory')),
+                                            now + 2.0)
                 screen = ('info', tuple(info_rows))
                 if screen != previous_screen:
                     render_info(display, info_rows)
@@ -1073,6 +1088,7 @@ def main():
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery, volume=volume_overlay(status),
                         alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
+                        memory=status.get('memory'),
                         wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
                               if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
@@ -1083,7 +1099,8 @@ def main():
                 # Temperature and WLAN dBm wobble constantly; at rest they may
                 # lag up to a minute, so the screen is redrawn about once a minute.
                 screen = ('rest', states['network'], info['clock'], shown_info['battery'],
-                          info.get('alarm'), info.get('server'), info.get('wlan'))
+                          info.get('alarm'), info.get('server'), info.get('wlan'),
+                          info.get('memory'))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info)
                     previous_screen = screen

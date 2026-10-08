@@ -7,7 +7,7 @@ Piper reads well (numbers as digits, dates as words).
 """
 import re
 
-from system_status import battery_sentence, status_text
+from system_status import battery_sentence, network_text, status_text, updates_text
 
 WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
 MONTHS = ('Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August',
@@ -31,6 +31,11 @@ _PATTERNS = (
     ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
+    ('network', re.compile(r'\b(netzwerk\w*|netzwerk status|wlan status|wlan signal|'
+                           r'wie ist das netz|wie ist die verbindung|internetverbindung|'
+                           r'verbindungsqualität|noosphäre)\b')),
+    ('updates', re.compile(r'\b(updates?|aktualisierungen|systemwartung|wartung nötig|'
+                           r'sicherheitsupdates?)\b')),
     ('identity', re.compile(r'\b(wer bist du|wie heißt du|was bist du)\b')),
 )
 IDENTITY = {
@@ -87,6 +92,10 @@ def answer(intent, now, snapshot=None, lore=None):
     if intent == 'battery':
         sentence = battery_sentence(snapshot) or "Energiedaten nicht verfügbar."
         return f"{sentence} Heilige Ölung empfohlen." if lore == 'full' else sentence
+    if intent == 'network':
+        return network_text(snapshot, lore=lore)
+    if intent == 'updates':
+        return updates_text(snapshot, lore=lore)
     if intent == 'identity':
         return IDENTITY.get(lore, IDENTITY['off'])
     raise ValueError(f'unknown intent {intent!r}')

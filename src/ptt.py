@@ -16,6 +16,7 @@ import functools
 from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
 import alarm_audio
 import memory as memory_core
+import sysmon
 from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor,
                     memory_phrase)
 from endpoint import Endpointer
@@ -526,6 +527,7 @@ class VoiceController:
         self.memory = memory_core.MemoryCore()
         self.memory_present = self.memory.present()
         self.turn_transcript = None
+        self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.internet_probe = None  # netprobe.InternetProbe
         self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
         self.shutting_down = False
@@ -703,7 +705,11 @@ class VoiceController:
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
                                 lore=self.lore, wlan='on' if self.wlan_on else 'off',
                                 llm_mode=self.llm_mode,
-                                extra=dict(memory='on' if self.memory_present else 'off'))
+                                extra=dict(sysmon.snapshot_fields(
+                                    getattr(self.network_watch, 'result', None)
+                                    if self.wlan_on else None,
+                                    getattr(self.update_watch, 'result', None)),
+                                    memory='on' if self.memory_present else 'off'))
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
@@ -717,6 +723,10 @@ class VoiceController:
                                    server=self.server_state() if links else 'off',
                                    lore=self.lore, internet=internet)
         texts += self._check_memory()
+        if self.power != 'sleep':  # maintenance can wait until someone is around
+            notice = self.alarms.updates_notice(self.status_snapshot(), now, self.lore)
+            if notice:
+                texts.append(notice)
         for text in texts:
             event('alarm', text=text, active=self.alarms.active)
         if self.alarms_enabled:
@@ -1382,6 +1392,8 @@ def main():
         controller.server_probe = ServerProbe(interval=15.0).start()
     if not args.probe:
         controller.internet_probe = InternetProbe().start()
+        controller.network_watch = sysmon.network_watch().start()
+        controller.update_watch = sysmon.update_watch().start()
     battery_monitor = Battery()
     next_power = 0.0
     shim = None

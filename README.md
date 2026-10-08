@@ -21,6 +21,8 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | Bedienung | Taste/SHIM A sprechen, B abbrechen, C/D Lautstärke (2 dB, halten wiederholt), E Status bzw. Menü-OK; PiTFT-Tasten öffnen ein Menü. [Button-Bedienung](docs/button-controls.md) |
 | Display | Schritt, Verarbeitungsort SERVER/LOKAL, letzte Antwort, Akku, Temperatur, WLAN, Uhrzeit, Lautstärke, Menü. [Display](docs/display.md) |
 | Alarme | Akku (3 Warnungen, dann Herunterfahren), Stromquelle, Unterspannung, Temperatur, Speicher, CPU, Netzwerk/Internet/Server; abschaltbar. [Architektur](docs/architecture.md#alarme-strom-und-netz) |
+| Gedächtnis | Fakten, Direktiven („nenne Städte nur noch Makropolen“, „installiere die Humor-Erweiterung“) und Verlauf auf einem USB-Stick; ohne Stick kein Gedächtnis; lernt selbst mit. [Gedächtnis](docs/memory.md) |
+| Wartung und Netz | Meldet wartende Updates (Pi und CT 107), WLAN-Signal, Latenz, DNS; „Wie ist das Netzwerk?“, „Gibt es Updates?“. [Gedächtnis, Wartung, Netz](docs/memory.md#systemwartung) |
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |
 | Hardware | WM8960, SHIM, PiTFT und PiSugar 3 laufen; Akkulaufzeit/Abschaltung und Kamera offen. [Hardware](docs/hardware.md) |
 

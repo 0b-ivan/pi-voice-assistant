@@ -214,6 +214,7 @@ class Service:
         self.config, self.pipeline = config, pipeline
         self.turn_lock = threading.Lock()
         self.limiter = RateLimiter(config.rate_limit)
+        self.updates = None  # sysmon.pending_updates(), refreshed in the background
         self.ready = False
 
     def authorized(self, header):
@@ -414,8 +415,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path.split('?', 1)[0] == '/health':
+        path = self.path.split('?', 1)[0]
+        if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
+        elif path == '/v1/status':
+            # Maintenance data only with the token (the URL is public).
+            if not self.service.authorized(self.headers.get('Authorization')):
+                return self._json(401, dict(error='unauthorized'))
+            state = getattr(self.service.pipeline, 'llm_state', None)
+            self._json(200, dict(updates=self.service.updates,
+                                 llm=state() if state else None))
         else:
             self._json(404, dict(error='not found'))
 
@@ -538,6 +547,15 @@ def main():
               flush=True)
 
     threading.Thread(target=load, daemon=True).start()
+
+    def watch_updates():
+        import sysmon
+        while True:
+            service.updates = sysmon.pending_updates()
+            print(json.dumps(dict(event='updates', **(service.updates or {}))), flush=True)
+            time.sleep(6 * 3600)
+
+    threading.Thread(target=watch_updates, daemon=True).start()
     print(json.dumps(dict(event='listening', bind=config.bind, port=config.port)), flush=True)
     server.serve_forever()
 

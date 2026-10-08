@@ -118,6 +118,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(data), {'ok': True, 'ready': True})
 
+    def test_status_needs_token_and_reports_updates(self):
+        self.service.updates = dict(pending=2, security=1, lists_age_days=0)
+        response, _ = self.request('/v1/status', method='GET', token=None)
+        self.assertEqual(response.status, 401)
+        response, data = self.request('/v1/status', method='GET')
+        self.assertEqual(json.loads(data)['updates'], dict(pending=2, security=1, lists_age_days=0))
+
     def test_turn_requires_token(self):
         response, _ = self.request('/v1/turn', b'\0' * 16000, token='wrong' * 10)
         self.assertEqual(response.status, 401)
