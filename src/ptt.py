@@ -489,6 +489,7 @@ class VoiceController:
         self.battery = None      # power.Battery reading, refreshed by main()
         self.throttled = None
         self.remote_failed = False
+        self.server_probe = None  # netprobe.ServerProbe when a server is configured
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -631,11 +632,17 @@ class VoiceController:
             event('menu', item=item)
         self._publish_menu()
 
-    def status_snapshot(self):
+    def server_state(self):
+        """'off' (none/disabled), 'ok' or 'down'; the probe wins over the last turn."""
         if not self.remote or not self.remote_enabled:
-            server = 'off'
-        else:
-            server = 'down' if self.remote_failed else 'ok'
+            return 'off'
+        probed = getattr(self.server_probe, 'state', None)
+        if probed in ('ok', 'down'):
+            return probed
+        return 'down' if self.remote_failed else 'ok'
+
+    def status_snapshot(self):
+        server = self.server_state()
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
                                 lore=self.lore)
 
@@ -947,11 +954,16 @@ class VoiceController:
         if self.wake is not None and not self.probe:
             self._wake_tick(now)
 
-        if (not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
-                and self.job is None and not self.speech.active
-                and not getattr(self.speech, 'synthesizing', False)
-                and self.recorder.process is None):
-            prepare_vosk_worker()
+        if not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid':
+            # The standby Vosk worker (~190 MB of 415) only serves the local
+            # fallback. While the server answers it is freed: next to Piper,
+            # display and wake word only ~50 MB stayed available.
+            if self.server_state() == 'ok':
+                stop_prepared_vosk()
+            elif (self.job is None and not self.speech.active
+                    and not getattr(self.speech, 'synthesizing', False)
+                    and self.recorder.process is None):
+                prepare_vosk_worker()
 
     def close(self):
         if self.wake is not None:
@@ -1104,6 +1116,9 @@ def main():
                                  remote=uplink_factory is not None,
                                  wake=wake, wake_word=wake_label)
     controller_ref.append(controller)
+    if uplink_factory is not None:
+        from netprobe import ServerProbe
+        controller.server_probe = ServerProbe(interval=15.0).start()
     battery_monitor = Battery()
     next_power = 0.0
     shim = None

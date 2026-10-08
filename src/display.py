@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import time
 
+from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
 
 
@@ -63,7 +64,6 @@ VOICE_COLORS = {
 
 PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/display-progress.json'))
 STATUS_FILE = Path(os.environ.get('PI_DISPLAY_STATUS_FILE', '/run/pi-ptt/display-status.json'))
-SERVER_PROBE_INTERVAL_SECONDS = 10.0
 VOLUME_SHOW_SECONDS = 2.5
 MENU_LABELS = (
     ('info', 'Systeminfo'),
@@ -77,7 +77,6 @@ MENU_LABELS = (
 )
 DEPLOYED_FILE = Path('/opt/pi-voice-assistant/src/DEPLOYED')
 WAKE_WORD_LABELS = {'hey_jarvis': 'Hey Jarvis', 'hey_servitor': 'Hey Servitor'}
-SERVER_PROBE_TIMEOUT_SECONDS = 0.5
 ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
 SERVER_FOOTER = {
     'ok': ('CT107 OK', (120, 220, 160)),
@@ -190,42 +189,6 @@ def last_answer_text(status):
         source = 'Server'
     seconds = f'{latency / 1000:.1f}'.replace('.', ',')
     return f'Zuletzt {seconds} s · {source}'
-
-
-def server_state(env=None):
-    """'off' without ASSISTANT_BASE_URL, else 'ok'/'down' from GET /health."""
-    import urllib.request
-    env = load_env() if env is None else env
-    urls = [u.strip().rstrip('/') for u in env.get('ASSISTANT_BASE_URL', '').split(',')]
-    urls = [u for u in urls if u]
-    if not urls:
-        return 'off'
-    try:
-        with urllib.request.urlopen(urls[0] + '/health',
-                                    timeout=SERVER_PROBE_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read(256))
-        return 'ok' if isinstance(payload, dict) and payload.get('ready') is True else 'down'
-    except (OSError, ValueError):
-        return 'down'
-
-
-class ServerProbe:
-    """Polls /health in a daemon thread so a slow server never stalls frames."""
-    def __init__(self, interval=SERVER_PROBE_INTERVAL_SECONDS, probe=None):
-        import threading
-        self.interval = interval
-        self.probe = probe or server_state
-        self.state = None
-        self._thread = threading.Thread(target=self._run, name='server-probe', daemon=True)
-
-    def start(self):
-        self._thread.start()
-        return self
-
-    def _run(self):
-        while True:
-            self.state = self.probe()
-            time.sleep(self.interval)
 
 
 def power_line(battery, throttled):

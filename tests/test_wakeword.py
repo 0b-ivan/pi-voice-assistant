@@ -281,5 +281,36 @@ class ControllerWakeTests(unittest.TestCase):
         self.assertEqual((status['opt_wake'], status['wake_word']), ('off', 'hey_jarvis'))
 
 
+
+class StandbyVoskTests(unittest.TestCase):
+    def controller(self, state):
+        recorder, speech = Mock(), Mock()
+        recorder.process = None
+        speech.active = False
+        speech.synthesizing = False
+        speech.poll.return_value = None
+        c = VoiceController(recorder, speech, .04, 30, remote=True)
+        c.server_probe = Mock(state=state)
+        return c
+
+    def test_standby_vosk_only_while_server_is_down(self):
+        with patch.dict(os.environ, {'PTT_MEMORY_MODE': 'hybrid'}), \
+                patch('ptt.prepare_vosk_worker') as prepare, \
+                patch('ptt.stop_prepared_vosk') as stop, redirect_stdout(StringIO()):
+            self.controller('ok').tick(False, (False,) * 5, 1.0)
+            stop.assert_called()
+            prepare.assert_not_called()
+            stop.reset_mock()
+            self.controller('down').tick(False, (False,) * 5, 1.0)
+            prepare.assert_called_once()
+            stop.assert_not_called()
+
+    def test_server_state_prefers_probe(self):
+        c = self.controller('down')
+        self.assertEqual(c.server_state(), 'down')
+        c.remote_enabled = False
+        self.assertEqual(c.server_state(), 'off')
+
+
 if __name__ == '__main__':
     unittest.main()
