@@ -214,9 +214,30 @@ class EnrollIO:
     def beep(self):
         self._play(self.beep_path, 5)
 
-    def record(self, path, seconds):
-        self._run(['/usr/bin/arecord', '-q', '-D', self.input, '-t', 'wav', '-f', 'S16_LE',
-                   '-r', '16000', '-c', '1', '-d', str(seconds), str(path)], seconds + 5)
+    def record(self, path, seconds, attempts=6):
+        """Record; while the capture device is still busy (e.g. the wake-word
+        listener releasing it), wait and try again instead of losing the take."""
+        for attempt in range(attempts):
+            started = time.monotonic()
+            self.process = subprocess.Popen(
+                ['/usr/bin/arecord', '-q', '-D', self.input, '-t', 'wav', '-f', 'S16_LE',
+                 '-r', '16000', '-c', '1', '-d', str(seconds), str(path)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                start_new_session=True)
+            try:
+                _, error = self.process.communicate(timeout=seconds + 5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                _, error = self.process.communicate()
+            code, self.process = self.process.returncode, None
+            if code == 0 and Path(path).is_file():
+                return True
+            if code is not None and code < 0:  # terminated by abort()
+                return False
+            event('enroll_record_error', attempt=attempt + 1, code=code,
+                  message=(error or b'').decode(errors='replace').strip()[:200])
+            time.sleep(max(0.0, 0.5 - (time.monotonic() - started)))
+        return False
 
     def transcribe(self, pcm):
         return enroll.transcribe(pcm)

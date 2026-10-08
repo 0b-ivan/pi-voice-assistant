@@ -45,6 +45,36 @@ class FakeIO:
         self.states.append(state)
 
 
+class RecordRetryTests(unittest.TestCase):
+    def test_busy_microphone_is_retried(self):
+        import os
+        from unittest.mock import patch
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        import ptt
+
+        calls = []
+
+        class Proc:
+            def __init__(self, args, **kwargs):
+                calls.append(args)
+                self.returncode = 1 if len(calls) < 3 else 0
+                if self.returncode == 0:
+                    Path(args[-1]).write_bytes(b"RIFF")
+
+            def communicate(self, timeout=None):
+                return b"", b"audio open error: Device or resource busy"
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, {"PTT_RUNTIME_DIR": tmp}), \
+                patch.object(ptt.subprocess, "Popen", Proc), patch.object(ptt, "event") as log, \
+                patch.object(ptt.time, "sleep"):
+            io = ptt.EnrollIO()
+            self.assertTrue(io.record(Path(tmp) / "x.wav", 2))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(log.call_count, 2)
+        self.assertIn("busy", log.call_args.kwargs["message"])
+
+
 class SessionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -52,6 +52,7 @@ CANCELLED = "Kennenlern-Sitzung abgebrochen."
 NEED_STICK = "Kennenlernen braucht den Gedächtniskern. Bitte Stick anschließen."
 NEED_SERVER = "Kennenlernen braucht den Server. Verbindung prüfen."
 NO_VOICEPRINT = "Stimmprofil konnte nicht erstellt werden."
+FAILED = "Kennenlern-Sitzung abgebrochen. Mikrofon nicht verfügbar."
 _COMMAND = re.compile(r'\b(lerne? mich kennen|kennenlernen|kennen lernen|trainingsmodus|'
                       r'stimmtraining|stimmprofil (anlegen|erstellen))\b')
 _NAME_PREFIX = re.compile(r'^(?:du kannst mich |nenn(?:e)? mich |ich heiße |mein name ist |'
@@ -69,7 +70,7 @@ def done_text(facts, voiceprint):
 
 def phrases():
     """Fixed sentences, for prerecorded clips."""
-    texts = [ANNOUNCE, INTRO, QUESTIONS_INTRO, CANCELLED, NEED_STICK, NEED_SERVER, NO_VOICEPRINT,
+    texts = [ANNOUNCE, INTRO, QUESTIONS_INTRO, CANCELLED, FAILED, NEED_STICK, NEED_SERVER, NO_VOICEPRINT,
              *WAKE_HINTS.values(), *(q for _, q, _, _ in QUESTIONS)]
     texts += [done_text(n, v) for n in (2,) for v in (True, False)]
     return texts
@@ -136,6 +137,7 @@ class Session:
             self.result = dict(cancelled=True)
         except Exception as exc:  # never take the voice service down
             self.io.publish(stage=None)
+            self.io.say(FAILED)
             self.result = dict(error=str(exc))
 
     def run(self):
@@ -153,7 +155,9 @@ class Session:
                 self.io.say(WAKE_HINTS[index])
             self.io.beep()
             self.io.publish(stage='wake', step=index + 1, total=WAKE_COUNT, rec=True)
-            self.io.record(wake_dir / f'{stamp}-{index + 1:02d}.wav', WAKE_SECONDS)
+            if self.io.record(wake_dir / f'{stamp}-{index + 1:02d}.wav', WAKE_SECONDS) is False:
+                self._check()
+                raise RuntimeError('microphone unavailable')
             self.io.publish(stage='wake', step=index + 1, total=WAKE_COUNT, rec=False)
         self._check()
         self.io.say(QUESTIONS_INTRO)
@@ -165,7 +169,9 @@ class Session:
             self.io.beep()
             path = answer_dir / f'{stamp}-{key}.wav'
             self.io.publish(stage='ask', step=number, total=len(QUESTIONS), rec=True)
-            self.io.record(path, ANSWER_SECONDS)
+            if self.io.record(path, ANSWER_SECONDS) is False:
+                self._check()
+                raise RuntimeError('microphone unavailable')
             self.io.publish(stage='ask', step=number, total=len(QUESTIONS), rec=False)
             self._check()
             pcm = pcm_of(path)
