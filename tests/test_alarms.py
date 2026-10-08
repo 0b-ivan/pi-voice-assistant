@@ -195,6 +195,19 @@ class ControllerAlarmTests(unittest.TestCase):
             self.assertFalse(self.c.set_wlan(True))
         self.assertFalse(self.c.wlan_on)
 
+    def test_no_link_alarms_while_wlan_reconnects(self):
+        self.c.battery = None
+        self.c.server_state = lambda: 'down'
+        self.c.internet_probe = Mock(state=False)
+        with patch('wlan.set_wlan'), patch('ptt.time.monotonic', return_value=1000.0):
+            self.assertTrue(self.c.set_wlan(True))
+        for now in (1010.0, 1020.0, 1030.0, 1050.0):
+            self.c.check_alarms(now, network=False)
+        self.assertEqual(self.c.alarms.active, [])
+        for now in (1070.0, 1080.0):
+            self.c.check_alarms(now, network=True)
+        self.assertEqual(self.c.alarms.active, ['internet', 'server'])
+
 
 class ShutdownAndModeTests(ControllerAlarmTests):
     def test_battery_shutdown_powers_off(self):

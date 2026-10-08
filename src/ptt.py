@@ -120,6 +120,7 @@ LED_LOCAL = (255, 120, 0)        # processing on the Pi (display: LOKAL, amber)
 LED_SPEAKING = (255, 100, 0)
 LED_MENU = (150, 0, 255)
 LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
+WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
 LED_ALARM = (255, 60, 0)         # slow blink while a critical alarm is active
 CRITICAL_ALARMS = {'undervoltage', 'battery', 'memory', 'temperature'}
 # Holding C/D repeats the volume step after a short pause.
@@ -504,6 +505,7 @@ class VoiceController:
         self.alarms_enabled = os.environ.get('PTT_ALARMS', '1') != '0'
         self.alarm_queue = []    # sentences waiting until the unit is idle
         self.wlan_on = True
+        self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
         self.internet_probe = None  # netprobe.InternetProbe
         self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
         self.shutting_down = False
@@ -682,13 +684,15 @@ class VoiceController:
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
-        if network is None and self.wlan_on:
+        # WLAN off, or just switched back on and still connecting: links unknown.
+        links = self.wlan_on and now >= self.link_grace_until
+        if network is None and links:
             network = network_up()
-        internet = getattr(self.internet_probe, 'state', None) if self.wlan_on else None
+        internet = getattr(self.internet_probe, 'state', None) if links else None
         texts = self.alarms.update(self.status_snapshot(), now,
-                                   network=network if self.wlan_on else None,
-                                   server=self.server_state(), lore=self.lore,
-                                   internet=internet)
+                                   network=network if links else None,
+                                   server=self.server_state() if links else 'off',
+                                   lore=self.lore, internet=internet)
         for text in texts:
             event('alarm', text=text, active=self.alarms.active)
         if self.alarms_enabled:
@@ -748,6 +752,8 @@ class VoiceController:
             event('wlan_error', message=str(exc))
             return False
         self.wlan_on = on
+        if on:
+            self.link_grace_until = time.monotonic() + WLAN_GRACE_SECONDS
         if self.remote:
             self.recorder.uplink_enabled = on and self.remote_enabled
         event('wlan', value='on' if on else 'off')

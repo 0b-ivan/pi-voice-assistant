@@ -128,7 +128,7 @@ Neben den Tasten startet **„Hey Jarvis“** eine Anfrage (vortrainiertes openW
 | Akku (ohne Netzteil) | Warnung 1/2/3 bei 15/10/6 % (direkt auf die passende Stufe, ein Satz); nach der letzten **Herunterfahren nach 60 s** (`systemctl poweroff`, polkit-Regel [`deploy/50-pi-voice-poweroff.rules`](../deploy/50-pi-voice-poweroff.rules)); Netzteil anstecken bricht ab. Läuft auch bei stummen Alarmen. |
 | Stromquelle wechselt | „Netzbetrieb. Energiespeicher N Prozent.“ bzw. „Akkubetrieb. …“ |
 | Unterspannung, Temperatur ≥ 75 °C, RAM ≤ 8 % frei oder Swap ≥ 85 %, Last ≥ 90 % über eine Minute | Alarm mit Abstand zwischen Ein- und Ausschaltschwelle |
-| Netzwerk, Internet (openrouter.ai/1.1.1.1:443 alle 30 s), Server | nach zwei Fehlprüfungen Alarm, Entwarnung bei Rückkehr; bei Netzausfall keine Folgealarme |
+| Netzwerk, Internet (openrouter.ai/1.1.1.1:443 alle 30 s), Server | nach zwei Fehlprüfungen Alarm, Entwarnung bei Rückkehr; bei Netzausfall keine Folgealarme; nach dem Einschalten des WLAN 60 s Schonfrist |
 
 **Vorgefertigte Ansagen:** Alarme werden nicht live synthetisiert. [`src/alarm_audio.py`](../src/alarm_audio.py) zerlegt jeden Alarmsatz an den Zahlen in Bausteine („Warnung“, „1“, „von“, „3“, „Energiespeicher bei“, „15“, „Prozent. Netzteil anschließen.“). Einmal nach jedem Deploy rendert
 
