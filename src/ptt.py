@@ -767,8 +767,7 @@ class VoiceController:
         snapshot = self.status_snapshot() if self.maint.active else {}
         publish_display_status(upd_pi=snapshot.get('updates'),
                                upd_pi_sec=snapshot.get('updates_security'),
-                               upd_srv=snapshot.get('server_updates'),
-                               upd_srv_sec=snapshot.get('server_updates_security'))
+                               upd_srv=None, upd_srv_sec=None)
         publish_display_status(maint='on' if self.maint.active else 'off',
                                maint_index=self.maint.index if self.maint.active else None,
                                maint_confirm=self.maint.pending,
@@ -797,6 +796,8 @@ class VoiceController:
         elif op == 'exit':
             self.maint.exit()
             text = maintenance.EXIT_TEXT
+        elif op in maintenance.DENIED:
+            text = maintenance.DENIED_TEXT
         elif not self.maint.active:
             text = maintenance.NEED_MODE_TEXT
         else:

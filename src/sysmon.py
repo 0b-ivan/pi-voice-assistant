@@ -156,7 +156,8 @@ class Watch:
 
 def update_watch(interval=6 * 3600):
     def measure():
-        return dict(pi=pending_updates(), server=server_status())
+        # Only the Pi: the server is maintained by hand and not Proximus' concern.
+        return dict(pi=pending_updates())
     return Watch(measure, interval, first_delay=120.0, name='update-watch')
 
 

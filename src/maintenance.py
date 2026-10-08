@@ -16,15 +16,18 @@ from pathlib import Path
 
 DIR = Path('/run/proximus-maintenance')
 ACTIONS = ('update', 'reboot')
+# The unit may restart its server but never update it (operator decision,
+# 08.10.2026): the backend is maintained by hand.
+SERVER_ACTIONS = ('reboot',)
+DENIED = ('update_server',)
 TARGETS = ('pi', 'server')
 CONFIRM_SECONDS = 20.0
 IDLE_EXIT_SECONDS = 600.0     # leave maintenance mode after 10 min without input
 SERVER_MIN_INTERVAL = 300.0   # server side: at most one request per 5 min
 # Maintenance list on the display, in order.
-ITEMS = ('update_pi', 'update_server', 'reboot_pi', 'reboot_server', 'exit')
+ITEMS = ('update_pi', 'reboot_pi', 'reboot_server', 'exit')
 LABELS = {
     'update_pi': 'Pi aktualisieren',
-    'update_server': 'Server aktualisieren',
     'reboot_pi': 'Pi neu starten',
     'reboot_server': 'Server neu starten',
     'exit': 'Wartung beenden',
@@ -103,7 +106,8 @@ _EXIT = re.compile(r'\b(wartung(smodus)? (beenden|verlassen|aus)|beende (die )?w
 
 
 def command(text):
-    """'enter', 'exit', 'update_pi', 'update_server', 'reboot_pi', 'reboot_server' or None."""
+    """'enter', 'exit', 'update_pi', 'reboot_pi', 'reboot_server', or 'update_server'
+    (recognized only to refuse it), else None."""
     text = str(text).lower().strip()
     if not text or len(text.split()) > 10:
         return None
@@ -246,16 +250,18 @@ def server_status(env=None, opener=None):
 ENTER_TEXT = "Wartungsmodus aktiv. Aktion wählen, Bestätigung mit Taste E."
 EXIT_TEXT = "Wartungsmodus beendet."
 NEED_MODE_TEXT = "Erst Wartungsmodus aktivieren."
+DENIED_TEXT = ("Aktualisierung des Servers ist dieser Einheit nicht gestattet. "
+               "Der Server wird manuell gewartet.")
 CANCEL_TEXT = "Abgebrochen."
 
 
 def phrases():
     """Every fixed maintenance sentence, for prerecorded clips."""
-    texts = [ENTER_TEXT, EXIT_TEXT, NEED_MODE_TEXT, CANCEL_TEXT,
+    texts = [ENTER_TEXT, EXIT_TEXT, NEED_MODE_TEXT, CANCEL_TEXT, DENIED_TEXT,
              *START_TEXT.values(), *FAIL_TEXT.values()]
     for item in ITEMS[:-1]:
         texts += [confirm_prompt(item, dict(updates=2, server_updates=2)), confirm_prompt(item)]
-    for target in TARGETS:
+    for target in ('pi',):  # only the Pi is ever updated
         for lore in ('off', 'full'):
             texts += [result_text(target, dict(state='done', upgraded=n, reboot=reboot), lore)
                       for reboot in (True, False) for n in (0, 2)]
@@ -265,7 +271,6 @@ def phrases():
 
 START_TEXT = {
     ('update', 'pi'): "Aktualisierung des Pi gestartet. Das dauert einige Minuten.",
-    ('update', 'server'): "Aktualisierung des Servers gestartet.",
     ('reboot', 'pi'): "Pi startet neu. Bis gleich.",
     ('reboot', 'server'): "Server startet neu. Antworten kommen so lange lokal.",
 }

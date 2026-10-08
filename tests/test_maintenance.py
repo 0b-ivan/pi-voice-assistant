@@ -131,6 +131,15 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.c.maint.active)
         self.assertEqual(self.status()["maint"], "off")
 
+    def test_server_update_is_refused_even_in_maintenance(self):
+        self.c._maintenance_op("enter")
+        with patch.object(maintenance, "request_server") as server:
+            text = self.c._maintenance_op("update_server", speak=False)
+        self.assertIn("nicht gestattet", text)
+        self.assertIsNone(self.c.maint.pending)
+        server.assert_not_called()
+        self.assertNotIn("update_server", maintenance.ITEMS)
+
     def test_b_cancels_then_leaves(self):
         self.c._maintenance_op("enter")
         self.c._maintenance_op("reboot_server", speak=False)
@@ -144,7 +153,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_server_unreachable_is_reported(self):
         self.c._maintenance_op("enter")
-        self.c._maintenance_op("update_server", speak=False)
+        self.c._maintenance_op("reboot_server", speak=False)
         with patch.object(maintenance, "request_server", return_value="unreachable"):
             self.c._maintenance_buttons(confirm=True, cancel=False)
         self.assertIn("nur im lokalen netz", self.said[-1].lower())
@@ -169,7 +178,7 @@ class ControllerTests(unittest.TestCase):
 
         capture = Capture()
         display.render_maintenance(capture, dict(maint="on", maint_index=1,
-                                                 maint_confirm="update_server", upd_pi=0,
+                                                 maint_confirm="reboot_server", upd_pi=0,
                                                  upd_srv=40, upd_srv_sec=21))
         self.assertIsNotNone(capture.picture.getbbox())
 
@@ -203,12 +212,14 @@ class ServerTests(unittest.TestCase):
         return response.status
 
     def test_maintenance_endpoint(self):
-        self.assertEqual(self.post(dict(action="update"), token="wrong" * 10), 401)
-        self.assertEqual(self.post(dict(action="update")), 503)    # worker not installed
+        self.assertEqual(self.post(dict(action="reboot"), token="wrong" * 10), 401)
+        self.assertEqual(self.post(dict(action="reboot")), 503)    # worker not installed
         (self.service.maintenance_dir / "requests").mkdir(parents=True)
         self.assertEqual(self.post(dict(action="shell")), 400)
-        self.assertEqual(self.post(dict(action="update")), 202)
-        self.assertTrue((self.service.maintenance_dir / "requests" / "update").exists())
+        self.assertEqual(self.post(dict(action="update")), 403)    # never update the server
+        self.assertFalse((self.service.maintenance_dir / "requests" / "update").exists())
+        self.assertEqual(self.post(dict(action="reboot")), 202)
+        self.assertTrue((self.service.maintenance_dir / "requests" / "reboot").exists())
         self.assertEqual(self.post(dict(action="reboot")), 429)    # at most every 5 min
         self.service.config.trusted_proxies = {"127.0.0.1"}        # as if through the tunnel
         self.service.maintenance_at = None

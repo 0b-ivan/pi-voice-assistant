@@ -783,8 +783,8 @@ def _menu_value(item, status):
     return ''
 
 
-MAINT_ITEMS = ('update_pi', 'update_server', 'reboot_pi', 'reboot_server', 'exit')
-MAINT_LABELS = ('Pi aktualisieren', 'Server aktualisieren', 'Pi neu starten', 'Server neu starten',
+MAINT_ITEMS = ('update_pi', 'reboot_pi', 'reboot_server', 'exit')
+MAINT_LABELS = ('Pi aktualisieren', 'Pi neu starten', 'Server neu starten',
                 'Wartung beenden')
 MAINT_STATES = ('running', 'done', 'failed', 'rebooting')
 MAINT_STATE_TEXT = {'running': ('läuft …', (255, 190, 60)), 'done': ('fertig', (120, 220, 160)),
@@ -811,15 +811,18 @@ def render_maintenance(display, status, info=None):
     if info.get('battery'):
         draw_battery(draw, 228, 14, info['battery'])
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
-    for row, (name, prefix) in enumerate((('Pi', 'pi'), ('Server', 'srv'))):
-        y = 46 + row * 18
-        draw.text((12, y), name, font=font(12), fill=(135, 145, 150))
-        state = status.get('maint_pi' if prefix == 'pi' else 'maint_server')
-        if state in ('running', 'rebooting'):
-            text, color = MAINT_STATE_TEXT[state]
-        else:
-            text, color = _updates_line(status.get(f'upd_{prefix}'), status.get(f'upd_{prefix}_sec'))
-        _right(draw, 228, y, text, 12, color)
+    # Pending updates of the Pi only; the server shows up just while it restarts.
+    draw.text((12, 46), 'Pi', font=font(12), fill=(135, 145, 150))
+    state = status.get('maint_pi')
+    if state in ('running', 'rebooting'):
+        text, color = MAINT_STATE_TEXT[state]
+    else:
+        text, color = _updates_line(status.get('upd_pi'), status.get('upd_pi_sec'))
+    _right(draw, 228, 46, text, 12, color)
+    if status.get('maint_server') == 'rebooting':
+        draw.text((12, 64), 'Server', font=font(12), fill=(135, 145, 150))
+        text, color = MAINT_STATE_TEXT['rebooting']
+        _right(draw, 228, 64, text, 12, color)
     draw.line((12, 84, 228, 84), fill=(65, 65, 65))
     selected = status.get('maint_index', 0)
     for row, label in enumerate(MAINT_LABELS):

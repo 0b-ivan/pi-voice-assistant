@@ -245,6 +245,8 @@ class Service:
             return maintenance.ENTER_TEXT
         if op == 'exit':
             return maintenance.EXIT_TEXT
+        if op in maintenance.DENIED:
+            return maintenance.DENIED_TEXT
         if not active:
             return maintenance.NEED_MODE_TEXT
         return maintenance.confirm_prompt(op, device)
@@ -471,6 +473,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         action = data.get('action') if isinstance(data, dict) else None
         if action not in maintenance.ACTIONS:
             return self._json(400, dict(error='action must be update or reboot'))
+        if action not in maintenance.SERVER_ACTIONS:
+            # The unit must never update its own backend.
+            return self._json(403, dict(error=f'{action} of the server is not allowed'))
         if not maintenance.installed(self.service.maintenance_dir):
             return self._json(503, dict(error='maintenance worker not installed'))
         now = time.monotonic()
@@ -608,14 +613,6 @@ def main():
 
     threading.Thread(target=load, daemon=True).start()
 
-    def watch_updates():
-        import sysmon
-        while True:
-            service.updates = sysmon.pending_updates()
-            print(json.dumps(dict(event='updates', **(service.updates or {}))), flush=True)
-            time.sleep(6 * 3600)
-
-    threading.Thread(target=watch_updates, daemon=True).start()
     print(json.dumps(dict(event='listening', bind=config.bind, port=config.port)), flush=True)
     server.serve_forever()
 

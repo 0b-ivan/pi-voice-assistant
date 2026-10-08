@@ -39,7 +39,7 @@ ssh -t obivan@172.22.9.128 'sudo mkfs.ext4 -F -L PROXIMUS /dev/sda1 \
 
 ## Systemwartung
 
-[`src/sysmon.py`](../src/sysmon.py) zählt alle 6 h (erstmals 2 min nach dem Start) wartende Pakete mit `apt-get -s upgrade` (Simulation, ohne root, mit `nice`), davon die aus einer `-security`-Quelle. Der Server (CT 107) macht dasselbe und meldet es über `GET /v1/status` (nur mit Token; `/health` bleibt ohne Details, weil die URL öffentlich ist). Proximus sagt neue Updates an und erinnert höchstens einmal am Tag, nie im Schlaf; die Frage „Gibt es Updates?“ und der Statusbericht nennen sie auch. Installiert wird nichts.
+[`src/sysmon.py`](../src/sysmon.py) zählt alle 6 h (erstmals 2 min nach dem Start) wartende Pakete mit `apt-get -s upgrade` (Simulation, ohne root, mit `nice`), davon die aus einer `-security`-Quelle. Nur der Pi wird überwacht; den Server wartet der Bediener selbst, Proximus fragt dessen Updates nicht ab. Proximus sagt neue Updates an und erinnert höchstens einmal am Tag, nie im Schlaf; die Frage „Gibt es Updates?“ und der Statusbericht nennen sie auch. Installiert wird nur im [Wartungsmodus](maintenance.md).
 
 Die Zahlen sind nur so aktuell wie die Paketlisten. `apt-daily` aktualisiert sie nur mit `APT::Periodic::Update-Package-Lists "1"` ([`deploy/20proximus-update-lists`](../deploy/20proximus-update-lists)); auf CT 107 ist das seit 08.10.2026 gesetzt, auf dem Pi mit dem Befehl oben. Sind die Listen älter als 7 Tage, sagt Proximus das dazu.
 
