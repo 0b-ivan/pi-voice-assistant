@@ -564,6 +564,61 @@ def _right(draw, x_right, y, text, size, fill):
     draw.text((x_right - width, y), text, font=font(size), fill=fill)
 
 
+ENVELOPE_FILE = Path(os.environ.get('PI_DISPLAY_ENVELOPE_FILE', '/run/pi-ptt/speech-envelope.json'))
+SKULL_STATES = ('BEREIT', 'AUSGABE', 'SPRECHEN')
+
+
+def read_envelope(path=None):
+    """Loudness curve of the reply being played (written by ptt.py)."""
+    try:
+        value = json.loads((ENVELOPE_FILE if path is None else Path(path)).read_text())
+        levels = value['levels']
+        if (isinstance(value['start'], (int, float)) and isinstance(value['step'], (int, float))
+                and value['step'] > 0 and isinstance(levels, list)
+                and all(isinstance(v, int) and 0 <= v <= 100 for v in levels)):
+            return dict(start=float(value['start']), step=float(value['step']), levels=levels)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def _draw_header(draw, info):
+    draw.text((12, 12), DEVICE_NAME, font=font(17), fill='white')
+    right_edge = 228
+    if info.get('battery'):
+        right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
+    temp = info.get('temp_c')
+    if temp is not None:
+        _right(draw, right_edge, 15, f'{temp}°C', 12,
+               (255, 120, 90) if temp >= 70 else (145, 155, 165))
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+
+
+def render_skull(display, skull, state, network, level, info=None):
+    """Idle and speaking: the servo skull with a glowing eye."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    image.paste(skull.frame(level), ((WIDTH - skull.base.width) // 2, 42))
+    if state == 'BEREIT':
+        if info.get('alarm'):
+            text, color = ALARMS[info['alarm']][1], (255, 70, 70)
+        elif info.get('last'):
+            text, color = info['last'], (145, 155, 165)
+        elif info.get('wake'):
+            text, color = f"„{info['wake']}“ oder Taste", (145, 155, 165)
+        else:
+            text, color = 'Zum Sprechen halten', (145, 155, 165)
+    else:
+        text, color = 'AUSGABE', VOICE_COLORS['AUSGABE']
+    width = draw.textlength(text, font=font(11))
+    draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=color)
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
+
+
 def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=None):
     """info: route, server ('ok'/'down'/'off'), temp_c, wifi_dbm, clock, last."""
     from PIL import Image, ImageDraw
@@ -573,15 +628,7 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
     description, icon, step = details or STATE_DETAILS.get(state, ('', 'gear', 0))
     color = VOICE_COLORS.get(state, (220, 220, 220))
     idle = state in ('BEREIT', 'FEHLER')
-    draw.text((12, 12), DEVICE_NAME, font=font(17), fill='white')
-    right_edge = 228
-    if info.get('battery'):
-        right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
-    temp = info.get('temp_c')
-    if temp is not None:
-        _right(draw, right_edge, 15, f'{temp}°C', 12,
-               (255, 120, 90) if temp >= 70 else (145, 155, 165))
-    draw.line((12, 40, 228, 40), fill=(65,65,65))
+    _draw_header(draw, info)
     # Where the work happens: during a turn as published by ptt.py, when idle
     # where the next turn will go (server reachable or local fallback).
     if idle:
@@ -818,6 +865,12 @@ def main():
 
     display = PartialDisplay(display)
     screen_lit = True
+    try:
+        from skull import Skull, idle_level, speaking_level
+        skull = Skull()
+    except Exception:  # never let the artwork take the status display down
+        skull = None
+    envelope, envelope_mtime = None, None
     info_rows, next_info = None, 0.0
     states = None
     server = ServerProbe().start()
@@ -923,12 +976,30 @@ def main():
             # Redraw only when something visible changes: the averaged battery
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))
-            screen = ('voice', current, states['network'], tick,
-                      tuple(sorted(shown_info.items())))
-            if screen != previous_screen:
-                render_voice(display, shown, states['network'],
-                             (description, icon, step), tick, elapsed, info)
-                previous_screen = screen
+            if skull is not None and shown in SKULL_STATES and info.get('volume') is None:
+                if shown == 'BEREIT':
+                    level = idle_level(now)
+                else:
+                    try:
+                        mtime = ENVELOPE_FILE.stat().st_mtime
+                    except OSError:
+                        mtime = None
+                    if mtime != envelope_mtime:
+                        envelope, envelope_mtime = read_envelope(), mtime
+                    level = speaking_level(time.time(), envelope)
+                eye = round(level * 11)  # same steps as the precomputed eye frames
+                screen = ('skull', shown, states['network'], eye,
+                          tuple(sorted(shown_info.items())))
+                if screen != previous_screen:
+                    render_skull(display, skull, shown, states['network'], level, info)
+                    previous_screen = screen
+            else:
+                screen = ('voice', current, states['network'], tick,
+                          tuple(sorted(shown_info.items())))
+                if screen != previous_screen:
+                    render_voice(display, shown, states['network'],
+                                 (description, icon, step), tick, elapsed, info)
+                    previous_screen = screen
 
         time.sleep(EVENT_INTERVAL_SECONDS)
 
