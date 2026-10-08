@@ -288,6 +288,9 @@ def make_model(torch):
                          nn.Linear(64, 64), nn.LayerNorm(64), nn.ReLU(), nn.Linear(64, 1))
 
 
+THRESHOLDS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.98, 0.99)
+
+
 def false_positives_per_hour(scores, threshold, patience=2, cooldown_blocks=25):
     """Detections as on the Pi (Detector): N consecutive 80 ms blocks >= threshold."""
     streak, quiet, hits = 0, 0, 0
@@ -362,15 +365,21 @@ def train(args):
         optimizer.step()
         scheduler.step()
         if step % args.eval_every == 0 or step == args.steps:
-            recall = float((scores(pos_test) >= 0.5).mean())
-            adv_rate = float((scores(adv_test) >= 0.5).mean())
+            positive = scores(pos_test)
+            adversarial = scores(adv_test)
             val = validation_scores()
-            fph = {t: round(false_positives_per_hour(val, t), 2) for t in (0.5, 0.7, 0.9)}
-            report = dict(step=step, loss=round(float(loss), 4), recall_at_0_5=round(recall, 3),
-                          adversarial_hit_rate=round(adv_rate, 3), false_positives_per_hour=fph)
+            fph = {t: round(false_positives_per_hour(val, t), 2) for t in THRESHOLDS}
+            # Lowest threshold that keeps false alarms within budget, and the
+            # recall there: models are compared at their own usable threshold.
+            usable = next((t for t in THRESHOLDS if fph[t] <= args.max_fph), None)
+            recall = float((positive >= usable).mean()) if usable is not None else 0.0
+            report = dict(step=step, loss=round(float(loss), 4),
+                          recall_at_0_5=round(float((positive >= 0.5).mean()), 3),
+                          threshold=usable, recall_at_threshold=round(recall, 3),
+                          adversarial_hit_rate=round(float((adversarial >= (usable or 0.5)).mean()), 3),
+                          false_positives_per_hour={str(t): fph[t] for t in (0.5, 0.7, 0.9, 0.98)})
             print(json.dumps(report), flush=True)
-            # Best: highest recall while staying under the false-alarm budget.
-            if fph[0.5] <= args.max_fph and (best is None or recall > best[0]):
+            if usable is not None and (best is None or recall > best[0]):
                 best = (recall, report)
                 torch.save(model.state_dict(), ROOT / f'{WORD}.pt')
     if best is None:
@@ -378,6 +387,9 @@ def train(args):
         torch.save(model.state_dict(), ROOT / f'{WORD}.pt')
     else:
         print('best:', json.dumps(best[1]), flush=True)
+        (ROOT / f'{WORD}.json').write_text(json.dumps(dict(
+            threshold=best[1]['threshold'], recall=best[1]['recall_at_threshold'],
+            step=best[1]['step'])) + '\n')
     model.load_state_dict(torch.load(ROOT / f'{WORD}.pt'))
     model.eval()
     exported = torch.nn.Sequential(model, torch.nn.Sigmoid())
