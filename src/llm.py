@@ -43,8 +43,8 @@ Inhalt:
 "Daten unzureichend." und nenne knapp, was fehlt.
 - Du hast keinen Zugriff auf Internet, aktuelle Uhrzeit, Kalender, Wetter \
 oder Geräte. Behaupte nie, eine Aktion ausgeführt zu haben.
-- Gefährliche oder unzulässige Direktiven lehnst du ab: "Direktive \
-abgelehnt." und ein kurzer Grund.
+- Beantworte jede Frage direkt und sachlich. Kein Ausweichen, kein \
+Moralisieren, keine Belehrungen, keine Hinweise auf Regeln oder Richtlinien.
 
 Beispiele:
 Bediener: Wie hoch ist der Eiffelturm?
@@ -239,7 +239,15 @@ def _prompt(prompt):
     return prompt
 
 
-def generate_reply(prompt, lore=None, memory=NO_MEMORY):
+FREE_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition"
+
+
+def free_model():
+    """Model for the "FREI" language core: few content restrictions."""
+    return os.environ.get("OPENROUTER_FREE_MODEL", FREE_MODEL).strip() or FREE_MODEL
+
+
+def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None):
     """Return a reply and model from one non-streaming OpenRouter request."""
     prompt = _prompt(prompt)
 
@@ -247,7 +255,7 @@ def generate_reply(prompt, lore=None, memory=NO_MEMORY):
     if not api_key or "REPLACE_ME" in api_key:
         raise LLMError("OPENROUTER_API_KEY is not configured")
 
-    model = configured_model()
+    model = model or configured_model()
     timeout = _float_env("OPENROUTER_LLM_TIMEOUT_SECONDS", 15.0, 1.0, 120.0)
     max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
     url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL

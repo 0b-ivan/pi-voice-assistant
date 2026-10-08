@@ -352,6 +352,20 @@ class ShutdownAndModeTests(ControllerAlarmTests):
         self.assertIn('Lokaler Sprachkern nicht erreichbar', self.speech.start.call_args.args[0])
         self.assertEqual(self.c.status_snapshot()['llm_mode'], 'local')
 
+    def test_menu_cycles_language_core_and_free_uses_its_model(self):
+        import llm
+        seen = []
+        for _ in range(3):
+            self.c.menu.show(0)
+            self.c.menu.index = ptt.MENU_ITEMS.index('llm')
+            self.c._menu_confirm(0)
+            seen.append(self.c.llm_mode)
+        self.assertEqual(seen, ['free', 'local', 'auto'])
+        self.c.llm_mode = 'free'
+        with patch('ptt.TranscriptionJob') as job:
+            self.c._start_llm('erzähl einen witz')
+        self.assertEqual(job.call_args.args[0].keywords['model'], llm.free_model())
+
 
 if __name__ == '__main__':
     unittest.main()

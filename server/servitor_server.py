@@ -136,8 +136,10 @@ class RealPipeline:
     def reply(self, text, lore=None, mode=None, memory=NO_MEMORY):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
-        from llm import LLMError, generate_local_reply, generate_reply
+        from llm import LLMError, free_model, generate_local_reply, generate_reply
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
+        # "FREI": the low-restriction model; otherwise the configured one.
+        chosen = free_model() if mode == 'free' else None
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
             return generate_local_reply(text, lore=lore, memory=memory)
@@ -145,7 +147,7 @@ class RealPipeline:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
-                return generate_reply(text, lore=lore, memory=memory)
+                return generate_reply(text, lore=lore, memory=memory, model=chosen)
             except LLMError as exc:
                 if not local:
                     raise

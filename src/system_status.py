@@ -160,7 +160,7 @@ SNAPSHOT_FIELDS = {
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
 SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
                    'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off'),
-                   'llm_mode': ('auto', 'local'), 'memory': ('on', 'off'),
+                   'llm_mode': ('auto', 'free', 'local'), 'memory': ('on', 'off'),
                    'dns': ('ok', 'fail'), 'maintenance': ('on', 'off')}
 
 

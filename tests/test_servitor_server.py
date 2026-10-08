@@ -362,6 +362,15 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(reply['model'], 'test/model')
         self.assertIs(self.pipeline.memory, llm.NO_MEMORY)
 
+    def test_free_mode_uses_the_free_model(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+        import llm
+        pipeline = ss.RealPipeline(self.tmp.name)
+        with unittest.mock.patch('llm.generate_reply', return_value=('f', 'x')) as remote:
+            pipeline.reply('frage', mode='free')
+            pipeline.reply('frage', mode='auto')
+        self.assertEqual([c.kwargs['model'] for c in remote.call_args_list], [llm.free_model(), None])
+
     def test_local_mode_skips_openrouter(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
         import llm

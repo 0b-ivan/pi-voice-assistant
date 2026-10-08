@@ -13,7 +13,7 @@ import time
 import wave
 
 import functools
-from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
+from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
 import alarm_audio
 import maintenance
 import memory as memory_core
@@ -97,6 +97,8 @@ WAKE_ECHO_PAUSE = 0.6
 # Display status: fixed identifiers and numbers only, never transcripts or
 # reply text. route/last_route: 'server' (CT 107) or 'pi'; last_llm:
 # 'openrouter' or 'offline' (local model on the server).
+# Language core: OpenRouter default model, low-restriction model, local only.
+LLM_MODES = ('auto', 'free', 'local')
 DISPLAY_STATUS_VALUES = {
     'route': {'server', 'pi'},
     'last_route': {'server', 'pi'},
@@ -117,7 +119,7 @@ DISPLAY_STATUS_VALUES = {
     'opt_lore': set(LORE_LEVELS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
-    'opt_llm': {'auto', 'local'},
+    'opt_llm': set(LLM_MODES),
     'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
 }
@@ -541,7 +543,8 @@ class VoiceController:
         self.alarms.notice_store = maintenance.NoticeStore()
         self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
-        self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
+        mode = os.environ.get('PTT_LLM_MODE', 'auto').strip().lower()
+        self.llm_mode = mode if mode in LLM_MODES else 'auto'
         self.shutting_down = False
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
@@ -685,7 +688,7 @@ class VoiceController:
             self.lore = LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)]
             event('menu', item='lore', value=self.lore)
         elif item == 'llm':
-            self.llm_mode = 'local' if self.llm_mode == 'auto' else 'auto'
+            self.llm_mode = LLM_MODES[(LLM_MODES.index(self.llm_mode) + 1) % len(LLM_MODES)]
             event('menu', item='llm', value=self.llm_mode)
         elif item == 'wlan':
             self.set_wlan(not self.wlan_on)
@@ -1119,8 +1122,9 @@ class VoiceController:
             self._start_speech(reply, source='assistant', model='local/intent')
             return
         context = self.memory.context()
+        model = free_model() if self.llm_mode == 'free' else None
         self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore,
-                                                      memory=context), text)
+                                                      memory=context, model=model), text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())

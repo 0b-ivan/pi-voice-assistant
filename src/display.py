@@ -164,7 +164,7 @@ def read_status(path=None):
                          ('opt_wake', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
-                         ('opt_llm', ('auto', 'local')),
+                         ('opt_llm', ('auto', 'free', 'local')),
                          ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off')),
@@ -772,7 +772,7 @@ def _menu_value(item, status):
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
     if item == 'llm':
-        return {'auto': 'AUTO', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
+        return {'auto': 'AUTO', 'free': 'FREI', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
     if item in ('wlan', 'alarms'):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
