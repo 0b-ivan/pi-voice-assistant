@@ -92,7 +92,8 @@ def publish_display_event(name):
 
 
 # Wake word: published label per model file, echo pause after own speech.
-WAKE_LABELS = {'hey_jarvis_v0.1': 'hey_jarvis', 'hey_servitor': 'hey_servitor'}
+WAKE_LABELS = {'hey_jarvis_v0.1': 'hey_jarvis', 'hey_servitor': 'hey_servitor',
+               'proximus': 'proximus'}
 WAKE_ECHO_PAUSE = 0.6
 # Display status: fixed identifiers and numbers only, never transcripts or
 # reply text. route/last_route: 'server' (CT 107) or 'pi'; last_llm:
@@ -978,7 +979,8 @@ class VoiceController:
             self.wake.error = None
             self.wake_resume_at = now + 30.0  # retry later, buttons keep working
         if self.wake.take_detection() and self._idle():
-            event('wake', word=self.wake_word)
+            detector = getattr(self.wake, 'detector', None)
+            event('wake', word=getattr(detector, 'last_word', None) or self.wake_word)
             if self.menu.open:
                 self.menu.close()
                 self._publish_menu()
@@ -1523,13 +1525,17 @@ def main():
         threshold = float(os.environ.get('PTT_WAKE_THRESHOLD', '0.5'))
         # Candidate words are scored in the shadow (logged, never trigger),
         # e.g. a freshly trained proximus.onnx, until they are good enough.
-        shadows = {}
+        # A model's .json can make it a second, real wake word:
+        # {"threshold": 0.9, "patience": 1, "active": true}.
+        shadows, active_words = {}, {}
         for name in os.environ.get('PTT_WAKE_SHADOW', 'proximus').split(','):
             name = name.strip()
             if name and name != wake_word and (wake_dir / f'{name}.onnx').is_file():
                 try:
                     meta = json.loads((wake_dir / f'{name}.json').read_text())
                     shadows[name] = float(meta.get('threshold', 0.7))
+                    if meta.get('active') is True:
+                        active_words[name] = max(1, int(meta.get('patience', 2)))
                 except (OSError, ValueError, TypeError):
                     shadows[name] = 0.7
         if not (wake_dir / f'{wake_word}.onnx').is_file():
@@ -1543,13 +1549,17 @@ def main():
                     os.sys.path.insert(0, str(site))
                 from wakeword import Detector, WakeWord
                 return Detector(WakeWord(wake_dir, wake_word, gate=True, shadows=list(shadows)),
-                                threshold=threshold, shadow_thresholds=shadows)
+                                threshold=threshold, shadow_thresholds=shadows,
+                                active=active_words)
             from wake_listener import WakeListener
             wake = WakeListener(os.environ.get('PTT_AUDIO_DEVICE',
                                                'plughw:CARD=wm8960soundcard,DEV=0'),
                                 detector_factory)
-            wake_label = WAKE_LABELS.get(wake_word)
-            event('wake_ready', word=wake_word, threshold=threshold, shadow=shadows)
+            # The display names the trained word when it is active.
+            wake_label = next((WAKE_LABELS[w] for w in active_words if w in WAKE_LABELS),
+                              WAKE_LABELS.get(wake_word))
+            event('wake_ready', word=wake_word, threshold=threshold, shadow=shadows,
+                  active=active_words)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
                                  remote=uplink_factory is not None,
                                  wake=wake, wake_word=wake_label)

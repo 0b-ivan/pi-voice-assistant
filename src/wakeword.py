@@ -164,7 +164,8 @@ class WakeWord:
 class Detector:
     """Score threshold with patience (consecutive blocks) and a cooldown."""
 
-    def __init__(self, wakeword, threshold=0.5, patience=2, cooldown=2.0, shadow_thresholds=None):
+    def __init__(self, wakeword, threshold=0.5, patience=2, cooldown=2.0, shadow_thresholds=None,
+                 active=None):
         self.wakeword = wakeword
         self.threshold = threshold
         self.patience = patience
@@ -175,6 +176,10 @@ class Detector:
         self._shadow_streak = {name: 0 for name in self.shadow_thresholds}
         self._shadow_quiet = {name: 0.0 for name in self.shadow_thresholds}
         self.shadow_hits = []     # (word, score) the shadow word would have triggered
+        # Extra words that do trigger: {word: patience}; their scores come from
+        # the shadow classifiers, thresholds from shadow_thresholds.
+        self.active = dict(active or {})
+        self.last_word = None
 
     def _shadow(self, now):
         for name, threshold in self.shadow_thresholds.items():
@@ -182,17 +187,25 @@ class Detector:
             if now < self._shadow_quiet[name]:
                 continue
             self._shadow_streak[name] = self._shadow_streak[name] + 1 if score >= threshold else 0
-            if self._shadow_streak[name] >= self.patience:
+            if self._shadow_streak[name] >= self.active.get(name, self.patience):
                 self._shadow_streak[name] = 0
                 self._shadow_quiet[name] = now + self.cooldown
                 self.shadow_hits.append((name, round(score, 3)))
+                if name in self.active:
+                    return name
+        return None
 
     def feed(self, pcm, now):
         score = self.wakeword.process(pcm)
         if score is None:
             return False
-        if self.shadow_thresholds:
-            self._shadow(now)
+        if self.shadow_thresholds and now >= self._quiet_until:
+            word = self._shadow(now)
+            if word is not None:
+                self._streak = 0
+                self._quiet_until = now + self.cooldown
+                self.last_word = word
+                return True
         if now < self._quiet_until:
             self._streak = 0
             return False
@@ -200,5 +213,6 @@ class Detector:
         if self._streak >= self.patience:
             self._streak = 0
             self._quiet_until = now + self.cooldown
+            self.last_word = self.wakeword.word
             return True
         return False

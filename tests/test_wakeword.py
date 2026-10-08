@@ -357,3 +357,22 @@ class ShadowWordTests(unittest.TestCase):
         fired = [detector.feed(b"", t) for t in (1.0, 1.1, 1.2)]
         self.assertEqual(fired, [False, False, False])
         self.assertEqual(detector.shadow_hits, [("proximus", 0.95)])
+
+
+class ActiveExtraWordTests(unittest.TestCase):
+    def test_active_extra_word_triggers_with_its_own_patience(self):
+        import wakeword
+        ww = Mock(shadow_scores={"proximus": 0.0}, segment_peaks=[], word="hey_jarvis_v0.1")
+        values = iter([0.95, 0.3, 0.95])
+
+        def process(pcm):
+            ww.shadow_scores = {"proximus": next(values)}
+            return 0.1
+
+        ww.process.side_effect = process
+        detector = wakeword.Detector(ww, threshold=0.5, shadow_thresholds={"proximus": 0.9},
+                                     active={"proximus": 1})
+        self.assertTrue(detector.feed(b"", 1.0))
+        self.assertEqual(detector.last_word, "proximus")
+        self.assertFalse(detector.feed(b"", 1.1))   # cooldown
+        self.assertFalse(detector.feed(b"", 1.2))

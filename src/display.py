@@ -82,7 +82,8 @@ MENU_LABELS = (
     ('close', 'Schließen'),
 )
 DEPLOYED_FILE = Path('/opt/pi-voice-assistant/src/DEPLOYED')
-WAKE_WORD_LABELS = {'hey_jarvis': 'Hey Jarvis', 'hey_servitor': 'Hey Servitor'}
+WAKE_WORD_LABELS = {'hey_jarvis': 'Hey Jarvis', 'hey_servitor': 'Hey Servitor',
+                    'proximus': 'Proximus'}
 ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
 SERVER_FOOTER = {
     'ok': ('CT107 OK', (120, 220, 160)),
