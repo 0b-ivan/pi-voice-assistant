@@ -345,8 +345,10 @@ def train(args):
     best = None
     third = args.batch // 3
     for step in range(1, args.steps + 1):
-        start = rng.integers(0, acav.shape[0] - third)
-        general = torch.from_numpy(np.asarray(acav[start:start + third], dtype=np.float32))
+        # Random rows from the whole 2000 h, not one contiguous stretch:
+        # neighbouring windows overlap and come from the same recording.
+        rows = np.sort(rng.choice(acav.shape[0], third, replace=False))
+        general = torch.from_numpy(np.asarray(acav[rows], dtype=np.float32))
         p = pos[torch.randint(len(pos), (third,))]
         a = adv[torch.randint(len(adv), (third,))]
         x = torch.cat([p, a, general])
@@ -396,7 +398,7 @@ def main():
     parser.add_argument('--steps', type=int, default=30000)
     parser.add_argument('--batch', type=int, default=768)
     parser.add_argument('--eval-every', type=int, default=3000)
-    parser.add_argument('--max-negative-weight', type=float, default=30.0)
+    parser.add_argument('--max-negative-weight', type=float, default=1000.0)
     parser.add_argument('--max-fph', type=float, default=0.5)
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--seed', type=int, default=7)
