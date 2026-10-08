@@ -136,7 +136,7 @@ class Browser:
         elif self.page == 'actions':
             labels = [ACTION_LABELS[a] for a in ACTIONS]
             if self.weak:
-                labels[0] = 'Nachtrainieren (empfohlen)'
+                labels[0] = 'Nachtrainieren!'  # recommended after a weak recognition
             data['items'] = labels
         else:
             data['details'] = {k: v for k, v in (self.details or {}).items()
