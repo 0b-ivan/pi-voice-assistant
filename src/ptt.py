@@ -15,6 +15,7 @@ import wave
 import functools
 from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
 import alarm_audio
+import boardled
 import enroll
 import people
 import maintenance
@@ -25,7 +26,7 @@ from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMo
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
 import wlan as wlan_radio
-from menu import ITEMS as MENU_ITEMS, Menu
+from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
 import datetime
 import intents
@@ -113,6 +114,7 @@ DISPLAY_STATUS_VALUES = {
     'screen': {'on', 'off'},
     'power': {'awake', 'rest', 'sleep'},
     'memory': {'on', 'off'},
+    'menu_group': {'top', *MENU_GROUPS},
     'maint': {'on', 'off'},
     'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth'},
     'people': {'on', 'off'},
@@ -148,6 +150,7 @@ WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
 # Idle power stages: 'rest' dims the display and calms the skull, 'sleep'
 # switches screen and LED off (optionally WLAN); the wake word keeps listening.
 REST_SECONDS = 30.0
+REST_LED = 0.35                 # LED brightness while resting, like the dimmed screen
 SLEEP_SECONDS = 600.0
 LED_ALARM = (255, 60, 0)         # slow blink while a critical alarm is active
 CRITICAL_ALARMS = {'undervoltage', 'battery', 'memory', 'temperature'}
@@ -271,7 +274,7 @@ def publish_display_status(**fields):
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
                 continue
         elif key == 'menu_index':
-            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(MENU_ITEMS):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 20:
                 continue
         elif key in ('upd_pi', 'upd_pi_sec', 'upd_srv', 'upd_srv_sec'):
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 9999:
@@ -636,6 +639,7 @@ class VoiceController:
         self.maint = maintenance.Mode()
         self.enroll = None                 # running enroll.Session or people.Flow
         self.people = people.Browser()
+        self.board_leds = boardled.BoardLeds()
         self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
         self.alarms.notice_store = maintenance.NoticeStore()
@@ -655,8 +659,7 @@ class VoiceController:
     def _scale(color, factor):
         return tuple(int(round(value * factor)) for value in color)
 
-    @property
-    def color(self):
+    def _color(self):
         """SHIM LED. Recording and errors always show; the rest follows the
         menu's LED switch. Few distinct colours on purpose: each change costs
         ~190 I2C writes, so animations are two-level pulses, not fades."""
@@ -685,8 +688,15 @@ class VoiceController:
                 level = 1.0
             return self._scale(LED_SPEAKING, (0.3, 0.6, 1.0)[min(2, int(level * 3))])
         local = self.remote and (not self.remote_enabled or self.turn_route == 'pi')
-        ready = LED_READY_LOCAL if local else LED_READY
-        return self._scale(ready, 0.3) if self.power == 'rest' else ready
+        return LED_READY_LOCAL if local else LED_READY
+
+    @property
+    def color(self):
+        """SHIM LED; dimmed like the screen while resting (recording, errors and
+        critical alarms excepted: they come before any dimming)."""
+        color = self._color()
+        bright = color in (LED_RECORDING, LED_ALARM)
+        return self._scale(color, REST_LED) if self.power == 'rest' and not bright else color
 
     def cancel(self, held, now):
         self.listen_after_greeting = False
@@ -760,6 +770,7 @@ class VoiceController:
         else:
             wake = 'on' if self.wake_enabled else 'off'
         publish_display_status(menu_index=self.menu.index, menu_page=self.menu.page,
+                               menu_group=self.menu.group or ('top' if self.menu.open else None),
                                opt_server=server, opt_wake=wake, wake_word=self.wake_word,
                                opt_lore=self.lore,
                                opt_wlan='on' if self.wlan_on else 'off',
@@ -1452,8 +1463,8 @@ class VoiceController:
             self._maintenance_buttons('E' in commands, 'B' in commands)
             commands = [name for name in commands if name not in 'BE']
         if 'B' in commands and self.menu.open:
-            # B leaves the menu first; a second press cancels as usual.
-            self.menu.close()
+            # B goes one level up and closes at the top; a further press cancels as usual.
+            self.menu.back(now)
             self._publish_menu()
             commands = []
         if 'B' in commands:
@@ -1597,6 +1608,13 @@ class VoiceController:
         previous, self.power = self.power, power
         event('power', state=power)
         publish_display_status(power=power)
+        if power == 'sleep':
+            error = self.board_leds.off()
+            if error and not getattr(self, '_board_led_error', None):
+                self._board_led_error = error
+                event('board_led_error', message=error)
+        elif previous == 'sleep':
+            self.board_leds.restore()
         if power == 'sleep' and self.sleep_wlan_off and self.wlan_on:
             self.wlan_slept = self.set_wlan(False)
         elif previous == 'sleep' and self.wlan_slept:

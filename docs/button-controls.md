@@ -8,7 +8,7 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 |---|---|
 | A | Halten: aufnehmen; Loslassen: STT |
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
-| B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: Menü schließen (erst ein zweiter Druck bricht ab) |
+| B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: eine Ebene zurück, oben schließen (erst danach bricht B ab) |
 | C / D | Digitalen `Playback`-Pegel um 2 dB senken/erhöhen, gehalten wiederholt |
 | E | Ohne Menü: Status ansagen (Warnungen zuerst, dann Akku, Temperatur, Serververbindung, Sprachkern, Laufzeit; siehe [Architektur](architecture.md#antworten-ohne-llm-status-und-charakter)). Bei offenem Menü: **Bestätigen** |
 | PiTFT-Taste oben (GPIO23) / unten (GPIO24) | Menü öffnen, Auswahl hoch/runter; bei ausgeschaltetem Display nur aufwecken |
@@ -23,19 +23,25 @@ C/D ändern nur den digitalen `Playback`-Regler (0,5-dB-Raster, 255 = 0 dB), nic
 
 Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B schließt**, nach 15 s ohne Taste schließt es selbst, PTT schließt es sofort. `pi-ptt` liest beide Tasten (Pull-up, aktiv Low, `PTT_PITFT_BUTTONS=23,24`, leer = aus) und besitzt den Menüzustand; das Display zeigt ihn nur an (feste Werte in `display-status.json`).
 
-| Eintrag | Wirkung |
-|---|---|
-| Systeminfo | Seite mit IP, Laufzeit, freiem RAM, Server, deployter Version und Akku; E oder eine PiTFT-Taste zurück |
-| Server nutzen AN/AUS | Schaltet zur Laufzeit zwischen CT 107 und rein lokalem Betrieb (nicht über Neustart gespeichert); Display zeigt `NUR PI` / `LOKAL` |
-| Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status; E schaltet weiter (nicht über Neustart gespeichert; Grundeinstellung `PTT_LORE_LEVEL`) |
-| Sprachkern AUTO/FREI/LOKAL | AUTO: OpenRouter (Mistral Medium 3.5), bei Ausfall lokal; FREI: wenig eingeschränktes Modell (Dolphin Venice); LOKAL: nur das lokale Modell auf CT 107 |
-| WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline (lokaler Betrieb) |
-| Alarme AN/AUS | Ansagen stumm; das Herunterfahren bei leerem Akku bleibt aktiv |
-| Aktivierungswort AN/AUS | Mithören für „Hey Jarvis“ ein/aus (nicht über Neustart gespeichert; Grundeinstellung über `PTT_WAKE_WORD`) |
-| Status-LED AN/AUS | Schaltet die SHIM-LED ab; Aufnahme und Fehler zeigt sie trotzdem |
-| Display aus | Hintergrundbeleuchtung aus (z. B. nachts); die nächste PiTFT-Taste weckt nur, ohne das Menü zu öffnen |
-| Status ansagen | Wie E ohne Menü |
-| Schließen | Menü zu |
+Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B geht eine Ebene zurück und schließt oben.
+
+| Gruppe | Eintrag | Wirkung |
+|---|---|---|
+| Sprache | Aktivierungswort AN/AUS | Mithören für „Proximus“/„Hey Jarvis“ ein/aus (nicht über Neustart gespeichert) |
+| | Sprachkern AUTO/FREI/LOKAL | AUTO: OpenRouter (Mistral Medium 3.5), bei Ausfall lokal; FREI: wenig eingeschränktes Modell; LOKAL: nur das lokale Modell auf CT 107 |
+| | Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status (Grundeinstellung `PTT_LORE_LEVEL`) |
+| | Server nutzen AN/AUS | Zwischen CT 107 und rein lokalem Betrieb umschalten |
+| Personen | Bekannte Personen | Liste der Stimmprofile, je Person Nachtrainieren/Details/Passphrase/Löschen mit Stimm- und Passphrase-Anmeldung ([Gedächtnis](memory.md#kennenlernen-und-stimmerkennung)) |
+| | Kennenlernen | Neue Person: Stimmproben, Fragen, Stimmprofil |
+| | Stimme nachtrainieren | 20 Stimmproben, dem passenden Profil zugerechnet |
+| Gerät | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
+| | Alarme AN/AUS | Ansagen stumm; Herunterfahren bei leerem Akku bleibt aktiv |
+| | Status-LED AN/AUS | SHIM-LED aus; Aufnahme und Fehler zeigt sie trotzdem |
+| | Display aus | Hintergrundbeleuchtung aus; die nächste PiTFT-Taste weckt nur |
+| System | Systeminfo | IP, Laufzeit, RAM, Server, Gedächtnis, Version, Akku |
+| | Status ansagen | Wie E ohne Menü |
+| | Wartung | [Wartungsmodus](maintenance.md) |
+| | Schließen (oberste Ebene) | Menü zu |
 
 ## Status-LED
 
@@ -50,6 +56,8 @@ Farben entsprechen dem Display (SERVER cyan, LOKAL gelb, AUSGABE orange):
 | Gelb, hell/dunkel pulsierend | Verarbeitung auf dem Pi |
 | Orange in drei Helligkeitsstufen | Sprachausgabe, folgt der Sprachhüllkurve |
 | Violett | Menü offen |
+| alles auf 35 % gedimmt | Ruhe (wie der Bildschirm); Aufnahme, Fehler, kritische Alarme bleiben hell |
+| aus | Schlaf; zusätzlich die grüne ACT-LED des Pi (udev-Regel [`deploy/91-pi-voice-leds.rules`](../deploy/91-pi-voice-leds.rules)) |
 | Rot blinkend (4 Hz, 3 s) | Fehler (auch bei abgeschalteter LED) |
 | Aus | LED im Menü abgeschaltet, Dienst beendet oder reine Probe |
 

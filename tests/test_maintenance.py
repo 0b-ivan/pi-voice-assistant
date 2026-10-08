@@ -114,7 +114,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_entering_from_the_menu_clears_the_menu_on_the_display(self):
         self.c.menu.show(0)
-        self.c.menu.index = self.ptt.MENU_ITEMS.index("maintenance")
+        self.c.menu.select("maintenance")
         self.c._publish_menu()
         self.c._menu_confirm(1)
         status = self.status()

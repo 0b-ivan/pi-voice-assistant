@@ -18,26 +18,40 @@ import ptt  # noqa: E402
 
 
 class MenuTests(unittest.TestCase):
-    def test_navigation_wraps_and_confirm(self):
+    def test_groups_navigation_and_back(self):
         menu = Menu(timeout=15)
         self.assertFalse(menu.open)
-        menu.move(1, 0)  # any button opens at the first item
-        self.assertEqual((menu.index, menu.page), (0, 'list'))
+        menu.move(1, 0)  # any button opens at the first group
+        self.assertEqual((menu.index, menu.group, menu.page), (0, None, 'list'))
         menu.move(-1, 1)
-        self.assertEqual(ITEMS[menu.index], 'close')
+        self.assertEqual(menu.items[menu.index], 'close')
         menu.move(1, 2)
+        menu.move(-1, 2)
+        menu.move(-1, 2)                               # 'system'
+        self.assertIsNone(menu.confirm(3))             # opens the group
+        self.assertEqual((menu.group, menu.items[menu.index]), ('system', 'info'))
         self.assertEqual(menu.confirm(3), 'info')
         self.assertEqual(menu.page, 'info')
         menu.move(1, 4)  # leaves the info page, keeps the selection
-        self.assertEqual((menu.page, ITEMS[menu.index]), ('list', 'info'))
-        menu.index = ITEMS.index('close')
-        self.assertEqual(menu.confirm(5), 'close')
+        self.assertEqual((menu.page, menu.items[menu.index]), ('list', 'info'))
+        self.assertFalse(menu.back(5))                 # group -> top level
+        self.assertEqual((menu.group, menu.items[menu.index]), (None, 'system'))
+        self.assertTrue(menu.back(6))                  # top level -> closed
         self.assertFalse(menu.open)
+        menu.select('close')
+        self.assertEqual(menu.confirm(7), 'close')
+        self.assertFalse(menu.open)
+
+    def test_back_item_returns_to_top(self):
+        menu = Menu()
+        menu.select('screen')
+        menu.index = len(menu.items) - 1               # 'Zurück'
+        self.assertIsNone(menu.confirm(0))
+        self.assertEqual((menu.group, menu.items[menu.index]), (None, 'device'))
 
     def test_toggles_stay_open_and_timeout_closes(self):
         menu = Menu(timeout=15)
-        menu.show(0)
-        menu.index = ITEMS.index('led')
+        menu.select('led')
         self.assertEqual(menu.confirm(1), 'led')
         self.assertTrue(menu.open)
         self.assertFalse(menu.expire(15.9))
@@ -86,8 +100,11 @@ class ControllerMenuTests(unittest.TestCase):
     def test_pitft_opens_menu_and_e_toggles_server(self):
         self.press(pitft='D')
         self.assertEqual((self.status()['menu_index'], self.status()['menu_page']), (0, 'list'))
-        self.press(pitft='D')
-        self.assertEqual(ITEMS[self.status()['menu_index']], 'server')
+        self.press(down='E')                           # into 'Sprache'
+        self.assertEqual(self.status()['menu_group'], 'voice')
+        for _ in range(3):
+            self.press(pitft='D')
+        self.assertEqual(self.c.menu.items[self.status()['menu_index']], 'server')
         self.press(down='E')
         self.assertFalse(self.c.remote_enabled)
         self.assertFalse(self.recorder.uplink_enabled)
@@ -105,8 +122,7 @@ class ControllerMenuTests(unittest.TestCase):
 
     def test_screen_off_and_wake(self):
         self.press(pitft='D')
-        for _ in range(ITEMS.index('screen')):
-            self.press(pitft='D')
+        self.c.menu.select('screen')
         self.press(down='E')
         self.assertEqual(self.status()['screen'], 'off')
         self.assertNotIn('menu_index', self.status())
@@ -122,7 +138,7 @@ class ControllerMenuTests(unittest.TestCase):
 
     def test_lore_item_cycles_and_reaches_snapshot(self):
         self.press(pitft='D')
-        self.c.menu.index = ITEMS.index('lore')
+        self.c.menu.select('lore')
         self.assertEqual(self.c.lore, 'light')
         self.press(down='E')
         self.assertEqual((self.c.lore, self.status()['opt_lore']), ('full', 'full'))
@@ -139,7 +155,7 @@ class ControllerMenuTests(unittest.TestCase):
 
     def test_menu_status_item_speaks(self):
         self.press(pitft='D')
-        self.c.menu.index = ITEMS.index('status')
+        self.c.menu.select('status')
         with patch('ptt.status_text', return_value='STATUS.'):
             self.press(down='E')
         self.speech.start.assert_called_once_with('STATUS.')

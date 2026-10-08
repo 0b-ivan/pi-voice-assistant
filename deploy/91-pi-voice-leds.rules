@@ -1,0 +1,3 @@
+# Let pi-ptt (user obivan, group gpio) switch the green ACT LED off while the
+# assistant sleeps. Install to /etc/udev/rules.d/ and trigger the leds subsystem.
+SUBSYSTEM=="leds", KERNEL=="ACT", ACTION=="add|change", RUN+="/bin/chgrp gpio /sys%p/brightness /sys%p/trigger", RUN+="/bin/chmod g+w /sys%p/brightness /sys%p/trigger"

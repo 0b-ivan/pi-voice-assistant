@@ -11,6 +11,7 @@ import subprocess
 import time
 
 from alarms import ALARMS
+import menu
 from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
 
@@ -67,23 +68,7 @@ VOICE_COLORS = {
 PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/display-progress.json'))
 STATUS_FILE = Path(os.environ.get('PI_DISPLAY_STATUS_FILE', '/run/pi-ptt/display-status.json'))
 VOLUME_SHOW_SECONDS = 2.5
-MENU_LABELS = (
-    ('info', 'Systeminfo'),
-    ('server', 'Server nutzen'),
-    ('llm', 'Sprachkern'),
-    ('wake', 'Aktivierungswort'),
-    ('lore', 'Lore-Stufe'),
-    ('wlan', 'WLAN'),
-    ('alarms', 'Alarme'),
-    ('led', 'Status-LED'),
-    ('screen', 'Display aus'),
-    ('enroll', 'Kennenlernen'),
-    ('refine', 'Stimme nachtrainieren'),
-    ('people', 'Bekannte Personen'),
-    ('maintenance', 'Wartung'),
-    ('status', 'Status ansagen'),
-    ('close', 'Schließen'),
-)
+MENU_LABELS = tuple((item, menu.LABELS[item]) for item in menu.ITEMS)  # flat, for older callers
 DEPLOYED_FILE = Path('/opt/pi-voice-assistant/src/DEPLOYED')
 WAKE_WORD_LABELS = {'hey_jarvis': 'Hey Jarvis', 'hey_servitor': 'Hey Servitor',
                     'proximus': 'Proximus'}
@@ -160,10 +145,16 @@ def read_status(path=None):
         if value.get('volume_limit') in ('min', 'max'):
             status['volume_limit'] = value['volume_limit']
     index = value.get('menu_index')
-    if (isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(MENU_LABELS)
+    group = value.get('menu_group')
+    group = None if group == 'top' else group
+    if (isinstance(index, int) and not isinstance(index, bool)
+            and (group is None or group in menu.GROUPS)
+            and 0 <= index < len(menu.entries(group))
             and value.get('menu_page') in ('list', 'info')):
         status['menu_index'] = index
         status['menu_page'] = value['menu_page']
+        if group:
+            status['menu_group'] = group
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
                          ('opt_wake', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
@@ -984,14 +975,17 @@ def render_menu(display, status, info=None):
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     accent = (150, 120, 255)
-    draw.text((12, 12), 'MENÜ', font=font(17), fill='white')
+    group = status.get('menu_group')
+    title = 'MENÜ' if group is None else f"MENÜ › {menu.LABELS[group].upper()}"
+    draw.text((12, 12), title, font=font(17), fill='white')
     if info.get('battery'):
         draw_battery(draw, 228, 14, info['battery'])
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
+    rows = [(item, menu.label(item, group)) for item in menu.entries(group)]
     visible = 7  # scroll so the selection stays on screen
-    first = max(0, min(selected - 3, len(MENU_LABELS) - visible))
-    for row, (item, label) in enumerate(MENU_LABELS):
+    first = max(0, min(selected - 3, len(rows) - visible))
+    for row, (item, label) in enumerate(rows):
         if not first <= row < first + visible:
             continue
         y = 45 + (row - first) * 21
@@ -999,6 +993,8 @@ def render_menu(display, status, info=None):
             draw.rectangle((10, y - 1, 230, y + 18), fill=(40, 32, 70))
             draw.text((14, y), '›', font=font(15), fill=accent)
         color = accent if row == selected else (215, 220, 225)
+        if group is None and item in menu.GROUPS:
+            label += ' ›'
         draw.text((28, y), label, font=font(15), fill=color)
         value = _menu_value(item, status)
         if value:
