@@ -31,6 +31,9 @@ SCREENS = (
     ('BEREIT', None, dict(BASE, battery=BATTERY, throttled=0x50005,
                           last='Zuletzt 1,6 s · Server')),
     ('FEHLER', None, dict(BASE, server='off')),
+    ('BEREIT', None, dict(BASE, volume=(35, None), last='Zuletzt 1,5 s · Server')),
+    ('AUSGABE', ('Audio abspielen', 'speaker', 5), dict(BASE, route='server',
+                                                        volume=(100, 'max'))),
 )
 
 

@@ -485,6 +485,17 @@ class DisplayStatusTests(RemoteControllerTests):
         self.assertEqual((status['route'], status['last_route']), ('pi', 'pi'))
         self.assertNotIn('last_llm', status)  # no stale value from an earlier turn
 
+    def test_volume_status_fields(self):
+        import ptt
+        ptt.publish_display_status(volume=35, volume_limit='max', volume_at=1000.5)
+        status = self.status()
+        self.assertEqual((status['volume'], status['volume_limit'], status['volume_at']),
+                         (35, 'max', 1000.5))
+        ptt.publish_display_status(volume=101, volume_limit=None, volume_at=True)
+        status = self.status()
+        self.assertEqual(status['volume'], 35)
+        self.assertNotIn('volume_limit', status)
+
     def test_publish_rejects_unknown_fields_and_values(self):
         import ptt
         ptt.publish_display_status(route='mars', last_latency_ms=-1, text='geheim',

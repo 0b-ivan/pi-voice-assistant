@@ -83,7 +83,11 @@ DISPLAY_STATUS_VALUES = {
     'route': {'server', 'pi'},
     'last_route': {'server', 'pi'},
     'last_llm': {'openrouter', 'offline'},
+    'volume_limit': {'min', 'max'},
 }
+# Holding C/D repeats the volume step after a short pause.
+VOLUME_REPEAT_DELAY = 0.45
+VOLUME_REPEAT_INTERVAL = 0.15
 _display_status = {}
 
 
@@ -108,6 +112,12 @@ def publish_display_status(**fields):
                 continue
         elif key == 'last_latency_ms':
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                continue
+        elif key == 'volume':
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                continue
+        elif key == 'volume_at':
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
                 continue
         else:
             continue
@@ -418,6 +428,7 @@ class VoiceController:
         self.turn_released_at = None
         self.turn_route = None
         self.turn_llm = None
+        self.volume_repeat = {}  # 'C'/'D' -> monotonic time of the next repeat
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -502,6 +513,19 @@ class VoiceController:
             event('remote_fallback', target='stt')
         self._set_route('pi')
         self._start_local_stt(capture)
+
+    def _volume_step(self, name):
+        direction = 1 if name == 'D' else -1
+        try:
+            level = change_volume(direction)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            self.volume_repeat.pop(name, None)
+            event('mixer_error', message=str(exc))
+            return
+        event('volume', direction='up' if direction > 0 else 'down', db=level['db'],
+              percent=level['percent'], limit=level['limit'])
+        publish_display_status(volume=level['percent'], volume_limit=level['limit'],
+                               volume_at=time.time())
 
     def _set_route(self, route):
         self.turn_route = route
@@ -628,13 +652,16 @@ class VoiceController:
             action = None
             # Simultaneous B/E never starts a new status utterance.
             commands = []
+        for name in list(self.volume_repeat):
+            if not self.commands[name].stable:
+                del self.volume_repeat[name]
+            elif name not in commands and now >= self.volume_repeat[name]:
+                self.volume_repeat[name] = now + VOLUME_REPEAT_INTERVAL
+                self._volume_step(name)
         for name in commands:
             if name in 'CD':
-                try:
-                    change_volume(1 if name == 'D' else -1)
-                    event('volume', direction='up' if name == 'D' else 'down', step=5)
-                except (OSError, subprocess.SubprocessError) as exc:
-                    event('mixer_error', message=str(exc))
+                self.volume_repeat[name] = now + VOLUME_REPEAT_DELAY
+                self._volume_step(name)
             elif name == 'E':
                 if (self.recorder.process is not None or action == 'start'
                         or (os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')

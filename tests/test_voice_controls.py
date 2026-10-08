@@ -153,7 +153,8 @@ class ControllerTests(unittest.TestCase):
 
     def test_volume_and_status_stay_usable_during_stt(self):
         self.job()
-        with patch('ptt.change_volume') as volume:
+        level = dict(db=-39.0, percent=35, limit=None)
+        with patch('ptt.change_volume', return_value=level) as volume:
             self.tick(down='C')
             self.tick(down='C')
             self.tick()
@@ -208,6 +209,31 @@ class ControllerTests(unittest.TestCase):
         self.assertIn('stt_error', [e['event'] for e in self.events()])
         self.tick(down='A')
         self.recorder.start.assert_called_once()
+
+    def test_holding_volume_button_repeats_after_a_pause(self):
+        level = dict(db=-39.0, percent=35, limit=None)
+        with patch('ptt.change_volume', return_value=level) as volume, \
+                patch('ptt.publish_display_status') as status:
+            for _ in range(6):  # 12 ticks of 0.1 s with D held
+                self.tick(down='D')
+            self.tick()
+            self.tick()
+        # press at ~0.2 s, first repeat after 0.45 s, then every 0.15 s
+        self.assertGreaterEqual(volume.call_count, 5)
+        self.assertLessEqual(volume.call_count, 8)
+        self.assertTrue(all(c.args == (1,) for c in volume.call_args_list))
+        self.assertEqual(status.call_args.kwargs['volume'], 35)
+        calls = volume.call_count
+        self.tick()
+        self.assertEqual(volume.call_count, calls)  # released: no more steps
+
+    def test_single_press_is_a_single_step(self):
+        level = dict(db=-39.0, percent=35, limit=None)
+        with patch('ptt.change_volume', return_value=level) as volume:
+            self.tick(down='C')
+            self.tick()
+            self.tick()
+        self.assertEqual(volume.call_count, 1)
 
     def test_probe_has_no_audio_or_mixer_actions(self):
         self.c.probe = True
@@ -499,9 +525,31 @@ class ProcessTests(unittest.TestCase):
             os.killpg(proc.pid, 0)
 
     def test_volume_targets_only_digital_playback(self):
-        with patch('voice_controls.subprocess.run') as run:
-            change_volume(-1)
-        self.assertEqual(run.call_args.args[0][-3:], ['sset', 'Playback', '5%-'])
+        run = self.mixer(177)
+        level = change_volume(-1, step_db=2, run=run)
+        self.assertEqual(run.call_args.args[0][-3:], ['sset', 'Playback', '173'])
+        self.assertEqual(level, dict(db=-41.0, percent=32, limit=None))
+
+    @staticmethod
+    def mixer(raw):
+        def run(command, **kwargs):
+            if 'sget' in command:
+                return Mock(stdout=f"  Limits: 0 - 255\n  Front Left: {raw} [69%] [-39.00dB]\n"
+                                   f"  Front Right: {raw} [69%] [-39.00dB]\n")
+            return Mock()
+        return Mock(side_effect=run)
+
+    def test_volume_steps_are_small_and_clamped(self):
+        up = change_volume(1, step_db=2, run=self.mixer(253))
+        self.assertEqual((up['db'], up['limit']), (0.0, 'max'))
+        top = self.mixer(255)
+        self.assertEqual(change_volume(1, step_db=2, run=top)['limit'], 'max')
+        self.assertEqual(top.call_count, 1)  # nothing to set at the top
+        floor = change_volume(-1, step_db=2, run=self.mixer(137))
+        self.assertEqual((floor['db'], floor['percent'], floor['limit']), (-60.0, 0, 'min'))
+        below = self.mixer(100)  # set lower elsewhere: down must not raise it
+        self.assertEqual(change_volume(-1, step_db=2, run=below)['db'], -77.5)
+        self.assertEqual(below.call_count, 1)
 
     def test_speech_stop_also_kills_child_that_ignores_sigterm(self):
         with tempfile.TemporaryDirectory() as tmp:

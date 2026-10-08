@@ -16,7 +16,7 @@ A und GPIO17 bilden gemeinsam einen Aufnahmetaster: Aufnahme endet erst, wenn be
 
 STT läuft im Hintergrund. B verwirft dessen Ergebnis, bricht den nativen Vosk-Aufruf aber nicht ab. Der Slot bleibt bis zum Abschluss belegt, danach braucht gehaltenes PTT Release. PTT stoppt eine vom Dienst gestartete Statusansage vor der Aufnahme; E spricht nicht während Aufnahme. Die Statusansage wird beim Druck neu aus `/proc`, `/sys` und dem Dateisystem aufgebaut; die 1-Minuten-Load wird auf die CPU-Kernzahl normiert und als `SYSTEMLAST` gesprochen. Eigene Wiedergabe läuft als verwalteter `aplay`- oder FFmpeg-Prozess; externe Audioprozesse werden nicht verwaltet.
 
-C/D ändern `amixer ... sset Playback 5%-/5%+`, nicht Speaker, Speaker AC/DC oder Mikrofonpegel. Änderungen werden vom Dienst nicht für den nächsten Boot gespeichert.
+C/D ändern nur den digitalen `Playback`-Regler (0,5-dB-Raster, 255 = 0 dB), nicht Speaker, Speaker AC/DC oder Mikrofonpegel: **2 dB pro Druck** (`TTS_VOLUME_STEP_DB`) im Bereich −60 bis 0 dB. Gehalten wiederholt sich der Schritt nach 0,45 s alle 0,15 s. Früher waren es „5 %“ der Rohwerte, also rund 6,4 dB pro Druck, was hörbar sprang. Ein bereits tiefer eingestellter Pegel wird beim Leiserstellen nicht auf −60 dB angehoben. Das PiTFT zeigt 2,5 s lang „LAUTSTÄRKE“ mit Balken (Prozent des Bereichs −60…0 dB, an den Grenzen MIN/MAX). Änderungen werden vom Dienst nicht für den nächsten Boot gespeichert.
 
 | RGB im Code | Zustand |
 |---|---|
@@ -57,7 +57,7 @@ Rückmeldungen am 05.10.2026, Journalzeiten CEST:
 | Initialisierung | Nach `modprobe i2c-dev`: 21:28:46 shim_ready, Bus 1/0x3f; erneut 21:42:18 |
 | Release → Vosk | Clips 1,50 / 1,38 s liefern tester/testers; weitere Transkripte ja/nix kann man machen. A gegenüber GPIO17 nicht identifiziert |
 | B | cancelled-Ereignisse; aktive Aufnahme/STT waren dabei nicht nachweislich im Gang |
-| C/D | volume down/up, step=5, ohne mixer_error; tatsächliche Pegel/Analogwerte noch nicht gemeinsam ausgelesen |
+| C/D | ursprünglich volume down/up, step=5, ohne mixer_error. Seit 08.10.2026 2-dB-Schritte mit Wiederholung; am Mixer geprüft (−39 → −37 → −39 dB), Tastenbedienung selbst noch nicht erneut abgenommen |
 | E | Zunächst No module named piper; nach GitHub-TTS-Deployment status 21:43:05 → speech_finished 21:43:29, Exitcode 0. Nutzer meldet langsame Sprachausgabe. Exakte LED-Farbe und B während Ansage offen |
 | Reboot | Frühere zusammenfassende Neustartbestätigung betrifft die Einzeltest-Phase. Reboot der aktuellen SHIM-/TTS-Dienstversion nicht belegt |
 

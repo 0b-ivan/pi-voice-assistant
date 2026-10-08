@@ -151,6 +151,7 @@ Vorschau mit dem echten Display-Code und den Pi-Schriften, erzeugt mit [`scripts
 | Schrittzeile rechts | **SERVER** (cyan) oder **LOKAL** (gelb): wo der aktuelle Durchlauf gerechnet wird; im Ruhezustand („NÄCHSTE ANFRAGE“), wohin die nächste Anfrage geht |
 | Zeile unter der Beschreibung (Ruhe) | letzte Antwort: Wartezeit vom Loslassen bis zum ersten Ton und Herkunft (`Server`, `Offline-LLM` = lokales Modell auf CT 107, `Pi lokal` = Fallback) |
 | Zeile darunter (Ruhe) | Akku-Detail „Akku 83 % · 3,86 V · lädt / Netz · voll / Akkubetrieb“; Vorrang haben Warnungen des Pi: `UNTERSPANNUNG!` (rot), `CPU gedrosselt`, `Unterspannung seit Start` |
+| Lautstärke (C/D) | 2,5 s lang „LAUTSTÄRKE“ mit Balken und Prozent (Bereich −60…0 dB), an den Grenzen MAX/MIN; ersetzt kurz die unteren Zeilen, auch während einer Antwort |
 | Fußzeile links | `CT107 OK` / `CT107 AUS` / `NUR PI` (kein `ASSISTANT_BASE_URL`) |
 | Fußzeile Mitte | WLAN-Signal in dBm (grün ≥ −67, gelb ≥ −78, sonst rot), `NET OK` ohne WLAN-Wert, `OFFLINE` |
 | Fußzeile rechts | Uhrzeit |

@@ -548,10 +548,51 @@ class SpeechOutput:
         _terminate_process_group(proc)
 
 
-def change_volume(direction):
-    """One 5 percentage point step of digital Playback; analog/input untouched."""
-    subprocess.run([
-        '/usr/bin/amixer', '-q', '-c', 'wm8960soundcard',
-        'sset', 'Playback', '5%+' if direction > 0 else '5%-'],
-        check=True, timeout=2, stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+VOLUME_CARD = 'wm8960soundcard'
+# WM8960 digital Playback: raw 0..255 in 0.5 dB steps, 255 = 0 dB. The old
+# "5%" step was ~6.4 dB per press; steps are now in dB within a usable range.
+VOLUME_FLOOR_DB = -60.0
+VOLUME_MAX_RAW = 255
+
+
+def _db_to_raw(db):
+    return VOLUME_MAX_RAW + round(db * 2)
+
+
+def volume_percent(db):
+    """Position within VOLUME_FLOOR_DB..0 dB, for the display."""
+    return max(0, min(100, round((db - VOLUME_FLOOR_DB) / -VOLUME_FLOOR_DB * 100)))
+
+
+def _playback_raw(run):
+    output = run(['/usr/bin/amixer', '-c', VOLUME_CARD, 'sget', 'Playback'],
+                 check=True, timeout=2, stdin=subprocess.DEVNULL,
+                 capture_output=True, text=True).stdout
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith(('Front Left:', 'Mono:')):
+            return int(line.split(':', 1)[1].split()[0])
+    raise ValueError('Playback volume not found in amixer output')
+
+
+def change_volume(direction, step_db=None, run=subprocess.run):
+    """Step only the digital Playback level by step_db (default 2 dB) within
+    VOLUME_FLOOR_DB..0 dB; analog outputs and capture stay untouched.
+    Returns dB, display percent and which limit was hit, if any."""
+    if step_db is None:
+        step_db = float(os.environ.get('TTS_VOLUME_STEP_DB', '2'))
+    raw = _playback_raw(run)
+    floor = _db_to_raw(VOLUME_FLOOR_DB)
+    delta = max(1, round(step_db * 2))
+    if direction > 0:
+        new = min(VOLUME_MAX_RAW, raw + delta)
+    else:
+        # Never jump up to the floor when the level is already below it.
+        new = max(min(raw, floor), raw - delta)
+    if new != raw:
+        run(['/usr/bin/amixer', '-q', '-c', VOLUME_CARD, 'sset', 'Playback', str(new)],
+            check=True, timeout=2, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    db = (new - VOLUME_MAX_RAW) / 2
+    limit = 'max' if new >= VOLUME_MAX_RAW else 'min' if direction < 0 and new <= floor else None
+    return dict(db=db, percent=volume_percent(db), limit=limit)

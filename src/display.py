@@ -61,6 +61,7 @@ VOICE_COLORS = {
 PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/display-progress.json'))
 STATUS_FILE = Path(os.environ.get('PI_DISPLAY_STATUS_FILE', '/run/pi-ptt/display-status.json'))
 SERVER_PROBE_INTERVAL_SECONDS = 10.0
+VOLUME_SHOW_SECONDS = 2.5
 SERVER_PROBE_TIMEOUT_SECONDS = 0.5
 ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
 SERVER_FOOTER = {
@@ -127,7 +128,24 @@ def read_status(path=None):
     latency = value.get('last_latency_ms')
     if isinstance(latency, int) and not isinstance(latency, bool) and 0 <= latency < 600_000:
         status['last_latency_ms'] = latency
+    volume, volume_at = value.get('volume'), value.get('volume_at')
+    if (isinstance(volume, int) and not isinstance(volume, bool) and 0 <= volume <= 100
+            and isinstance(volume_at, (int, float)) and not isinstance(volume_at, bool)):
+        status['volume'] = volume
+        status['volume_at'] = float(volume_at)
+        if value.get('volume_limit') in ('min', 'max'):
+            status['volume_limit'] = value['volume_limit']
     return status
+
+
+def volume_overlay(status, now=None):
+    """(percent, limit) while a volume change is recent, else None."""
+    if 'volume' not in status:
+        return None
+    now = time.time() if now is None else now
+    if not 0 <= now - status['volume_at'] < VOLUME_SHOW_SECONDS:
+        return None
+    return status['volume'], status.get('volume_limit')
 
 
 def last_answer_text(status):
@@ -635,6 +653,20 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
         _right(draw, 228, 53, label, 11, label_color)
     draw_activity_icon(draw, icon, (34, 101), color, tick)
     draw.text((65, 87), state, font=font(22 if len(state)<10 else 19), fill=color)
+    volume = info.get('volume')
+    if volume is not None:
+        # Volume feedback replaces the lower lines for a moment.
+        percent, limit = volume
+        draw.text((12, 139), 'LAUTSTÄRKE', font=font(14), fill=(215, 220, 225))
+        label = {'max': 'MAX', 'min': 'MIN'}.get(limit, f'{percent} %')
+        _right(draw, 228, 139, label, 14, (80, 210, 235))
+        draw.rectangle((12, 164, 228, 178), outline=(80, 210, 235), width=1)
+        width = round(212 * percent / 100)
+        if width:
+            draw.rectangle((14, 166, 14 + width, 176), fill=(80, 210, 235))
+        _draw_footer(draw, network, info)
+        display.image(image, 180)
+        return
     draw.text((12, 139), description, font=font(14), fill=(215,220,225))
     if not idle:
         draw.text((12, 165), f'Seit {max(0, int(elapsed))} s', font=font(12), fill=(145,155,165))
@@ -648,6 +680,11 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
         for i in range(1,6):
             xx = 160+(i-1)*14
             draw.ellipse((xx,170,xx+6,176), fill=color if i<=step else (45,45,45))
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
+
+
+def _draw_footer(draw, network, info):
     draw.line((12,197,228,197), fill=(65,65,65))
     server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
     draw.text((12, 209), server_text, font=font(13), fill=server_color)
@@ -662,7 +699,6 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
     draw.text((100, 209), link, font=font(13), fill=link_color)
     if info.get('clock'):
         _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
-    display.image(image, 180)
 
 
 class PartialDisplay:
@@ -786,7 +822,7 @@ def main():
             info = dict(route=status.get('route'), server=server.state, temp_c=temp,
                         wifi_dbm=wifi, clock=time.strftime('%H:%M'),
                         last=last_answer_text(status), throttled=throttled,
-                        battery=battery)
+                        battery=battery, volume=volume_overlay(status))
             # Redraw only when something visible changes: the averaged battery
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))

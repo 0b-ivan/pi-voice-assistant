@@ -482,3 +482,26 @@ class BatteryViewTests(unittest.TestCase):
         self.assertNotEqual(display.battery_view(a), display.battery_view(dict(a, mv=3874)))
         self.assertNotEqual(display.battery_view(a), display.battery_view(dict(a, percent=84)))
         self.assertIsNone(display.battery_view(None))
+
+
+
+class VolumeOverlayTests(unittest.TestCase):
+    def test_status_and_overlay_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text('{"volume": 35, "volume_at": 1000.0, "volume_limit": "max"}')
+            status = display.read_status(path)
+            self.assertEqual(display.volume_overlay(status, now=1001.0), (35, "max"))
+            self.assertIsNone(display.volume_overlay(status, now=1003.0))
+            path.write_text('{"volume": 150, "volume_at": 1000.0}')
+            self.assertIsNone(display.volume_overlay(display.read_status(path), now=1000.5))
+
+    def test_render_volume_overlay(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        for volume in ((35, None), (100, "max"), (0, "min")):
+            capture = Capture()
+            display.render_voice(capture, "BEREIT", True, info=dict(volume=volume))
+            self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
