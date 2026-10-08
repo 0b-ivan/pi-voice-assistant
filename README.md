@@ -1,6 +1,6 @@
 # Pi Voice Assistant (SERVITOR)
 
-Sprachassistent auf einem **Raspberry Pi Zero 2 W** mit WM8960-HAT (zwei Mikrofone, zwei Lautsprecher, PTT-Taste), Pimoroni Button SHIM, Adafruit mini PiTFT 1,3″ und PiSugar 3 (Akku). Er antwortet als **SERVITOR**: eine kybernetische Diensteinheit, knapp, mechanisch, Fakten vor Rolle, mit verfremdeter Stimme.
+Sprachassistent auf einem **Raspberry Pi Zero 2 W** mit WM8960-HAT (zwei Mikrofone, zwei Lautsprecher, PTT-Taste), Pimoroni Button SHIM, Adafruit mini PiTFT 1,3″ und PiSugar 3 (Akku). Er antwortet als **Servitor Proximus**: eine kybernetische Diensteinheit, knapp, mechanisch, Fakten vor Rolle, mit verfremdeter Stimme und wahlweise Warhammer-40k-Vokabular (Lore-Stufe im Menü).
 
 **Stand 08.10.2026:** Der Pi nimmt auf, die Rechenarbeit läuft auf dem eigenen Server **CT 107** im Proxmox-Homelab. Fällt der Server oder das Internet aus, arbeitet das System stufenweise lokal weiter.
 

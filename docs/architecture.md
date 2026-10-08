@@ -99,6 +99,18 @@ Der **Status** ([`src/system_status.py`](../src/system_status.py)) entsteht aus 
 
 Der **Charakter** steht im Systemprompt in [`src/llm.py`](../src/llm.py): kybernetische Diensteinheit ohne eigenen Willen, „diese Einheit“ statt „ich“, „Bediener“, kurze Quittungen („Daten abgerufen.“), keine Gefühle oder Floskeln, Fakten vor Rolle („Daten unzureichend.“), keine erfundenen Aktionen, drei kurze Beispiele. Das LLM bekommt Datum und Uhrzeit des Bedieners am Ende des Prompts (der Prompt-Cache des lokalen Modells bleibt so gültig). Antworten werden für Piper geglättet: eine Zeile, keine Listen, Markdown, Gedankenstriche oder Emojis. [`server/sample-persona.py`](../server/sample-persona.py) vergleicht OpenRouter und lokales Modell mit festen Fragen. Mit OpenRouter trifft der Ton gut („Funktionszustand stabil. Keine Abweichungen.“, „Direktive abgelehnt. Diese Einheit hat keinen Zugriff auf Geräte.“); das lokale Modell ist inhaltlich schwächer und braucht 3–10 s.
 
+### Lore-Stufen (Warhammer 40.000)
+
+Die Einheit heißt **Servitor Proximus**. Wie viel Mechanicus-Vokabular einfließt, bestimmt die Lore-Stufe: Menü „Lore-Stufe AUS/DEZENT/VOLL“, Grundeinstellung `PTT_LORE_LEVEL` (Pi) bzw. `SERVITOR_LORE` (Server), Standard DEZENT. Der Pi schickt die Stufe mit seinem Status-Snapshot; der Server gibt sie an OpenRouter bzw. das lokale Modell und an die direkten Antworten weiter, der lokale Fallback nutzt sie ebenso.
+
+| Stufe | LLM-Antworten | Direkte Antworten |
+|---|---|---|
+| AUS | keine Begriffe aus fiktiven Welten | „Zeitindex: 9 Uhr 15.“, Status endet mit „Befehl erwartet.“ |
+| DEZENT | höchstens ein Begriff pro Antwort, nicht in jeder („Das Fleisch ist schwach.“) | Status endet mit „Maschinengeist ruhig. Befehl erwartet.“ |
+| VOLL | Mechanicus-Liturgie, Anrufungen, binäre Lobgesänge, höchstens 60 Wörter | „Der heilige Chronometer meldet: 9 Uhr 15. Lob dem Omnissiah.“, Status als Litanei |
+
+Fakten bleiben in allen Stufen vollständig; gemessen mit OpenRouter blieb etwa „330 Meter einschließlich Antenne“ in allen drei Stufen gleich.
+
 ## Aktivierungswort
 
 Neben den Tasten startet **„Hey Jarvis“** eine Anfrage (vortrainiertes openWakeWord-Modell; ein eigenes „Hey Servitor“ ist geplant). Ist `PTT_WAKE_WORD` gesetzt, hört [`src/wake_listener.py`](../src/wake_listener.py) im Ruhezustand mit und gibt das Mikrofon frei, sobald eine Taste gedrückt wird, eine Anfrage läuft oder der Servitor spricht (plus 0,6 s gegen das eigene Echo). Nach dem Wort startet die normale Aufnahme; [`src/endpoint.py`](../src/endpoint.py) beendet sie nach 0,9 s Sprechpause oder verwirft sie still, wenn 5 s lang niemand spricht. Eine Taste während einer solchen Aufnahme übernimmt sie (Ende beim Loslassen). Das Menü schaltet das Mithören ab („Aktivierungswort AUS“); das Display zeigt dann wieder „Zum Sprechen halten“ statt „„Hey Jarvis“ oder Taste“. Audio verlässt den Pi erst nach dem Aktivierungswort.
