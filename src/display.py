@@ -58,6 +58,15 @@ VOICE_COLORS = {
 
 
 PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/display-progress.json'))
+STATUS_FILE = Path(os.environ.get('PI_DISPLAY_STATUS_FILE', '/run/pi-ptt/display-status.json'))
+SERVER_PROBE_INTERVAL_SECONDS = 10.0
+SERVER_PROBE_TIMEOUT_SECONDS = 0.5
+ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
+SERVER_FOOTER = {
+    'ok': ('CT107 OK', (120, 220, 160)),
+    'down': ('CT107 AUS', (255, 180, 0)),
+    'off': ('NUR PI', (150, 150, 150)),
+}
 ANIMATION_INTERVAL_SECONDS = 0.25
 # state, description, icon, position in the five-step response sequence
 PHASE_DETAILS = {
@@ -98,6 +107,100 @@ def read_progress(path=None):
         return value
     except (OSError, ValueError, TypeError):
         return None
+
+
+def read_status(path=None):
+    """Fixed identifiers/numbers from ptt.py; anything else is dropped."""
+    try:
+        value = json.loads((STATUS_FILE if path is None else Path(path)).read_text())
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    status = {}
+    for key in ('route', 'last_route'):
+        if value.get(key) in ('server', 'pi'):
+            status[key] = value[key]
+    if value.get('last_llm') in ('openrouter', 'offline'):
+        status['last_llm'] = value['last_llm']
+    latency = value.get('last_latency_ms')
+    if isinstance(latency, int) and not isinstance(latency, bool) and 0 <= latency < 600_000:
+        status['last_latency_ms'] = latency
+    return status
+
+
+def last_answer_text(status):
+    """'Zuletzt 1,5 s · Server' — where the answer came from and how fast."""
+    latency = status.get('last_latency_ms')
+    if latency is None:
+        return None
+    if status.get('last_route') == 'pi':
+        source = 'Pi lokal'
+    elif status.get('last_llm') == 'offline':
+        source = 'Offline-LLM'
+    else:
+        source = 'Server'
+    seconds = f'{latency / 1000:.1f}'.replace('.', ',')
+    return f'Zuletzt {seconds} s · {source}'
+
+
+def server_state(env=None):
+    """'off' without ASSISTANT_BASE_URL, else 'ok'/'down' from GET /health."""
+    import urllib.request
+    env = load_env() if env is None else env
+    urls = [u.strip().rstrip('/') for u in env.get('ASSISTANT_BASE_URL', '').split(',')]
+    urls = [u for u in urls if u]
+    if not urls:
+        return 'off'
+    try:
+        with urllib.request.urlopen(urls[0] + '/health',
+                                    timeout=SERVER_PROBE_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read(256))
+        return 'ok' if isinstance(payload, dict) and payload.get('ready') is True else 'down'
+    except (OSError, ValueError):
+        return 'down'
+
+
+class ServerProbe:
+    """Polls /health in a daemon thread so a slow server never stalls frames."""
+    def __init__(self, interval=SERVER_PROBE_INTERVAL_SECONDS, probe=None):
+        import threading
+        self.interval = interval
+        self.probe = probe or server_state
+        self.state = None
+        self._thread = threading.Thread(target=self._run, name='server-probe', daemon=True)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def _run(self):
+        while True:
+            self.state = self.probe()
+            time.sleep(self.interval)
+
+
+def cpu_temp_c(path='/sys/class/thermal/thermal_zone0/temp'):
+    try:
+        return round(int(Path(path).read_text().strip()) / 1000)
+    except (OSError, ValueError):
+        return None
+
+
+def wifi_dbm(path='/proc/net/wireless'):
+    try:
+        lines = Path(path).read_text().splitlines()[2:]
+    except OSError:
+        return None
+    for line in lines:
+        name, _, rest = line.partition(':')
+        fields = rest.split()
+        if name.strip() and len(fields) >= 3:
+            try:
+                return int(float(fields[2]))
+            except ValueError:
+                return None
+    return None
 
 
 def screen_details(state, event, progress):
@@ -378,28 +481,62 @@ def render_boot(display, states):
     display.image(image, 180)
 
 
-def render_voice(display, state, network, details=None, tick=0, elapsed=0):
+def _right(draw, x_right, y, text, size, fill):
+    width = draw.textlength(text, font=font(size))
+    draw.text((x_right - width, y), text, font=font(size), fill=fill)
+
+
+def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=None):
+    """info: route, server ('ok'/'down'/'off'), temp_c, wifi_dbm, clock, last."""
     from PIL import Image, ImageDraw
+    info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     description, icon, step = details or STATE_DETAILS.get(state, ('', 'gear', 0))
     color = VOICE_COLORS.get(state, (220, 220, 220))
+    idle = state in ('BEREIT', 'FEHLER')
     draw.text((12, 10), 'PI ASSISTANT', font=font(20), fill='white')
+    temp = info.get('temp_c')
+    if temp is not None:
+        _right(draw, 228, 15, f'{temp}°C', 13,
+               (255, 120, 90) if temp >= 70 else (145, 155, 165))
     draw.line((12, 40, 228, 40), fill=(65,65,65))
-    draw.text((12, 53), 'AKTUELLER SCHRITT', font=font(11), fill=(135,145,150))
+    # Where the work happens: during a turn as published by ptt.py, when idle
+    # where the next turn will go (server reachable or local fallback).
+    if idle:
+        route = 'server' if info.get('server') == 'ok' else 'pi'
+        draw.text((12, 53), 'NÄCHSTE ANFRAGE', font=font(11), fill=(135,145,150))
+    else:
+        route = info.get('route')
+        draw.text((12, 53), 'AKTUELLER SCHRITT', font=font(11), fill=(135,145,150))
+    if route in ROUTE_LABELS:
+        label, label_color = ROUTE_LABELS[route]
+        _right(draw, 228, 53, label, 11, label_color)
     draw_activity_icon(draw, icon, (34, 101), color, tick)
     draw.text((65, 87), state, font=font(22 if len(state)<10 else 19), fill=color)
     draw.text((12, 139), description, font=font(14), fill=(215,220,225))
-    if state not in ('BEREIT', 'FEHLER'):
+    if not idle:
         draw.text((12, 165), f'Seit {max(0, int(elapsed))} s', font=font(12), fill=(145,155,165))
+    elif info.get('last'):
+        draw.text((12, 165), info['last'], font=font(12), fill=(145,155,165))
     if step:
         for i in range(1,6):
             xx = 160+(i-1)*14
             draw.ellipse((xx,170,xx+6,176), fill=color if i<=step else (45,45,45))
     draw.line((12,197,228,197), fill=(65,65,65))
-    draw.text((12,209), 'VOICE LIVE', font=font(13), fill=(170,170,170))
-    draw.text((143,209), 'NET OK' if network else 'OFFLINE', font=font(13),
-              fill=(120,220,160) if network else (180,180,180))
+    server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
+    draw.text((12, 209), server_text, font=font(13), fill=server_color)
+    if not network:
+        link, link_color = 'OFFLINE', (180, 180, 180)
+    elif info.get('wifi_dbm') is not None:
+        dbm = info['wifi_dbm']
+        link = f'WLAN {dbm}'
+        link_color = (120,220,160) if dbm >= -67 else (255,180,0) if dbm >= -78 else (255,90,90)
+    else:
+        link, link_color = 'NET OK', (120, 220, 160)
+    draw.text((100, 209), link, font=font(13), fill=link_color)
+    if info.get('clock'):
+        _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
     display.image(image, 180)
 
 
@@ -447,6 +584,7 @@ def main():
 
     display = PartialDisplay(display)
     states = None
+    server = ServerProbe().start()
     voice_state = None
     last_event = None
     error_until = None
@@ -459,6 +597,7 @@ def main():
         if states is None or now >= next_probe:
             states = collect_system_states()
             next_probe = now + PROBE_INTERVAL_SECONDS
+            temp, wifi = cpu_temp_c(), wifi_dbm()
 
         current_event = read_voice_event()
         if current_event is not None and current_event != last_event:
@@ -508,10 +647,14 @@ def main():
             shown, description, icon, step, started = current
             tick = int(now / ANIMATION_INTERVAL_SECONDS) if shown not in ('BEREIT', 'FEHLER') else 0
             elapsed = max(0, time.time() - started)
-            screen = ('voice', current, states['network'], tick)
+            status = read_status()
+            info = dict(route=status.get('route'), server=server.state, temp_c=temp,
+                        wifi_dbm=wifi, clock=time.strftime('%H:%M'),
+                        last=last_answer_text(status))
+            screen = ('voice', current, states['network'], tick, tuple(sorted(info.items())))
             if screen != previous_screen:
                 render_voice(display, shown, states['network'],
-                             (description, icon, step), tick, elapsed)
+                             (description, icon, step), tick, elapsed, info)
                 previous_screen = screen
 
         time.sleep(EVENT_INTERVAL_SECONDS)

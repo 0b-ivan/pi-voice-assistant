@@ -285,3 +285,103 @@ class PartialFrameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusInfoTests(unittest.TestCase):
+    def test_read_status_keeps_only_whitelisted_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text('{"route":"server","last_route":"pi","last_llm":"offline",'
+                            '"last_latency_ms":1530,"text":"geheim","route_x":1}')
+            self.assertEqual(display.read_status(path), {
+                "route": "server", "last_route": "pi", "last_llm": "offline",
+                "last_latency_ms": 1530})
+            path.write_text('{"route":"mars","last_latency_ms":true}')
+            self.assertEqual(display.read_status(path), {})
+            path.write_text("kaputt")
+            self.assertEqual(display.read_status(path), {})
+
+    def test_last_answer_text_names_source(self):
+        self.assertIsNone(display.last_answer_text({}))
+        cases = (
+            ({"last_route": "server", "last_llm": "openrouter"}, "Server"),
+            ({"last_route": "server", "last_llm": "offline"}, "Offline-LLM"),
+            ({"last_route": "pi", "last_llm": "openrouter"}, "Pi lokal"),
+        )
+        for status, source in cases:
+            self.assertEqual(display.last_answer_text(dict(status, last_latency_ms=1530)),
+                             f"Zuletzt 1,5 s · {source}")
+
+    def test_server_state(self):
+        class Response:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, _n):
+                return self.body
+
+        env = {"ASSISTANT_BASE_URL": "http://172.22.9.107:8765, https://x.example"}
+        self.assertEqual(display.server_state({}), "off")
+        with patch("urllib.request.urlopen", return_value=Response(b'{"ready": true}')) as get:
+            self.assertEqual(display.server_state(env), "ok")
+        self.assertEqual(get.call_args.args[0], "http://172.22.9.107:8765/health")
+        with patch("urllib.request.urlopen", return_value=Response(b'{"ready": false}')):
+            self.assertEqual(display.server_state(env), "down")
+        with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+            self.assertEqual(display.server_state(env), "down")
+
+    def test_wifi_and_temperature_probes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wireless = Path(tmp) / "wireless"
+            wireless.write_text(
+                "Inter-| sta-|   Quality        |\n"
+                " face | tus | link level noise |\n"
+                " wlan0: 0000   50.  -60.  -256        0\n")
+            self.assertEqual(display.wifi_dbm(wireless), -60)
+            wireless.write_text("header\nheader\n")
+            self.assertIsNone(display.wifi_dbm(wireless))
+            temp = Path(tmp) / "temp"
+            temp.write_text("44008\n")
+            self.assertEqual(display.cpu_temp_c(temp), 44)
+            self.assertIsNone(display.cpu_temp_c(Path(tmp) / "missing"))
+
+    def test_render_voice_with_and_without_info(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        for state, info in (
+            ("BEREIT", None),
+            ("BEREIT", {"server": "down", "last": "Zuletzt 9,8 s · Pi lokal",
+                        "wifi_dbm": -81, "temp_c": 71, "clock": "23:41"}),
+            ("DENKEN", {"server": "ok", "route": "server", "wifi_dbm": -60}),
+        ):
+            capture = Capture()
+            display.render_voice(capture, state, True, info=info)
+            self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+
+class ServerProbeTests(unittest.TestCase):
+    def test_probe_runs_in_background_and_updates_state(self):
+        import threading
+        called = threading.Event()
+
+        def probe():
+            called.set()
+            return "ok"
+
+        server = display.ServerProbe(interval=60, probe=probe)
+        self.assertIsNone(server.state)
+        server.start()
+        self.assertTrue(called.wait(2))
+        for _ in range(100):
+            if server.state == "ok":
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(server.state, "ok")

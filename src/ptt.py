@@ -76,6 +76,57 @@ def publish_display_event(name):
             pass
 
 
+# Display status: fixed identifiers and numbers only, never transcripts or
+# reply text. route/last_route: 'server' (CT 107) or 'pi'; last_llm:
+# 'openrouter' or 'offline' (local model on the server).
+DISPLAY_STATUS_VALUES = {
+    'route': {'server', 'pi'},
+    'last_route': {'server', 'pi'},
+    'last_llm': {'openrouter', 'offline'},
+}
+_display_status = {}
+
+
+def display_status_path():
+    runtime_dir = os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')
+    default = str(Path(runtime_dir) / 'display-status.json')
+    return Path(os.environ.get('PTT_DISPLAY_STATUS_PATH', default))
+
+
+def llm_kind(model):
+    return 'offline' if str(model or '').startswith('local/') else 'openrouter'
+
+
+def publish_display_status(**fields):
+    """Merge whitelisted status fields and atomically replace the status file."""
+    for key, value in fields.items():
+        if value is None:
+            _display_status.pop(key, None)  # unknown now: never show a stale value
+            continue
+        if key in DISPLAY_STATUS_VALUES:
+            if value not in DISPLAY_STATUS_VALUES[key]:
+                continue
+        elif key == 'last_latency_ms':
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                continue
+        else:
+            continue
+        _display_status[key] = value
+    path = display_status_path()
+    tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+    try:
+        if not path.parent.is_dir():
+            return
+        payload = dict(version=1, timestamp=time.time(), **_display_status)
+        tmp.write_text(json.dumps(payload) + '\n', encoding='utf-8')
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def event(name, **fields):
     print(json.dumps(dict(version=1, event=name, **fields)), flush=True)
     publish_display_event(name)
@@ -363,6 +414,10 @@ class VoiceController:
         self.recorder, self.speech, self.probe = recorder, speech, probe
         self.remote = remote
         self.remote_capture = None
+        # Release-to-playback bookkeeping for the display's "last answer" line.
+        self.turn_released_at = None
+        self.turn_route = None
+        self.turn_llm = None
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -410,6 +465,7 @@ class VoiceController:
             self.recorder.drop_uplink()
         if self.job is not None:
             self.job.cancel()
+        self.turn_released_at = None
         self.ptt.resync(held, now)
         event('cancelled')
 
@@ -426,12 +482,15 @@ class VoiceController:
                 uplink.cancel()
             return
         event('processing', path=str(capture))
+        self.turn_released_at = time.monotonic()
+        self.turn_llm = None
         if uplink is not None:
             if uplink.error is None:
                 self.remote_capture = capture
                 self.job = RemoteTurnJob(uplink, capture.parent)
                 self.job_stage = 'remote'
                 self.job_started_at = time.monotonic()
+                self._set_route('server')
                 return
             uplink.cancel()
             # Keep the server's reason (unauthorized/rate_limited/busy) when it
@@ -441,7 +500,21 @@ class VoiceController:
                   code=rejection.code if rejection is not None else 'network',
                   message=rejection.message if rejection is not None else uplink.error)
             event('remote_fallback', target='stt')
+        self._set_route('pi')
         self._start_local_stt(capture)
+
+    def _set_route(self, route):
+        self.turn_route = route
+        publish_display_status(route=route)
+
+    def _turn_spoken(self):
+        """First audio of an answer: publish how long the user waited."""
+        if self.turn_released_at is None:
+            return
+        latency = round((time.monotonic() - self.turn_released_at) * 1000)
+        self.turn_released_at = None
+        publish_display_status(last_route=self.turn_route, last_llm=self.turn_llm,
+                               last_latency_ms=latency)
 
     def _start_local_stt(self, capture):
         if capture is not None:
@@ -468,6 +541,7 @@ class VoiceController:
             event('speech_started', **fields)
             self.speech.start(text)
             self.speech_started_at = time.monotonic()
+            self._turn_spoken()
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
 
@@ -490,6 +564,7 @@ class VoiceController:
             print(f'ERKANNT: {text}', flush=True)
         elif kind == 'reply':
             text = str(item.get('text', ''))
+            self.turn_llm = llm_kind(item.get('model'))
             event('llm_response', text=text, model=item.get('model'))
             print(f'SERVITOR: {text}', flush=True)
         elif kind == 'audio':
@@ -513,13 +588,17 @@ class VoiceController:
                 display_progress('tts', 'playback')
                 self.speech.play(job.result['audio'])
                 self.speech_started_at = time.monotonic()
+                self._turn_spoken()
             except (OSError, RuntimeError, ValueError) as exc:
                 event('speech_error', message=str(exc))
             return
         event('remote_error', stage=job.error_stage, code=job.error_code, message=job.error)
         if not job.fallback_allowed:
             event('stt_error', message=job.error)
-        elif job.reply:
+            self.turn_released_at = None
+            return
+        self._set_route('pi')
+        if job.reply:
             event('remote_fallback', target='tts')
             self._start_speech(job.reply, source='assistant', model=job.model)
         elif job.transcript:
@@ -613,6 +692,7 @@ class VoiceController:
                 self._start_llm(text)
             elif stage == 'llm':
                 reply, model = job.result
+                self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
                 self._start_speech(reply, source='assistant', model=model)
