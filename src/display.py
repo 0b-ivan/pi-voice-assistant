@@ -175,13 +175,14 @@ def read_status(path=None):
                          ('power', ('awake', 'rest', 'sleep')),
                          ('memory', ('on', 'off')),
                          ('maint', ('on', 'off')),
-                         ('enroll', ('intro', 'wake', 'ask', 'process', 'done')),
+                         ('enroll', ('intro', 'wake', 'ask', 'process', 'done', 'auth')),
+                         ('people', ('on', 'off')),
                          ('enroll_rec', ('on', 'off')),
                          ('maint_confirm', MAINT_ITEMS),
                          ('maint_pi', MAINT_STATES), ('maint_server', MAINT_STATES)):
         if value.get(key) in allowed:
             status[key] = value[key]
-    for key, high in (('enroll_step', 100), ('enroll_total', 100),
+    for key, high in (('enroll_step', 100), ('enroll_total', 100), ('people_rev', 9999),
                       ('maint_index', len(MAINT_ITEMS) - 1), ('upd_pi', 9999), ('upd_pi_sec', 9999),
                       ('upd_srv', 9999), ('upd_srv_sec', 9999)):
         item = value.get(key)
@@ -851,6 +852,10 @@ def render_enroll(display, status, info=None):
         draw.text((12, 52), f'Frage {step + 1} / {total}', font=font(13), fill=(170, 175, 180))
         for row, line in enumerate(_wrap(draw, ENROLL_QUESTIONS[step], 17, 216)[:4]):
             draw.text((12, 76 + row * 24), line, font=font(17), fill='white')
+    elif stage == 'auth':
+        draw.text((12, 52), 'Authentifizierung', font=font(13), fill=(170, 175, 180))
+        for row, line in enumerate(_wrap(draw, 'Nach dem Ton die Passphrase sprechen.', 17, 216)):
+            draw.text((12, 76 + row * 24), line, font=font(17), fill='white')
     else:
         text = {'intro': 'Sitzung beginnt …', 'process': 'Stimmprofil wird berechnet …',
                 'done': 'Abgeschlossen'}.get(stage, '')
@@ -860,6 +865,71 @@ def render_enroll(display, status, info=None):
         draw.text((36, 159), 'AUFNAHME', font=font(15), fill=(255, 90, 90))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
     draw.text((12, 209), 'B: abbrechen', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
+
+
+PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', '/run/pi-ptt/display-people.json'))
+
+
+def read_people(path=None):
+    """The people browser as written by ptt.py, length-limited."""
+    try:
+        data = json.loads((PEOPLE_FILE if path is None else Path(path)).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    items = [str(i)[:28] for i in data.get('items', []) if isinstance(i, str)][:14]
+    details = data.get('details') if isinstance(data.get('details'), dict) else {}
+    index = data.get('index') if isinstance(data.get('index'), int) else 0
+    return dict(page=data.get('page') if data.get('page') in ('list', 'actions', 'details')
+                else 'list', index=index, items=items,
+                person=str(data.get('person') or '')[:28], details=details,
+                confirm_delete=data.get('confirm_delete') is True)
+
+
+def render_people(display, view, info=None):
+    """Known people, a person's actions, or their details."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    accent = (0, 200, 170)
+    title = 'PERSONEN' if view['page'] == 'list' else view['person'].upper()[:16]
+    draw.text((12, 12), title, font=font(17), fill=accent)
+    if info.get('battery'):
+        draw_battery(draw, 228, 14, info['battery'])
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    if view['page'] == 'details':
+        d = view['details']
+        when = time.strftime('%d.%m.%Y', time.localtime(d.get('at') or 0))
+        score = d.get('last_score')
+        rows = (('Aufnahmen', str(d.get('count', 0))), ('Geändert', when),
+                ('Passphrase', 'gesetzt' if d.get('passphrase') else 'fehlt'),
+                ('Erkennung', f"{round(score * 100)} %" if isinstance(score, (int, float)) else '–'))
+        for row, (label, value) in enumerate(rows):
+            y = 52 + row * 26
+            draw.text((12, y), label, font=font(13), fill=(135, 145, 150))
+            _right(draw, 228, y, value, 15, (215, 220, 225))
+    else:
+        visible = 7
+        first = max(0, min(view['index'] - 3, len(view['items']) - visible))
+        for row, label in enumerate(view['items']):
+            if not first <= row < first + visible:
+                continue
+            y = 46 + (row - first) * 21
+            if row == view['index']:
+                draw.rectangle((10, y - 1, 230, y + 18), fill=(0, 60, 52))
+                draw.text((14, y), '›', font=font(15), fill=accent)
+            draw.text((28, y), label, font=font(15),
+                      fill=accent if row == view['index'] else (215, 220, 225))
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    if view['confirm_delete']:
+        draw.rectangle((10, 200, 230, 228), fill=(110, 20, 20))
+        draw.text((14, 203), 'Profil löschen?', font=font(12), fill='white')
+        _right(draw, 226, 214, 'E = Ja · B = Nein', 11, (255, 210, 210))
+    else:
+        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
     display.image(image, 180)
 
 
@@ -1194,6 +1264,12 @@ def main():
             screen = ('enroll', tuple(sorted(status.items())), battery_view(battery))
             if screen != previous_screen:
                 render_enroll(display, status, dict(battery=battery))
+                previous_screen = screen
+        elif status.get('people') == 'on' and read_people() is not None:
+            view = read_people()
+            screen = ('people', json.dumps(view, sort_keys=True), battery_view(battery))
+            if screen != previous_screen:
+                render_people(display, view, dict(battery=battery))
                 previous_screen = screen
         elif status.get('maint') == 'on':  # takes the screen even over a stale menu
             screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
