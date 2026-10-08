@@ -170,7 +170,7 @@ class ControllerWakeTests(unittest.TestCase):
         self.speech.active = False
         self.speech.synthesizing = False
         self.speech.poll.return_value = None
-        self.wake = Mock(running=False, error=None)
+        self.wake = Mock(running=False, error=None, detector=None)
         self.wake.take_detection.return_value = False
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

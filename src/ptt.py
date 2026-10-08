@@ -470,6 +470,7 @@ class VoiceController:
         self.wake_enabled = wake is not None
         self.wake_recording = False       # current recording ends on a pause
         self.wake_resume_at = 0.0
+        self.wake_stats_at = 0.0
         self.remote = remote
         self.remote_capture = None
         # Release-to-playback bookkeeping for the display's "last answer" line.
@@ -664,6 +665,10 @@ class VoiceController:
                 if self.remote:
                     self.recorder.drop_uplink()
                 event('wake_timeout')
+        detector = getattr(self.wake, 'detector', None)
+        if detector is not None and now >= self.wake_stats_at:
+            self.wake_stats_at = now + 60.0
+            event('wake_stats', **detector.wakeword.stats())
         listen = self.wake_enabled and self._idle() and now >= self.wake_resume_at
         if listen and not self.wake.running:
             self.wake.start()

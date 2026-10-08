@@ -77,9 +77,11 @@ class WakeWord:
         self._quiet = GATE_REFRESH  # quiet blocks since the silence embedding
         self._silence = None
         self.exact_blocks = self.gated_blocks = 0
+        self.last_rms = 0.0
 
     def _loud(self, block):
         rms = float(np.sqrt(np.mean(block.astype(np.float32) ** 2)))
+        self.last_rms = rms
         if self._floor is None:
             self._floor = rms
         loud = rms > max(GATE_MIN_RMS, self._floor * GATE_FACTOR)
@@ -94,6 +96,14 @@ class WakeWord:
     def _embed(self, window):
         x = window.astype(np.float32)[None, :, :, None]
         return np.squeeze(self._embedding.run(None, {self._embedding_input: x})[0])
+
+    def stats(self):
+        """Gate counters since the last call (for the service journal)."""
+        total = self.exact_blocks + self.gated_blocks
+        result = dict(blocks=total, exact_pct=round(self.exact_blocks * 100 / total) if total else 0,
+                      floor_rms=round(self._floor or 0), last_rms=round(self.last_rms))
+        self.exact_blocks = self.gated_blocks = 0
+        return result
 
     def _embeddings_of(self, audio):
         spec = self._melspectrogram(audio)
