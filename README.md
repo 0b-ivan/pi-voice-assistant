@@ -17,6 +17,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | LLM | OpenRouter (`gpt-5.4-mini`); fällt es aus (kein Netz, keine Credits, Timeout), antwortet Qwen3-4B lokal auf CT 107 |
 | Charakter | Servitor-Systemprompt in [`src/llm.py`](src/llm.py); Datum/Uhrzeit des Bedieners werden mitgegeben, Antworten für die Sprachausgabe geglättet |
 | Erkennung | Vosk `small-de-0.15`; größeres Vosk-Modell gemessen und verworfen ([Architektur](docs/architecture.md#größeres-vosk-modell-verworfen)); Whisper-Vergleich auf Branch `feat/servitor-whisper-stt`, Test mit echter Stimme offen |
+| Aktivierungswort | „Hey Jarvis“ startet eine Anfrage, eine Sprechpause beendet sie; läuft auf dem Pi, abschaltbar im Menü. [Architektur](docs/architecture.md#aktivierungswort) |
 | Bedienung | Taste/SHIM A sprechen, B abbrechen, C/D Lautstärke (2 dB, halten wiederholt), E Status bzw. Menü-OK; PiTFT-Tasten öffnen ein Menü. [Button-Bedienung](docs/button-controls.md) |
 | Display | Schritt, Verarbeitungsort SERVER/LOKAL, letzte Antwort, Akku, Temperatur, WLAN, Uhrzeit, Lautstärke, Menü. [Display](docs/display.md) |
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |

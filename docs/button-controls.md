@@ -27,6 +27,7 @@ Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B schlie�
 |---|---|
 | Systeminfo | Seite mit IP, Laufzeit, freiem RAM, Server, deployter Version und Akku; E oder eine PiTFT-Taste zurück |
 | Server nutzen AN/AUS | Schaltet zur Laufzeit zwischen CT 107 und rein lokalem Betrieb (nicht über Neustart gespeichert); Display zeigt `NUR PI` / `LOKAL` |
+| Aktivierungswort AN/AUS | Mithören für „Hey Jarvis“ ein/aus (nicht über Neustart gespeichert; Grundeinstellung über `PTT_WAKE_WORD`) |
 | Status-LED AN/AUS | Schaltet die SHIM-LED ab; Aufnahme und Fehler zeigt sie trotzdem |
 | Display aus | Hintergrundbeleuchtung aus (z. B. nachts); die nächste PiTFT-Taste weckt nur, ohne das Menü zu öffnen |
 | Status ansagen | Wie E ohne Menü |
