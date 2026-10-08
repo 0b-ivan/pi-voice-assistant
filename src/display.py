@@ -62,6 +62,15 @@ PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/dis
 STATUS_FILE = Path(os.environ.get('PI_DISPLAY_STATUS_FILE', '/run/pi-ptt/display-status.json'))
 SERVER_PROBE_INTERVAL_SECONDS = 10.0
 VOLUME_SHOW_SECONDS = 2.5
+MENU_LABELS = (
+    ('info', 'Systeminfo'),
+    ('server', 'Server nutzen'),
+    ('led', 'Status-LED'),
+    ('screen', 'Display aus'),
+    ('status', 'Status ansagen'),
+    ('close', 'Schließen'),
+)
+DEPLOYED_FILE = Path('/opt/pi-voice-assistant/src/DEPLOYED')
 SERVER_PROBE_TIMEOUT_SECONDS = 0.5
 ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
 SERVER_FOOTER = {
@@ -135,6 +144,15 @@ def read_status(path=None):
         status['volume_at'] = float(volume_at)
         if value.get('volume_limit') in ('min', 'max'):
             status['volume_limit'] = value['volume_limit']
+    index = value.get('menu_index')
+    if (isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(MENU_LABELS)
+            and value.get('menu_page') in ('list', 'info')):
+        status['menu_index'] = index
+        status['menu_page'] = value['menu_page']
+    for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
+                         ('screen', ('on', 'off'))):
+        if value.get(key) in allowed:
+            status[key] = value[key]
     return status
 
 
@@ -684,6 +702,121 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
     display.image(image, 180)
 
 
+def _menu_value(item, status):
+    if item == 'server':
+        return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
+    if item == 'led':
+        return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
+    return ''
+
+
+def render_menu(display, status, info=None):
+    """Menu list: PiTFT buttons move, SHIM E confirms, SHIM B closes."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    accent = (150, 120, 255)
+    draw.text((12, 12), 'MENÜ', font=font(17), fill='white')
+    if info.get('battery'):
+        draw_battery(draw, 228, 14, info['battery'])
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    selected = status.get('menu_index', 0)
+    for row, (item, label) in enumerate(MENU_LABELS):
+        y = 47 + row * 24
+        if row == selected:
+            draw.rectangle((10, y - 2, 230, y + 19), fill=(40, 32, 70))
+            draw.text((14, y), '›', font=font(15), fill=accent)
+        color = accent if row == selected else (215, 220, 225)
+        draw.text((28, y), label, font=font(15), fill=color)
+        value = _menu_value(item, status)
+        if value:
+            value_color = (120, 220, 160) if value == 'AN' else (170, 170, 170)
+            _right(draw, 226, y + 1, value, 13, value_color)
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
+
+
+def uptime_text(path='/proc/uptime'):
+    try:
+        seconds = int(float(Path(path).read_text().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return None
+    days, rest = divmod(seconds, 86400)
+    hours, minutes = rest // 3600, rest % 3600 // 60
+    return f'{days} d {hours} h' if days else f'{hours} h {minutes} min'
+
+
+def mem_available_mb(path='/proc/meminfo'):
+    try:
+        for line in Path(path).read_text().splitlines():
+            if line.startswith('MemAvailable:'):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def ipv4_address():
+    ip = shutil.which('ip')
+    if not ip:
+        return None
+    try:
+        result = subprocess.run([ip, '-4', '-brief', 'address', 'show', 'up'],
+                                capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if fields and fields[0] != 'lo' and len(fields) >= 3:
+            return fields[2].split('/')[0]
+    return None
+
+
+def deployed_version(path=None):
+    try:
+        return (DEPLOYED_FILE if path is None else Path(path)).read_text().split()[0][:7]
+    except (OSError, IndexError):
+        return None
+
+
+def system_info_rows(env=None, battery=None):
+    env = load_env() if env is None else env
+    urls = [u.strip() for u in env.get('ASSISTANT_BASE_URL', '').split(',') if u.strip()]
+    server = None
+    if urls:
+        import urllib.parse
+        server = urllib.parse.urlsplit(urls[0]).hostname
+    mem = mem_available_mb()
+    rows = [
+        ('IP', ipv4_address()),
+        ('Laufzeit', uptime_text()),
+        ('RAM frei', None if mem is None else f'{mem} MB'),
+        ('Server', server or 'keiner'),
+        ('Version', deployed_version()),
+    ]
+    if battery:
+        volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
+        rows.append(('Akku', f"{battery['percent']} % · {volts} V"))
+    return [(label, value) for label, value in rows if value]
+
+
+def render_info(display, rows):
+    from PIL import Image, ImageDraw
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    draw.text((12, 12), 'SYSTEMINFO', font=font(17), fill='white')
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    for row, (label, value) in enumerate(rows[:6]):
+        y = 50 + row * 24
+        draw.text((12, y), label, font=font(12), fill=(135, 145, 150))
+        _right(draw, 228, y, value, 13, (215, 220, 225))
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    draw.text((12, 209), 'E oder ▲▼: zurück', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
+
+
 def _draw_footer(draw, network, info):
     draw.line((12,197,228,197), fill=(65,65,65))
     server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
@@ -744,6 +877,8 @@ def main():
     )
 
     display = PartialDisplay(display)
+    screen_lit = True
+    info_rows, next_info = None, 0.0
     states = None
     server = ServerProbe().start()
     battery_monitor = Battery()
@@ -808,7 +943,25 @@ def main():
             )
             error_until = None
 
-        if states is None or not is_ready(states) or voice_state is None:
+        status = read_status()
+        lit = status.get('screen') != 'off'
+        if lit != screen_lit:
+            backlight.value = lit
+            screen_lit = lit
+        if status.get('menu_index') is not None and states is not None and is_ready(states):
+            if status['menu_page'] == 'info':
+                if info_rows is None or now >= next_info:
+                    info_rows, next_info = system_info_rows(battery=battery), now + 2.0
+                screen = ('info', tuple(info_rows))
+                if screen != previous_screen:
+                    render_info(display, info_rows)
+                    previous_screen = screen
+            else:
+                screen = ('menu', tuple(sorted(status.items())), battery_view(battery))
+                if screen != previous_screen:
+                    render_menu(display, status, dict(battery=battery))
+                    previous_screen = screen
+        elif states is None or not is_ready(states) or voice_state is None:
             screen = ("boot", tuple(sorted((states or {}).items())))
             if screen != previous_screen and states is not None:
                 render_boot(display, states)
@@ -818,8 +971,9 @@ def main():
             shown, description, icon, step, started = current
             tick = int(now / ANIMATION_INTERVAL_SECONDS) if shown not in ('BEREIT', 'FEHLER') else 0
             elapsed = max(0, time.time() - started)
-            status = read_status()
-            info = dict(route=status.get('route'), server=server.state, temp_c=temp,
+            # "Server nutzen: AUS" in the menu means Pi-only until switched back.
+            server_shown = 'off' if status.get('opt_server') == 'off' else server.state
+            info = dict(route=status.get('route'), server=server_shown, temp_c=temp,
                         wifi_dbm=wifi, clock=time.strftime('%H:%M'),
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery, volume=volume_overlay(status))

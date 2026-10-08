@@ -13,6 +13,7 @@ import time
 import wave
 
 from llm import configured_model, generate_reply
+from menu import ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
 from system_status import build_status_text
 from transcribe import (
@@ -84,7 +85,21 @@ DISPLAY_STATUS_VALUES = {
     'last_route': {'server', 'pi'},
     'last_llm': {'openrouter', 'offline'},
     'volume_limit': {'min', 'max'},
+    'menu_page': {'list', 'info'},
+    'opt_server': {'on', 'off', 'none'},
+    'opt_led': {'on', 'off'},
+    'screen': {'on', 'off'},
 }
+# SHIM LED palette (APA102 at the driver's fixed low global brightness).
+LED_OFF = (0, 0, 0)
+LED_READY = (0, 90, 30)          # idle, next turn goes to the server or local-only setup
+LED_READY_LOCAL = (120, 70, 0)   # idle, server switched off or last turn fell back
+LED_RECORDING = (255, 0, 0)
+LED_SERVER = (0, 170, 255)       # processing on CT 107 (display: SERVER, cyan)
+LED_LOCAL = (255, 120, 0)        # processing on the Pi (display: LOKAL, amber)
+LED_SPEAKING = (255, 100, 0)
+LED_MENU = (150, 0, 255)
+LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
 # Holding C/D repeats the volume step after a short pause.
 VOLUME_REPEAT_DELAY = 0.45
 VOLUME_REPEAT_INTERVAL = 0.15
@@ -115,6 +130,9 @@ def publish_display_status(**fields):
                 continue
         elif key == 'volume':
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                continue
+        elif key == 'menu_index':
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(MENU_ITEMS):
                 continue
         elif key == 'volume_at':
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
@@ -206,6 +224,7 @@ class Recorder:
         self.limit = limit
         self.live_vosk_factory = live_vosk_factory
         self.uplink_factory = uplink_factory
+        self.uplink_enabled = True  # menu "Server nutzen"
         self._uplink = None
         self.process = None
         self.raw = self.directory / 'capture.part.pcm'
@@ -267,7 +286,7 @@ class Recorder:
         self.drop_uplink()
 
         uplink = None
-        if self.uplink_factory is not None:
+        if self.uplink_factory is not None and self.uplink_enabled:
             try:
                 uplink = self.uplink_factory()
             except (OSError, ValueError) as exc:
@@ -429,6 +448,11 @@ class VoiceController:
         self.turn_route = None
         self.turn_llm = None
         self.volume_repeat = {}  # 'C'/'D' -> monotonic time of the next repeat
+        self.menu = Menu()
+        self.pitft = (Button(debounce, math.inf), Button(debounce, math.inf))
+        self.remote_enabled = remote
+        self.led_enabled = True
+        self.screen_on = True
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -437,36 +461,37 @@ class VoiceController:
         self.speech_started_at = None
 
     @staticmethod
-    def _mix_color(first, second, amount):
-        amount = max(0.0, min(1.0, float(amount)))
-        values = tuple(
-            int(round(a + (b - a) * amount)) for a, b in zip(first, second)
-        )
-        # Quantize slightly so the main 10 ms loop does not flood I2C with
-        # imperceptibly small RGB changes while still looking smooth.
-        return tuple(max(0, min(255, int(round(value / 8)) * 8)) for value in values)
+    def _scale(color, factor):
+        return tuple(int(round(value * factor)) for value in color)
 
     @property
     def color(self):
+        """SHIM LED. Recording and errors always show; the rest follows the
+        menu's LED switch. Few distinct colours on purpose: each change costs
+        ~190 I2C writes, so animations are two-level pulses, not fades."""
+        now = time.monotonic()
         if self.recorder.process is not None:
-            return (255, 0, 0)
-
+            return LED_RECORDING
+        if (_display_last_error_at is not None
+                and time.time() - _display_last_error_at < DISPLAY_ERROR_HOLD_SECONDS):
+            return LED_RECORDING if int(now * 4) % 2 == 0 else LED_OFF
+        if not self.led_enabled:
+            return LED_OFF
+        if self.menu.open:
+            return LED_MENU
         if self.job is not None:
-            # Processing/thinking: hard red/yellow blink. This intentionally
-            # looks different from the smooth turquoise/orange speech envelope.
-            return (255, 208, 0) if int(time.monotonic() * 2) % 2 else (255, 0, 0)
-
+            base = LED_SERVER if self.turn_route == 'server' else LED_LOCAL
+            return base if int(now / LED_PULSE_SECONDS) % 2 == 0 else self._scale(base, 0.25)
         if self.speech.active:
-            # Speech follows the actual streamed Piper cadence. Sentence pauses
-            # are turquoise; voiced chunks fade toward orange.
+            # Three brightness steps follow the speech envelope.
             level = getattr(self.speech, 'voice_level', 1.0)
             try:
-                level = float(level)
+                level = max(0.0, min(1.0, float(level)))
             except (TypeError, ValueError):
                 level = 1.0
-            return self._mix_color((0, 224, 208), (255, 104, 0), level)
-
-        return (0, 255, 0)
+            return self._scale(LED_SPEAKING, (0.3, 0.6, 1.0)[min(2, int(level * 3))])
+        local = self.remote and (not self.remote_enabled or self.turn_route == 'pi')
+        return LED_READY_LOCAL if local else LED_READY
 
     def cancel(self, held, now):
         self.speech.stop()
@@ -526,6 +551,65 @@ class VoiceController:
               percent=level['percent'], limit=level['limit'])
         publish_display_status(volume=level['percent'], volume_limit=level['limit'],
                                volume_at=time.time())
+
+    def _publish_menu(self):
+        if not self.remote:
+            server = 'none'
+        else:
+            server = 'on' if self.remote_enabled else 'off'
+        publish_display_status(menu_index=self.menu.index, menu_page=self.menu.page,
+                               opt_server=server,
+                               opt_led='on' if self.led_enabled else 'off',
+                               screen='on' if self.screen_on else 'off')
+
+    def _menu_confirm(self, now):
+        item = self.menu.confirm(now)
+        if item == 'server' and self.remote:
+            self.remote_enabled = not self.remote_enabled
+            self.recorder.uplink_enabled = self.remote_enabled
+            event('menu', item='server', value='on' if self.remote_enabled else 'off')
+        elif item == 'led':
+            self.led_enabled = not self.led_enabled
+            event('menu', item='led', value='on' if self.led_enabled else 'off')
+        elif item == 'screen':
+            self.screen_on = False
+            event('menu', item='screen', value='off')
+        elif item == 'status':
+            self._speak_status(action=None)
+        elif item is not None:
+            event('menu', item=item)
+        self._publish_menu()
+
+    def _speak_status(self, action):
+        if (self.recorder.process is not None or action == 'start'
+                or (os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
+                    and self.job is not None)):
+            event('status_skipped', reason='recording_or_processing')
+            return
+        text = build_status_text(
+            processing=self.job is not None,
+            stt_provider=os.environ.get('STT_PROVIDER'),
+        )
+        try:
+            event('status', text=text)
+            event('speech_started', source='status')
+            self.speech.start(text)
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+
+    def _pitft_input(self, pitft_pressed, now):
+        up = self.pitft[0].update(pitft_pressed[0], now) == 'start'
+        down = self.pitft[1].update(pitft_pressed[1], now) == 'start'
+        if up or down:
+            if not self.screen_on:
+                self.screen_on = True  # first press only wakes the screen
+                event('menu', item='screen', value='on')
+            else:
+                self.menu.move(-1 if up else 1, now)
+            self._publish_menu()
+        elif self.menu.expire(now):
+            self._publish_menu()
 
     def _set_route(self, route):
         self.turn_route = route
@@ -636,7 +720,7 @@ class VoiceController:
         else:
             event('stt_error', message=job.error)
 
-    def tick(self, gpio_pressed, shim_pressed, now):
+    def tick(self, gpio_pressed, shim_pressed, now, pitft_pressed=(False, False)):
         held = gpio_pressed or shim_pressed[0]
         action = self.ptt.update(held, now)
         commands = [name for i, name in enumerate('BCDE', 1)
@@ -646,7 +730,16 @@ class VoiceController:
                 event('button', button='PTT', action=action)
             for name in commands:
                 event('button', button=name, action='start')
+            for name, button, pressed in zip(('UP', 'DOWN'), self.pitft, pitft_pressed):
+                if button.update(pressed, now) == 'start':
+                    event('button', button=name, action='start')
             return
+        self._pitft_input(pitft_pressed, now)
+        if 'B' in commands and self.menu.open:
+            # B leaves the menu first; a second press cancels as usual.
+            self.menu.close()
+            self._publish_menu()
+            commands = []
         if 'B' in commands:
             self.cancel(held, now)
             action = None
@@ -663,22 +756,10 @@ class VoiceController:
                 self.volume_repeat[name] = now + VOLUME_REPEAT_DELAY
                 self._volume_step(name)
             elif name == 'E':
-                if (self.recorder.process is not None or action == 'start'
-                        or (os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
-                            and self.job is not None)):
-                    event('status_skipped', reason='recording_or_processing')
+                if self.menu.open:
+                    self._menu_confirm(now)
                 else:
-                    text = build_status_text(
-                        processing=self.job is not None,
-                        stt_provider=os.environ.get('STT_PROVIDER'),
-                    )
-                    try:
-                        event('status', text=text)
-                        event('speech_started', source='status')
-                        self.speech.start(text)
-                        self.speech_started_at = time.monotonic()
-                    except (OSError, RuntimeError, ValueError) as exc:
-                        event('speech_error', message=str(exc))
+                    self._speak_status(action)
         code = self.speech.poll()
         if code is not None:
             if self.speech_started_at is not None:
@@ -728,6 +809,9 @@ class VoiceController:
 
             self.ptt.resync(held, now)
             action = None
+        if action == 'start' and self.menu.open:
+            self.menu.close()
+            self._publish_menu()
         if action == 'start':
             if (self.job is not None or (os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
                     and getattr(self.speech, 'synthesizing', False))):
@@ -870,36 +954,63 @@ def main():
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
                                  remote=uplink_factory is not None)
     shim = None
+    led = None
     if shim_enabled == '1':
         try:
-            from button_shim import ButtonShim
+            from button_shim import ButtonShim, LedWriter
             shim = ButtonShim()
+            if not args.probe:
+                led = LedWriter(shim)
             event('shim_ready', bus=1, address='0x3f')
         except (ImportError, OSError) as exc:
             event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
 
+    # PiTFT buttons (upper, lower): menu. Empty PTT_PITFT_BUTTONS disables them.
+    pitft_lines = tuple(int(value) for value in
+                        os.environ.get('PTT_PITFT_BUTTONS', '23,24').split(',') if value.strip())
+    if len(pitft_lines) not in (0, 2) or line in pitft_lines:
+        parser.error('PTT_PITFT_BUTTONS must be two GPIO lines other than PTT_GPIO_LINE, or empty')
+    menu_settings = gpiod.LineSettings(direction=Direction.INPUT, active_low=True,
+                                       bias=Bias.PULL_UP)
+    config = {line: settings, **{pin: menu_settings for pin in pitft_lines}}
+    if not args.probe:
+        controller._publish_menu()
+
+    def stop_shim():
+        nonlocal shim, led
+        if led is not None:
+            led.close()
+            led = None
+        if shim is not None:
+            try:
+                shim.close()
+            except OSError as exc:
+                event('shim_error', message=str(exc))
+            shim = None
+
     try:
-        with gpiod.request_lines(chip, consumer='pi-ptt', config={line: settings}) as request:
-            event('waiting_for_release', chip=chip, line=line, probe=args.probe)
+        with gpiod.request_lines(chip, consumer='pi-ptt', config=config) as request:
+            event('waiting_for_release', chip=chip, line=line, probe=args.probe,
+                  menu_lines=list(pitft_lines))
             while not stop.is_set():
                 gpio_pressed = request.get_value(line) == Value.ACTIVE
+                pitft = tuple(request.get_value(pin) == Value.ACTIVE for pin in pitft_lines) \
+                    or (False, False)
                 now = time.monotonic()
                 pressed = (False,) * 5
                 if shim is not None:
                     try:
+                        if led is not None and led.error is not None:
+                            raise led.error
                         pressed = shim.read()
-                        if not args.probe:
-                            shim.set_color(controller.color)
+                        if led is not None:
+                            led.request(controller.color)
                     except OSError as exc:
                         event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
-                        try:
-                            shim.close()
-                        except OSError:
-                            pass
-                        shim = None
+                        stop_shim()
                         controller.cancel(gpio_pressed, now)
                 try:
-                    controller.tick(gpio_pressed, pressed, now)
+                    controller.tick(gpio_pressed, pressed, now, pitft)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
                     event('error', message=str(exc))
                     controller.cancel(gpio_pressed or pressed[0], now)
@@ -908,11 +1019,7 @@ def main():
         try:
             controller.close()
         finally:
-            if shim is not None:
-                try:
-                    shim.close()
-                except OSError as exc:
-                    event('shim_error', message=str(exc))
+            stop_shim()
 
 
 if __name__ == '__main__':

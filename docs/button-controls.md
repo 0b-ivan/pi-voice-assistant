@@ -8,9 +8,10 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 |---|---|
 | A | Halten: aufnehmen; Loslassen: STT |
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
-| B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen |
-| C / D | Digitalen `Playback`-Pegel um 5 Prozentpunkte senken/erhöhen |
-| E | Dynamischen Systemstatus ansagen: Systemlast, Temperatur, freier RAM/Datenspeicher, Laufzeit, STT-Modus und Servitor-Zustand |
+| B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: Menü schließen (erst ein zweiter Druck bricht ab) |
+| C / D | Digitalen `Playback`-Pegel um 2 dB senken/erhöhen, gehalten wiederholt |
+| E | Ohne Menü: dynamischen Systemstatus ansagen (Systemlast, Temperatur, freier RAM/Datenspeicher, Laufzeit, STT-Modus, Servitor-Zustand). Bei offenem Menü: **Bestätigen** |
+| PiTFT-Taste oben (GPIO23) / unten (GPIO24) | Menü öffnen, Auswahl hoch/runter; bei ausgeschaltetem Display nur aufwecken |
 
 A und GPIO17 bilden gemeinsam einen Aufnahmetaster: Aufnahme endet erst, wenn beide losgelassen sind. Alle Tasten beim Start loslassen; B–E lösen einmal pro Druck aus. B hat bei gleichzeitigen Aktionen Vorrang.
 
@@ -18,15 +19,36 @@ STT läuft im Hintergrund. B verwirft dessen Ergebnis, bricht den nativen Vosk-A
 
 C/D ändern nur den digitalen `Playback`-Regler (0,5-dB-Raster, 255 = 0 dB), nicht Speaker, Speaker AC/DC oder Mikrofonpegel: **2 dB pro Druck** (`TTS_VOLUME_STEP_DB`) im Bereich −60 bis 0 dB. Gehalten wiederholt sich der Schritt nach 0,45 s alle 0,15 s. Früher waren es „5 %“ der Rohwerte, also rund 6,4 dB pro Druck, was hörbar sprang. Ein bereits tiefer eingestellter Pegel wird beim Leiserstellen nicht auf −60 dB angehoben. Das PiTFT zeigt 2,5 s lang „LAUTSTÄRKE“ mit Balken (Prozent des Bereichs −60…0 dB, an den Grenzen MIN/MAX). Änderungen werden vom Dienst nicht für den nächsten Boot gespeichert.
 
-| RGB im Code | Zustand |
-|---|---|
-| Grün | Bereit, auch beim anfänglichen Warten auf Release |
-| Rot | Aufnahme |
-| Rot ↔ Gelb, klar blinkend | STT/Verarbeitung bzw. späteres „Nachdenken“ |
-| Türkis ↔ Orange | Sprachausgabe: Türkis in Pausen, Orange während Sprachsegmenten |
-| Aus | Dienst beendet oder reine Probe |
+## Menü auf dem PiTFT
 
-Die Sprachfarbe folgt der Piper-Chunk-Timeline: Satzpausen bleiben Türkis, Sprachsegmente blenden weich Richtung Orange. Verarbeitung blinkt unabhängig davon klar zwischen Rot und Gelb (500 ms pro Farbe). Die tatsächliche optische Wirkung auf der Hardware muss noch abgenommen werden. Kein eigener Fehler-/Offline-LED-Zustand implementiert.
+Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B schließt**, nach 15 s ohne Taste schließt es selbst, PTT schließt es sofort. `pi-ptt` liest beide Tasten (Pull-up, aktiv Low, `PTT_PITFT_BUTTONS=23,24`, leer = aus) und besitzt den Menüzustand; das Display zeigt ihn nur an (feste Werte in `display-status.json`).
+
+| Eintrag | Wirkung |
+|---|---|
+| Systeminfo | Seite mit IP, Laufzeit, freiem RAM, Server, deployter Version und Akku; E oder eine PiTFT-Taste zurück |
+| Server nutzen AN/AUS | Schaltet zur Laufzeit zwischen CT 107 und rein lokalem Betrieb (nicht über Neustart gespeichert); Display zeigt `NUR PI` / `LOKAL` |
+| Status-LED AN/AUS | Schaltet die SHIM-LED ab; Aufnahme und Fehler zeigt sie trotzdem |
+| Display aus | Hintergrundbeleuchtung aus (z. B. nachts); die nächste PiTFT-Taste weckt nur, ohne das Menü zu öffnen |
+| Status ansagen | Wie E ohne Menü |
+| Schließen | Menü zu |
+
+## Status-LED
+
+Farben entsprechen dem Display (SERVER cyan, LOKAL gelb, AUSGABE orange):
+
+| Farbe | Zustand |
+|---|---|
+| Gedämpftes Grün | Bereit; nächste Anfrage geht an den Server (bzw. Pi ohne konfigurierten Server) |
+| Gedämpftes Gelb | Bereit, aber lokal: Server im Menü abgeschaltet oder letzte Anfrage lief im Fallback |
+| Rot | Aufnahme (auch bei abgeschalteter LED) |
+| Cyan, hell/dunkel pulsierend (0,6 s) | Verarbeitung auf CT 107 |
+| Gelb, hell/dunkel pulsierend | Verarbeitung auf dem Pi |
+| Orange in drei Helligkeitsstufen | Sprachausgabe, folgt der Sprachhüllkurve |
+| Violett | Menü offen |
+| Rot blinkend (4 Hz, 3 s) | Fehler (auch bei abgeschalteter LED) |
+| Aus | LED im Menü abgeschaltet, Dienst beendet oder reine Probe |
+
+Ein Farbwechsel am SHIM sind rund 190 I²C-Schreibzugriffe (gemessen ~0,5 ms pro Transaktion, also 50–90 ms). Früher liefen sie in der 10-ms-Hauptschleife und blockierten in dieser Zeit die Tastenabfrage. Jetzt schreibt `LedWriter` in einem eigenen Thread: nur die jeweils letzte gewünschte Farbe, höchstens alle 0,1 s; Tastenlesen und LED-Bits wechseln sich pro Transaktion ab. Animationen sind deshalb bewusst zweistufig statt weich überblendet. Abnahme auf der Hardware steht aus.
 
 ## Aktivieren
 

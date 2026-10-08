@@ -505,3 +505,43 @@ class VolumeOverlayTests(unittest.TestCase):
             capture = Capture()
             display.render_voice(capture, "BEREIT", True, info=dict(volume=volume))
             self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+
+class MenuDisplayTests(unittest.TestCase):
+    def test_read_status_menu_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text('{"menu_index": 1, "menu_page": "list", "opt_server": "off",'
+                            ' "opt_led": "on", "screen": "off"}')
+            status = display.read_status(path)
+            self.assertEqual((status["menu_index"], status["opt_server"], status["screen"]),
+                             (1, "off", "off"))
+            path.write_text('{"menu_index": 99, "menu_page": "list", "screen": "dim"}')
+            self.assertEqual(display.read_status(path), {})
+
+    def test_render_menu_and_info(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        capture = Capture()
+        display.render_menu(capture, dict(menu_index=1, menu_page="list", opt_server="on",
+                                          opt_led="off"))
+        self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+        capture = Capture()
+        display.render_info(capture, [("IP", "172.22.9.128"), ("Version", "abc1234")])
+        self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+    def test_info_helpers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            uptime = Path(tmp) / "uptime"
+            uptime.write_text("22380.5 1000.0\n")
+            self.assertEqual(display.uptime_text(uptime), "6 h 13 min")
+            uptime.write_text("190000 1\n")
+            self.assertEqual(display.uptime_text(uptime), "2 d 4 h")
+            meminfo = Path(tmp) / "meminfo"
+            meminfo.write_text("MemTotal: 425000 kB\nMemAvailable: 115712 kB\n")
+            self.assertEqual(display.mem_available_mb(meminfo), 113)
+            deployed = Path(tmp) / "DEPLOYED"
+            deployed.write_text("6da76a2abcdef\nbranch x\n")
+            self.assertEqual(display.deployed_version(deployed), "6da76a2")

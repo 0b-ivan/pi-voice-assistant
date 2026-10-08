@@ -168,24 +168,51 @@ class ControllerTests(unittest.TestCase):
         self.speech.start.assert_called_once()
         self.speech.stop.assert_called_once()
 
-    def test_led_processing_blinks_and_speech_tracks_voice_level(self):
+    def test_led_colors_follow_state_route_and_switch(self):
+        import ptt
+        ptt._display_last_error_at = None
+        self.assertEqual(self.c.color, ptt.LED_READY)
         self.c.job = Mock()
-        with patch("ptt.time.monotonic", return_value=0.0):
-            processing_red = self.c.color
-        with patch("ptt.time.monotonic", return_value=0.5):
-            processing_yellow = self.c.color
-        self.assertEqual(processing_red, (255, 0, 0))
-        self.assertEqual(processing_yellow, (255, 208, 0))
-
+        self.c.turn_route = 'server'
+        with patch('ptt.time.monotonic', return_value=0.0):
+            bright = self.c.color
+        with patch('ptt.time.monotonic', return_value=0.7):
+            dim = self.c.color
+        self.assertEqual(bright, ptt.LED_SERVER)
+        self.assertEqual(dim, tuple(round(v * 0.25) for v in ptt.LED_SERVER))
+        self.c.turn_route = 'pi'
+        with patch('ptt.time.monotonic', return_value=0.0):
+            self.assertEqual(self.c.color, ptt.LED_LOCAL)
         self.c.job = None
         self.speech.active = True
-        self.speech.voice_level = 0.0
-        pause = self.c.color
-        self.speech.voice_level = 1.0
-        voiced = self.c.color
-        self.assertGreater(pause[1], pause[0])
-        self.assertGreater(voiced[0], voiced[1])
-        self.assertGreater(pause[2], voiced[2])
+        levels = []
+        for level in (0.0, 0.5, 1.0):
+            self.speech.voice_level = level
+            levels.append(self.c.color)
+        self.assertEqual(len(set(levels)), 3)  # three steps only
+        self.assertEqual(levels[-1], ptt.LED_SPEAKING)
+        self.speech.active = False
+        self.c.remote = True
+        self.c.remote_enabled = False
+        self.assertEqual(self.c.color, ptt.LED_READY_LOCAL)
+        self.c.led_enabled = False
+        self.assertEqual(self.c.color, ptt.LED_OFF)
+        proc = Mock()
+        self.recorder.process = proc
+        self.assertEqual(self.c.color, ptt.LED_RECORDING)  # recording always shows
+
+    def test_led_flashes_after_errors_even_when_switched_off(self):
+        import ptt
+        self.c.led_enabled = False
+        ptt._display_last_error_at = time.time()
+        try:
+            with patch('ptt.time.monotonic', return_value=0.0):
+                on = self.c.color
+            with patch('ptt.time.monotonic', return_value=0.3):
+                off = self.c.color
+        finally:
+            ptt._display_last_error_at = None
+        self.assertEqual((on, off), (ptt.LED_RECORDING, ptt.LED_OFF))
 
     def test_status_never_plays_into_recording(self):
         self.tick(down='AE')

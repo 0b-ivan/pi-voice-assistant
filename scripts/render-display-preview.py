@@ -34,6 +34,10 @@ SCREENS = (
     ('BEREIT', None, dict(BASE, volume=(35, None), last='Zuletzt 1,5 s · Server')),
     ('AUSGABE', ('Audio abspielen', 'speaker', 5), dict(BASE, route='server',
                                                         volume=(100, 'max'))),
+    ('MENU', None, dict(menu_index=1, menu_page='list', opt_server='on', opt_led='on')),
+    ('INFO', None, [('IP', '172.22.9.128'), ('Laufzeit', '6 h 13 min'), ('RAM frei', '113 MB'),
+                    ('Server', '172.22.9.107'), ('Version', '6da76a2'),
+                    ('Akku', '83 % · 3,86 V')]),
 )
 
 
@@ -51,7 +55,12 @@ def main():
                               rows * (display.HEIGHT + gap) + gap), (28, 28, 28))
     for index, (state, details, info) in enumerate(SCREENS):
         capture = Capture()
-        display.render_voice(capture, state, True, details, tick=3, elapsed=2, info=info)
+        if state == 'MENU':
+            display.render_menu(capture, info, dict(battery=CHARGING))
+        elif state == 'INFO':
+            display.render_info(capture, info)
+        else:
+            display.render_voice(capture, state, True, details, tick=3, elapsed=2, info=info)
         x = gap + (index % columns) * (display.WIDTH + gap)
         y = gap + (index // columns) * (display.HEIGHT + gap)
         sheet.paste(capture.frame, (x, y))
