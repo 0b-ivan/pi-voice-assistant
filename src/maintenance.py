@@ -66,6 +66,28 @@ def sanitize_status(data):
     return clean
 
 
+class NoticeStore:
+    """Remembers the last update announcement across pi-ptt restarts (until
+    reboot): a small file in the request folder, which the service may write
+    and the root worker ignores."""
+
+    def __init__(self, directory=DIR):
+        self.path = Path(directory) / 'requests' / '.notified'
+
+    def load(self):
+        try:
+            data = json.loads(self.path.read_text())
+            return (tuple(int(v) for v in data['key'][:2]), float(data['at']))
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def save(self, key, at):
+        try:
+            self.path.write_text(json.dumps(dict(key=list(key), at=at)))
+        except OSError:
+            pass
+
+
 def installed(directory=DIR):
     return (Path(directory) / 'requests').is_dir()
 
@@ -118,6 +140,9 @@ def result_text(target, data, lore='off'):
     if data.get('state') == 'failed':
         return f"{name}: Aktualisierung fehlgeschlagen. Protokoll prüfen."
     count = data.get('upgraded', 0)
+    if not count:
+        text = f"{name} ist bereits aktuell. Keine Pakete installiert."
+        return text + (" Der Maschinengeist ist rein." if lore == 'full' else "")
     text = f"{name}: Aktualisierung abgeschlossen, {count} Pakete installiert."
     if data.get('reboot'):
         text += " Neustart empfohlen."
@@ -232,8 +257,8 @@ def phrases():
         texts += [confirm_prompt(item, dict(updates=2, server_updates=2)), confirm_prompt(item)]
     for target in TARGETS:
         for lore in ('off', 'full'):
-            texts += [result_text(target, dict(state='done', upgraded=2, reboot=reboot), lore)
-                      for reboot in (True, False)]
+            texts += [result_text(target, dict(state='done', upgraded=n, reboot=reboot), lore)
+                      for reboot in (True, False) for n in (0, 2)]
         texts.append(result_text(target, dict(state='failed')))
     return texts
 

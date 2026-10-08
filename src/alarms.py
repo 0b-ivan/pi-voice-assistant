@@ -224,14 +224,20 @@ class AlarmMonitor:
         sentence = updates_sentence(snapshot)
         key = (snapshot.get('updates', 0) + snapshot.get('server_updates', 0),
                snapshot.get('updates_security', 0) + snapshot.get('server_updates_security', 0))
-        last_key, last_at = getattr(self, '_updates', ((0, 0), None))
+        store = getattr(self, 'notice_store', None)
+        if not hasattr(self, '_updates'):
+            # What was announced before a service restart (``now`` is wall time then).
+            self._updates = (store.load() if store else None) or ((0, 0), None)
+        last_key, last_at = self._updates
         if sentence is None:
             self._updates = (key, None)
             return None
         more = key[0] > last_key[0] or key[1] > last_key[1]
-        if not more and last_at is not None and now - last_at < UPDATE_REMINDER:
+        if not more and last_at is not None and 0 <= now - last_at < UPDATE_REMINDER:
             return None
         self._updates = (key, now)
+        if store:
+            store.save(key, now)
         if lore == 'full':
             return sentence + " Die Riten der Wartung sind fällig."
         return sentence

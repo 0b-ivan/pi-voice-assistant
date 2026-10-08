@@ -51,6 +51,25 @@ class ModuleTests(unittest.TestCase):
                       maintenance.result_text("pi", dict(state="done", upgraded=12, reboot=True)))
 
 
+class NoticeStoreTests(unittest.TestCase):
+    def test_update_notice_is_not_repeated_after_a_restart(self):
+        from alarms import AlarmMonitor
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "requests").mkdir()
+            snap = dict(server_updates=42, server_updates_security=23)
+            first = AlarmMonitor()
+            first.notice_store = maintenance.NoticeStore(tmp)
+            self.assertIsNotNone(first.updates_notice(snap, 1000.0))
+            restarted = AlarmMonitor()
+            restarted.notice_store = maintenance.NoticeStore(tmp)
+            self.assertIsNone(restarted.updates_notice(snap, 1600.0))
+            self.assertIsNotNone(restarted.updates_notice(dict(snap, server_updates=43), 1700.0))
+
+    def test_up_to_date_result(self):
+        self.assertEqual(maintenance.result_text("pi", dict(state="done", upgraded=0)),
+                         "Pi ist bereits aktuell. Keine Pakete installiert.")
+
+
 class ControllerTests(unittest.TestCase):
     def setUp(self):
         import ptt

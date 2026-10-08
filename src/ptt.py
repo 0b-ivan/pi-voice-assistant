@@ -538,6 +538,7 @@ class VoiceController:
         self.turn_transcript = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.maint = maintenance.Mode()
+        self.alarms.notice_store = maintenance.NoticeStore()
         self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
         self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
@@ -740,7 +741,8 @@ class VoiceController:
         texts += self._check_memory()
         maintenance_texts = self._check_maintenance()  # spoken even with alarms muted
         if self.power != 'sleep':  # maintenance can wait until someone is around
-            notice = self.alarms.updates_notice(self.status_snapshot(), now, self.lore)
+            # Wall clock: the last announcement survives service restarts.
+            notice = self.alarms.updates_notice(self.status_snapshot(), time.time(), self.lore)
             if notice:
                 texts.append(notice)
         for text in texts:
