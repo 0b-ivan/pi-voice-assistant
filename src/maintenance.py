@@ -218,6 +218,26 @@ def server_status(env=None, opener=None):
     return sanitize_status(result[1].get('maintenance'))
 
 
+ENTER_TEXT = "Wartungsmodus aktiv. Aktion wählen, Bestätigung mit Taste E."
+EXIT_TEXT = "Wartungsmodus beendet."
+NEED_MODE_TEXT = "Erst Wartungsmodus aktivieren."
+CANCEL_TEXT = "Abgebrochen."
+
+
+def phrases():
+    """Every fixed maintenance sentence, for prerecorded clips."""
+    texts = [ENTER_TEXT, EXIT_TEXT, NEED_MODE_TEXT, CANCEL_TEXT,
+             *START_TEXT.values(), *FAIL_TEXT.values()]
+    for item in ITEMS[:-1]:
+        texts += [confirm_prompt(item, dict(updates=2, server_updates=2)), confirm_prompt(item)]
+    for target in TARGETS:
+        for lore in ('off', 'full'):
+            texts += [result_text(target, dict(state='done', upgraded=2, reboot=reboot), lore)
+                      for reboot in (True, False)]
+        texts.append(result_text(target, dict(state='failed')))
+    return texts
+
+
 START_TEXT = {
     ('update', 'pi'): "Aktualisierung des Pi gestartet. Das dauert einige Minuten.",
     ('update', 'server'): "Aktualisierung des Servers gestartet.",

@@ -236,11 +236,11 @@ class Service:
     def _maintenance_reply(op, device):
         active = device.get('maintenance') == 'on'
         if op == 'enter':
-            return "Wartungsmodus aktiv. Aktion wählen, Bestätigung mit Taste E."
+            return maintenance.ENTER_TEXT
         if op == 'exit':
-            return "Wartungsmodus beendet."
+            return maintenance.EXIT_TEXT
         if not active:
-            return "Erst Wartungsmodus aktivieren."
+            return maintenance.NEED_MODE_TEXT
         return maintenance.confirm_prompt(op, device)
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY):

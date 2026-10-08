@@ -77,6 +77,8 @@ def known_pieces():
                                                      server_updates_security=ss), 0, lore)
                   for pi in (0, 1, 2) for ps in (0, 1) for sv in (0, 1, 2) for ss in (0, 1)
                   if (pi or not ps) and (sv or not ss) and (pi or sv)]
+    from maintenance import phrases
+    texts += phrases()
     pieces = {piece for text in texts for piece, _ in fragments(text)}
     return sorted(pieces | {str(n) for n in NUMBERS})
 

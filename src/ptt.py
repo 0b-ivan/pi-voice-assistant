@@ -786,12 +786,12 @@ class VoiceController:
             if self.menu.open:
                 self.menu.close()
                 self._publish_menu()
-            text = "Wartungsmodus aktiv. Aktion wählen, Bestätigung mit Taste E."
+            text = maintenance.ENTER_TEXT
         elif op == 'exit':
             self.maint.exit()
-            text = "Wartungsmodus beendet."
+            text = maintenance.EXIT_TEXT
         elif not self.maint.active:
-            text = "Erst Wartungsmodus aktivieren."
+            text = maintenance.NEED_MODE_TEXT
         else:
             self.maint.index = maintenance.ITEMS.index(op)
             self.maint.ask(op)
@@ -806,7 +806,7 @@ class VoiceController:
         if cancel:
             if self.maint.pending is not None:
                 self.maint.pending = None
-                self._say("Abgebrochen.")
+                self._say(maintenance.CANCEL_TEXT)
             else:
                 self._maintenance_op('exit')
         elif confirm:
