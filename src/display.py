@@ -978,7 +978,8 @@ def main():
             shown_info = dict(info, battery=battery_view(battery))
             if skull is not None and shown in SKULL_STATES and info.get('volume') is None:
                 if shown == 'BEREIT':
-                    level = idle_level(now)
+                    # Breathing is slow: 4 frames per second are enough.
+                    level = idle_level(int(now * 4) / 4)
                 else:
                     try:
                         mtime = ENVELOPE_FILE.stat().st_mtime
