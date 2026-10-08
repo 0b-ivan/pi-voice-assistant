@@ -1000,7 +1000,8 @@ class VoiceController:
             for word, score in hits:
                 event('wake_shadow', word=word, score=score)
             for peak in peaks:
-                event('wake_shadow_peak', **{k: round(v, 3) for k, v in peak.items()})
+                if max(peak.values(), default=0) >= 0.05:  # skip plain room noise
+                    event('wake_shadow_peak', **{k: round(v, 3) for k, v in peak.items()})
         detector = getattr(self.wake, 'detector', None)
         if detector is not None and now >= self.wake_stats_at:
             self.wake_stats_at = now + 60.0
