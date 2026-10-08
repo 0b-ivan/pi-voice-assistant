@@ -17,7 +17,6 @@ import argparse
 import json
 from pathlib import Path
 import time
-import wave
 
 import numpy as np
 
@@ -110,19 +109,55 @@ def trim(audio, threshold=0.02):
     return audio[loud[0]:loud[-1] + 1] if len(loud) else audio
 
 
+def read_wav(path):
+    """Mono float samples of a PCM (16/24/32 bit) or IEEE-float WAV, including
+    WAVE_FORMAT_EXTENSIBLE (the MIT impulse responses), plus its rate."""
+    import struct
+    data = Path(path).read_bytes()
+    if data[:4] != b'RIFF' or data[8:12] != b'WAVE':
+        raise ValueError('not a WAV file')
+    pos, fmt, frames = 12, None, None
+    while pos + 8 <= len(data):
+        cid, size = data[pos:pos + 4], struct.unpack('<I', data[pos + 4:pos + 8])[0]
+        body = data[pos + 8:pos + 8 + size]
+        if cid == b'fmt ':
+            tag, channels, rate = struct.unpack('<HHI', body[:8])
+            bits = struct.unpack('<H', body[14:16])[0]
+            if tag == 0xFFFE and len(body) >= 26:  # extensible: real tag in the GUID
+                tag = struct.unpack('<H', body[24:26])[0]
+            fmt = (tag, channels, rate, bits)
+        elif cid == b'data':
+            frames = body
+        pos += 8 + size + (size & 1)
+    if fmt is None or frames is None:
+        raise ValueError('missing fmt or data chunk')
+    tag, channels, rate, bits = fmt
+    if tag == 3 and bits == 32:
+        samples = np.frombuffer(frames, dtype='<f4').astype(np.float32)
+    elif tag == 1 and bits == 16:
+        samples = np.frombuffer(frames, dtype='<i2').astype(np.float32) / 32768
+    elif tag == 1 and bits == 24:
+        raw = np.frombuffer(frames[:len(frames) // 3 * 3], dtype=np.uint8).reshape(-1, 3)
+        ints = (raw[:, 0].astype(np.int32) | (raw[:, 1].astype(np.int32) << 8)
+                | (raw[:, 2].astype(np.int32) << 16))
+        samples = (np.where(ints & 0x800000, ints - 0x1000000, ints) / 8388608).astype(np.float32)
+    elif tag == 1 and bits == 32:
+        samples = np.frombuffer(frames, dtype='<i4').astype(np.float32) / 2147483648
+    else:
+        raise ValueError(f'unsupported WAV format tag {tag} with {bits} bits')
+    return samples[::channels], rate
+
+
 def load_rirs():
     rirs = []
     for path in sorted((ROOT / 'rir').glob('*.wav')):
         try:
-            with wave.open(str(path)) as w:
-                if w.getsampwidth() != 2 or w.getframerate() != RATE:
-                    continue
-                data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
-                if w.getnchannels() > 1:
-                    data = data[::w.getnchannels()]
-            rirs.append(data / (np.abs(data).max() or 1.0))
-        except (wave.Error, EOFError):
+            data, rate = read_wav(path)
+        except (OSError, ValueError):
             continue
+        if rate != RATE or not len(data):
+            continue
+        rirs.append(data / (np.abs(data).max() or 1.0))
     return rirs
 
 
@@ -278,10 +313,15 @@ def train(args):
         return out.numpy()
 
     def validation_scores():
+        """The validation set is one embedding per 80 ms; slide 16-frame windows
+        over it exactly like the Pi does in streaming mode."""
         chunks = []
-        for i in range(0, validation.shape[0], 65536):
-            chunks.append(scores(torch.from_numpy(np.asarray(validation[i:i + 65536],
-                                                             dtype=np.float32))))
+        step = 65536
+        for i in range(0, validation.shape[0] - 15, step):
+            block = np.asarray(validation[i:i + step + 15], dtype=np.float32)
+            windows = np.lib.stride_tricks.sliding_window_view(block, 16, axis=0)
+            chunks.append(scores(torch.from_numpy(np.ascontiguousarray(
+                windows.transpose(0, 2, 1)))))
         return np.concatenate(chunks)
 
     best = None
@@ -323,7 +363,8 @@ def train(args):
     exported = torch.nn.Sequential(model, torch.nn.Sigmoid())
     torch.onnx.export(exported, torch.zeros(1, 16, 96), str(ROOT / f'{WORD}.onnx'),
                       input_names=['x'], output_names=['score'],
-                      dynamic_axes={'x': {0: 'batch'}, 'score': {0: 'batch'}}, opset_version=17)
+                      dynamic_axes={'x': {0: 'batch'}, 'score': {0: 'batch'}}, opset_version=17,
+                      dynamo=False)  # classic exporter: needs only the onnx package
     print(f'exported {ROOT / f"{WORD}.onnx"}', flush=True)
 
 
