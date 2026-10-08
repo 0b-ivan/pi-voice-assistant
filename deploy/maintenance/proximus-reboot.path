@@ -1,0 +1,9 @@
+[Unit]
+Description=Proximus maintenance request: reboot
+
+[Path]
+PathExists=/run/proximus-maintenance/requests/reboot
+Unit=proximus-reboot.service
+
+[Install]
+WantedBy=multi-user.target

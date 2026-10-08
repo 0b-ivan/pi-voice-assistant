@@ -134,6 +134,15 @@ class Watch:
         self._thread.start()
         return self
 
+    def refresh(self):
+        """Measure again now (e.g. after an update), in its own thread."""
+        def once():
+            try:
+                self.result, self.updated_at = self.measure(), time.time()
+            except Exception:
+                pass
+        threading.Thread(target=once, name='watch-refresh', daemon=True).start()
+
     def _run(self):
         time.sleep(self.first_delay)
         while True:

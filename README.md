@@ -23,6 +23,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | Alarme | Akku (3 Warnungen, dann Herunterfahren), Stromquelle, Unterspannung, Temperatur, Speicher, CPU, Netzwerk/Internet/Server; abschaltbar. [Architektur](docs/architecture.md#alarme-strom-und-netz) |
 | Gedächtnis | Fakten, Direktiven („nenne Städte nur noch Makropolen“, „installiere die Humor-Erweiterung“) und Verlauf auf einem USB-Stick; ohne Stick kein Gedächtnis; lernt selbst mit. [Gedächtnis](docs/memory.md) |
 | Wartung und Netz | Meldet wartende Updates (Pi und CT 107), WLAN-Signal, Latenz, DNS; „Wie ist das Netzwerk?“, „Gibt es Updates?“. [Gedächtnis, Wartung, Netz](docs/memory.md#systemwartung) |
+| Wartungsmodus | Menü „Wartung“ oder Sprache; Updates und Neustarts für Pi und CT 107, jede Aktion mit Taste E bestätigt. [Wartungsmodus](docs/maintenance.md) |
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |
 | Hardware | WM8960, SHIM, PiTFT und PiSugar 3 laufen; Akkulaufzeit/Abschaltung und Kamera offen. [Hardware](docs/hardware.md) |
 

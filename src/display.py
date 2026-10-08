@@ -77,6 +77,7 @@ MENU_LABELS = (
     ('alarms', 'Alarme'),
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
+    ('maintenance', 'Wartung'),
     ('status', 'Status ansagen'),
     ('close', 'Schließen'),
 )
@@ -168,9 +169,17 @@ def read_status(path=None):
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off')),
                          ('power', ('awake', 'rest', 'sleep')),
-                         ('memory', ('on', 'off'))):
+                         ('memory', ('on', 'off')),
+                         ('maint', ('on', 'off')),
+                         ('maint_confirm', MAINT_ITEMS),
+                         ('maint_pi', MAINT_STATES), ('maint_server', MAINT_STATES)):
         if value.get(key) in allowed:
             status[key] = value[key]
+    for key, high in (('maint_index', len(MAINT_ITEMS) - 1), ('upd_pi', 9999), ('upd_pi_sec', 9999),
+                      ('upd_srv', 9999), ('upd_srv_sec', 9999)):
+        item = value.get(key)
+        if isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= high:
+            status[key] = item
     return status
 
 
@@ -773,6 +782,64 @@ def _menu_value(item, status):
     return ''
 
 
+MAINT_ITEMS = ('update_pi', 'update_server', 'reboot_pi', 'reboot_server', 'exit')
+MAINT_LABELS = ('Pi aktualisieren', 'Server aktualisieren', 'Pi neu starten', 'Server neu starten',
+                'Wartung beenden')
+MAINT_STATES = ('running', 'done', 'failed', 'rebooting')
+MAINT_STATE_TEXT = {'running': ('läuft …', (255, 190, 60)), 'done': ('fertig', (120, 220, 160)),
+                    'failed': ('Fehler', (255, 90, 90)), 'rebooting': ('Neustart', (255, 190, 60))}
+
+
+def _updates_line(count, security):
+    if count is None:
+        return 'unbekannt', (150, 150, 150)
+    if not count:
+        return 'aktuell', (120, 220, 160)
+    text = f'{count} Updates' + (f' · {security} Sich.' if security else '')
+    return text, (255, 110, 90) if security else (255, 190, 60)
+
+
+def render_maintenance(display, status, info=None):
+    """Maintenance mode: pending updates, actions, confirmation with E."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    accent = (255, 170, 40)
+    draw.text((12, 12), 'WARTUNG', font=font(17), fill=accent)
+    if info.get('battery'):
+        draw_battery(draw, 228, 14, info['battery'])
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    for row, (name, prefix) in enumerate((('Pi', 'pi'), ('Server', 'srv'))):
+        y = 46 + row * 18
+        draw.text((12, y), name, font=font(12), fill=(135, 145, 150))
+        state = status.get('maint_pi' if prefix == 'pi' else 'maint_server')
+        if state in ('running', 'rebooting'):
+            text, color = MAINT_STATE_TEXT[state]
+        else:
+            text, color = _updates_line(status.get(f'upd_{prefix}'), status.get(f'upd_{prefix}_sec'))
+        _right(draw, 228, y, text, 12, color)
+    draw.line((12, 84, 228, 84), fill=(65, 65, 65))
+    selected = status.get('maint_index', 0)
+    for row, label in enumerate(MAINT_LABELS):
+        y = 90 + row * 21
+        if row == selected:
+            draw.rectangle((10, y - 1, 230, y + 18), fill=(70, 45, 10))
+            draw.text((14, y), '›', font=font(15), fill=accent)
+        draw.text((28, y), label, font=font(15),
+                  fill=accent if row == selected else (215, 220, 225))
+    pending = status.get('maint_confirm')
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    if pending:
+        draw.rectangle((10, 200, 230, 228), fill=(110, 20, 20))
+        label = MAINT_LABELS[MAINT_ITEMS.index(pending)]
+        draw.text((14, 203), f'{label}?', font=font(12), fill='white')
+        _right(draw, 226, 214, 'E = Ja · B = Nein', 11, (255, 210, 210))
+    else:
+        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+    display.image(image, 180)
+
+
 def render_menu(display, status, info=None):
     """Menu list: PiTFT buttons move, SHIM E confirms, SHIM B closes."""
     from PIL import Image, ImageDraw
@@ -1056,7 +1123,12 @@ def main():
             previous_screen = None  # redraw at once when the screen comes back
             time.sleep(SLEEP_POLL_SECONDS)
             continue
-        if status.get('menu_index') is not None and states is not None and is_ready(states):
+        if status.get('maint') == 'on' and status.get('menu_index') is None:
+            screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
+            if screen != previous_screen:
+                render_maintenance(display, status, dict(battery=battery))
+                previous_screen = screen
+        elif status.get('menu_index') is not None and states is not None and is_ready(states):
             if status['menu_page'] == 'info':
                 if info_rows is None or now >= next_info:
                     info_rows, next_info = (system_info_rows(battery=battery,

@@ -1,0 +1,9 @@
+[Unit]
+Description=Proximus maintenance request: update
+
+[Path]
+PathExists=/run/proximus-maintenance/requests/update
+Unit=proximus-update.service
+
+[Install]
+WantedBy=multi-user.target

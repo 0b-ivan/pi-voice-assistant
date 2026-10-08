@@ -15,6 +15,7 @@ import wave
 import functools
 from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
 import alarm_audio
+import maintenance
 import memory as memory_core
 import sysmon
 from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor,
@@ -107,6 +108,11 @@ DISPLAY_STATUS_VALUES = {
     'screen': {'on', 'off'},
     'power': {'awake', 'rest', 'sleep'},
     'memory': {'on', 'off'},
+    'maint': {'on', 'off'},
+    'maint_index': set(range(len(maintenance.ITEMS))),
+    'maint_confirm': set(maintenance.ITEMS),
+    'maint_pi': set(maintenance.STATES),
+    'maint_server': set(maintenance.STATES),
     'opt_wake': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
     'opt_wlan': {'on', 'off'},
@@ -170,6 +176,9 @@ def publish_display_status(**fields):
                 continue
         elif key == 'menu_index':
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(MENU_ITEMS):
+                continue
+        elif key in ('upd_pi', 'upd_pi_sec', 'upd_srv', 'upd_srv_sec'):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 9999:
                 continue
         elif key == 'volume_at':
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
@@ -528,6 +537,8 @@ class VoiceController:
         self.memory_present = self.memory.present()
         self.turn_transcript = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
+        self.maint = maintenance.Mode()
+        self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
         self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
         self.shutting_down = False
@@ -657,6 +668,9 @@ class VoiceController:
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
+        if item == 'maintenance':
+            self._maintenance_op('enter', speak=True)
+            return
         if item == 'server' and self.remote:
             self.remote_enabled = not self.remote_enabled
             self.recorder.uplink_enabled = self.remote_enabled
@@ -709,7 +723,8 @@ class VoiceController:
                                     getattr(self.network_watch, 'result', None)
                                     if self.wlan_on else None,
                                     getattr(self.update_watch, 'result', None)),
-                                    memory='on' if self.memory_present else 'off'))
+                                    memory='on' if self.memory_present else 'off',
+                                    maintenance='on' if self.maint.active else 'off'))
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
@@ -723,6 +738,7 @@ class VoiceController:
                                    server=self.server_state() if links else 'off',
                                    lore=self.lore, internet=internet)
         texts += self._check_memory()
+        maintenance_texts = self._check_maintenance()  # spoken even with alarms muted
         if self.power != 'sleep':  # maintenance can wait until someone is around
             notice = self.alarms.updates_notice(self.status_snapshot(), now, self.lore)
             if notice:
@@ -731,10 +747,123 @@ class VoiceController:
             event('alarm', text=text, active=self.alarms.active)
         if self.alarms_enabled:
             self.alarm_queue.extend(texts)
+        self.alarm_queue.extend(maintenance_texts)
         active = self.alarms.active
         publish_display_status(alarm=active[0] if active else None)
         if self.alarms.shutdown_due(now) and not self.shutting_down:
             self.shutdown()
+
+    # --- Maintenance mode ---------------------------------------------------
+
+    def _publish_maintenance(self):
+        jobs = {target: (self._maintenance_state(target) or {}).get('state')
+                for target in maintenance.TARGETS}
+        snapshot = self.status_snapshot() if self.maint.active else {}
+        publish_display_status(upd_pi=snapshot.get('updates'),
+                               upd_pi_sec=snapshot.get('updates_security'),
+                               upd_srv=snapshot.get('server_updates'),
+                               upd_srv_sec=snapshot.get('server_updates_security'))
+        publish_display_status(maint='on' if self.maint.active else 'off',
+                               maint_index=self.maint.index if self.maint.active else None,
+                               maint_confirm=self.maint.pending,
+                               maint_pi=jobs['pi'], maint_server=jobs['server'])
+
+    def _maintenance_state(self, target):
+        cache = getattr(self, '_maint_status', {})
+        return cache.get(target)
+
+    def _say(self, text):
+        try:
+            self._say_alarm([text], source='maintenance')
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+
+    def _maintenance_op(self, op, speak=True):
+        """Voice or menu: enter/exit or ask to confirm an action. Returns the sentence."""
+        if op == 'enter':
+            self.maint.enter()
+            if self.menu.open:
+                self.menu.close()
+                self._publish_menu()
+            text = "Wartungsmodus aktiv. Aktion wählen, Bestätigung mit Taste E."
+        elif op == 'exit':
+            self.maint.exit()
+            text = "Wartungsmodus beendet."
+        elif not self.maint.active:
+            text = "Erst Wartungsmodus aktivieren."
+        else:
+            self.maint.index = maintenance.ITEMS.index(op)
+            self.maint.ask(op)
+            text = maintenance.confirm_prompt(op, self.status_snapshot())
+        event('maintenance', op=op, active=self.maint.active)
+        self._publish_maintenance()
+        if speak:
+            self._say(text)
+        return text
+
+    def _maintenance_buttons(self, confirm, cancel):
+        if cancel:
+            if self.maint.pending is not None:
+                self.maint.pending = None
+                self._say("Abgebrochen.")
+            else:
+                self._maintenance_op('exit')
+        elif confirm:
+            item = self.maint.take_confirmed()
+            if item is not None:
+                self._run_maintenance(item)
+            else:
+                chosen = maintenance.ITEMS[self.maint.index]
+                if chosen == 'exit':
+                    self._maintenance_op('exit')
+                else:
+                    self._maintenance_op(chosen)
+        self._publish_maintenance()
+
+    def _run_maintenance(self, item):
+        action, target = maintenance.split(item)
+        if target == 'pi':
+            try:
+                maintenance.request(action)
+                outcome = 'accepted'
+            except OSError:
+                outcome = 'not_installed'
+        else:
+            outcome = maintenance.request_server(action)
+        event('maintenance_run', action=action, target=target, outcome=outcome)
+        if outcome == 'accepted':
+            self.maint_jobs[target] = time.time()
+            self._say(maintenance.START_TEXT[(action, target)])
+        else:
+            self._say(maintenance.FAIL_TEXT[outcome])
+
+    def _check_maintenance(self):
+        """Every ~10 s: follow running actions and announce their result."""
+        if self.maint.expired():
+            self._publish_maintenance()
+        if self.maint.idle_too_long() and not self.maint_jobs:
+            self.maint.exit()
+            event('maintenance', op='exit', active=False, reason='idle')
+        if not self.maint_jobs and not self.maint.active:
+            return []
+        cache = getattr(self, '_maint_status', {})
+        out = []
+        for target in maintenance.TARGETS:
+            data = (maintenance.status() if target == 'pi'
+                    else maintenance.server_status())
+            cache[target] = data
+            started = self.maint_jobs.get(target)
+            if (started is not None and data and data.get('at', 0) >= int(started) - 1
+                    and data['state'] in ('done', 'failed')):
+                del self.maint_jobs[target]
+                event('maintenance_done', target=target, **data)
+                out.append(maintenance.result_text(target, data, self.lore))
+                if self.update_watch is not None:
+                    self.update_watch.refresh()
+        self._maint_status = cache
+        self._publish_maintenance()
+        return out
 
     def _check_memory(self):
         """Announce plugging or pulling the memory stick."""
@@ -906,6 +1035,10 @@ class VoiceController:
     def _pitft_input(self, pitft_pressed, now):
         up = self.pitft[0].update(pitft_pressed[0], now) == 'start'
         down = self.pitft[1].update(pitft_pressed[1], now) == 'start'
+        if (up or down) and self.maint.active and self.power == 'awake':
+            self.maint.move(-1 if up else 1)
+            self._publish_maintenance()
+            return
         if up or down:
             if self.power != 'awake':
                 self._wake_up(now)  # first press only wakes the display
@@ -947,6 +1080,12 @@ class VoiceController:
 
     def _start_llm(self, text):
         self.turn_transcript = text
+        op = maintenance.command(intents.normalize(text))
+        if op is not None:
+            reply = self._maintenance_op(op, speak=False)
+            event('llm_response', text=reply, model='local/maintenance')
+            self._start_speech(reply, source='assistant', model='local/maintenance')
+            return
         reply = self._memory_command(text)
         if reply is not None:
             event('llm_response', text=reply, model='local/memory')
@@ -1001,6 +1140,9 @@ class VoiceController:
             self.turn_transcript = text
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
+        elif kind == 'maintenance':
+            if item.get('op') in maintenance.ITEMS + ('enter',):
+                self._maintenance_op(item['op'], speak=False)  # the server's reply speaks
         elif kind == 'memory':
             if self.memory.apply(item):
                 event('memory', op=item.get('op'), learned=bool(item.get('learned')))
@@ -1074,6 +1216,9 @@ class VoiceController:
                     event('button', button=name, action='start')
             return
         self._pitft_input(pitft_pressed, now)
+        if self.maint.active and not self.menu.open and ('B' in commands or 'E' in commands):
+            self._maintenance_buttons('E' in commands, 'B' in commands)
+            commands = [name for name in commands if name not in 'BE']
         if 'B' in commands and self.menu.open:
             # B leaves the menu first; a second press cancels as usual.
             self.menu.close()
@@ -1198,7 +1343,7 @@ class VoiceController:
     def _busy(self):
         return (self.recorder.process is not None or self.job is not None
                 or self.speech.active or getattr(self.speech, 'synthesizing', False)
-                or self.menu.open or bool(self.alarm_queue))
+                or self.menu.open or bool(self.alarm_queue) or self.maint.active)
 
     def _wake_up(self, now):
         self.last_activity = now

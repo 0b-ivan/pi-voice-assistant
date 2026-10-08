@@ -38,6 +38,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import intents  # noqa: E402
+import maintenance  # noqa: E402
 import memory  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from system_status import sanitize_snapshot  # noqa: E402
@@ -215,6 +216,8 @@ class Service:
         self.turn_lock = threading.Lock()
         self.limiter = RateLimiter(config.rate_limit)
         self.updates = None  # sysmon.pending_updates(), refreshed in the background
+        self.maintenance_dir = maintenance.DIR
+        self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.ready = False
 
     def authorized(self, header):
@@ -228,6 +231,17 @@ class Service:
             return datetime.datetime.now(zoneinfo.ZoneInfo(self.config.timezone))
         except (zoneinfo.ZoneInfoNotFoundError, ValueError):
             return datetime.datetime.now()
+
+    @staticmethod
+    def _maintenance_reply(op, device):
+        active = device.get('maintenance') == 'on'
+        if op == 'enter':
+            return "Wartungsmodus aktiv. Aktion wählen, Bestätigung mit Taste E."
+        if op == 'exit':
+            return "Wartungsmodus beendet."
+        if not active:
+            return "Erst Wartungsmodus aktivieren."
+        return maintenance.confirm_prompt(op, device)
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
@@ -282,7 +296,13 @@ class Service:
                 intent = intents.match(text)
                 command = (memory.command(intents.normalize(text))
                            if memory_copy is not NO_MEMORY else None)
-                if command is not None:
+                service_op = maintenance.command(intents.normalize(text))
+                if service_op is not None and memory_copy is not NO_MEMORY:
+                    # Only Pis that know maintenance send a memory state too.
+                    answer = self._maintenance_reply(service_op, device or {})
+                    emit(dict(event='maintenance', op=service_op))
+                    model = 'local/maintenance'
+                elif command is not None:
                     op, argument = command
                     lore = (device or {}).get('lore')
                     answer = memory.reply(op, argument, memory_copy, lore or 'off')
@@ -424,12 +444,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(401, dict(error='unauthorized'))
             state = getattr(self.service.pipeline, 'llm_state', None)
             self._json(200, dict(updates=self.service.updates,
-                                 llm=state() if state else None))
+                                 llm=state() if state else None,
+                                 maintenance=maintenance.status(self.service.maintenance_dir)))
         else:
             self._json(404, dict(error='not found'))
 
+    def _maintenance(self):
+        """Update or reboot CT 107 on request of the Pi (button-confirmed there)."""
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        if self.client_address[0] in self.service.config.trusted_proxies:
+            # Through the public tunnel: never. Only the LAN path may ask.
+            return self._json(403, dict(error='maintenance only on the LAN'))
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            data = json.loads(self.rfile.read(min(length, 1024)) or b'{}')
+        except (ValueError, OSError):
+            return self._json(400, dict(error='expected JSON {"action": "update|reboot"}'))
+        action = data.get('action') if isinstance(data, dict) else None
+        if action not in maintenance.ACTIONS:
+            return self._json(400, dict(error='action must be update or reboot'))
+        if not maintenance.installed(self.service.maintenance_dir):
+            return self._json(503, dict(error='maintenance worker not installed'))
+        now = time.monotonic()
+        last = self.service.maintenance_at
+        if last is not None and now - last < maintenance.SERVER_MIN_INTERVAL:
+            return self._json(429, dict(error='too soon'), {'Retry-After': str(
+                int(maintenance.SERVER_MIN_INTERVAL - (now - last)) + 1)})
+        maintenance.request(action, self.service.maintenance_dir)
+        self.service.maintenance_at = now
+        print(json.dumps(dict(event='maintenance_request', action=action)), flush=True)
+        return self._json(202, dict(accepted=action))
+
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == '/v1/maintenance':
+            return self._maintenance()
         if url.path not in ('/v1/turn', '/v1/speak'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
