@@ -15,7 +15,7 @@ import wave
 import functools
 from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
 import alarm_audio
-from alarms import ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, AlarmMonitor
+from alarms import ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
 import wlan as wlan_radio
@@ -519,6 +519,7 @@ class VoiceController:
         self.sleep_after = float(os.environ.get('PTT_SLEEP_SECONDS', SLEEP_SECONDS))
         self.sleep_wlan_off = os.environ.get('PTT_SLEEP_WLAN', 'keep') == 'off'
         self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
+        self.listen_after_greeting = False  # wake word woke us: listen after the greeting
         self.internet_probe = None  # netprobe.InternetProbe
         self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
         self.shutting_down = False
@@ -567,6 +568,7 @@ class VoiceController:
         return self._scale(ready, 0.3) if self.power == 'rest' else ready
 
     def cancel(self, held, now):
+        self.listen_after_greeting = False
         self.speech.stop()
         self.speech_started_at = None
         self.recorder.finish('cancel', publish=False)
@@ -746,17 +748,17 @@ class VoiceController:
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
 
-    def _say_alarm(self, texts):
+    def _say_alarm(self, texts, source='alarm'):
         """Play prerecorded clips (no synthesis, works offline and under
         load); fall back to live synthesis when a clip is missing."""
         play = getattr(self.speech, 'play', None)
         path = (Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'alarm.wav'
                 if play is not None else None)
         if path is not None and alarm_audio.assemble(texts, path):
-            event('speech_started', source='alarm', clips=True)
+            event('speech_started', source=source, clips=True)
             play(path)
             return
-        event('speech_started', source='alarm', clips=False)
+        event('speech_started', source=source, clips=False)
         self.speech.start(' '.join(texts))
 
     def set_wlan(self, on):
@@ -792,10 +794,13 @@ class VoiceController:
             if self.menu.open:
                 self.menu.close()
                 self._publish_menu()
-            self._release_microphone()
-            self.speech_started_at = None
-            self.recorder.start(auto_stop=True)
-            self.wake_recording = True
+            if self.power == 'sleep':
+                # Asleep: announce the warm-up first, then listen.
+                self.last_activity = now
+                self._greet()
+                self.listen_after_greeting = True
+            else:
+                self._start_wake_recording()
         if self.wake_recording and self.recorder.process is not None:
             result = self.recorder.endpoint_result
             if result == 'end':
@@ -816,6 +821,20 @@ class VoiceController:
             self.wake.start()
         elif not listen and self.wake.running:
             self.wake.stop()
+
+    def _start_wake_recording(self):
+        self._release_microphone()
+        self.speech_started_at = None
+        self.recorder.start(auto_stop=True)
+        self.wake_recording = True
+
+    def _greet(self):
+        """Short prerecorded line when waking from sleep."""
+        try:
+            self._say_alarm([WAKE_PHRASES.get(self.lore, WAKE_PHRASES['light'])], source='wake')
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
 
     def _speak_status(self, action):
         if (self.recorder.process is not None or action == 'start'
@@ -1028,6 +1047,10 @@ class VoiceController:
                 self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
+            if self.listen_after_greeting:
+                self.listen_after_greeting = False
+                if self._idle() and not self.menu.open:
+                    self._start_wake_recording()
         if self.job is not None and self.job_stage == 'remote' and not self.job.done.is_set():
             for item in self.job.drain():
                 self._remote_progress(item)
@@ -1130,6 +1153,11 @@ class VoiceController:
         elif previous == 'sleep' and self.wlan_slept:
             self.wlan_slept = False
             self.set_wlan(True)
+        if previous == 'sleep' and self._idle() and not self.alarm_queue:
+            # Woken by a display/SHIM button: say so. Talking (PTT), alarms
+            # and status replies already speak or listen; the wake word
+            # greets on its own before listening.
+            self._greet()
 
     def close(self):
         if self.wake is not None:

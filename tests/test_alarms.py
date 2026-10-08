@@ -257,6 +257,36 @@ class PowerStageTests(ControllerAlarmTests):
         self.assertFalse(self.c.wlan_on)
 
 
+class WakeGreetingTests(PowerStageTests):
+    def test_button_wake_from_sleep_greets_but_rest_does_not(self):
+        self.c._update_power(31)
+        self.c._wake_up(40)
+        self.speech.start.assert_not_called()
+        self.speech.play.assert_not_called()
+        self.c._update_power(700)
+        self.c.lore = 'full'
+        self.c._wake_up(710)
+        said = (self.speech.start.call_args or self.speech.play.call_args)
+        self.assertIsNotNone(said)
+        if self.speech.start.called:
+            self.assertIn('vorgewärmt', self.speech.start.call_args.args[0])
+
+    def test_wake_word_while_asleep_greets_then_listens(self):
+        self.c.wake = Mock(error=None, running=False, detector=None)
+        self.c.wake.take_detection.return_value = True
+        self.c.wake_word = 'proximus'
+        self.c._update_power(700)
+        self.c.recorder.process = None
+        with patch.object(ptt.alarm_audio, 'assemble', return_value=False):
+            self.c._wake_tick(701)
+        self.speech.start.assert_called_once()
+        self.c.recorder.start.assert_not_called()
+        self.assertTrue(self.c.listen_after_greeting)
+        self.speech.poll.return_value = 0
+        self.c.tick(False, (False,) * 5, 703)
+        self.c.recorder.start.assert_called_once_with(auto_stop=True)
+
+
 class ShutdownAndModeTests(ControllerAlarmTests):
     def test_battery_shutdown_powers_off(self):
         for t, pct in ((0, 15), (10, 10), (20, 6)):

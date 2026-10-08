@@ -57,9 +57,10 @@ def clip_path(piece, directory=None):
 def known_pieces():
     """Every fragment an alarm can consist of, plus the numbers."""
     from alarms import (ALARMS, BATTERY_STAGES, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED,
-                        SHUTDOWN_NOW, _battery_phrase, _phrase, power_source_phrase)
+                        SHUTDOWN_NOW, WAKE_PHRASES, _battery_phrase, _phrase,
+                        power_source_phrase)
     snapshot = dict(battery_pct=1, temp_c=1, load_pct=1)
-    texts = [SHUTDOWN_NOW, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED]
+    texts = [SHUTDOWN_NOW, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED, *WAKE_PHRASES.values()]
     for lore in ('off', 'full'):  # alarm wording only knows full lore or not
         texts += [_phrase(key, snapshot, lore) for key in ALARMS]
         texts += [_phrase(key, snapshot, lore, recovered=True)

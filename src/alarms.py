@@ -32,6 +32,12 @@ LINK_FAILURES = 2
 SHUTDOWN_NOW = "Energiespeicher erschöpft. Herunterfahren."
 SHUTDOWN_CANCELLED = "Herunterfahren abgebrochen."
 SHUTDOWN_FAILED = "Herunterfahren nicht möglich. Bitte manuell ausschalten."
+# Spoken when the unit wakes from sleep, per lore level.
+WAKE_PHRASES = {
+    'off': "Aktiviert. Systeme werden vorbereitet.",
+    'light': "Proximus erwacht. Systeme werden vorgewärmt.",
+    'full': "Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.",
+}
 
 
 @dataclass
