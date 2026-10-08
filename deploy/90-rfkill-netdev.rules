@@ -1,0 +1,3 @@
+# Let group netdev (the voice service user obivan) soft-block/unblock radios,
+# so the PiTFT menu and PTT_WLAN can switch WLAN without root.
+KERNEL=="rfkill", SUBSYSTEM=="misc", GROUP="netdev", MODE="0664"

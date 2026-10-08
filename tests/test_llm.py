@@ -225,6 +225,19 @@ class SpeechTextTests(unittest.TestCase):
         self.assertEqual(llm.speech_text("Der Eiffelturm misst 330 Meter, 3,5 Prozent."),
                          "Der Eiffelturm misst 330 Meter, 3,5 Prozent.")
 
+    def test_lore_levels_in_system_prompt(self):
+        for level, word in (("off", "keine Begriffe"), ("light", "höchstens einmal"),
+                            ("full", "Liturgie")):
+            prompt = llm.system_prompt(level)
+            self.assertTrue(prompt.startswith(llm.SERVITOR_SYSTEM_PROMPT))
+            self.assertIn(word, prompt)
+            if level != "off":
+                self.assertIn("Fakten bleiben", prompt)
+            self.assertTrue(prompt.rstrip().split("\n")[-1].startswith("Aktueller Zeitpunkt"))
+        self.assertEqual(llm.lore_level("unbekannt"), llm.DEFAULT_LORE)
+        with patch.dict("os.environ", {"SERVITOR_LORE": "full"}):
+            self.assertEqual(llm.lore_level(), "full")
+
     def test_time_context(self):
         import datetime
         now = datetime.datetime(2026, 10, 8, 9, 5)

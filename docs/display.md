@@ -139,6 +139,20 @@ stt_error / tts_error / speech_error
 
 Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nicht angezeigt; ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
 
+## Ruhe und Schlaf
+
+`ptt.py` kennt drei Stufen und schreibt sie als `power` in `display-status.json`:
+
+| Stufe | ab (ohne Aktivität) | Display | LED |
+|---|---|---|---|
+| `awake` | – | Schädel mit pulsierendem Auge, Litaneien, zweites Auge in Statusfarbe | normal |
+| `rest` | 30 s (`PTT_REST_SECONDS`) | auf 35 % abgedunkelt, rotes Auge schwach und ruhig, zweites Auge aus, keine Litaneien; Neuzeichnen etwa einmal pro Minute (Uhr, Akku, Alarm) | 30 % |
+| `sleep` | 10 min (`PTT_SLEEP_SECONDS`) | Hintergrundbeleuchtung aus, kein Rendern | aus |
+
+Beim Aufwachen aus dem Schlaf sagt Proximus kurz an, dass er erwacht (je nach Lore-Stufe, z. B. „Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.“; vorgefertigter Clip wie bei den Alarmen). Weckt ihn das Aktivierungswort, hört er erst nach dieser Ansage zu. Nach Druck auf die Sprechtaste, bei Alarmen und Statusansagen entfällt sie.
+
+Aktivität sind Tastendrücke, Aufnahme, Verarbeitung, Sprachausgabe (auch Alarme), offenes Menü. Das Aktivierungswort lauscht in allen Stufen. Der erste Druck auf eine PiTFT-Taste weckt nur. Mit `PTT_SLEEP_WLAN=off` schaltet der Schlaf zusätzlich das WLAN ab und das Aufwachen wieder an (nur wenn der Schlaf es abgeschaltet hat); dann ist der Pi im Schlaf nicht per SSH erreichbar, und der erste Befehl nach dem Aufwachen läuft eventuell lokal, solange das WLAN sich verbindet.
+
 ## Statusinformationen mit Servitor-Server
 
 ![Neun Display-Zustände mit Verarbeitungsort, Serverstatus, WLAN, Temperatur, Uhrzeit und letzter Antwort](images/display-status-preview.png)

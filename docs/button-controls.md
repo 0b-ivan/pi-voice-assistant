@@ -27,6 +27,11 @@ Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B schlie�
 |---|---|
 | Systeminfo | Seite mit IP, Laufzeit, freiem RAM, Server, deployter Version und Akku; E oder eine PiTFT-Taste zurück |
 | Server nutzen AN/AUS | Schaltet zur Laufzeit zwischen CT 107 und rein lokalem Betrieb (nicht über Neustart gespeichert); Display zeigt `NUR PI` / `LOKAL` |
+| Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status; E schaltet weiter (nicht über Neustart gespeichert; Grundeinstellung `PTT_LORE_LEVEL`) |
+| Sprachkern AUTO/LOKAL | AUTO: OpenRouter, bei Ausfall lokal; LOKAL: nur das lokale Modell auf CT 107 |
+| WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline (lokaler Betrieb) |
+| Alarme AN/AUS | Ansagen stumm; das Herunterfahren bei leerem Akku bleibt aktiv |
+| Aktivierungswort AN/AUS | Mithören für „Hey Jarvis“ ein/aus (nicht über Neustart gespeichert; Grundeinstellung über `PTT_WAKE_WORD`) |
 | Status-LED AN/AUS | Schaltet die SHIM-LED ab; Aufnahme und Fehler zeigt sie trotzdem |
 | Display aus | Hintergrundbeleuchtung aus (z. B. nachts); die nächste PiTFT-Taste weckt nur, ohne das Menü zu öffnen |
 | Status ansagen | Wie E ohne Menü |

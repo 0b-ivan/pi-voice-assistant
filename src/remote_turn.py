@@ -13,6 +13,7 @@ import base64
 import binascii
 import http.client
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -55,6 +56,9 @@ class RemoteConfig:
     @property
     def hosts(self):
         return [urllib.parse.urlsplit(url).netloc for url in self.base_urls]
+
+
+USER_AGENT = 'pi-voice-assistant/1'
 
 
 def _status_error(response):
@@ -172,6 +176,8 @@ class RemoteTurnUplink:
             connection.putrequest('POST', f'{path}/v1/turn?format={self.config.audio_format}',
                                   skip_accept_encoding=True)
             connection.putheader('Authorization', f'Bearer {self.config.token}')
+            # Cloudflare rejects requests without a browser-like or named agent (error 1010).
+            connection.putheader('User-Agent', USER_AGENT)
             # Access credentials only travel encrypted (Internet path), never
             # to a plain-HTTP LAN endpoint configured alongside it.
             if self.config.access_client_id and urllib.parse.urlsplit(url).scheme == 'https':
@@ -393,6 +399,42 @@ class RemoteTurnJob:
         return self.error is not None and self.error_code not in NO_FALLBACK_CODES
 
 
+ENVELOPE_STEP = 0.05
+
+
+def envelope_path():
+    runtime = Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt'))
+    return Path(os.environ.get('PI_DISPLAY_ENVELOPE_FILE', str(runtime / 'speech-envelope.json')))
+
+
+def speech_envelope(path, step=ENVELOPE_STEP):
+    """Loudness per 50 ms as 0..100 of the loudest window (16-bit WAV)."""
+    from array import array
+    with wave.open(str(path), 'rb') as audio:
+        rate, channels = audio.getframerate(), audio.getnchannels()
+        samples = array('h')
+        samples.frombytes(audio.readframes(audio.getnframes()))
+    window = max(1, int(rate * step)) * channels
+    levels = []
+    for start in range(0, len(samples), window):
+        chunk = samples[start:start + window:4 * channels] or samples[start:start + 1]
+        levels.append(math.sqrt(sum(v * v for v in chunk) / len(chunk)))
+    peak = max(levels) if levels else 0
+    return [round(100 * (level / peak) ** 0.7) if peak else 0 for level in levels]
+
+
+def publish_envelope(path, started):
+    """For the display's eye; computed after playback started, never blocking it."""
+    target = envelope_path()
+    try:
+        levels = speech_envelope(path)
+        temporary = target.with_name(f'.{target.name}.tmp')
+        temporary.write_text(json.dumps(dict(start=started, step=ENVELOPE_STEP, levels=levels)))
+        os.replace(temporary, target)
+    except (OSError, EOFError, wave.Error, ValueError):
+        pass
+
+
 class RemoteCapableSpeech:
     """Local speech output plus playback of finished server audio files."""
 
@@ -425,6 +467,9 @@ class RemoteCapableSpeech:
         self.player = self.popen(
             ['/usr/bin/aplay', '-q', '-D', self.device, str(path)],
             stdin=subprocess.DEVNULL, start_new_session=True)
+        started = time.time()
+        threading.Thread(target=publish_envelope, args=(path, started),
+                         name='speech-envelope', daemon=True).start()
 
     def poll(self):
         if self.player is not None:

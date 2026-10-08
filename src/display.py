@@ -10,9 +10,12 @@ import shutil
 import subprocess
 import time
 
+from alarms import ALARMS
+from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
 
 
+DEVICE_NAME = os.environ.get('PI_DISPLAY_NAME', 'PROXIMUS')
 WIDTH = 240
 HEIGHT = 240
 ENV_FILE = Path("/etc/pi-voice-assistant.env")
@@ -21,6 +24,7 @@ VOICE_EVENT_FILE = Path(
 )
 PROBE_INTERVAL_SECONDS = 2.0
 EVENT_INTERVAL_SECONDS = 0.1
+SLEEP_POLL_SECONDS = 0.3  # screen off: check for wake-ups less often
 ERROR_HOLD_SECONDS = 3.0
 
 VOICE_EVENT_STATES = {
@@ -47,6 +51,7 @@ VOICE_EVENT_STATES = {
     "llm_error": "FEHLER",
     "tts_error": "FEHLER",
     "speech_error": "FEHLER",
+    "wake_timeout": "BEREIT",
 }
 
 VOICE_COLORS = {
@@ -61,18 +66,22 @@ VOICE_COLORS = {
 
 PROGRESS_FILE = Path(os.environ.get('PI_DISPLAY_PROGRESS_FILE', '/run/pi-ptt/display-progress.json'))
 STATUS_FILE = Path(os.environ.get('PI_DISPLAY_STATUS_FILE', '/run/pi-ptt/display-status.json'))
-SERVER_PROBE_INTERVAL_SECONDS = 10.0
 VOLUME_SHOW_SECONDS = 2.5
 MENU_LABELS = (
     ('info', 'Systeminfo'),
     ('server', 'Server nutzen'),
+    ('llm', 'Sprachkern'),
+    ('wake', 'Aktivierungswort'),
+    ('lore', 'Lore-Stufe'),
+    ('wlan', 'WLAN'),
+    ('alarms', 'Alarme'),
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
     ('status', 'Status ansagen'),
     ('close', 'Schließen'),
 )
 DEPLOYED_FILE = Path('/opt/pi-voice-assistant/src/DEPLOYED')
-SERVER_PROBE_TIMEOUT_SECONDS = 0.5
+WAKE_WORD_LABELS = {'hey_jarvis': 'Hey Jarvis', 'hey_servitor': 'Hey Servitor'}
 ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
 SERVER_FOOTER = {
     'ok': ('CT107 OK', (120, 220, 160)),
@@ -151,7 +160,14 @@ def read_status(path=None):
         status['menu_index'] = index
         status['menu_page'] = value['menu_page']
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
-                         ('screen', ('on', 'off'))):
+                         ('opt_wake', ('on', 'off', 'none')),
+                         ('opt_lore', ('off', 'light', 'full')),
+                         ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
+                         ('opt_llm', ('auto', 'local')),
+                         ('alarm', tuple(ALARMS)),
+                         ('wake_word', tuple(WAKE_WORD_LABELS)),
+                         ('screen', ('on', 'off')),
+                         ('power', ('awake', 'rest', 'sleep'))):
         if value.get(key) in allowed:
             status[key] = value[key]
     return status
@@ -182,42 +198,6 @@ def last_answer_text(status):
         source = 'Server'
     seconds = f'{latency / 1000:.1f}'.replace('.', ',')
     return f'Zuletzt {seconds} s · {source}'
-
-
-def server_state(env=None):
-    """'off' without ASSISTANT_BASE_URL, else 'ok'/'down' from GET /health."""
-    import urllib.request
-    env = load_env() if env is None else env
-    urls = [u.strip().rstrip('/') for u in env.get('ASSISTANT_BASE_URL', '').split(',')]
-    urls = [u for u in urls if u]
-    if not urls:
-        return 'off'
-    try:
-        with urllib.request.urlopen(urls[0] + '/health',
-                                    timeout=SERVER_PROBE_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read(256))
-        return 'ok' if isinstance(payload, dict) and payload.get('ready') is True else 'down'
-    except (OSError, ValueError):
-        return 'down'
-
-
-class ServerProbe:
-    """Polls /health in a daemon thread so a slow server never stalls frames."""
-    def __init__(self, interval=SERVER_PROBE_INTERVAL_SECONDS, probe=None):
-        import threading
-        self.interval = interval
-        self.probe = probe or server_state
-        self.state = None
-        self._thread = threading.Thread(target=self._run, name='server-probe', daemon=True)
-
-    def start(self):
-        self._thread.start()
-        return self
-
-    def _run(self):
-        while True:
-            self.state = self.probe()
-            time.sleep(self.interval)
 
 
 def power_line(battery, throttled):
@@ -552,7 +532,7 @@ def render_boot(display, states):
     row_font = font(17)
     small_font = font(13)
 
-    draw.text((12, 8), "PI ASSISTANT", font=title_font, fill="white")
+    draw.text((12, 8), DEVICE_NAME, font=title_font, fill="white")
     draw.line((12, 37, 228, 37), fill=(90, 90, 90), width=1)
 
     rows = [
@@ -588,6 +568,125 @@ def _right(draw, x_right, y, text, size, fill):
     draw.text((x_right - width, y), text, font=font(size), fill=fill)
 
 
+ENVELOPE_FILE = Path(os.environ.get('PI_DISPLAY_ENVELOPE_FILE', '/run/pi-ptt/speech-envelope.json'))
+SKULL_STATES = ('BEREIT', 'ZUHÖREN', 'VERSTEHEN', 'ERKENNEN', 'DENKEN', 'SYNTHESE',
+                'RENDERN', 'AUSGABE', 'SPRECHEN')
+THINKING_STATES = ('VERSTEHEN', 'ERKENNEN', 'DENKEN', 'SYNTHESE', 'RENDERN')
+# Same meaning as the SHIM LED (ptt.LED_*): ready, local, listening, processing, speaking.
+LED_LIKE = dict(ready=(0, 200, 80), local=(255, 170, 0), listen=(255, 30, 30),
+                server=(0, 170, 255), speak=(255, 110, 0))
+RAIN_LEFT = (2, 14, 26, 38)
+RAIN_RIGHT = (191, 203, 215, 227)
+
+
+def status_light(state, info):
+    """The colour the SHIM LED shows in this state (for the skull's lens and the rain)."""
+    if state == 'ZUHÖREN':
+        return LED_LIKE['listen']
+    if state in ('AUSGABE', 'SPRECHEN'):
+        return LED_LIKE['speak']
+    if state in THINKING_STATES:
+        return LED_LIKE['server'] if info.get('route') == 'server' else LED_LIKE['local']
+    return LED_LIKE['ready'] if info.get('server') in ('ok', None) else LED_LIKE['local']
+
+
+_RAIN = None
+
+
+def rain():
+    global _RAIN
+    if _RAIN is None:
+        from skull import Rain
+        _RAIN = Rain(RAIN_LEFT + RAIN_RIGHT, top=43, rows=12)
+    return _RAIN
+
+
+def read_envelope(path=None):
+    """Loudness curve of the reply being played (written by ptt.py)."""
+    try:
+        value = json.loads((ENVELOPE_FILE if path is None else Path(path)).read_text())
+        levels = value['levels']
+        if (isinstance(value['start'], (int, float)) and isinstance(value['step'], (int, float))
+                and value['step'] > 0 and isinstance(levels, list)
+                and all(isinstance(v, int) and 0 <= v <= 100 for v in levels)):
+            return dict(start=float(value['start']), step=float(value['step']), levels=levels)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def _draw_header(draw, info):
+    draw.text((12, 12), DEVICE_NAME, font=font(17), fill='white')
+    right_edge = 228
+    if info.get('battery'):
+        right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
+    temp = info.get('temp_c')
+    if temp is not None:
+        _right(draw, right_edge, 15, f'{temp}°C', 12,
+               (255, 120, 90) if temp >= 70 else (145, 155, 165))
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+
+
+REST_LEVEL = 0.12        # red eye while resting: low and steady
+REST_BRIGHTNESS = 0.35   # whole picture dimmed while resting
+
+
+def render_rest(display, skull, network, info=None):
+    """Idle for a while: dimmed, the red eye low and steady, the other eye
+    dark, no litanies. Only redrawn when clock, battery or alarm change."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    image.paste(skull.frame(REST_LEVEL), ((WIDTH - skull.base.width) // 2, 42))
+    if info.get('alarm'):
+        text = ALARMS[info['alarm']][1]
+        width = draw.textlength(text, font=font(11))
+        draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=(255, 70, 70))
+    _draw_footer(draw, network, info)
+    image = Image.eval(image, lambda v: int(v * REST_BRIGHTNESS))
+    display.image(image, 180)
+
+
+def render_skull(display, skull, state, network, level, info=None, frame=0, details=None):
+    """The servo skull: red eye glowing with ``level``, the other eye in the
+    status-LED colour, litany streams ("thoughts") falling on both sides."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    light = status_light(state, info)
+    if state in THINKING_STATES:
+        mode, gain = 'think', 1.0
+    elif state in ('AUSGABE', 'SPRECHEN'):
+        mode, gain = 'speak', 0.45 + 0.55 * min(1.0, max(0.0, (level - 0.55) / 0.45))
+    else:
+        mode, gain = 'idle', 0.55
+    rain().draw(image, frame, mode, light, font(10), gain)
+    image.paste(skull.frame(level, light), ((WIDTH - skull.base.width) // 2, 42))
+    if state not in ('BEREIT', 'AUSGABE', 'SPRECHEN'):
+        description = (details or STATE_DETAILS.get(state, ('', 'gear', 0)))[0]
+        text = f'{state} · {description}' if description else state
+        color = VOICE_COLORS.get(state, light)
+    elif state == 'BEREIT':
+        if info.get('alarm'):
+            text, color = ALARMS[info['alarm']][1], (255, 70, 70)
+        elif info.get('last'):
+            text, color = info['last'], (145, 155, 165)
+        elif info.get('wake'):
+            text, color = f"„{info['wake']}“ oder Taste", (145, 155, 165)
+        else:
+            text, color = 'Zum Sprechen halten', (145, 155, 165)
+    else:
+        text, color = 'AUSGABE', VOICE_COLORS['AUSGABE']
+    width = draw.textlength(text, font=font(11))
+    draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=color)
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
+
+
 def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=None):
     """info: route, server ('ok'/'down'/'off'), temp_c, wifi_dbm, clock, last."""
     from PIL import Image, ImageDraw
@@ -597,15 +696,7 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
     description, icon, step = details or STATE_DETAILS.get(state, ('', 'gear', 0))
     color = VOICE_COLORS.get(state, (220, 220, 220))
     idle = state in ('BEREIT', 'FEHLER')
-    draw.text((12, 12), 'PI ASSISTANT', font=font(17), fill='white')
-    right_edge = 228
-    if info.get('battery'):
-        right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
-    temp = info.get('temp_c')
-    if temp is not None:
-        _right(draw, right_edge, 15, f'{temp}°C', 12,
-               (255, 120, 90) if temp >= 70 else (145, 155, 165))
-    draw.line((12, 40, 228, 40), fill=(65,65,65))
+    _draw_header(draw, info)
     # Where the work happens: during a turn as published by ptt.py, when idle
     # where the next turn will go (server reachable or local fallback).
     if idle:
@@ -633,6 +724,8 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
         _draw_footer(draw, network, info)
         display.image(image, 180)
         return
+    if state == 'BEREIT' and info.get('wake'):
+        description = f"„{info['wake']}“ oder Taste"
     draw.text((12, 139), description, font=font(14), fill=(215,220,225))
     if not idle:
         draw.text((12, 165), f'Seit {max(0, int(elapsed))} s', font=font(12), fill=(145,155,165))
@@ -640,6 +733,8 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
         draw.text((12, 161), info['last'], font=font(12), fill=(145,155,165))
     if idle:
         power = power_line(info.get('battery'), info.get('throttled'))
+        if info.get('alarm'):
+            power = (ALARMS[info['alarm']][1], (255, 70, 70))
         if power:
             draw.text((12, 179), power[0], font=font(11), fill=power[1])
     if step:
@@ -655,6 +750,14 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
+    if item == 'llm':
+        return {'auto': 'AUTO', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
+    if item in ('wlan', 'alarms'):
+        return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
+    if item == 'lore':
+        return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
+    if item == 'wake':
+        return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_wake'), '')
     return ''
 
 
@@ -670,10 +773,14 @@ def render_menu(display, status, info=None):
         draw_battery(draw, 228, 14, info['battery'])
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
+    visible = 7  # scroll so the selection stays on screen
+    first = max(0, min(selected - 3, len(MENU_LABELS) - visible))
     for row, (item, label) in enumerate(MENU_LABELS):
-        y = 47 + row * 24
+        if not first <= row < first + visible:
+            continue
+        y = 45 + (row - first) * 21
         if row == selected:
-            draw.rectangle((10, y - 2, 230, y + 19), fill=(40, 32, 70))
+            draw.rectangle((10, y - 1, 230, y + 18), fill=(40, 32, 70))
             draw.text((14, y), '›', font=font(15), fill=accent)
         color = accent if row == selected else (215, 220, 225)
         draw.text((28, y), label, font=font(15), fill=color)
@@ -769,7 +876,9 @@ def _draw_footer(draw, network, info):
     draw.line((12,197,228,197), fill=(65,65,65))
     server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
     draw.text((12, 209), server_text, font=font(13), fill=server_color)
-    if not network:
+    if info.get('wlan') == 'off':
+        link, link_color = 'WLAN AUS', (150, 150, 150)
+    elif not network:
         link, link_color = 'OFFLINE', (180, 180, 180)
     elif info.get('wifi_dbm') is not None:
         dbm = info['wifi_dbm']
@@ -782,21 +891,48 @@ def _draw_footer(draw, network, info):
         _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
 
 
+def rgb565(image):
+    """Big-endian RGB565 bytes for the ST7789, computed by Pillow in C.
+
+    The Adafruit driver falls back to getpixel() per pixel without numpy
+    (not installed in the display venv), which costs ~10 ms per 1000 px.
+    """
+    r, g, b = image.convert('RGB').split()
+    from PIL import Image, ImageChops
+    high = ImageChops.add(r.point(lambda v: v & 0xF8), g.point(lambda v: v >> 5))
+    low = ImageChops.add(g.point(lambda v: (v & 0x1C) << 3), b.point(lambda v: v >> 3))
+    return Image.merge('LA', (high, low)).tobytes()
+
+
 class PartialDisplay:
     """Transfer only changed pixels; avoid converting a full frame each tick."""
     def __init__(self, hardware):
         self.hardware = hardware
         self.previous = None
 
+    BANDS = 3  # vertical bands: the two rain strips change without the middle
+
     def image(self, image, rotation=0):
         from PIL import ImageChops
         oriented = image.rotate(rotation, expand=True) if rotation else image
-        box = (0, 0, oriented.width, oriented.height)
-        if self.previous is not None and self.previous.size == oriented.size:
-            box = ImageChops.difference(oriented, self.previous).getbbox()
-        if box is None:
-            return
-        self.hardware.image(oriented.crop(box), rotation=0, x=box[0], y=box[1])
+        if self.previous is None or self.previous.size != oriented.size:
+            boxes = [(0, 0, oriented.width, oriented.height)]
+        else:
+            diff = ImageChops.difference(oriented, self.previous)
+            step = oriented.width // self.BANDS
+            boxes = []
+            for band in range(self.BANDS):
+                left = band * step
+                right = oriented.width if band == self.BANDS - 1 else left + step
+                box = diff.crop((left, 0, right, oriented.height)).getbbox()
+                if box is not None:
+                    boxes.append((left + box[0], box[1], left + box[2], box[3]))
+        block = getattr(self.hardware, '_block', None)
+        for box in boxes:
+            if block is not None:
+                block(box[0], box[1], box[2] - 1, box[3] - 1, rgb565(oriented.crop(box)))
+            else:
+                self.hardware.image(oriented.crop(box), rotation=0, x=box[0], y=box[1])
         self.previous = oriented.copy()
 
 
@@ -826,6 +962,12 @@ def main():
 
     display = PartialDisplay(display)
     screen_lit = True
+    try:
+        from skull import Skull, idle_level, speaking_level
+        skull = Skull()
+    except Exception:  # never let the artwork take the status display down
+        skull = None
+    envelope, envelope_mtime = None, None
     info_rows, next_info = None, 0.0
     states = None
     server = ServerProbe().start()
@@ -892,10 +1034,15 @@ def main():
             error_until = None
 
         status = read_status()
-        lit = status.get('screen') != 'off'
+        # Menu "Display aus" or the idle sleep stage: backlight off, no rendering.
+        lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
         if lit != screen_lit:
             backlight.value = lit
             screen_lit = lit
+        if not lit:
+            previous_screen = None  # redraw at once when the screen comes back
+            time.sleep(SLEEP_POLL_SECONDS)
+            continue
         if status.get('menu_index') is not None and states is not None and is_ready(states):
             if status['menu_page'] == 'info':
                 if info_rows is None or now >= next_info:
@@ -924,16 +1071,49 @@ def main():
             info = dict(route=status.get('route'), server=server_shown, temp_c=temp,
                         wifi_dbm=wifi, clock=time.strftime('%H:%M'),
                         last=last_answer_text(status), throttled=throttled,
-                        battery=battery, volume=volume_overlay(status))
+                        battery=battery, volume=volume_overlay(status),
+                        alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
+                        wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
+                              if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))
-            screen = ('voice', current, states['network'], tick,
-                      tuple(sorted(shown_info.items())))
-            if screen != previous_screen:
-                render_voice(display, shown, states['network'],
-                             (description, icon, step), tick, elapsed, info)
-                previous_screen = screen
+            resting = status.get('power') == 'rest' and shown == 'BEREIT'
+            if skull is not None and resting and info.get('volume') is None:
+                # Temperature and WLAN dBm wobble constantly; at rest they may
+                # lag up to a minute, so the screen is redrawn about once a minute.
+                screen = ('rest', states['network'], info['clock'], shown_info['battery'],
+                          info.get('alarm'), info.get('server'), info.get('wlan'))
+                if screen != previous_screen:
+                    render_rest(display, skull, states['network'], info)
+                    previous_screen = screen
+            elif skull is not None and shown in SKULL_STATES and info.get('volume') is None:
+                fps = 4 if shown in ('BEREIT', 'ZUHÖREN') else 10
+                frame = int(now * fps)
+                if shown not in ('AUSGABE', 'SPRECHEN'):
+                    # Breathing is slow; the rain sets the frame rate.
+                    level = idle_level(frame / fps)
+                else:
+                    try:
+                        mtime = ENVELOPE_FILE.stat().st_mtime
+                    except OSError:
+                        mtime = None
+                    if mtime != envelope_mtime:
+                        envelope, envelope_mtime = read_envelope(), mtime
+                    level = speaking_level(time.time(), envelope)
+                screen = ('skull', shown, states['network'], frame,
+                          tuple(sorted(shown_info.items())))
+                if screen != previous_screen:
+                    render_skull(display, skull, shown, states['network'], level, info,
+                                 frame, (description, icon, step))
+                    previous_screen = screen
+            else:
+                screen = ('voice', current, states['network'], tick,
+                          tuple(sorted(shown_info.items())))
+                if screen != previous_screen:
+                    render_voice(display, shown, states['network'],
+                                 (description, icon, step), tick, elapsed, info)
+                    previous_screen = screen
 
         time.sleep(EVENT_INTERVAL_SECONDS)
 

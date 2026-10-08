@@ -45,7 +45,8 @@ class FakePipeline:
     def recognizer(self):
         return FakeRecognizer(self)
 
-    def reply(self, text):
+    def reply(self, text, lore=None, mode=None):
+        self.lore, self.mode = lore, mode
         if self.fail_llm:
             raise RuntimeError('OpenRouter request failed: timeout')
         if self.block:
@@ -271,6 +272,32 @@ class ServerTest(unittest.TestCase):
         _, data = self.request('/v1/turn', b'\1' * 16000)
         last = self.events(data)[-1]
         self.assertEqual((last['stage'], last['code']), ('recognize', 'stt'))
+
+    def test_lore_level_from_device_reaches_llm_and_intents(self):
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps({'lore': 'full'})})
+        conn.getresponse().read()
+        conn.close()
+        self.assertEqual(self.pipeline.lore, 'full')
+        self.pipeline.transcript = 'wer bist du'
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps({'lore': 'full'})})
+        data = conn.getresponse().read()
+        conn.close()
+        reply = next(e for e in self.events(data) if e['event'] == 'reply')
+        self.assertIn('Omnissiah', reply['text'])
+
+    def test_local_mode_skips_openrouter(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+        import llm
+        pipeline = ss.RealPipeline(self.tmp.name)
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_LOCAL_LLM': '1'}), \
+                unittest.mock.patch('llm.generate_reply') as remote, \
+                unittest.mock.patch('llm.generate_local_reply', return_value=('l', 'local/q')):
+            self.assertEqual(pipeline.reply('frage', mode='local'), ('l', 'local/q'))
+        remote.assert_not_called()
 
     def raw_turn(self, body_bytes):
         """Send a hand-written chunked body; return the decoded NDJSON events."""

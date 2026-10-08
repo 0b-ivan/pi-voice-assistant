@@ -219,6 +219,7 @@ class RemoteTurnTests(LiveServerCase):
         self.assertEqual(sent['https://servitor.example.org']['CF-Access-Client-Secret'],
                          'secret')
         self.assertIn('Authorization', sent['http://172.22.9.107:8765'])
+        self.assertEqual(sent['https://servitor.example.org']['User-Agent'], 'pi-voice-assistant/1')
 
     def test_wrong_token_is_reported(self):
         job = self.turn(self.config(token='y' * 40))

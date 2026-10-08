@@ -146,10 +146,13 @@ SNAPSHOT_FIELDS = {
     'disk_free_pct': (int, 0, 100),
     'uptime_s': (int, 0, 10 ** 9),
     'battery_pct': (int, 0, 100),
+    'swap_used_pct': (int, 0, 100),
     'throttled': (int, 0, 0xFFFFFFFF),
 }
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
-SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline')}
+SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
+                   'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off'),
+                   'llm_mode': ('auto', 'local')}
 
 
 def sanitize_snapshot(value):
@@ -174,7 +177,22 @@ def sanitize_snapshot(value):
     return clean
 
 
-def collect_snapshot(battery=None, throttled=None, server=None,
+def _swap_used_percent(path=MEMINFO_PATH):
+    values = {}
+    for line in (_read_text(path) or '').splitlines():
+        key, _, rest = line.partition(':')
+        try:
+            values[key] = int(rest.split()[0])
+        except (ValueError, IndexError):
+            continue
+    total = values.get('SwapTotal')
+    if not total or values.get('SwapFree') is None:
+        return None
+    return max(0, min(100, round((total - values['SwapFree']) * 100 / total)))
+
+
+def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=None,
+                     llm_mode=None,
                      thermal_path=THERMAL_PATH, meminfo_path=MEMINFO_PATH,
                      loadavg_path=LOADAVG_PATH, uptime_path=UPTIME_PATH,
                      disk_path="/", disk_usage=shutil.disk_usage, cpu_count=os.cpu_count):
@@ -186,6 +204,10 @@ def collect_snapshot(battery=None, throttled=None, server=None,
         disk_free_pct=_disk_free_percent(disk_path, disk_usage=disk_usage),
         throttled=throttled,
         server=server,
+        lore=lore,
+        wlan=wlan,
+        llm_mode=llm_mode,
+        swap_used_pct=_swap_used_percent(meminfo_path),
     )
     text = _read_text(uptime_path)
     try:
@@ -223,7 +245,7 @@ def battery_sentence(snapshot):
     return f"Energiespeicher {percent} Prozent. Akkubetrieb."
 
 
-def status_text(snapshot, processing=False):
+def status_text(snapshot, processing=False, lore=None):
     """Servitor status for button E and the spoken "status" question.
 
     Warnings first, then what matters day to day: energy, temperature,
@@ -249,11 +271,18 @@ def status_text(snapshot, processing=False):
         warnings.append("Warnung: Arbeitsspeicher knapp.")
     if snapshot.get('disk_free_pct', 100) <= 10:
         warnings.append("Warnung: Datenspeicher knapp.")
-    if snapshot.get('server') == 'down':
+    if snapshot.get('wlan') == 'off':
+        warnings.append("WLAN deaktiviert. Nur lokaler Betrieb.")
+    elif snapshot.get('server') == 'down':
         warnings.append("Server nicht erreichbar. Lokaler Betrieb.")
 
+    lore = lore or snapshot.get('lore', 'off')
     if processing:
         parts = ["Direktive in Bearbeitung."]
+    elif lore == 'full':
+        parts = ["Status-Litanei beginnt."]
+        if any(w.startswith("Warnung") for w in warnings):
+            parts.append("Makel am Maschinengeist erkannt.")
     elif any(w.startswith("Warnung") for w in warnings):
         parts = ["Status eingeschränkt."]
     else:
@@ -270,13 +299,20 @@ def status_text(snapshot, processing=False):
     server = snapshot.get('server')
     if server == 'ok':
         parts.append("Verbindung zum Server stabil.")
-        if snapshot.get('llm') == 'offline':
+        if snapshot.get('llm_mode') == 'local':
+            parts.append("Sprachkern lokal.")
+        elif snapshot.get('llm') == 'offline':
             parts.append("Sprachkern im Notbetrieb.")
-    elif server == 'off':
+    elif server == 'off' and snapshot.get('wlan') != 'off':
         parts.append("Nur lokaler Betrieb.")
     uptime = snapshot.get('uptime_s')
     if uptime is not None:
         parts.append(f"Laufzeit {_uptime_from_seconds(uptime)}.")
     if not processing:
-        parts.append("Befehl erwartet.")
+        if lore == 'full':
+            parts.append("Der Maschinengeist ist besänftigt. Lob dem Omnissiah.")
+        elif lore == 'light' and not any(w.startswith("Warnung") for w in warnings):
+            parts.append("Maschinengeist ruhig. Befehl erwartet.")
+        else:
+            parts.append("Befehl erwartet.")
     return " ".join(parts)

@@ -1,6 +1,6 @@
 # Pi Voice Assistant (SERVITOR)
 
-Sprachassistent auf einem **Raspberry Pi Zero 2 W** mit WM8960-HAT (zwei Mikrofone, zwei Lautsprecher, PTT-Taste), Pimoroni Button SHIM, Adafruit mini PiTFT 1,3″ und PiSugar 3 (Akku). Er antwortet als **SERVITOR**: eine kybernetische Diensteinheit, knapp, mechanisch, Fakten vor Rolle, mit verfremdeter Stimme.
+Sprachassistent auf einem **Raspberry Pi Zero 2 W** mit WM8960-HAT (zwei Mikrofone, zwei Lautsprecher, PTT-Taste), Pimoroni Button SHIM, Adafruit mini PiTFT 1,3″ und PiSugar 3 (Akku). Er antwortet als **Servitor Proximus**: eine kybernetische Diensteinheit, knapp, mechanisch, Fakten vor Rolle, mit verfremdeter Stimme und wahlweise Warhammer-40k-Vokabular (Lore-Stufe im Menü).
 
 **Stand 08.10.2026:** Der Pi nimmt auf, die Rechenarbeit läuft auf dem eigenen Server **CT 107** im Proxmox-Homelab. Fällt der Server oder das Internet aus, arbeitet das System stufenweise lokal weiter.
 
@@ -17,8 +17,10 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | LLM | OpenRouter (`gpt-5.4-mini`); fällt es aus (kein Netz, keine Credits, Timeout), antwortet Qwen3-4B lokal auf CT 107 |
 | Charakter | Servitor-Systemprompt in [`src/llm.py`](src/llm.py); Datum/Uhrzeit des Bedieners werden mitgegeben, Antworten für die Sprachausgabe geglättet |
 | Erkennung | Vosk `small-de-0.15`; größeres Vosk-Modell gemessen und verworfen ([Architektur](docs/architecture.md#größeres-vosk-modell-verworfen)); Whisper-Vergleich auf Branch `feat/servitor-whisper-stt`, Test mit echter Stimme offen |
+| Aktivierungswort | „Hey Jarvis“ startet eine Anfrage, eine Sprechpause beendet sie; läuft auf dem Pi, abschaltbar im Menü. [Architektur](docs/architecture.md#aktivierungswort) |
 | Bedienung | Taste/SHIM A sprechen, B abbrechen, C/D Lautstärke (2 dB, halten wiederholt), E Status bzw. Menü-OK; PiTFT-Tasten öffnen ein Menü. [Button-Bedienung](docs/button-controls.md) |
 | Display | Schritt, Verarbeitungsort SERVER/LOKAL, letzte Antwort, Akku, Temperatur, WLAN, Uhrzeit, Lautstärke, Menü. [Display](docs/display.md) |
+| Alarme | Akku (3 Warnungen, dann Herunterfahren), Stromquelle, Unterspannung, Temperatur, Speicher, CPU, Netzwerk/Internet/Server; abschaltbar. [Architektur](docs/architecture.md#alarme-strom-und-netz) |
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |
 | Hardware | WM8960, SHIM, PiTFT und PiSugar 3 laufen; Akkulaufzeit/Abschaltung und Kamera offen. [Hardware](docs/hardware.md) |
 

@@ -99,6 +99,56 @@ Der **Status** ([`src/system_status.py`](../src/system_status.py)) entsteht aus 
 
 Der **Charakter** steht im Systemprompt in [`src/llm.py`](../src/llm.py): kybernetische Diensteinheit ohne eigenen Willen, „diese Einheit“ statt „ich“, „Bediener“, kurze Quittungen („Daten abgerufen.“), keine Gefühle oder Floskeln, Fakten vor Rolle („Daten unzureichend.“), keine erfundenen Aktionen, drei kurze Beispiele. Das LLM bekommt Datum und Uhrzeit des Bedieners am Ende des Prompts (der Prompt-Cache des lokalen Modells bleibt so gültig). Antworten werden für Piper geglättet: eine Zeile, keine Listen, Markdown, Gedankenstriche oder Emojis. [`server/sample-persona.py`](../server/sample-persona.py) vergleicht OpenRouter und lokales Modell mit festen Fragen. Mit OpenRouter trifft der Ton gut („Funktionszustand stabil. Keine Abweichungen.“, „Direktive abgelehnt. Diese Einheit hat keinen Zugriff auf Geräte.“); das lokale Modell ist inhaltlich schwächer und braucht 3–10 s.
 
+### Lore-Stufen (Warhammer 40.000)
+
+Die Einheit heißt **Servitor Proximus**. Wie viel Mechanicus-Vokabular einfließt, bestimmt die Lore-Stufe: Menü „Lore-Stufe AUS/DEZENT/VOLL“, Grundeinstellung `PTT_LORE_LEVEL` (Pi) bzw. `SERVITOR_LORE` (Server), Standard DEZENT. Der Pi schickt die Stufe mit seinem Status-Snapshot; der Server gibt sie an OpenRouter bzw. das lokale Modell und an die direkten Antworten weiter, der lokale Fallback nutzt sie ebenso.
+
+| Stufe | LLM-Antworten | Direkte Antworten |
+|---|---|---|
+| AUS | keine Begriffe aus fiktiven Welten | „Zeitindex: 9 Uhr 15.“, Status endet mit „Befehl erwartet.“ |
+| DEZENT | höchstens ein Begriff pro Antwort, nicht in jeder („Das Fleisch ist schwach.“) | Status endet mit „Maschinengeist ruhig. Befehl erwartet.“ |
+| VOLL | Mechanicus-Liturgie, Anrufungen, binäre Lobgesänge, höchstens 60 Wörter | „Der heilige Chronometer meldet: 9 Uhr 15. Lob dem Omnissiah.“, Status als Litanei |
+
+Fakten bleiben in allen Stufen vollständig; gemessen mit OpenRouter blieb etwa „330 Meter einschließlich Antenne“ in allen drei Stufen gleich.
+
+## Aktivierungswort
+
+Neben den Tasten startet **„Hey Jarvis“** eine Anfrage (vortrainiertes openWakeWord-Modell; ein eigenes „Hey Servitor“ ist geplant). Ist `PTT_WAKE_WORD` gesetzt, hört [`src/wake_listener.py`](../src/wake_listener.py) im Ruhezustand mit und gibt das Mikrofon frei, sobald eine Taste gedrückt wird, eine Anfrage läuft oder der Servitor spricht (plus 0,6 s gegen das eigene Echo). Nach dem Wort startet die normale Aufnahme; [`src/endpoint.py`](../src/endpoint.py) beendet sie nach 0,9 s Sprechpause oder verwirft sie still, wenn 5 s lang niemand spricht. Eine Taste während einer solchen Aufnahme übernimmt sie (Ende beim Loslassen). Das Menü schaltet das Mithören ab („Aktivierungswort AUS“); das Display zeigt dann wieder „Zum Sprechen halten“ statt „„Hey Jarvis“ oder Taste“. Audio verlässt den Pi erst nach dem Aktivierungswort.
+
+[`src/wakeword.py`](../src/wakeword.py) betreibt die drei ONNX-Modelle von openWakeWord direkt mit onnxruntime und numpy aus der Piper-Umgebung. Das Paket selbst würde scipy und scikit-learn nachziehen und verlangt `tflite-runtime`, das es für Python 3.13 auf ARM nicht gibt. Auf sechs Testclips waren die Werte identisch mit openwakeword 0.6.0 (Abweichung 0,0000). Modelle: [`scripts/install-wakeword.sh`](../scripts/install-wakeword.sh), Prüfsummen fest; Code Apache 2.0, vortrainierte Modelle **CC BY-NC-SA 4.0** (nur nicht-kommerziell).
+
+**Rechenaufwand auf dem Pi Zero 2 W:** Ungeschaltet 56 % eines Kerns (das Einbettungsmodell kostet 36 von 45 ms je 80-ms-Block); Int8-Quantisierung verwarf zu viel Genauigkeit (0,94 → 0,77). Eine Ruheschaltung rechnet leise Blöcke nur mit dem billigen Mel-Spektrum und einer zwischengespeicherten Stille-Einbettung weiter. Gemessen mit `wake_stats` im Journal: stiller Raum ~16–20 % eines Kerns (16–18 % der Blöcke exakt), belebter Raum (Gespräch/TV) ~35–50 %. RAM: ~33 MB im Dienst. Ohne Aktivierungswort liegt `pi-ptt` bei ~4 %.
+
+## Alarme, Strom und Netz
+
+[`src/alarms.py`](../src/alarms.py) prüft alle 10 s (zusammen mit dem Akku) und spricht Alarme, sobald die Einheit frei ist; der wichtigste aktive Alarm steht rot im Ruhebildschirm, kritische lassen die LED orange blinken. Menü „Alarme AUS“ schaltet die Ansagen stumm (`PTT_ALARMS=0`).
+
+| Auslöser | Verhalten |
+|---|---|
+| Akku (ohne Netzteil) | Warnung 1/2/3 bei 15/10/6 % (direkt auf die passende Stufe, ein Satz); nach der letzten **Herunterfahren nach 60 s** (`systemctl poweroff`, polkit-Regel [`deploy/50-pi-voice-poweroff.rules`](../deploy/50-pi-voice-poweroff.rules)); Netzteil anstecken bricht ab. Läuft auch bei stummen Alarmen. |
+| Stromquelle wechselt | „Netzbetrieb. Energiespeicher N Prozent.“ bzw. „Akkubetrieb. …“ |
+| Unterspannung, Temperatur ≥ 75 °C, RAM ≤ 8 % frei oder Swap ≥ 85 %, Last ≥ 90 % über eine Minute | Alarm mit Abstand zwischen Ein- und Ausschaltschwelle |
+| Netzwerk, Internet (openrouter.ai/1.1.1.1:443 alle 30 s), Server | nach zwei Fehlprüfungen Alarm, Entwarnung bei Rückkehr; bei Netzausfall keine Folgealarme; nach dem Einschalten des WLAN 60 s Schonfrist |
+
+**Vorgefertigte Ansagen:** Alarme werden nicht live synthetisiert. [`src/alarm_audio.py`](../src/alarm_audio.py) zerlegt jeden Alarmsatz an den Zahlen in Bausteine („Warnung“, „1“, „von“, „3“, „Energiespeicher bei“, „15“, „Prozent. Netzteil anschließen.“). Einmal nach jedem Deploy rendert
+
+```sh
+set -a; . /etc/pi-voice-assistant.env; set +a
+python3 /opt/pi-voice-assistant/src/alarm_audio.py build --prune
+```
+
+alle Bausteine und die Zahlen 0–100 über `/v1/speak` in der Servitor-Stimme (144 Clips, nur fehlende; ein Clip alle 6 s, damit das Ratenlimit für echte Anfragen frei bleibt, ~15 min beim ersten Mal) nach `models/alarm-voice/` und schneidet die Stille an den Rändern ab. `pi-ptt` liest die Clips nur (der Dienst hat `ProtectSystem=strict`), hängt die WAV-Daten mit kurzen Pausen aneinander und spielt sie mit `aplay`. So kommen Alarme auch offline, ohne Server und bei Volllast oder Speichermangel ohne Rechenaufwand. Fehlt ein Baustein (neuer Text, Build nicht gelaufen), wird wie früher lokal mit Piper gesprochen; das Journal zeigt `speech_started` mit `clips=false`.
+
+**WLAN** lässt sich über `PTT_WLAN=on|off` (beim Dienststart) und das Menü schalten (`rfkill`, udev-Regel [`deploy/90-rfkill-netdev.rules`](../deploy/90-rfkill-netdev.rules)). Ohne LAN-Kabel ist der Pi dann offline: lokaler Betrieb, keine Server-/Netzalarme, Status „WLAN deaktiviert“.
+
+**Sprachkern AUTO/LOKAL** (Menü, `PTT_LLM_MODE`): bei LOKAL antwortet CT 107 nur mit dem lokalen Modell, OpenRouter wird nie gefragt; im Fallback auf dem Pi gibt es dann nur die Antworten ohne LLM.
+
+**Speicher:** Der Vosk-Bereitschaftsprozess (~190 MB) wird freigegeben, solange CT 107 erreichbar ist (verfügbarer RAM 50 → ~220 MB), und bei Serverausfall wieder vorgeladen.
+
+## Display: Servo-Skull
+
+Im Ruhezustand und beim Sprechen zeigt das PiTFT einen Servo-Skull ([`src/skull.py`](../src/skull.py)) mit rot pulsierendem Auge: ruhig atmend im Leerlauf (4 Bilder/s), beim Sprechen im Takt der Lautstärke der Antwort (Hüllkurve der WAV, 50-ms-Schritte, `/run/pi-ptt/speech-envelope.json`). Das Auge wird automatisch gefunden und in 12 Stufen vorberechnet. Das verwendete Pixel-Art-Bild (r/PixelArt, „16-color Warhammer servo skull wallpaper“) liegt **nur auf dem Pi** (`PI_DISPLAY_SKULL`, Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`), nicht in diesem öffentlichen Repository; ohne Datei zeichnet der Code einen eigenen schlichten Schädel. Display-CPU im Leerlauf ~10 % eines Kerns.
+
 ## Sprachausgabe
 
 Im Normalbetrieb erzeugt CT 107 die Stimme (Piper Thorsten Emotional, Speaker 4, Referenz-DSP aus PR #26) und der Pi spielt die fertige WAV nur ab. Lokal auf dem Pi (Statusansage mit E, Fallback) bleibt Piper 1.8.0 resident: `servitor` nutzt dasselbe Modell mit einer Sprechkonfiguration, bei der Wörter nur leicht langsamer sind und zusätzliche Satzpausen den schweren Befehlston erzeugen; `normal` nutzt Thorsten Low.

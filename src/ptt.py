@@ -12,7 +12,13 @@ import threading
 import time
 import wave
 
-from llm import configured_model, generate_reply
+import functools
+from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
+import alarm_audio
+from alarms import ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor
+from endpoint import Endpointer
+from netprobe import InternetProbe, network_up
+import wlan as wlan_radio
 from menu import ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
 import datetime
@@ -33,6 +39,7 @@ DISPLAY_EVENTS = {
     'transcript', 'transcript_discarded', 'cancelled', 'busy',
     'llm_start', 'llm_response', 'llm_discarded', 'llm_error',
     'status', 'speech_started', 'speech_finished', 'speech_error',
+    'wake_timeout',
 }
 DISPLAY_ERROR_EVENTS = {'stt_error', 'llm_error', 'tts_error', 'speech_error'}
 DISPLAY_ERROR_HOLD_SECONDS = 3.0
@@ -80,6 +87,9 @@ def publish_display_event(name):
             pass
 
 
+# Wake word: published label per model file, echo pause after own speech.
+WAKE_LABELS = {'hey_jarvis_v0.1': 'hey_jarvis', 'hey_servitor': 'hey_servitor'}
+WAKE_ECHO_PAUSE = 0.6
 # Display status: fixed identifiers and numbers only, never transcripts or
 # reply text. route/last_route: 'server' (CT 107) or 'pi'; last_llm:
 # 'openrouter' or 'offline' (local model on the server).
@@ -92,6 +102,14 @@ DISPLAY_STATUS_VALUES = {
     'opt_server': {'on', 'off', 'none'},
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
+    'power': {'awake', 'rest', 'sleep'},
+    'opt_wake': {'on', 'off', 'none'},
+    'opt_lore': set(LORE_LEVELS),
+    'opt_wlan': {'on', 'off'},
+    'opt_alarms': {'on', 'off'},
+    'opt_llm': {'auto', 'local'},
+    'alarm': set(ALARMS),
+    'wake_word': set(WAKE_LABELS.values()),
 }
 # SHIM LED palette (APA102 at the driver's fixed low global brightness).
 LED_OFF = (0, 0, 0)
@@ -103,6 +121,15 @@ LED_LOCAL = (255, 120, 0)        # processing on the Pi (display: LOKAL, amber)
 LED_SPEAKING = (255, 100, 0)
 LED_MENU = (150, 0, 255)
 LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
+SHIM_RETRY_SECONDS = 2.0        # reconnect the Button SHIM after an I2C error ...
+SHIM_RETRY_MAX_SECONDS = 60.0   # ... backing off to this while it keeps failing
+WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
+# Idle power stages: 'rest' dims the display and calms the skull, 'sleep'
+# switches screen and LED off (optionally WLAN); the wake word keeps listening.
+REST_SECONDS = 30.0
+SLEEP_SECONDS = 600.0
+LED_ALARM = (255, 60, 0)         # slow blink while a critical alarm is active
+CRITICAL_ALARMS = {'undervoltage', 'battery', 'memory', 'temperature'}
 # Holding C/D repeats the volume step after a short pause.
 VOLUME_REPEAT_DELAY = 0.45
 VOLUME_REPEAT_INTERVAL = 0.15
@@ -242,6 +269,8 @@ class Recorder:
         self._capture_rate = 48000
         self._capture_channels = 2
         self._live_recognizer = None
+        self._endpoint = None  # set for wake-word recordings without a button
+        self.endpoint_result = None
 
     def _pump_live_audio(self, proc, recognizer, uplink=None):
         recognizer_ok = recognizer is not None
@@ -252,6 +281,8 @@ class Recorder:
                     if not chunk:
                         break
                     sink.write(chunk)
+                    if self._endpoint is not None and self.endpoint_result is None:
+                        self.endpoint_result = self._endpoint.feed(chunk)
                     if uplink is not None:
                         uplink.accept_pcm(chunk)
                     if recognizer_ok:
@@ -273,7 +304,9 @@ class Recorder:
             if proc.stdout is not None:
                 proc.stdout.close()
 
-    def start(self):
+    def start(self, auto_stop=False):
+        """auto_stop: no button to release (wake word); endpoint_result turns
+        'end' after speech plus a pause or 'timeout' if nobody speaks."""
         # A timed-out native recognizer still owns its file and result fields.
         # Never reset them or start a second recognizer before it has exited.
         if self._pump_thread is not None:
@@ -290,6 +323,8 @@ class Recorder:
         self._live_error = None
         self._pump_thread = None
         self.drop_uplink()
+        self._endpoint = Endpointer() if auto_stop else None
+        self.endpoint_result = None
 
         uplink = None
         if self.uplink_factory is not None and self.uplink_enabled:
@@ -308,7 +343,7 @@ class Recorder:
             except (OSError, TranscriptionError) as exc:
                 self._live_error = str(exc)
 
-        if recognizer is not None or uplink is not None:
+        if recognizer is not None or uplink is not None or auto_stop:
             self._live_recognizer = recognizer
             self._capture_rate = 16000
             self._capture_channels = 1
@@ -320,13 +355,15 @@ class Recorder:
             self._pump_thread = threading.Thread(
                 target=self._pump_live_audio,
                 args=(self.process, recognizer, uplink),
-                name='vosk-live' if recognizer is not None else 'remote-pump',
+                name='vosk-live' if recognizer is not None else 'capture-pump',
                 daemon=True,
             )
             self._pump_thread.start()
             fields = dict(remote=True) if uplink is not None else {}
-            event('recording', stt='vosk-live' if recognizer is not None else 'remote',
-                  sample_rate=16000, channels=1, **fields)
+            if auto_stop:
+                fields['trigger'] = 'wake'
+            stt = 'vosk-live' if recognizer is not None else 'remote' if uplink is not None else 'file'
+            event('recording', stt=stt, sample_rate=16000, channels=1, **fields)
             return
 
         isolated = os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
@@ -445,8 +482,15 @@ class Recorder:
 
 class VoiceController:
     """One capture/STT/LLM slot, with A and GPIO17 combined as hold-to-talk."""
-    def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False):
+    def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False,
+                 wake=None, wake_word=None):
         self.recorder, self.speech, self.probe = recorder, speech, probe
+        self.wake = wake                  # WakeListener or None
+        self.wake_word = wake_word        # published label, e.g. 'hey_jarvis'
+        self.wake_enabled = wake is not None
+        self.wake_recording = False       # current recording ends on a pause
+        self.wake_resume_at = 0.0
+        self.wake_stats_at = 0.0
         self.remote = remote
         self.remote_capture = None
         # Release-to-playback bookkeeping for the display's "last answer" line.
@@ -459,9 +503,26 @@ class VoiceController:
         self.remote_enabled = remote
         self.led_enabled = True
         self.screen_on = True
+        self.lore = lore_level(os.environ.get('PTT_LORE_LEVEL'))  # off / light / full
         self.battery = None      # power.Battery reading, refreshed by main()
         self.throttled = None
         self.remote_failed = False
+        self.server_probe = None  # netprobe.ServerProbe when a server is configured
+        self.alarms = AlarmMonitor()
+        self.alarms_enabled = os.environ.get('PTT_ALARMS', '1') != '0'
+        self.alarm_queue = []    # sentences waiting until the unit is idle
+        self.wlan_on = True
+        self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
+        self.power = 'awake'
+        self.last_activity = time.monotonic()
+        self.rest_after = float(os.environ.get('PTT_REST_SECONDS', REST_SECONDS))
+        self.sleep_after = float(os.environ.get('PTT_SLEEP_SECONDS', SLEEP_SECONDS))
+        self.sleep_wlan_off = os.environ.get('PTT_SLEEP_WLAN', 'keep') == 'off'
+        self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
+        self.listen_after_greeting = False  # wake word woke us: listen after the greeting
+        self.internet_probe = None  # netprobe.InternetProbe
+        self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
+        self.shutting_down = False
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -484,7 +545,10 @@ class VoiceController:
         if (_display_last_error_at is not None
                 and time.time() - _display_last_error_at < DISPLAY_ERROR_HOLD_SECONDS):
             return LED_RECORDING if int(now * 4) % 2 == 0 else LED_OFF
-        if not self.led_enabled:
+        if (self.alarms_enabled and CRITICAL_ALARMS.intersection(self.alarms.active)
+                and self.job is None and not self.speech.active):
+            return LED_ALARM if int(now) % 2 == 0 else LED_OFF
+        if not self.led_enabled or self.power == 'sleep':
             return LED_OFF
         if self.menu.open:
             return LED_MENU
@@ -500,12 +564,15 @@ class VoiceController:
                 level = 1.0
             return self._scale(LED_SPEAKING, (0.3, 0.6, 1.0)[min(2, int(level * 3))])
         local = self.remote and (not self.remote_enabled or self.turn_route == 'pi')
-        return LED_READY_LOCAL if local else LED_READY
+        ready = LED_READY_LOCAL if local else LED_READY
+        return self._scale(ready, 0.3) if self.power == 'rest' else ready
 
     def cancel(self, held, now):
+        self.listen_after_greeting = False
         self.speech.stop()
         self.speech_started_at = None
         self.recorder.finish('cancel', publish=False)
+        self.wake_recording = False
         if self.remote:
             self.recorder.drop_uplink()
         if self.job is not None:
@@ -567,8 +634,16 @@ class VoiceController:
             server = 'none'
         else:
             server = 'on' if self.remote_enabled else 'off'
+        if self.wake is None:
+            wake = 'none'
+        else:
+            wake = 'on' if self.wake_enabled else 'off'
         publish_display_status(menu_index=self.menu.index, menu_page=self.menu.page,
-                               opt_server=server,
+                               opt_server=server, opt_wake=wake, wake_word=self.wake_word,
+                               opt_lore=self.lore,
+                               opt_wlan='on' if self.wlan_on else 'off',
+                               opt_alarms='on' if self.alarms_enabled else 'off',
+                               opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
                                screen='on' if self.screen_on else 'off')
 
@@ -578,6 +653,24 @@ class VoiceController:
             self.remote_enabled = not self.remote_enabled
             self.recorder.uplink_enabled = self.remote_enabled
             event('menu', item='server', value='on' if self.remote_enabled else 'off')
+        elif item == 'wake' and self.wake is not None:
+            self.wake_enabled = not self.wake_enabled
+            if not self.wake_enabled:
+                self._release_microphone()
+            event('menu', item='wake', value='on' if self.wake_enabled else 'off')
+        elif item == 'lore':
+            self.lore = LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)]
+            event('menu', item='lore', value=self.lore)
+        elif item == 'llm':
+            self.llm_mode = 'local' if self.llm_mode == 'auto' else 'auto'
+            event('menu', item='llm', value=self.llm_mode)
+        elif item == 'wlan':
+            self.set_wlan(not self.wlan_on)
+        elif item == 'alarms':
+            self.alarms_enabled = not self.alarms_enabled
+            if not self.alarms_enabled:
+                self.alarm_queue = []
+            event('menu', item='alarms', value='on' if self.alarms_enabled else 'off')
         elif item == 'led':
             self.led_enabled = not self.led_enabled
             event('menu', item='led', value='on' if self.led_enabled else 'off')
@@ -590,12 +683,158 @@ class VoiceController:
             event('menu', item=item)
         self._publish_menu()
 
+    def server_state(self):
+        """'off' (none/disabled), 'ok' or 'down'; the probe wins over the last turn."""
+        if not self.remote or not self.remote_enabled or not self.wlan_on:
+            return 'off'
+        probed = getattr(self.server_probe, 'state', None)
+        if probed in ('ok', 'down'):
+            return probed
+        return 'down' if self.remote_failed else 'ok'
+
     def status_snapshot(self):
-        if not self.remote or not self.remote_enabled:
-            server = 'off'
-        else:
-            server = 'down' if self.remote_failed else 'ok'
-        return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server)
+        server = self.server_state()
+        return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
+                                lore=self.lore, wlan='on' if self.wlan_on else 'off',
+                                llm_mode=self.llm_mode)
+
+    def check_alarms(self, now, network=None):
+        """Called every ~10 s by main(); queues alarm sentences to speak."""
+        # WLAN off, or just switched back on and still connecting: links unknown.
+        links = self.wlan_on and now >= self.link_grace_until
+        if network is None and links:
+            network = network_up()
+        internet = getattr(self.internet_probe, 'state', None) if links else None
+        texts = self.alarms.update(self.status_snapshot(), now,
+                                   network=network if links else None,
+                                   server=self.server_state() if links else 'off',
+                                   lore=self.lore, internet=internet)
+        for text in texts:
+            event('alarm', text=text, active=self.alarms.active)
+        if self.alarms_enabled:
+            self.alarm_queue.extend(texts)
+        active = self.alarms.active
+        publish_display_status(alarm=active[0] if active else None)
+        if self.alarms.shutdown_due(now) and not self.shutting_down:
+            self.shutdown()
+
+    def shutdown(self):
+        """Battery empty: say so, then power off (polkit rule for obivan)."""
+        self.shutting_down = True
+        event('shutdown', reason='battery')
+        self.speech.stop()
+        try:
+            self._say_alarm([SHUTDOWN_NOW])
+            deadline = time.monotonic() + 8
+            while self.speech.active and time.monotonic() < deadline:
+                time.sleep(0.1)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        try:
+            subprocess.run(['/usr/bin/systemctl', 'poweroff'], check=True, timeout=15,
+                           stdin=subprocess.DEVNULL, capture_output=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.shutting_down = False
+            event('shutdown_error', message=str(exc))
+            self.alarm_queue.append(SHUTDOWN_FAILED)
+
+    def _speak_alarms(self):
+        if not self.alarm_queue or not self._idle() or self.menu.open:
+            return
+        texts, self.alarm_queue = self.alarm_queue, []
+        try:
+            self._say_alarm(texts)
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+
+    def _say_alarm(self, texts, source='alarm'):
+        """Play prerecorded clips (no synthesis, works offline and under
+        load); fall back to live synthesis when a clip is missing."""
+        play = getattr(self.speech, 'play', None)
+        path = (Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'alarm.wav'
+                if play is not None else None)
+        if path is not None and alarm_audio.assemble(texts, path):
+            event('speech_started', source=source, clips=True)
+            play(path)
+            return
+        event('speech_started', source=source, clips=False)
+        self.speech.start(' '.join(texts))
+
+    def set_wlan(self, on):
+        try:
+            wlan_radio.set_wlan(on)
+        except (OSError, subprocess.SubprocessError) as exc:
+            event('wlan_error', message=str(exc))
+            return False
+        self.wlan_on = on
+        if on:
+            self.link_grace_until = time.monotonic() + WLAN_GRACE_SECONDS
+        if self.remote:
+            self.recorder.uplink_enabled = on and self.remote_enabled
+        event('wlan', value='on' if on else 'off')
+        return True
+
+    def _release_microphone(self):
+        """The wake listener holds the capture device; free it before recording."""
+        if self.wake is not None and self.wake.running:
+            self.wake.stop()
+
+    def _idle(self):
+        return (self.recorder.process is None and self.job is None
+                and not self.speech.active and not getattr(self.speech, 'synthesizing', False))
+
+    def _wake_tick(self, now):
+        if self.wake.error:
+            event('wake_error', message=self.wake.error)
+            self.wake.error = None
+            self.wake_resume_at = now + 30.0  # retry later, buttons keep working
+        if self.wake.take_detection() and self._idle():
+            event('wake', word=self.wake_word)
+            if self.menu.open:
+                self.menu.close()
+                self._publish_menu()
+            if self.power == 'sleep':
+                # Asleep: announce the warm-up first, then listen.
+                self.last_activity = now
+                self._greet()
+                self.listen_after_greeting = True
+            else:
+                self._start_wake_recording()
+        if self.wake_recording and self.recorder.process is not None:
+            result = self.recorder.endpoint_result
+            if result == 'end':
+                self.wake_recording = False
+                self.submit('silence')
+            elif result == 'timeout':
+                self.wake_recording = False
+                self.recorder.finish('wake_timeout', publish=False)
+                if self.remote:
+                    self.recorder.drop_uplink()
+                event('wake_timeout')
+        detector = getattr(self.wake, 'detector', None)
+        if detector is not None and now >= self.wake_stats_at:
+            self.wake_stats_at = now + 60.0
+            event('wake_stats', **detector.wakeword.stats())
+        listen = self.wake_enabled and self._idle() and now >= self.wake_resume_at
+        if listen and not self.wake.running:
+            self.wake.start()
+        elif not listen and self.wake.running:
+            self.wake.stop()
+
+    def _start_wake_recording(self):
+        self._release_microphone()
+        self.speech_started_at = None
+        self.recorder.start(auto_stop=True)
+        self.wake_recording = True
+
+    def _greet(self):
+        """Short prerecorded line when waking from sleep."""
+        try:
+            self._say_alarm([WAKE_PHRASES.get(self.lore, WAKE_PHRASES['light'])], source='wake')
+            self.speech_started_at = time.monotonic()
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
 
     def _speak_status(self, action):
         if (self.recorder.process is not None or action == 'start'
@@ -616,7 +855,9 @@ class VoiceController:
         up = self.pitft[0].update(pitft_pressed[0], now) == 'start'
         down = self.pitft[1].update(pitft_pressed[1], now) == 'start'
         if up or down:
-            if not self.screen_on:
+            if self.power != 'awake':
+                self._wake_up(now)  # first press only wakes the display
+            elif not self.screen_on:
                 self.screen_on = True  # first press only wakes the screen
                 event('menu', item='screen', value='on')
             else:
@@ -654,6 +895,12 @@ class VoiceController:
 
     def _start_llm(self, text):
         intent = intents.match(text)
+        if intent is None and self.llm_mode == 'local':
+            # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
+            reply = "Daten unzureichend. Lokaler Sprachkern nicht erreichbar."
+            event('llm_response', text=reply, model='local/none')
+            self._start_speech(reply, source='assistant', model='local/none')
+            return
         if intent is not None:
             # Time, date, status ...: answered on the Pi, also without network.
             reply = intents.answer(intent, datetime.datetime.now(), self.status_snapshot())
@@ -662,7 +909,7 @@ class VoiceController:
             print(f'SERVITOR: {reply}', flush=True)
             self._start_speech(reply, source='assistant', model='local/intent')
             return
-        self.job = TranscriptionJob(generate_reply, text)
+        self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore), text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
@@ -799,6 +1046,11 @@ class VoiceController:
                 )
                 self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
+            self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
+            if self.listen_after_greeting:
+                self.listen_after_greeting = False
+                if self._idle() and not self.menu.open:
+                    self._start_wake_recording()
         if self.job is not None and self.job_stage == 'remote' and not self.job.done.is_set():
             for item in self.job.drain():
                 self._remote_progress(item)
@@ -838,6 +1090,10 @@ class VoiceController:
         if action == 'start' and self.menu.open:
             self.menu.close()
             self._publish_menu()
+        if action == 'start' and self.wake_recording and self.recorder.process is not None:
+            # Button pressed during a wake-word recording: it ends on release now.
+            self.wake_recording = False
+            action = None
         if action == 'start':
             if (self.job is not None or (os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
                     and getattr(self.speech, 'synthesizing', False))):
@@ -845,20 +1101,67 @@ class VoiceController:
             else:
                 self.speech.stop()
                 self.speech_started_at = None
+                self._release_microphone()
                 self.recorder.start()
         elif action in ('release', 'limit') and self.recorder.process is not None:
             self.submit(action)
         if self.recorder.process is not None and self.recorder.process.poll() is not None:
+            self.wake_recording = False
             self.submit('process_exit')
             self.ptt.resync(held, now)
+        if self.wake is not None and not self.probe:
+            self._wake_tick(now)
+        if not self.probe:
+            self._speak_alarms()
+            pressed = action is not None or commands or any(pitft_pressed)
+            self._update_power(now, pressed)
 
-        if (not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
-                and self.job is None and not self.speech.active
-                and not getattr(self.speech, 'synthesizing', False)
-                and self.recorder.process is None):
-            prepare_vosk_worker()
+        if not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid':
+            # The standby Vosk worker (~190 MB of 415) only serves the local
+            # fallback. While the server answers it is freed: next to Piper,
+            # display and wake word only ~50 MB stayed available.
+            if self.server_state() == 'ok':
+                stop_prepared_vosk()
+            elif (self.job is None and not self.speech.active
+                    and not getattr(self.speech, 'synthesizing', False)
+                    and self.recorder.process is None):
+                prepare_vosk_worker()
+
+    def _busy(self):
+        return (self.recorder.process is not None or self.job is not None
+                or self.speech.active or getattr(self.speech, 'synthesizing', False)
+                or self.menu.open or bool(self.alarm_queue))
+
+    def _wake_up(self, now):
+        self.last_activity = now
+        self._update_power(now, False)
+
+    def _update_power(self, now, pressed=False):
+        """awake -> rest -> sleep while nothing happens; any activity wakes."""
+        if pressed or self._busy():
+            self.last_activity = now
+        idle = now - self.last_activity
+        power = ('sleep' if idle >= self.sleep_after else
+                 'rest' if idle >= self.rest_after else 'awake')
+        if power == self.power:
+            return
+        previous, self.power = self.power, power
+        event('power', state=power)
+        publish_display_status(power=power)
+        if power == 'sleep' and self.sleep_wlan_off and self.wlan_on:
+            self.wlan_slept = self.set_wlan(False)
+        elif previous == 'sleep' and self.wlan_slept:
+            self.wlan_slept = False
+            self.set_wlan(True)
+        if previous == 'sleep' and self._idle() and not self.alarm_queue:
+            # Woken by a display/SHIM button: say so. Talking (PTT), alarms
+            # and status replies already speak or listen; the wake word
+            # greets on its own before listening.
+            self._greet()
 
     def close(self):
+        if self.wake is not None:
+            self.wake.stop()
         stop_prepared_vosk()
         if self.job is not None:
             self.job.cancel()
@@ -980,22 +1283,74 @@ def main():
     if uplink_factory is not None:
         speech = RemoteCapableSpeech(
             speech, os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'))
+    wake, wake_label = None, None
+    wake_word = os.environ.get('PTT_WAKE_WORD', '').strip()
+    if wake_word and not args.probe:
+        wake_dir = Path(os.environ.get('PTT_WAKE_MODEL_DIR',
+                                       '/opt/pi-voice-assistant/models/wakeword'))
+        threshold = float(os.environ.get('PTT_WAKE_THRESHOLD', '0.5'))
+        if not (wake_dir / f'{wake_word}.onnx').is_file():
+            event('wake_error', message=f'model {wake_word} missing in {wake_dir}')
+        else:
+            def detector_factory():
+                # numpy/onnxruntime live in the Piper venv (also used by Piper).
+                venv = Path(os.environ.get('PIPER_VENV', '/opt/pi-voice-assistant/.venv'))
+                site = venv / 'lib' / f'python{os.sys.version_info.major}.{os.sys.version_info.minor}' / 'site-packages'
+                if site.is_dir() and str(site) not in os.sys.path:
+                    os.sys.path.insert(0, str(site))
+                from wakeword import Detector, WakeWord
+                return Detector(WakeWord(wake_dir, wake_word, gate=True), threshold=threshold)
+            from wake_listener import WakeListener
+            wake = WakeListener(os.environ.get('PTT_AUDIO_DEVICE',
+                                               'plughw:CARD=wm8960soundcard,DEV=0'),
+                                detector_factory)
+            wake_label = WAKE_LABELS.get(wake_word)
+            event('wake_ready', word=wake_word, threshold=threshold)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
-                                 remote=uplink_factory is not None)
+                                 remote=uplink_factory is not None,
+                                 wake=wake, wake_word=wake_label)
     controller_ref.append(controller)
+    wlan_setting = os.environ.get('PTT_WLAN', '').strip().lower()
+    if wlan_setting in ('on', 'off') and not args.probe:
+        if not controller.set_wlan(wlan_setting == 'on'):
+            controller.wlan_on = wlan_radio.wlan_blocked() is not True
+    elif not args.probe:
+        controller.wlan_on = wlan_radio.wlan_blocked() is not True
+    if uplink_factory is not None:
+        from netprobe import ServerProbe
+        controller.server_probe = ServerProbe(interval=15.0).start()
+    if not args.probe:
+        controller.internet_probe = InternetProbe().start()
     battery_monitor = Battery()
     next_power = 0.0
     shim = None
     led = None
-    if shim_enabled == '1':
+    shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
+
+    def open_shim(now):
+        """(Re)connect the Button SHIM; on failure retry later with backoff,
+        so a transient I2C error (EIO) does not disable it until a restart."""
+        nonlocal shim, led, shim_retry_at, shim_backoff
         try:
             from button_shim import ButtonShim, LedWriter
             shim = ButtonShim()
             if not args.probe:
                 led = LedWriter(shim)
-            event('shim_ready', bus=1, address='0x3f')
-        except (ImportError, OSError) as exc:
-            event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
+        except ImportError as exc:
+            event('shim_error', message=str(exc), fallback='GPIO17')
+            shim_retry_at = None
+            return
+        except OSError as exc:
+            event('shim_error', message=str(exc), fallback='GPIO17',
+                  retry_seconds=shim_backoff)
+            shim_retry_at = now + shim_backoff
+            shim_backoff = min(shim_backoff * 2, SHIM_RETRY_MAX_SECONDS)
+            return
+        event('shim_ready', bus=1, address='0x3f')
+        shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
+
+    if shim_enabled == '1':
+        open_shim(time.monotonic())
 
     # PiTFT buttons (upper, lower): menu. Empty PTT_PITFT_BUTTONS disables them.
     pitft_lines = tuple(int(value) for value in
@@ -1032,8 +1387,11 @@ def main():
                 if not args.probe and now >= next_power:
                     controller.battery = battery_monitor.read()
                     controller.throttled = throttled_flags()
+                    controller.check_alarms(now)
                     next_power = now + 10.0
                 pressed = (False,) * 5
+                if shim is None and shim_retry_at is not None and now >= shim_retry_at:
+                    open_shim(now)
                 if shim is not None:
                     try:
                         if led is not None and led.error is not None:
@@ -1042,9 +1400,11 @@ def main():
                         if led is not None:
                             led.request(controller.color)
                     except OSError as exc:
-                        event('shim_error', message=str(exc), fallback='GPIO17; restart to retry')
+                        event('shim_error', message=str(exc), fallback='GPIO17',
+                              retry_seconds=SHIM_RETRY_SECONDS)
                         stop_shim()
                         controller.cancel(gpio_pressed, now)
+                        shim_retry_at = now + SHIM_RETRY_SECONDS
                 try:
                     controller.tick(gpio_pressed, pressed, now, pitft)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:

@@ -126,16 +126,19 @@ class RealPipeline:
             return 'offline'
         return 'openrouter'
 
-    def reply(self, text):
+    def reply(self, text, lore=None, mode=None):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
         from llm import LLMError, generate_local_reply, generate_reply
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
+        if local and mode == 'local':
+            # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
+            return generate_local_reply(text, lore=lore)
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
-                return generate_reply(text)
+                return generate_reply(text, lore=lore)
             except LLMError as exc:
                 if not local:
                     raise
@@ -144,7 +147,7 @@ class RealPipeline:
                 self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
-            return generate_local_reply(text)
+            return generate_local_reply(text, lore=lore)
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
@@ -282,7 +285,9 @@ class Service:
                 else:
                     emit(dict(event='stage', stage='think'))
                     try:
-                        answer, model = timed('llm', self.pipeline.reply, text)
+                        lore = (device or {}).get('lore')
+                        mode = (device or {}).get('llm_mode')
+                        answer, model = timed('llm', self.pipeline.reply, text, lore, mode)
                     except Exception as exc:
                         raise TurnError('think', 'llm', str(exc)) from exc
                 emit(dict(event='reply', text=answer, model=model))
