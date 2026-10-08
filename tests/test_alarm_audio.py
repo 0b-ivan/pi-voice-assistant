@@ -68,6 +68,29 @@ class AssembleTests(unittest.TestCase):
             self.assertFalse(alarm_audio.assemble(["Warnung 2"], out, tmp))
 
 
+class BuildTests(unittest.TestCase):
+    def test_build_renders_only_missing_clips_and_prunes(self):
+        import remote_turn
+        config = Mock(base_urls=("http://server",), token="t" * 32)
+        rendered = []
+
+        def render(url, token, piece, agent):
+            rendered.append(piece)
+            return wav_bytes([0, 4000, 4000, 0])
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.object(remote_turn, "load_remote_config", return_value=config), \
+                unittest.mock.patch.object(alarm_audio, "_render", side_effect=render):
+            alarm_audio.clip_path("Warnung", tmp).write_bytes(wav_bytes([1]))
+            (Path(tmp) / "stale.wav").write_bytes(b"x")
+            alarm_audio.build(tmp, prune=True, out=lambda m: None, pace=0)
+            pieces = alarm_audio.known_pieces()
+            self.assertEqual(len(rendered), len(pieces) - 1)
+            self.assertNotIn("Warnung", rendered)
+            self.assertFalse((Path(tmp) / "stale.wav").exists())
+            self.assertEqual(len(list(Path(tmp).glob("*.wav"))), len(pieces))
+
+
 class ControllerAlarmTests(unittest.TestCase):
     def test_alarm_uses_clips_when_complete_else_synthesis(self):
         import ptt

@@ -130,6 +130,15 @@ Neben den Tasten startet **„Hey Jarvis“** eine Anfrage (vortrainiertes openW
 | Unterspannung, Temperatur ≥ 75 °C, RAM ≤ 8 % frei oder Swap ≥ 85 %, Last ≥ 90 % über eine Minute | Alarm mit Abstand zwischen Ein- und Ausschaltschwelle |
 | Netzwerk, Internet (openrouter.ai/1.1.1.1:443 alle 30 s), Server | nach zwei Fehlprüfungen Alarm, Entwarnung bei Rückkehr; bei Netzausfall keine Folgealarme |
 
+**Vorgefertigte Ansagen:** Alarme werden nicht live synthetisiert. [`src/alarm_audio.py`](../src/alarm_audio.py) zerlegt jeden Alarmsatz an den Zahlen in Bausteine („Warnung“, „1“, „von“, „3“, „Energiespeicher bei“, „15“, „Prozent. Netzteil anschließen.“). Einmal nach jedem Deploy rendert
+
+```sh
+set -a; . /etc/pi-voice-assistant.env; set +a
+python3 /opt/pi-voice-assistant/src/alarm_audio.py build --prune
+```
+
+alle Bausteine und die Zahlen 0–100 über `/v1/speak` in der Servitor-Stimme (144 Clips, nur fehlende; ein Clip alle 6 s, damit das Ratenlimit für echte Anfragen frei bleibt, ~15 min beim ersten Mal) nach `models/alarm-voice/` und schneidet die Stille an den Rändern ab. `pi-ptt` liest die Clips nur (der Dienst hat `ProtectSystem=strict`), hängt die WAV-Daten mit kurzen Pausen aneinander und spielt sie mit `aplay`. So kommen Alarme auch offline, ohne Server und bei Volllast oder Speichermangel ohne Rechenaufwand. Fehlt ein Baustein (neuer Text, Build nicht gelaufen), wird wie früher lokal mit Piper gesprochen; das Journal zeigt `speech_started` mit `clips=false`.
+
 **WLAN** lässt sich über `PTT_WLAN=on|off` (beim Dienststart) und das Menü schalten (`rfkill`, udev-Regel [`deploy/90-rfkill-netdev.rules`](../deploy/90-rfkill-netdev.rules)). Ohne LAN-Kabel ist der Pi dann offline: lokaler Betrieb, keine Server-/Netzalarme, Status „WLAN deaktiviert“.
 
 **Sprachkern AUTO/LOKAL** (Menü, `PTT_LLM_MODE`): bei LOKAL antwortet CT 107 nur mit dem lokalen Modell, OpenRouter wird nie gefragt; im Fallback auf dem Pi gibt es dann nur die Antworten ohne LLM.

@@ -30,6 +30,7 @@ GAP = 0.06              # seconds between fragments of one sentence
 SENTENCE_GAP = 0.35     # after a full stop and between alarm sentences
 QUIET = 300             # int16 level treated as silence when trimming clips
 MARGIN = 0.015          # seconds of silence kept at each clip edge
+PACE = 6.0              # seconds between renders: half the server's rate limit stays free
 
 
 def fragments(text):
@@ -151,8 +152,9 @@ def _render(url, token, piece, user_agent):
     raise RuntimeError('no audio in reply')
 
 
-def build(directory=None, force=False, prune=False, out=print):
+def build(directory=None, force=False, prune=False, out=None, pace=PACE):
     """Render missing clips via the Servitor server (honours its rate limit)."""
+    out = out or (lambda message: print(message, flush=True))
     from remote_turn import USER_AGENT, load_remote_config
     config = load_remote_config()
     if config is None:
@@ -177,6 +179,8 @@ def build(directory=None, force=False, prune=False, out=print):
         else:
             raise SystemExit(f'could not render fragment {done}')
         _store(audio, clip_path(piece, directory))
+        if done < len(todo):
+            time.sleep(pace)
         if done % 20 == 0 or done == len(todo):
             out(f'{done}/{len(todo)}')
     if prune:
