@@ -10,7 +10,7 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
 | B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: Menü schließen (erst ein zweiter Druck bricht ab) |
 | C / D | Digitalen `Playback`-Pegel um 2 dB senken/erhöhen, gehalten wiederholt |
-| E | Ohne Menü: dynamischen Systemstatus ansagen (Systemlast, Temperatur, freier RAM/Datenspeicher, Laufzeit, STT-Modus, Servitor-Zustand). Bei offenem Menü: **Bestätigen** |
+| E | Ohne Menü: Status ansagen (Warnungen zuerst, dann Akku, Temperatur, Serververbindung, Sprachkern, Laufzeit; siehe [Architektur](architecture.md#antworten-ohne-llm-status-und-charakter)). Bei offenem Menü: **Bestätigen** |
 | PiTFT-Taste oben (GPIO23) / unten (GPIO24) | Menü öffnen, Auswahl hoch/runter; bei ausgeschaltetem Display nur aufwecken |
 
 A und GPIO17 bilden gemeinsam einen Aufnahmetaster: Aufnahme endet erst, wenn beide losgelassen sind. Alle Tasten beim Start loslassen; B–E lösen einmal pro Druck aus. B hat bei gleichzeitigen Aktionen Vorrang.

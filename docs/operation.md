@@ -58,7 +58,7 @@ Nach Konfigurationsänderungen `sudo systemctl restart pi-ptt.service`. Für Ove
 
 ## Dateien und Rechte
 
-- Dienstcode: `/opt/pi-voice-assistant/src`, root-verwaltet. Der Dienst läuft tatsächlich als **obivan**, mit `audio`, `gpio`, `i2c`; kein dedizierter Dienstbenutzer implementiert.
+- Dienstcode: `/opt/pi-voice-assistant/src`, gehört `obivan` (beide Dienste laufen als **obivan** mit `audio`, `gpio`, `i2c`); `src/DEPLOYED` nennt den eingespielten Commit. Kein dedizierter Dienstbenutzer implementiert.
 - Aufnahme: ein Slot `/run/pi-ptt/capture.wav`, privat, flüchtig. Neue Aufnahme, Dienststop oder Reboot entfernt die vorherige Datei. Vor Ctrl-C/Stop abhören, falls die Testaufnahme benötigt wird.
 - Vosk: root-verwaltete `vendor/`- und `models/`-Verzeichnisse; Modell einmal bei Bedarf laden, im Dienst wiederverwenden.
 - Piper/Servitor, separat: `.venv/` und `tts/`; FFmpeg kommt über den Piper-Installer. Der residente Servitor-Pfad streamt Piper-PCM direkt über FFmpeg nach ALSA und benötigt keine TTS-WAV. Siehe [TTS-Setup](text-to-speech.md).
@@ -80,6 +80,22 @@ systemctl status pi-ptt.service --no-pager
 ```
 
 Vosk/Piper nicht bei jedem Codeupdate neu installieren. **Nach erstmaligem Wechsel auf das Servitor-Profil** `sudo bash scripts/install-piper.sh` einmal ausführen, damit Emotional-Modell und FFmpeg vorhanden sind. Installer verändern `/opt` und die systemd-Unit; ein Wechsel des Git-Checkouts allein verändert den installierten Dienst nicht. Für Rücknahme einen bekannten Commit in einem sauberen Checkout wählen und dessen Installer ausführen, Konfiguration separat prüfen.
+
+### Aus einem Git-Commit einspielen (aktuelle Praxis)
+
+Auf dem Pi ist `/opt/pi-voice-assistant` kein Git-Checkout. Eingespielt wird nur aus gepushten Commits; geänderte Dateien werden kopiert, der Commit wird festgehalten:
+
+```bash
+C=$(git rev-parse HEAD)
+git archive $C src | ssh obivan@pi 'D=$(mktemp -d); tar -x -C $D; \
+  python3 -m py_compile $D/src/*.py && install -m 0644 $D/src/*.py /opt/pi-voice-assistant/src/; \
+  echo '$C' > /opt/pi-voice-assistant/src/DEPLOYED; rm -rf $D'
+ssh obivan@pi 'sudo -n systemctl restart pi-ptt.service pi-display.service'
+```
+
+Für Neustart und Env-Datei gibt es eine eng begrenzte sudo-Regel (`/etc/sudoers.d/pi-voice-deploy`: nur diese beiden Dienste neu starten und `tee /etc/pi-voice-assistant.env`).
+
+Auf **CT 107** ist `/opt/servitor-voice/repo` ein Git-Checkout: `git fetch` und `git checkout --detach <commit>`, dann `systemctl restart servitor-voice`; Unit/Env bzw. Offline-LLM mit `server/install-ct.sh` bzw. `server/install-llm.sh`. `/opt/servitor-voice/DEPLOYED` nennt den Commit.
 
 ## Abnahme nach Änderungen
 

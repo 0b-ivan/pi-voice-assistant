@@ -1,26 +1,34 @@
-# Pi Voice Assistant
+# Pi Voice Assistant (SERVITOR)
 
-Sprachprojekt für **Raspberry Pi Zero 2 W**, WM8960-HAT mit zwei eingebauten Mikrofonen, zwei Lautsprechern und vorhandener PTT-Taste sowie PiSugar 3 (Akku).
+Sprachassistent auf einem **Raspberry Pi Zero 2 W** mit WM8960-HAT (zwei Mikrofone, zwei Lautsprecher, PTT-Taste), Pimoroni Button SHIM, Adafruit mini PiTFT 1,3″ und PiSugar 3 (Akku). Er antwortet als **SERVITOR**: eine kybernetische Diensteinheit, knapp, mechanisch, Fakten vor Rolle, mit verfremdeter Stimme.
 
-**Stand 06.10.2026:** Der Sprachloop ist integriert: Taste halten → lokale Vosk-Erkennung → nicht-streamender OpenRouter-LLM-Aufruf → lokale Piper/Thorsten-Servitor-Ausgabe. Die Hardware-Abnahme dieses vollständigen Loops auf dem Pi steht noch aus.
+**Stand 08.10.2026:** Der Pi nimmt auf, die Rechenarbeit läuft auf dem eigenen Server **CT 107** im Proxmox-Homelab. Fällt der Server oder das Internet aus, arbeitet das System stufenweise lokal weiter.
 
-| Bereich | Aktueller Stand |
+```text
+Taste halten → Pi streamt Audio → CT 107: Vosk → [Uhrzeit/Datum/Status direkt | OpenRouter | lokales Qwen3-4B]
+             → Piper Thorsten + Servitor-DSP → Pi spielt ab (≈ 1,5 s nach dem Loslassen)
+Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (langsamer, aber funktionsfähig)
+```
+
+| Bereich | Stand |
 |---|---|
-| System | Raspberry Pi OS Lite 64-bit / Debian 13 Trixie, `pi-assistent`, Benutzer `obivan` |
-| Audio | WM8960-Aufnahme und Wiedergabe samt Neustart bestätigt; vorhandenes Kernelmodul/Overlay, kein zusätzlicher Waveshare-Treiber |
-| PTT und STT | GPIO17, optional Button SHIM A–E/RGB; STT ist ausschließlich lokale Live-Vosk-Erkennung mit `STT_PROVIDER=vosk`. OpenRouter erhält kein Mikrofon-Audio. |
-| Lokale Sprachausgabe auf dem Pi | Piper 1.8.0 resident; `normal` nutzt `de_DE-thorsten-low`, `servitor` nutzt `de_DE-thorsten_emotional-medium` (Speaker 4) plus gestreamten FFmpeg-Live-DSP. SHIM E spricht kompakte dynamische Telemetrie; Verarbeitung blinkt Rot↔Gelb, Sprachpausen sind Türkis und Sprachsegmente Orange. |
-| Performance | [Piper auf dem Pi gemessen](docs/piper-resources.md): frischer Prozess 17–22 s, resident 1,12–1,20 s. Kontrollierter Vosk/Piper-Wechsel stabilisierte sich bei 5,89 s STT / 1,26 s TTS; kombinierter Peak-RSS 254,7 MiB, zram physisch ~57 MiB, kein Writeback-I/O |
-| LLM | `src/llm.py` kapselt OpenRouter vollständig getrennt von GPIO/Audio; API-Key nur aus Environment, nicht-streamend, mit Timeout und Fehlerbehandlung. |
-| Display | Adafruit mini PiTFT 1,3″: [animierte Arbeitsschritte](docs/display-work-steps.md#interface-preview) für Aufnahme, Erkennung, Denken, Synthese, Rendering und Ausgabe. |
-| Noch offen | Hardware-Abnahme des vollständigen Antwortloops und reale Latenzmessung; Akku/Abschaltung und Kamera. |
+| Antwortweg | Pi streamt während des Tastendrucks an CT 107; Antwort ca. 1,5 s nach dem Loslassen (vorher rein lokal ca. 13,7 s). [Architektur](docs/architecture.md), [ADR 0004](docs/decisions/0004-servitor-server.md) |
+| Ohne LLM | Uhrzeit, Datum, Status, Akku und „wer bist du“ beantwortet ein Regelwerk direkt, auf dem Server und offline auf dem Pi (0,5–1,7 s inkl. Sprachausgabe) |
+| LLM | OpenRouter (`gpt-5.4-mini`); fällt es aus (kein Netz, keine Credits, Timeout), antwortet Qwen3-4B lokal auf CT 107 |
+| Charakter | Servitor-Systemprompt in [`src/llm.py`](src/llm.py); Datum/Uhrzeit des Bedieners werden mitgegeben, Antworten für die Sprachausgabe geglättet |
+| Erkennung | Vosk `small-de-0.15`; größeres Vosk-Modell gemessen und verworfen ([Architektur](docs/architecture.md#größeres-vosk-modell-verworfen)); Whisper-Vergleich auf Branch `feat/servitor-whisper-stt`, Test mit echter Stimme offen |
+| Bedienung | Taste/SHIM A sprechen, B abbrechen, C/D Lautstärke (2 dB, halten wiederholt), E Status bzw. Menü-OK; PiTFT-Tasten öffnen ein Menü. [Button-Bedienung](docs/button-controls.md) |
+| Display | Schritt, Verarbeitungsort SERVER/LOKAL, letzte Antwort, Akku, Temperatur, WLAN, Uhrzeit, Lautstärke, Menü. [Display](docs/display.md) |
+| Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |
+| Hardware | WM8960, SHIM, PiTFT und PiSugar 3 laufen; Akkulaufzeit/Abschaltung und Kamera offen. [Hardware](docs/hardware.md) |
 
 ## Einrichten und betreiben
 
-1. [Setup](docs/setup.md): OS, funktionierendes WM8960-Audio, Dienst und Offline-STT installieren.
-2. [Betrieb](docs/operation.md): starten, konfigurieren, aktualisieren und Logs prüfen.
-3. [Troubleshooting](docs/troubleshooting.md): GPIO belegt, I²C fehlt, leere Transkripte oder TTS-Probleme.
+1. [Setup](docs/setup.md): OS, WM8960-Audio, Dienst und Offline-STT auf dem Pi.
+2. [Betrieb](docs/operation.md): Konfiguration (inkl. `ASSISTANT_*` für den Server), Aktualisieren, Logs.
+3. Server CT 107: [`server/install-ct.sh`](server/install-ct.sh), Offline-LLM [`server/install-llm.sh`](server/install-llm.sh).
+4. [Troubleshooting](docs/troubleshooting.md).
 
-Vertiefung: [Hardware und Fotos](docs/hardware.md), [Ethernet/USB/SHIM-Test](docs/hardware-bring-up.md), [PTT-Verhalten](docs/push-to-talk.md), [STT und Messwerte](docs/speech-to-text.md), [Button-Bedienung](docs/button-controls.md), [Piper-TTS einrichten](docs/text-to-speech.md), [TTS-Performance](docs/local-speech.md), [PiTFT-Display](docs/display.md), [Architektur](docs/architecture.md), [nächste Aufgaben](docs/roadmap.md), [Projekt-/PR-Prüfung](docs/project-review.md).
+Vertiefung: [Architektur](docs/architecture.md), [Hardware](docs/hardware.md), [Display](docs/display.md), [Button-Bedienung und LED](docs/button-controls.md), [STT](docs/speech-to-text.md), [TTS](docs/text-to-speech.md), [Entscheidungen](docs/decisions/), [Roadmap](docs/roadmap.md).
 
-Die Installationsvorlage setzt jetzt bewusst **`STT_PROVIDER=vosk`**. Vosk und Piper werden weiterhin separat installiert. OpenRouter wird im normalen Assistentenpfad ausschließlich für das LLM verwendet; der echte API-Key gehört nur nach `/etc/pi-voice-assistant.env`.
+Geheimnisse (OpenRouter-Key, Server-Token) stehen nur in `/etc/pi-voice-assistant.env` (Pi) bzw. `/etc/servitor-voice.env` (CT 107), nie im Repository. Die Proxmox-Firewall bleibt aus (Docker auf dem Host); Port 8765 ist im LAN offen und nur mit Token nutzbar.

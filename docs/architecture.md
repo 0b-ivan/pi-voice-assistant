@@ -1,24 +1,20 @@
 # Architektur
 
-Der Pi übernimmt Taste, Audio, lokale STT und lokale TTS. OpenRouter wird ausschließlich für das LLM verwendet. **Implementierter Antwortpfad:**
+Der Pi übernimmt Tasten, Aufnahme, Display, LED und Wiedergabe. Erkennung, Antwort und Stimme laufen im Normalbetrieb auf dem eigenen Servitor-Server **CT 107** ([ADR 0004](decisions/0004-servitor-server.md)); der Pi kann alles davon auch lokal, langsamer, als Fallback.
 
 ```text
-GPIO17 oder optional SHIM A
-  → arecord: 16 kHz / Mono / S16_LE im lokalen Vosk-Pfad
-  → Live-Vosk während gedrückter PTT-Taste
-  → transcript / ERKANNT
-  → src/llm.py
-      OpenRouter Chat Completions
-      Servitor-System-Prompt
-      nicht-streamend
-      Timeout + recoverable errors
-  → resident Piper / Thorsten Emotional
-  → Servitor-FFmpeg-Live-DSP
-  → ALSA
-  → WM8960
+PTT gedrückt (GPIO17 / SHIM A)
+  → arecord 16 kHz mono → Uplink: chunked POST /v1/turn an CT 107 (+ Status-Snapshot des Pi)
+CT 107
+  → Vosk (live während des Uploads)
+  → Regelwerk ohne LLM (Uhrzeit, Datum, Status, Akku, Identität) — sonst:
+  → OpenRouter (Servitor-Persona + aktuelles Datum/Uhrzeit) — bei Ausfall: Qwen3-4B lokal
+  → Piper Thorsten Emotional + Servitor-DSP → NDJSON (Fortschritt, Text, WAV)
+Pi
+  → Display/LED aus den Ereignissen → aplay → WM8960
 ```
 
-[`src/ptt.py`](../src/ptt.py) orchestriert GPIO, Aufnahme und die Zustandsfolge. [`src/transcribe.py`](../src/transcribe.py) enthält STT, [`src/llm.py`](../src/llm.py) ausschließlich den OpenRouter-LLM-Client und [`src/voice_controls.py`](../src/voice_controls.py) die lokalen Speech-/Piper-Prozesse. `llm.py` kennt weder GPIO noch ALSA, WM8960 oder Piper. Es gibt weiterhin nur **einen** Verarbeitungs-Slot, keine Warteschlange.
+[`src/ptt.py`](../src/ptt.py) orchestriert Tasten, Aufnahme, Menü und Zustandsfolge; [`src/remote_turn.py`](../src/remote_turn.py) ist der Server-Client; [`server/servitor_server.py`](../server/servitor_server.py) der Dienst auf CT 107. Lokal: [`src/transcribe.py`](../src/transcribe.py) (Vosk), [`src/llm.py`](../src/llm.py) (OpenRouter bzw. lokales LLM, Persona), [`src/voice_controls.py`](../src/voice_controls.py) (Piper, Wiedergabe, Lautstärke). Es gibt **einen** Verarbeitungs-Slot, keine Warteschlange.
 
 Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Das Vosk-Modell wird beim Dienststart vorgewärmt, damit der erste PTT-Zyklus keinen Modell-Load bezahlen muss.
 
@@ -95,24 +91,28 @@ Mit Qwen3 4B und ungültigem OpenRouter-Key: Serverzeit 2,5–3,9 s. `llama-serv
 
 Der Nutzen käme erst mit dem 2,1 GB großen `rescore`-Sprachmodell, für das der Host keinen RAM frei hat. Typische Restfehler des kleinen Modells: „ein Tag“ → „ein paar“, „nenne“ → „wenn die“. Eine bessere Erkennung bräuchte ein anderes Verfahren (z. B. Whisper), nicht ein größeres Vosk-Modell.
 
-## Statusansage und Antwortpfad
+## Antworten ohne LLM, Status und Charakter
 
-SHIM E erzeugt den Status im Dienst selbst. [`src/system_status.py`](../src/system_status.py) liest normierte Systemlast, CPU-Temperatur, freien RAM/Datenspeicher, Uptime und STT-Modus. Fehlende Werte werden ausgelassen. PTT stoppt die eigene Statusansage vor Aufnahme; E spricht nicht während Aufnahme.
+[`src/intents.py`](../src/intents.py) erkennt wenige feste Fragen konservativ und beantwortet sie ohne LLM: **Uhrzeit** („Zeitindex: 8 Uhr 37.“), **Datum**, **Status**, **Akku** und **„wer bist du“**. Fragen mit einem anderen Ort („wie spät ist es in Tokio“) und alles Unklare gehen an das LLM. Auf dem Server läuft der Abgleich vor OpenRouter (Zeiten in `SERVITOR_TIMEZONE`, Standard Europe/Berlin, weil CT 107 auf UTC läuft), auf dem Pi im lokalen Fallback; damit funktionieren diese Antworten auch ganz ohne Netz. Gemessen vom Pi aus: 0,5–1,7 s bis zum fertigen Audio, fast nur Sprachausgabe. Das Display zeigt solche Antworten als „direkt“.
 
-Piper 1.8.0 bleibt resident. `normal` nutzt Thorsten Low. `servitor` nutzt Thorsten Emotional mit neutralem Speaker und einer Sprechkonfiguration, bei der Wörter nur leicht langsamer sind, während zusätzliche Satzpausen den schweren Befehlston erzeugen.
+Der **Status** ([`src/system_status.py`](../src/system_status.py)) entsteht aus einem Snapshot des Pi (Akku, Temperatur, Last, Speicher, Laufzeit, Spannungsflags), den der Pi bei jeder Anfrage als `X-Servitor-Status` mitschickt (nur Zahlen; der Server prüft und filtert). Reihenfolge: zuerst Warnungen (Unterspannung, Akku kritisch, Temperatur, Arbeits-/Datenspeicher knapp, Server nicht erreichbar), dann Energie, Temperatur, Verbindung, Zustand des Sprachkerns (extern oder Notbetrieb) und Laufzeit; Last und Speicher nur, wenn auffällig. Beispiel: „Status nominal. Energiespeicher 75 Prozent. Akkubetrieb. Kerntemperatur 46 Grad. Verbindung zum Server stabil. Laufzeit zwölf Stunden zwanzig Minuten. Befehl erwartet.“ Taste E und die gesprochene Frage nutzen denselben Text.
+
+Der **Charakter** steht im Systemprompt in [`src/llm.py`](../src/llm.py): kybernetische Diensteinheit ohne eigenen Willen, „diese Einheit“ statt „ich“, „Bediener“, kurze Quittungen („Daten abgerufen.“), keine Gefühle oder Floskeln, Fakten vor Rolle („Daten unzureichend.“), keine erfundenen Aktionen, drei kurze Beispiele. Das LLM bekommt Datum und Uhrzeit des Bedieners am Ende des Prompts (der Prompt-Cache des lokalen Modells bleibt so gültig). Antworten werden für Piper geglättet: eine Zeile, keine Listen, Markdown, Gedankenstriche oder Emojis. [`server/sample-persona.py`](../server/sample-persona.py) vergleicht OpenRouter und lokales Modell mit festen Fragen. Mit OpenRouter trifft der Ton gut („Funktionszustand stabil. Keine Abweichungen.“, „Direktive abgelehnt. Diese Einheit hat keinen Zugriff auf Geräte.“); das lokale Modell ist inhaltlich schwächer und braucht 3–10 s.
+
+## Sprachausgabe
+
+Im Normalbetrieb erzeugt CT 107 die Stimme (Piper Thorsten Emotional, Speaker 4, Referenz-DSP aus PR #26) und der Pi spielt die fertige WAV nur ab. Lokal auf dem Pi (Statusansage mit E, Fallback) bleibt Piper 1.8.0 resident: `servitor` nutzt dasselbe Modell mit einer Sprechkonfiguration, bei der Wörter nur leicht langsamer sind und zusätzliche Satzpausen den schweren Befehlston erzeugen; `normal` nutzt Thorsten Low.
 
 ```text
-SHIM E
-  -> kompakter dynamischer Systemtext
+lokaler Text (E-Status, Fallback)
   -> resident Piper
   -> erster 16-Bit-PCM-Chunk
-  -> FFmpeg Live-DSP über stdin
+  -> FFmpeg-DSP (gestreamt; auf dem Pi derzeit TTS_PLAYBACK_MODE=buffered)
        metal / flanger / chorus / stutter / aura / doppler / ringmod / limiter
-  -> ALSA
-  -> WM8960
+  -> ALSA -> WM8960
 ```
 
-Der residente Servitor-Pfad erzeugt keine TTS-WAV mehr: Piper liefert Audio-Chunks direkt an FFmpeg. Dadurch beginnt die Ausgabe mit dem ersten synthetisierten Chunk. Das Normalprofil und der Standalone-Fallback können weiterhin dateibasiert arbeiten. [`src/voice_effects.py`](../src/voice_effects.py) enthält beide FFmpeg-Befehlsvarianten.
+[`src/voice_effects.py`](../src/voice_effects.py) enthält die gestreamte und die dateibasierte FFmpeg-Variante.
 
 ## Display
 
@@ -122,12 +122,12 @@ Der Display-Dienst greift nicht in Aufnahme, STT oder TTS ein. `ptt.py` veröffe
 
 `DENKEN` wird durch `transcript`/`llm_start` gesetzt; `llm_response` bzw. `speech_started` wechseln auf `SPRECHEN`. LLM-Fehler werden wie STT-/TTS-Fehler kurz als `FEHLER` angezeigt.
 
-OpenRouter verarbeitet nur Text. Mikrofon-Audio bleibt bei Vosk lokal, und die Antwort wird lokal mit Piper erzeugt. Der API-Key wird ausschließlich aus dem von systemd geladenen Environment gelesen. Lokales LLM, Wake Word, Echounterdrückung sowie die Kamera sind keine aktuellen Funktionen.
+OpenRouter verarbeitet nur Text; Mikrofon-Audio geht nur an den eigenen CT 107. Schlüssel und Token kommen ausschließlich aus dem von systemd geladenen Environment. Wake Word, Echounterdrückung und Kamera sind keine aktuellen Funktionen. Menü, Statusinformationen, Akku und Lautstärke auf dem Display: [Display](display.md).
 
 ## Betrieb und Grenzen
 
 Die [Unit](../deploy/pi-ptt.service) läuft als `obivan` mit `audio/gpio/i2c`, ohne root. Runtime-Verzeichnis ist `/run/pi-ptt`; Code unter `/opt`, Home gesperrt. Ein dedizierter Dienstbenutzer ist eine offene Verbesserung, keine bereits implementierte Isolation.
 
-Aufnahme hat standardmäßig 30 s Limit; STT-/LLM-/TTS-Fehler werden protokolliert und beenden den Dienst nicht. Vosk braucht kein Netzwerk, der LLM-Schritt dagegen schon. Die Unit wartet trotzdem nicht auf `network-online.target`: ein Netz-/OpenRouter-Ausfall wird als `llm_error` behandelt, danach bleibt PTT nutzbar. WAVs sind flüchtig; Transkripte und LLM-Antworten stehen im Journal.
+Aufnahme hat standardmäßig 30 s Limit; STT-/LLM-/TTS-Fehler werden protokolliert und beenden den Dienst nicht. Ohne Netz arbeitet der Pi lokal weiter (Vosk, Antworten ohne LLM, Piper); nur freie Fragen brauchen OpenRouter oder den Server. Die Unit wartet nicht auf `network-online.target`. WAVs sind flüchtig; Transkripte und LLM-Antworten stehen im Journal.
 
 Messwerte stehen ausschließlich unter [STT](speech-to-text.md) und [TTS](local-speech.md); Hardware-Abnahmen unter [PTT](push-to-talk.md), [Button SHIM](button-controls.md) und [Erweiterungen](hardware-bring-up.md). Entscheidungen: [Pi-Client](decisions/0001-client-server.md), [OS](decisions/0002-operating-system.md), [Vosk-only STT](decisions/0003-hybrid-stt.md), [Servitor-Server](decisions/0004-servitor-server.md).
