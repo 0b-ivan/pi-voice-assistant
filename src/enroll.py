@@ -120,8 +120,9 @@ class Session:
     """Runs the steps; ``io`` provides say(text), beep(), record(path, seconds),
     transcribe(pcm) -> text|None, voiceprint(pcm) -> base64|None, publish(**state)."""
 
-    def __init__(self, core, io, clock=time.time, mode='enroll'):
+    def __init__(self, core, io, clock=time.time, mode='enroll', target=None):
         self.core, self.io, self.clock, self.mode = core, io, clock, mode
+        self.target = target   # refine: this (authenticated) person, no matching
         self.cancelled = threading.Event()
         self.thread = None
         self.result = None
@@ -234,7 +235,10 @@ class Session:
                 prints.append(print_)
         known = [dict(name=p['name'], vector=decode(p['print'])) for p in self.core.voiceprints()]
         vector = average([decode(p) for p in prints])
-        name, score = identify(vector, known, REFINE_MATCH) if vector else (None, None)
+        if self.target and vector and any(p['name'] == self.target for p in known):
+            name, score = self.target, None
+        else:
+            name, score = identify(vector, known, REFINE_MATCH) if vector else (None, None)
         self.io.publish(stage='done')
         if not known:
             text, total = NO_PROFILE, None

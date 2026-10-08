@@ -226,6 +226,29 @@ class MemoryCore:
         """[{'name', 'print'}] of every known person (base64 int8), or []."""
         return [dict(name=name, print=data['print']) for name, data in self._profiles().items()]
 
+    def profile(self, name):
+        """One person's profile (name, print, count, at, passphrase, ...) or None."""
+        data = self._profiles().get(name)
+        return {k: v for k, v in data.items() if k != 'path'} if data else None
+
+    def update_profile(self, name, **fields):
+        data = self._profiles().get(name)
+        if data is None:
+            return False
+        path = Path(data.pop('path'))
+        data.update(fields)
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(data), encoding='utf-8')
+        temporary.replace(path)
+        return True
+
+    def delete_profile(self, name):
+        data = self._profiles().get(name)
+        if data is None:
+            return False
+        Path(data['path']).unlink(missing_ok=True)
+        return True
+
     def people(self):
         """[(name, recordings)] of the known voices."""
         return [(name, int(data.get('count') or 0)) for name, data in self._profiles().items()]
@@ -248,7 +271,8 @@ class MemoryCore:
         slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'bediener'
         path = folder / f'{slug}.json'
         temporary = path.with_suffix('.tmp')
-        temporary.write_text(json.dumps(dict(name=name, print=print_, count=total,
+        keep = {k: old[k] for k in ('passphrase', 'last_score') if old and k in old}
+        temporary.write_text(json.dumps(dict(keep, name=name, print=print_, count=total,
                                              at=int(self.clock()))), encoding='utf-8')
         temporary.replace(path)
         if old and old['path'] != str(path):

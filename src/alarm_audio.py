@@ -80,7 +80,8 @@ def known_pieces():
     from maintenance import phrases
     texts += phrases()
     import enroll
-    texts += enroll.phrases()
+    import people
+    texts += enroll.phrases() + people.phrases()
     pieces = {piece for text in texts for piece, _ in fragments(text)}
     return sorted(pieces | {str(n) for n in NUMBERS})
 

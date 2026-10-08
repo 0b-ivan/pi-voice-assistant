@@ -16,6 +16,7 @@ import functools
 from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
 import alarm_audio
 import enroll
+import people
 import maintenance
 import memory as memory_core
 import sysmon
@@ -113,7 +114,9 @@ DISPLAY_STATUS_VALUES = {
     'power': {'awake', 'rest', 'sleep'},
     'memory': {'on', 'off'},
     'maint': {'on', 'off'},
-    'enroll': {'intro', 'wake', 'ask', 'process', 'done'},
+    'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth'},
+    'people': {'on', 'off'},
+    'people_rev': set(range(10000)),
     'enroll_rec': {'on', 'off'},
     'enroll_step': set(range(0, 101)),
     'enroll_total': set(range(0, 101)),
@@ -631,7 +634,9 @@ class VoiceController:
         self.turn_transcript = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.maint = maintenance.Mode()
-        self.enroll = None                 # running enroll.Session
+        self.enroll = None                 # running enroll.Session or people.Flow
+        self.people = people.Browser()
+        self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
         self.alarms.notice_store = maintenance.NoticeStore()
         self.maint_jobs = {}          # target -> start time (time.time()) of a running action
@@ -771,8 +776,7 @@ class VoiceController:
             return
         if item == 'people':
             self._publish_menu()
-            context = self.memory.context()
-            self._say(memory_core.reply('list_people', '', context, self.lore))
+            self._open_people()
             return
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
@@ -977,7 +981,65 @@ class VoiceController:
 
     # --- Getting to know the operator ------------------------------------
 
-    def _start_enroll(self, mode='enroll'):
+    def _open_people(self):
+        if not self.memory.present():
+            self._say(enroll.NEED_STICK)
+            return
+        self.people.open(name for name, _ in self.memory.people())
+        self._publish_people()
+
+    def _publish_people(self):
+        path = Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'display-people.json'
+        if self.people.active:
+            try:
+                people.write_view(path, self.people.view())
+            except OSError:
+                pass
+        self.people_rev = (self.people_rev + 1) % 10000
+        publish_display_status(people='on' if self.people.active else 'off',
+                               people_rev=self.people_rev)
+
+    def _people_buttons(self, confirm, cancel, now):
+        browser = self.people
+        if browser.delete_until is not None:
+            pending, browser.delete_until = browser.delete_until, None
+            if confirm and now <= pending and self.memory.delete_profile(browser.person):
+                event('people', action='deleted')
+                self._say(people.DELETED)
+                browser.open(name for name, _ in self.memory.people())
+            elif cancel or confirm:
+                self._say(maintenance.CANCEL_TEXT)
+            self._publish_people()
+            return
+        if cancel:
+            browser.back()
+        elif confirm:
+            choice = browser.select()
+            if choice and choice[0] == 'close':
+                browser.close()
+            elif choice and choice[0] == 'action':
+                if not self.remote or self.server_state() != 'ok':
+                    self._say(people.NO_SERVER)
+                else:
+                    self.speech.stop()
+                    self._release_microphone()
+                    self.enroll = people.Flow(self.memory, EnrollIO(), browser.person, choice[1])
+                    event('people', action=choice[1])
+                    self.enroll.start()
+        self._publish_people()
+
+    def _people_flow_done(self, flow, result, now):
+        browser = self.people
+        browser.weak = bool(result.get('weak'))
+        if result.get('details'):
+            browser.details, browser.page = result['details'], 'details'
+        if result.get('delete_pending'):
+            browser.delete_until = now + people.DELETE_CONFIRM_SECONDS
+        self._publish_people()
+        if result.get('refine'):
+            self._start_enroll('refine', target=flow.name)
+
+    def _start_enroll(self, mode='enroll', target=None):
         if self.enroll is not None:
             return
         if not self.memory.present():
@@ -991,7 +1053,7 @@ class VoiceController:
         if self.menu.open:
             self.menu.close()
             self._publish_menu()
-        self.enroll = enroll.Session(self.memory, EnrollIO(), mode=mode)
+        self.enroll = enroll.Session(self.memory, EnrollIO(), mode=mode, target=target)
         event('enroll', state='start', mode=mode)
         self.enroll.start()
 
@@ -1174,6 +1236,10 @@ class VoiceController:
     def _pitft_input(self, pitft_pressed, now):
         up = self.pitft[0].update(pitft_pressed[0], now) == 'start'
         down = self.pitft[1].update(pitft_pressed[1], now) == 'start'
+        if (up or down) and self.people.active and self.power == 'awake':
+            self.people.move(-1 if up else 1)
+            self._publish_people()
+            return
         if (up or down) and self.maint.active and self.power == 'awake':
             self.maint.move(-1 if up else 1)
             self._publish_maintenance()
@@ -1362,8 +1428,11 @@ class VoiceController:
                     self.enroll.cancel()
                 self.last_activity = now
                 return
-            event('enroll', **(self.enroll.result or {}))
-            self.enroll = None
+            finished, self.enroll = self.enroll, None
+            result = finished.result or {}
+            event('enroll', **{k: v for k, v in result.items() if k != 'details'})
+            if isinstance(finished, people.Flow):
+                self._people_flow_done(finished, result, now)
             self.ptt.resync(held, now)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE
         if self.probe:
@@ -1376,6 +1445,9 @@ class VoiceController:
                     event('button', button=name, action='start')
             return
         self._pitft_input(pitft_pressed, now)
+        if self.people.active and not self.menu.open and ('B' in commands or 'E' in commands):
+            self._people_buttons('E' in commands, 'B' in commands, now)
+            commands = [name for name in commands if name not in 'BE']
         if self.maint.active and not self.menu.open and ('B' in commands or 'E' in commands):
             self._maintenance_buttons('E' in commands, 'B' in commands)
             commands = [name for name in commands if name not in 'BE']
@@ -1506,7 +1578,8 @@ class VoiceController:
     def _busy(self):
         return (self.recorder.process is not None or self.job is not None
                 or self.speech.active or getattr(self.speech, 'synthesizing', False)
-                or self.menu.open or bool(self.alarm_queue) or self.maint.active)
+                or self.menu.open or bool(self.alarm_queue) or self.maint.active
+                or self.people.active)
 
     def _wake_up(self, now):
         self.last_activity = now
