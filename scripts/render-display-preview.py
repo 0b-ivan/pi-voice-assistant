@@ -12,7 +12,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 import display  # noqa: E402
 
-BASE = dict(server='ok', temp_c=47, wifi_dbm=-60, clock='23:41')
+CHARGING = dict(percent=83, mv=3861, plugged=True, charging=True, board_c=35)
+BATTERY = dict(percent=64, mv=3780, plugged=False, charging=False, board_c=33)
+LOW = dict(percent=12, mv=3480, plugged=False, charging=False, board_c=31)
+BASE = dict(server='ok', temp_c=47, wifi_dbm=-60, clock='23:41', battery=CHARGING, throttled=0)
 SCREENS = (
     ('BEREIT', None, dict(BASE, last='Zuletzt 1,5 s · Server')),
     ('ZUHÖREN', None, dict(BASE, route='server')),
@@ -21,9 +24,12 @@ SCREENS = (
     ('AUSGABE', ('Audio abspielen', 'speaker', 5), dict(BASE, route='server')),
     ('ERKENNEN', ('Sprache in Text', 'scan', 1), dict(BASE, server='down', route='pi',
                                                        wifi_dbm=-74)),
-    ('BEREIT', None, dict(BASE, server='down', wifi_dbm=-81,
+    ('BEREIT', None, dict(BASE, server='down', wifi_dbm=-81, battery=LOW,
                           last='Zuletzt 9,8 s · Pi lokal')),
-    ('BEREIT', None, dict(BASE, last='Zuletzt 3,4 s · Offline-LLM', temp_c=71)),
+    ('BEREIT', None, dict(BASE, last='Zuletzt 3,4 s · Offline-LLM', temp_c=71,
+                          battery=BATTERY)),
+    ('BEREIT', None, dict(BASE, battery=BATTERY, throttled=0x50005,
+                          last='Zuletzt 1,6 s · Server')),
     ('FEHLER', None, dict(BASE, server='off')),
 )
 

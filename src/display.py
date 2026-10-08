@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PiTFT boot and live voice status display for the Pi Voice Assistant."""
 
+import collections
 import json
 import math
 from functools import lru_cache
@@ -178,6 +179,115 @@ class ServerProbe:
         while True:
             self.state = self.probe()
             time.sleep(self.interval)
+
+
+PISUGAR3_ADDRESS = 0x57
+BATTERY_SAMPLE_SECONDS = 5.0
+
+
+class Battery:
+    """PiSugar 3 on I²C bus 1, read-only, registers as in the vendor driver
+    (pisugar-power-manager-rs, pisugar3.rs): 0x22/0x23 voltage in mV, 0x2A
+    percent, 0x02 bit 7 power plugged, bit 6 charging allowed, 0x04 board
+    temperature + 40. The percent register follows the momentary voltage and
+    jumps with charge pulses, so values are averaged over the last minute."""
+
+    def __init__(self, bus_factory=None, window=12):
+        self.bus_factory = bus_factory
+        self.samples = collections.deque(maxlen=window)
+
+    def _bus(self):
+        if self.bus_factory is not None:
+            return self.bus_factory()
+        from smbus2 import SMBus
+        return SMBus(1)
+
+    def read(self):
+        try:
+            bus = self._bus()
+            try:
+                mv = (bus.read_byte_data(PISUGAR3_ADDRESS, 0x22) << 8) | bus.read_byte_data(
+                    PISUGAR3_ADDRESS, 0x23)
+                percent = bus.read_byte_data(PISUGAR3_ADDRESS, 0x2A)
+                ctr1 = bus.read_byte_data(PISUGAR3_ADDRESS, 0x02)
+                board = bus.read_byte_data(PISUGAR3_ADDRESS, 0x04) - 40
+            finally:
+                bus.close()
+        except (ImportError, OSError):
+            return None
+        if not (2500 <= mv <= 4500 and 0 <= percent <= 100):
+            return None
+        self.samples.append((percent, mv))
+        avg_percent = round(sum(p for p, _ in self.samples) / len(self.samples))
+        avg_mv = round(sum(v for _, v in self.samples) / len(self.samples))
+        plugged = bool(ctr1 & 0x80)
+        return dict(percent=avg_percent, mv=avg_mv, plugged=plugged,
+                    charging=plugged and bool(ctr1 & 0x40) and avg_percent < 100,
+                    board_c=board)
+
+
+def throttled_flags(run=subprocess.run):
+    """Firmware power flags (vcgencmd get_throttled), None if unavailable."""
+    try:
+        result = run(['vcgencmd', 'get_throttled'], capture_output=True, text=True,
+                     timeout=2, check=False)
+        return int(result.stdout.strip().split('=', 1)[1], 16)
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
+
+
+def power_line(battery, throttled):
+    """Idle detail line: power warnings first, then the battery state."""
+    if throttled is not None:
+        if throttled & 0x1:
+            return 'UNTERSPANNUNG!', (255, 70, 70)
+        if throttled & 0x6:
+            return 'CPU gedrosselt', (255, 180, 0)
+        if throttled & 0x10000:
+            return 'Unterspannung seit Start', (255, 180, 0)
+    if not battery:
+        return None
+    volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
+    if battery['charging']:
+        state = 'lädt'
+    elif battery['plugged']:
+        state = 'Netz · voll'
+    else:
+        state = 'Akkubetrieb'
+    color = (255, 90, 90) if battery['percent'] <= 15 and not battery['plugged'] else (145, 155, 165)
+    return f"Akku {battery['percent']} % · {volts} V · {state}", color
+
+
+def battery_color(battery):
+    if battery['charging']:
+        return (80, 210, 235)
+    if battery['percent'] <= 15:
+        return (255, 70, 70)
+    if battery['percent'] <= 40:
+        return (255, 180, 0)
+    return (120, 220, 160)
+
+
+def draw_battery(draw, x_right, y, battery):
+    """Small battery gauge plus percentage, right-aligned at x_right."""
+    color = battery_color(battery)
+    text = f"{battery['percent']}%"
+    text_width = draw.textlength(text, font=font(13))
+    draw.text((x_right - text_width, y), text, font=font(13), fill=color)
+    right = x_right - text_width - 5
+    left = right - 20
+    top = y + 3
+    draw.rectangle((left, top, right - 2, top + 10), outline=color, width=1)
+    draw.rectangle((right - 1, top + 3, right, top + 7), fill=color)
+    fill_width = round(15 * max(0, min(100, battery['percent'])) / 100)
+    if fill_width:
+        draw.rectangle((left + 2, top + 2, left + 2 + fill_width, top + 8), fill=color)
+    if battery['charging']:
+        cx = (left + right) // 2 - 1
+        draw.polygon(((cx + 2, top - 1), (cx - 3, top + 6), (cx, top + 6),
+                      (cx - 2, top + 12), (cx + 4, top + 4), (cx + 1, top + 4)),
+                     fill=(255, 255, 255))
+    return left
 
 
 def cpu_temp_c(path='/sys/class/thermal/thermal_zone0/temp'):
@@ -495,10 +605,13 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
     description, icon, step = details or STATE_DETAILS.get(state, ('', 'gear', 0))
     color = VOICE_COLORS.get(state, (220, 220, 220))
     idle = state in ('BEREIT', 'FEHLER')
-    draw.text((12, 10), 'PI ASSISTANT', font=font(20), fill='white')
+    draw.text((12, 12), 'PI ASSISTANT', font=font(17), fill='white')
+    right_edge = 228
+    if info.get('battery'):
+        right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
     temp = info.get('temp_c')
     if temp is not None:
-        _right(draw, 228, 15, f'{temp}°C', 13,
+        _right(draw, right_edge, 15, f'{temp}°C', 12,
                (255, 120, 90) if temp >= 70 else (145, 155, 165))
     draw.line((12, 40, 228, 40), fill=(65,65,65))
     # Where the work happens: during a turn as published by ptt.py, when idle
@@ -518,7 +631,11 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
     if not idle:
         draw.text((12, 165), f'Seit {max(0, int(elapsed))} s', font=font(12), fill=(145,155,165))
     elif info.get('last'):
-        draw.text((12, 165), info['last'], font=font(12), fill=(145,155,165))
+        draw.text((12, 161), info['last'], font=font(12), fill=(145,155,165))
+    if idle:
+        power = power_line(info.get('battery'), info.get('throttled'))
+        if power:
+            draw.text((12, 179), power[0], font=font(11), fill=power[1])
     if step:
         for i in range(1,6):
             xx = 160+(i-1)*14
@@ -585,6 +702,10 @@ def main():
     display = PartialDisplay(display)
     states = None
     server = ServerProbe().start()
+    battery_monitor = Battery()
+    battery = None
+    throttled = None
+    next_battery = 0.0
     voice_state = None
     last_event = None
     error_until = None
@@ -598,6 +719,10 @@ def main():
             states = collect_system_states()
             next_probe = now + PROBE_INTERVAL_SECONDS
             temp, wifi = cpu_temp_c(), wifi_dbm()
+        if now >= next_battery:
+            battery = battery_monitor.read()
+            throttled = throttled_flags()
+            next_battery = now + BATTERY_SAMPLE_SECONDS
 
         current_event = read_voice_event()
         if current_event is not None and current_event != last_event:
@@ -650,7 +775,8 @@ def main():
             status = read_status()
             info = dict(route=status.get('route'), server=server.state, temp_c=temp,
                         wifi_dbm=wifi, clock=time.strftime('%H:%M'),
-                        last=last_answer_text(status))
+                        last=last_answer_text(status), throttled=throttled,
+                        battery=battery)
             screen = ('voice', current, states['network'], tick, tuple(sorted(info.items())))
             if screen != previous_screen:
                 render_voice(display, shown, states['network'],

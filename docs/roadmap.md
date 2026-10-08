@@ -21,7 +21,7 @@ Stand 06.10.2026. Der aktuelle Funktionsstand steht in der [README](../README.md
 ## Betrieb und Hardware
 
 - Offene Codepunkte aus PR #4/#13 prüfen: dedizierter Dienstbenutzer, Runtime-Pfad und Installer-Preflight.
-- PiSugar2-Revision, Akkukapazität, Laufzeit und kontrolliertes Abschalten testen.
+- PiSugar 3: Akkukapazität, Laufzeit und kontrolliertes Abschalten testen (Revision und Ladestand-Anzeige erledigt).
 - SSH/Routertest über LAN und alle drei externen USB-Ports abnehmen.
 - Verbleibende PTT-Grenztests: elektrische Prellimpulse, Aufnahme unter 100 ms, Boot mit gehaltener Taste.
 - Image-Prüfsumme, WLAN-Land/Zeitzone bei nächster Systemaufnahme ergänzen.

@@ -385,3 +385,90 @@ class ServerProbeTests(unittest.TestCase):
                 break
             threading.Event().wait(0.01)
         self.assertEqual(server.state, "ok")
+
+
+class FakeBus:
+    def __init__(self, registers):
+        self.registers = registers
+        self.closed = False
+        self.writes = []
+
+    def read_byte_data(self, address, register):
+        assert address == 0x57
+        return self.registers[register]
+
+    def write_byte_data(self, *args):  # must never be called: read-only
+        self.writes.append(args)
+
+    def close(self):
+        self.closed = True
+
+
+def pisugar(mv, percent, ctr1=0xF4, temp=75):
+    return {0x22: mv >> 8, 0x23: mv & 0xFF, 0x2A: percent, 0x02: ctr1, 0x04: temp}
+
+
+class BatteryTests(unittest.TestCase):
+    def test_reads_pisugar3_registers_read_only(self):
+        bus = FakeBus(pisugar(3834, 80))
+        battery = display.Battery(bus_factory=lambda: bus).read()
+        self.assertEqual(battery, dict(percent=80, mv=3834, plugged=True, charging=True,
+                                       board_c=35))
+        self.assertTrue(bus.closed)
+        self.assertEqual(bus.writes, [])
+
+    def test_jumpy_percent_is_averaged(self):
+        values = iter([(3861, 83), (3969, 91), (3855, 83), (3852, 82)])
+        monitor = display.Battery(bus_factory=lambda: FakeBus(pisugar(*next(values))))
+        for _ in range(4):
+            battery = monitor.read()
+        self.assertEqual((battery['percent'], battery['mv']), (85, 3884))
+
+    def test_power_states(self):
+        on_battery = display.Battery(bus_factory=lambda: FakeBus(pisugar(3780, 64, 0x40))).read()
+        self.assertEqual((on_battery['plugged'], on_battery['charging']), (False, False))
+        full = display.Battery(bus_factory=lambda: FakeBus(pisugar(4180, 100, 0xC0))).read()
+        self.assertEqual((full['plugged'], full['charging']), (True, False))
+        disabled = display.Battery(bus_factory=lambda: FakeBus(pisugar(3900, 70, 0x80))).read()
+        self.assertEqual((disabled['plugged'], disabled['charging']), (True, False))
+
+    def test_missing_board_or_implausible_values(self):
+        def broken():
+            raise OSError("no device")
+        self.assertIsNone(display.Battery(bus_factory=broken).read())
+        self.assertIsNone(display.Battery(bus_factory=lambda: FakeBus(pisugar(9000, 80))).read())
+        self.assertIsNone(display.Battery(bus_factory=lambda: FakeBus(pisugar(3800, 180))).read())
+
+    def test_throttled_flags(self):
+        ok = SimpleNamespace(stdout="throttled=0x50005\n")
+        self.assertEqual(display.throttled_flags(run=lambda *a, **k: ok), 0x50005)
+        self.assertIsNone(display.throttled_flags(run=lambda *a, **k: SimpleNamespace(stdout="?")))
+
+        def missing(*args, **kwargs):
+            raise OSError("no vcgencmd")
+        self.assertIsNone(display.throttled_flags(run=missing))
+
+    def test_power_line_priorities(self):
+        charging = dict(percent=83, mv=3861, plugged=True, charging=True, board_c=35)
+        low = dict(percent=12, mv=3480, plugged=False, charging=False, board_c=31)
+        self.assertEqual(display.power_line(charging, 0)[0], "Akku 83 % · 3,86 V · lädt")
+        self.assertEqual(display.power_line(low, 0), ("Akku 12 % · 3,48 V · Akkubetrieb",
+                                                      (255, 90, 90)))
+        self.assertEqual(display.power_line(dict(charging, charging=False, percent=100), 0)[0],
+                         "Akku 100 % · 3,86 V · Netz · voll")
+        self.assertEqual(display.power_line(charging, 0x50005)[0], "UNTERSPANNUNG!")
+        self.assertEqual(display.power_line(charging, 0x4)[0], "CPU gedrosselt")
+        self.assertEqual(display.power_line(charging, 0x10000)[0], "Unterspannung seit Start")
+        self.assertIsNone(display.power_line(None, None))
+
+    def test_render_with_battery(self):
+        class Capture:
+            def image(self, image, rotation=0):
+                self.frame = image
+
+        for battery in (dict(percent=83, mv=3861, plugged=True, charging=True, board_c=35),
+                        dict(percent=5, mv=3300, plugged=False, charging=False, board_c=30)):
+            capture = Capture()
+            display.render_voice(capture, "BEREIT", True,
+                                 info=dict(battery=battery, throttled=0, temp_c=47))
+            self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))

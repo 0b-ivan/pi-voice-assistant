@@ -24,7 +24,7 @@ Die fünf Tasten A–E liegen an der Außenkante. Der vorhandene WM8960-Taster b
 
 In der Mitte ist das WM8960-HAT auf dem Pi-Stapel montiert. Links und rechts liegen die beiden Lautsprecher mit Anschlussleitungen; am HAT ist der weiße Lautsprecherstecker belegt. Die Leitungen verlaufen teilweise außerhalb des Bildes, daher lässt sich die vollständige Kanalverdrahtung aus diesem Foto nicht prüfen.
 
-Das Adafruit mini PiTFT und die Kamera mit Aufdruck `Frank-S01-V1.0` liegen separat unterhalb des Stapels. Sie sind in dieser Aufnahme nicht montiert; die Kamera ist anders als auf den früheren Fotos nicht am Pi angeschlossen. PiSugar2 und Akku sind im Stapel nicht ausreichend sichtbar, um Revision oder Anschlusszustand erneut zu bestimmen.
+Das Adafruit mini PiTFT und die Kamera mit Aufdruck `Frank-S01-V1.0` liegen separat unterhalb des Stapels. Sie sind in dieser Aufnahme nicht montiert; die Kamera ist anders als auf den früheren Fotos nicht am Pi angeschlossen. Akku und Stromversorgung sind im Stapel nicht ausreichend sichtbar; die Revision wurde später per I²C als PiSugar 3 bestimmt.
 
 Dies ist der frühere Aufbau für die Audio-Inbetriebnahme. Aufnahme und Wiedergabe wurden inzwischen bestätigt, siehe [Audio-Abnahme](setup.md). Die drei neueren Fotos oben zeigen die Hardware-Erweiterungen.
 
@@ -39,7 +39,7 @@ Dies ist der frühere Aufbau für die Audio-Inbetriebnahme. Aufnahme und Wiederg
 | HAT-Taste | Aufdruck `BUTTON`; Herstellerbelegung GPIO17, physischer Pin 11 | Aufnahme auslösen |
 | Waveshare ETH/USB HUB HAT | Aufdruck auf neuem Foto; 1× RJ45 10/100 Mbit/s, 3× USB-A; Erkennung noch offen | Kabelnetzwerk und USB-Erweiterung |
 | Pimoroni Button SHIM | Aufdruck `BTN SHIM`, fünf Tasten A–E; I²C `0x3f`, RGB-LED | Zusätzliche Bedienung und Statusanzeige |
-| PiSugar2 | Von Ivan benannt; Foto zeigt Stromversorgungsplatine, Akku und Status-LEDs | Akkubetrieb |
+| PiSugar 3 | Ursprünglich als PiSugar2 notiert; am 08.10.2026 per I²C als PiSugar 3 identifiziert (Akkucontroller `0x57`, Version `0x03`; RTC `0x68`) | Akkubetrieb, Ladestand auf dem PiTFT |
 | Li-Ion-Akku | Aufdruck `PiSugar`, Modell `803052`; Kapazitätszeile nicht zuverlässig lesbar | Energiespeicher |
 | Kamera | Zuvor angeschlossen, im aktuellen Übersichtsfoto separat abgelegt; Flexplatine trägt `Frank-S01-V1.0`; daraus kein sicherer Sensorname ableitbar | Spätere Bildanfragen |
 | 64-GB-microSD | Von Ivan bestätigt; kein separates Foto | Betriebssystem |
@@ -55,7 +55,9 @@ Am Board sichtbar: zwei Mikrofone, die zentrale Taste, weißer Lautsprechersteck
 
 ![PiSugar-Stromversorgung und Akku](images/pisugar-power.jpg)
 
-Sichtbar sind Akku, Anschlussleitungen, Stromversorgungsplatine und leuchtende LEDs. Das Foto belegt keinen getesteten Ladezustand oder eine bestimmte Laufzeit. Die genaue PiSugar2-Revision und die Akkukapazität bleiben bis zum Ablesen offen.
+Sichtbar sind Akku, Anschlussleitungen, Stromversorgungsplatine und leuchtende LEDs. Das Foto belegt keinen getesteten Ladezustand oder eine bestimmte Laufzeit. Die Akkukapazität bleibt bis zum Ablesen offen.
+
+**PiSugar 3, gelesen am 08.10.2026** (nur gezielte Lesezugriffe auf `0x57`, Registerbedeutung wie im Herstellertreiber `pisugar-power-manager-rs/pisugar3.rs`): 3,74–3,97 V, Ladestand-Register 69–91 %, Netzteil angesteckt, Laden erlaubt, Platinentemperatur 24–37 °C, Pi meldet keine Unterspannung (`throttled=0x0`). Das Ladestand-Register folgt der momentanen Spannung und springt mit den Ladeimpulsen; das Display mittelt deshalb über eine Minute. Unter den PiSugar2-Adressen `0x75`/`0x32` antwortet nichts. Ein PiSugar-Dienst ist nicht installiert; Abschaltlogik und Laufzeit sind weiter offen.
 
 ## Kamera
 
@@ -75,14 +77,14 @@ Alle GPIO-Angaben verwenden BCM-Nummern. Die Tabelle folgt den Herstellerbelegun
 
 | Bauteil | Schnittstelle / GPIOs | Prüfung |
 |---|---|---|
-| WM8960 Steuerung | I²C: GPIO2/3 | Audio funktioniert; PiSugar-Revision/Adressbelegung separat prüfen |
+| WM8960 Steuerung | I²C: GPIO2/3 | Audio funktioniert; PiSugar 3 teilt den Bus auf `0x57`/`0x68` |
 | WM8960 Audio | I²S: GPIO18/19/20/21 | Vorhandenes Kernelmodul/Overlay funktionieren |
 | HAT-Taste | GPIO17, physischer Pin 11 | Aktiv Low und normale Zyklen bestätigt; gezielte Prelltests offen |
 | ETH/USB HUB HAT | USB-Datenverbindung zum Pi; GPIO-Stapel für Versorgung und Durchführung | Erkennung/r8152/100-Mbit-Link bestätigt; LAN-SSH und externe Ports offen |
 | Button SHIM | I²C: GPIO2/3, physische Pins 3/5; Adresse `0x3f`; 5 V, 3,3 V und Masse | Einzeltests bestätigt; aktuelle Dienstabnahme/Adresskonflikte separat prüfen |
 | mini PiTFT | SPI: GPIO10/11, CS GPIO8, DC GPIO25; Backlight GPIO22 | SPI0 und `/dev/spidev0.0/.1` bestätigt; ST7789-Farbtest und Boot-/Statusdienst bestanden |
 | Displaytaster | GPIO23/24 | Optional zusätzliche Bedienung |
-| PiSugar2 | I²C; weitere Details revisionsabhängig | Adresse und Versorgung prüfen |
+| PiSugar 3 | I²C `0x57` (Akkucontroller), `0x68` (RTC) | Spannung, Ladestand, Netzteil und Ladefreigabe gelesen; Abschaltung offen |
 | Kamera | Kameraanschluss/Flexkabel | Sensor und Treiber prüfen |
 
 Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. SPI0 wurde zusammen mit der bestehenden WM8960-Konfiguration aktiviert; die endgültige mechanische Montage, Versorgung und weitere Funktionen der konkreten PiSugar-Revision werden gesondert geprüft.
@@ -95,7 +97,7 @@ Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethern
 
 - Ethernet-/USB-HAT: Herkunft der IP, Router-/SSH-Test über LAN und drei USB-Anschlüsse. Erkennung, LAN-IP und 100-Mbit/s-Link sind bestätigt.
 - Button SHIM: A–E und Hersteller-LED-Test bestätigt; aktuelle Dienstfarben, aktive Abbruchfälle und Reboot der neuen Dienstversion noch abnehmen. Siehe [Button-Steuerung](button-controls.md).
-- PiSugar2-Revision, Akkukapazität und sauberes Abschaltverhalten.
+- Akkukapazität, Laufzeit und sauberes Abschaltverhalten der PiSugar 3.
 - Kamerasensor und Testbild.
 - Lautsprecherimpedanz und Nennleistung; Aufnahme/Wiedergabe bereits bestätigt.
 - PiTFT-Live-Voice-Zustände und Belegung der beiden Displaytaster; Boot-/Statusdienst ist bestätigt.
