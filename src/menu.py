@@ -5,7 +5,7 @@ selection; SHIM E confirms; SHIM B closes. No hardware or display code in
 here: VoiceController owns a Menu and publishes its state for display.py.
 """
 
-ITEMS = ('info', 'server', 'wake', 'lore', 'wlan', 'alarms', 'led', 'screen',
+ITEMS = ('info', 'server', 'llm', 'wake', 'lore', 'wlan', 'alarms', 'led', 'screen',
          'status', 'close')
 TIMEOUT_SECONDS = 15.0
 

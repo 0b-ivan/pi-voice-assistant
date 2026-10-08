@@ -20,18 +20,52 @@ OK = dict(battery_pct=80, battery_plugged=False, mem_free_pct=40, swap_used_pct=
 
 
 class AlarmMonitorTests(unittest.TestCase):
-    def test_battery_warns_once_and_repeats_when_critical(self):
+    def test_three_battery_warnings_then_shutdown(self):
         m = AlarmMonitor()
         self.assertEqual(m.update(OK, 0), [])
-        low = m.update(dict(OK, battery_pct=14), 10)
-        self.assertEqual(low, ["Warnung. Energiespeicher bei 14 Prozent. Netzteil anschließen."])
+        self.assertEqual(m.update(dict(OK, battery_pct=15), 10),
+                         ["Warnung 1 von 3. Energiespeicher bei 15 Prozent. Netzteil anschließen."])
         self.assertEqual(m.update(dict(OK, battery_pct=13), 20), [])
-        self.assertEqual(m.update(dict(OK, battery_pct=6), 200), [])       # within 5 min
-        self.assertEqual(len(m.update(dict(OK, battery_pct=5), 320)), 1)    # repeated
-        self.assertEqual(m.update(dict(OK, battery_pct=17), 330), [])      # hysteresis
-        self.assertEqual(m.active, ['battery'])
-        self.assertEqual(m.update(dict(OK, battery_pct=17, battery_plugged=True), 340), [])
-        self.assertEqual(m.active, [])
+        self.assertTrue(m.update(dict(OK, battery_pct=10), 30)[0].startswith("Warnung 2 von 3."))
+        last = m.update(dict(OK, battery_pct=6), 40)
+        self.assertTrue(last[0].startswith("Letzte Warnung."))
+        self.assertIn("Herunterfahren in 60 Sekunden", last[0])
+        self.assertFalse(m.shutdown_due(99))
+        self.assertTrue(m.shutdown_due(100))
+
+    def test_charger_cancels_shutdown_and_announces_source(self):
+        m = AlarmMonitor()
+        m.update(dict(OK, battery_pct=16), 0)
+        for t, pct in ((10, 15), (20, 10), (30, 6)):
+            m.update(dict(OK, battery_pct=pct), t)
+        texts = m.update(dict(OK, battery_pct=6, battery_plugged=True), 50)
+        self.assertEqual(texts, ["Netzbetrieb. Energiespeicher 6 Prozent.",
+                                 "Herunterfahren abgebrochen."])
+        self.assertFalse(m.shutdown_due(1000))
+        self.assertEqual(m.update(dict(OK, battery_pct=7, battery_plugged=False), 60),
+                         ["Akkubetrieb. Energiespeicher 7 Prozent.",
+                          "Warnung 2 von 3. Energiespeicher bei 7 Prozent. Netzteil anschließen."])
+
+    def test_big_jump_gives_one_warning_per_check(self):
+        m = AlarmMonitor()
+        texts = m.update(dict(OK, battery_pct=5), 0)
+        self.assertEqual(len(texts), 1)  # straight to the last stage, one sentence
+        self.assertTrue(texts[0].startswith("Letzte Warnung."))
+        self.assertTrue(m.shutdown_due(60))
+
+    def test_first_reading_sets_source_silently(self):
+        m = AlarmMonitor()
+        self.assertEqual(m.update(dict(OK, battery_plugged=True), 0), [])
+        self.assertEqual(m.update(dict(OK, battery_plugged=False), 10),
+                         ["Akkubetrieb. Energiespeicher 80 Prozent."])
+
+    def test_internet_loss_and_recovery(self):
+        m = AlarmMonitor()
+        self.assertEqual(m.update(OK, 0, network=True, internet=False), [])
+        self.assertEqual(m.update(OK, 10, network=True, internet=False),
+                         ["Warnung. Internetverbindung verloren. Antworten nur noch lokal."])
+        self.assertEqual(m.update(OK, 20, network=True, internet=True),
+                         ["Internetverbindung wiederhergestellt."])
 
     def test_cpu_needs_a_minute(self):
         m = AlarmMonitor()
@@ -129,6 +163,7 @@ class ControllerAlarmTests(unittest.TestCase):
         self.addCleanup(context.__exit__, None, None, None)
         self.c = VoiceController(self.recorder, self.speech, .04, 30)
         self.c.battery = dict(percent=10, plugged=False, charging=False)
+        self.c.speech.active = False
 
     def test_alarm_is_spoken_when_idle_and_shown(self):
         self.speech.active = True  # busy: wait
@@ -138,6 +173,7 @@ class ControllerAlarmTests(unittest.TestCase):
         self.speech.active = False
         self.c.tick(False, (False,) * 5, 0.2)
         self.assertIn('Energiespeicher bei 10 Prozent', self.speech.start.call_args.args[0])
+        self.assertIn('Warnung 2 von 3', self.speech.start.call_args.args[0])
         status = json.loads((Path(self.tmp.name) / 'status.json').read_text())
         self.assertEqual(status['alarm'], 'battery')
 
@@ -158,6 +194,34 @@ class ControllerAlarmTests(unittest.TestCase):
         with patch('wlan.set_wlan', side_effect=OSError('Operation not permitted')):
             self.assertFalse(self.c.set_wlan(True))
         self.assertFalse(self.c.wlan_on)
+
+
+class ShutdownAndModeTests(ControllerAlarmTests):
+    def test_battery_shutdown_powers_off(self):
+        for t, pct in ((0, 15), (10, 10), (20, 6)):
+            self.c.battery = dict(percent=pct, plugged=False, charging=False)
+            self.c.check_alarms(t, network=True)
+        with patch('ptt.subprocess.run') as run, patch('ptt.time.sleep'):
+            self.c.check_alarms(81, network=True)
+        self.assertEqual(run.call_args.args[0], ['/usr/bin/systemctl', 'poweroff'])
+        self.assertTrue(self.c.shutting_down)
+
+    def test_failed_poweroff_is_reported(self):
+        import subprocess
+        self.c.alarms.shutdown_at = 0
+        with patch('ptt.subprocess.run', side_effect=subprocess.CalledProcessError(1, 'x')), \
+                patch('ptt.time.sleep'):
+            self.c.check_alarms(1, network=True)
+        self.assertFalse(self.c.shutting_down)
+        self.assertIn('Herunterfahren nicht möglich. Bitte manuell ausschalten.', self.c.alarm_queue)
+
+    def test_local_llm_mode_never_calls_openrouter_on_the_pi(self):
+        self.c.llm_mode = 'local'
+        with patch('ptt.TranscriptionJob') as job:
+            self.c._start_llm('wie hoch ist der eiffelturm')
+        job.assert_not_called()
+        self.assertIn('Lokaler Sprachkern nicht erreichbar', self.speech.start.call_args.args[0])
+        self.assertEqual(self.c.status_snapshot()['llm_mode'], 'local')
 
 
 if __name__ == '__main__':

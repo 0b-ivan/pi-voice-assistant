@@ -16,7 +16,7 @@ import functools
 from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
 from alarms import ALARMS, AlarmMonitor
 from endpoint import Endpointer
-from netprobe import network_up
+from netprobe import InternetProbe, network_up
 import wlan as wlan_radio
 from menu import ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
@@ -105,6 +105,7 @@ DISPLAY_STATUS_VALUES = {
     'opt_lore': set(LORE_LEVELS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
+    'opt_llm': {'auto', 'local'},
     'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
 }
@@ -502,6 +503,9 @@ class VoiceController:
         self.alarms_enabled = os.environ.get('PTT_ALARMS', '1') != '0'
         self.alarm_queue = []    # sentences waiting until the unit is idle
         self.wlan_on = True
+        self.internet_probe = None  # netprobe.InternetProbe
+        self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
+        self.shutting_down = False
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
         self.job = None
@@ -620,6 +624,7 @@ class VoiceController:
                                opt_lore=self.lore,
                                opt_wlan='on' if self.wlan_on else 'off',
                                opt_alarms='on' if self.alarms_enabled else 'off',
+                               opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
                                screen='on' if self.screen_on else 'off')
 
@@ -637,6 +642,9 @@ class VoiceController:
         elif item == 'lore':
             self.lore = LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)]
             event('menu', item='lore', value=self.lore)
+        elif item == 'llm':
+            self.llm_mode = 'local' if self.llm_mode == 'auto' else 'auto'
+            event('menu', item='llm', value=self.llm_mode)
         elif item == 'wlan':
             self.set_wlan(not self.wlan_on)
         elif item == 'alarms':
@@ -668,21 +676,46 @@ class VoiceController:
     def status_snapshot(self):
         server = self.server_state()
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
-                                lore=self.lore, wlan='on' if self.wlan_on else 'off')
+                                lore=self.lore, wlan='on' if self.wlan_on else 'off',
+                                llm_mode=self.llm_mode)
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
         if network is None and self.wlan_on:
             network = network_up()
+        internet = getattr(self.internet_probe, 'state', None) if self.wlan_on else None
         texts = self.alarms.update(self.status_snapshot(), now,
                                    network=network if self.wlan_on else None,
-                                   server=self.server_state(), lore=self.lore)
+                                   server=self.server_state(), lore=self.lore,
+                                   internet=internet)
         for text in texts:
             event('alarm', text=text, active=self.alarms.active)
         if self.alarms_enabled:
             self.alarm_queue.extend(texts)
         active = self.alarms.active
         publish_display_status(alarm=active[0] if active else None)
+        if self.alarms.shutdown_due(now) and not self.shutting_down:
+            self.shutdown()
+
+    def shutdown(self):
+        """Battery empty: say so, then power off (polkit rule for obivan)."""
+        self.shutting_down = True
+        event('shutdown', reason='battery')
+        self.speech.stop()
+        try:
+            self.speech.start("Energiespeicher erschöpft. Herunterfahren.")
+            deadline = time.monotonic() + 8
+            while self.speech.active and time.monotonic() < deadline:
+                time.sleep(0.1)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        try:
+            subprocess.run(['/usr/bin/systemctl', 'poweroff'], check=True, timeout=15,
+                           stdin=subprocess.DEVNULL, capture_output=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.shutting_down = False
+            event('shutdown_error', message=str(exc))
+            self.alarm_queue.append("Herunterfahren nicht möglich. Bitte manuell ausschalten.")
 
     def _speak_alarms(self):
         if not self.alarm_queue or not self._idle() or self.menu.open:
@@ -808,6 +841,12 @@ class VoiceController:
 
     def _start_llm(self, text):
         intent = intents.match(text)
+        if intent is None and self.llm_mode == 'local':
+            # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
+            reply = "Daten unzureichend. Lokaler Sprachkern nicht erreichbar."
+            event('llm_response', text=reply, model='local/none')
+            self._start_speech(reply, source='assistant', model='local/none')
+            return
         if intent is not None:
             # Time, date, status ...: answered on the Pi, also without network.
             reply = intents.answer(intent, datetime.datetime.now(), self.status_snapshot())
@@ -1188,6 +1227,8 @@ def main():
     if uplink_factory is not None:
         from netprobe import ServerProbe
         controller.server_probe = ServerProbe(interval=15.0).start()
+    if not args.probe:
+        controller.internet_probe = InternetProbe().start()
     battery_monitor = Battery()
     next_power = 0.0
     shim = None

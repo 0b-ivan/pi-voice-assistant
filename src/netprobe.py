@@ -81,3 +81,25 @@ def network_up():
         return None
     return any(line.split()[0] != 'lo' and '/' in line
                for line in result.stdout.splitlines() if line.split())
+
+
+INTERNET_TARGETS = (('openrouter.ai', 443), ('1.1.1.1', 443))
+
+
+def internet_up(targets=INTERNET_TARGETS, timeout=2.0):
+    """True if any well-known host accepts a TCP connection (DNS included)."""
+    import socket
+    for host, port in targets:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+class InternetProbe(ServerProbe):
+    """Same daemon-thread polling as the server probe; state True/False."""
+
+    def __init__(self, interval=30.0, probe=None):
+        super().__init__(interval=interval, probe=probe or internet_up)

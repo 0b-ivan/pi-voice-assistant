@@ -45,8 +45,8 @@ class FakePipeline:
     def recognizer(self):
         return FakeRecognizer(self)
 
-    def reply(self, text, lore=None):
-        self.lore = lore
+    def reply(self, text, lore=None, mode=None):
+        self.lore, self.mode = lore, mode
         if self.fail_llm:
             raise RuntimeError('OpenRouter request failed: timeout')
         if self.block:
@@ -288,6 +288,16 @@ class ServerTest(unittest.TestCase):
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertIn('Omnissiah', reply['text'])
+
+    def test_local_mode_skips_openrouter(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+        import llm
+        pipeline = ss.RealPipeline(self.tmp.name)
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_LOCAL_LLM': '1'}), \
+                unittest.mock.patch('llm.generate_reply') as remote, \
+                unittest.mock.patch('llm.generate_local_reply', return_value=('l', 'local/q')):
+            self.assertEqual(pipeline.reply('frage', mode='local'), ('l', 'local/q'))
+        remote.assert_not_called()
 
     def raw_turn(self, body_bytes):
         """Send a hand-written chunked body; return the decoded NDJSON events."""

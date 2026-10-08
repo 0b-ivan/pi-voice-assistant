@@ -1,0 +1,10 @@
+// Let the voice service user power the Pi off when the battery is empty
+// (src/alarms.py, last of three warnings). Nothing else is allowed here.
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.power-off" ||
+         action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.power-off-ignore-inhibit") &&
+        subject.user == "obivan") {
+        return polkit.Result.YES;
+    }
+});

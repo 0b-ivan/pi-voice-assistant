@@ -151,7 +151,8 @@ SNAPSHOT_FIELDS = {
 }
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
 SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
-                   'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off')}
+                   'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off'),
+                   'llm_mode': ('auto', 'local')}
 
 
 def sanitize_snapshot(value):
@@ -191,6 +192,7 @@ def _swap_used_percent(path=MEMINFO_PATH):
 
 
 def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=None,
+                     llm_mode=None,
                      thermal_path=THERMAL_PATH, meminfo_path=MEMINFO_PATH,
                      loadavg_path=LOADAVG_PATH, uptime_path=UPTIME_PATH,
                      disk_path="/", disk_usage=shutil.disk_usage, cpu_count=os.cpu_count):
@@ -204,6 +206,7 @@ def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=
         server=server,
         lore=lore,
         wlan=wlan,
+        llm_mode=llm_mode,
         swap_used_pct=_swap_used_percent(meminfo_path),
     )
     text = _read_text(uptime_path)
@@ -296,7 +299,9 @@ def status_text(snapshot, processing=False, lore=None):
     server = snapshot.get('server')
     if server == 'ok':
         parts.append("Verbindung zum Server stabil.")
-        if snapshot.get('llm') == 'offline':
+        if snapshot.get('llm_mode') == 'local':
+            parts.append("Sprachkern lokal.")
+        elif snapshot.get('llm') == 'offline':
             parts.append("Sprachkern im Notbetrieb.")
     elif server == 'off' and snapshot.get('wlan') != 'off':
         parts.append("Nur lokaler Betrieb.")

@@ -69,6 +69,7 @@ VOLUME_SHOW_SECONDS = 2.5
 MENU_LABELS = (
     ('info', 'Systeminfo'),
     ('server', 'Server nutzen'),
+    ('llm', 'Sprachkern'),
     ('wake', 'Aktivierungswort'),
     ('lore', 'Lore-Stufe'),
     ('wlan', 'WLAN'),
@@ -161,6 +162,7 @@ def read_status(path=None):
                          ('opt_wake', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
+                         ('opt_llm', ('auto', 'local')),
                          ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off'))):
@@ -682,6 +684,8 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
+    if item == 'llm':
+        return {'auto': 'AUTO', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
     if item in ('wlan', 'alarms'):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
