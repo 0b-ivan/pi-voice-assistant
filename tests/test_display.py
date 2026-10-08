@@ -472,3 +472,13 @@ class BatteryTests(unittest.TestCase):
             display.render_voice(capture, "BEREIT", True,
                                  info=dict(battery=battery, throttled=0, temp_c=47))
             self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+
+class BatteryViewTests(unittest.TestCase):
+    def test_view_ignores_invisible_millivolt_changes(self):
+        a = dict(percent=83, mv=3861, plugged=True, charging=True, board_c=35)
+        b = dict(a, mv=3863, board_c=36)
+        self.assertEqual(display.battery_view(a), display.battery_view(b))
+        self.assertNotEqual(display.battery_view(a), display.battery_view(dict(a, mv=3874)))
+        self.assertNotEqual(display.battery_view(a), display.battery_view(dict(a, percent=84)))
+        self.assertIsNone(display.battery_view(None))

@@ -258,6 +258,14 @@ def power_line(battery, throttled):
     return f"Akku {battery['percent']} % · {volts} V · {state}", color
 
 
+def battery_view(battery):
+    """The battery values as drawn (percent, 10 mV steps, state)."""
+    if not battery:
+        return None
+    return (battery['percent'], round(battery['mv'] / 10), battery['plugged'],
+            battery['charging'])
+
+
 def battery_color(battery):
     if battery['charging']:
         return (80, 210, 235)
@@ -777,7 +785,11 @@ def main():
                         wifi_dbm=wifi, clock=time.strftime('%H:%M'),
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery)
-            screen = ('voice', current, states['network'], tick, tuple(sorted(info.items())))
+            # Redraw only when something visible changes: the averaged battery
+            # voltage moves by a few mV on almost every sample.
+            shown_info = dict(info, battery=battery_view(battery))
+            screen = ('voice', current, states['network'], tick,
+                      tuple(sorted(shown_info.items())))
             if screen != previous_screen:
                 render_voice(display, shown, states['network'],
                              (description, icon, step), tick, elapsed, info)
