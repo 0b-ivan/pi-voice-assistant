@@ -94,3 +94,14 @@ class NetworkAlarmTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpdateWatchTests(unittest.TestCase):
+    def test_only_the_pi_is_watched(self):
+        from unittest.mock import patch
+        with patch.object(sysmon, "pending_updates", return_value=dict(pending=1, security=0)), \
+                patch.object(sysmon, "server_status") as server:
+            result = sysmon.update_watch().measure()
+        server.assert_not_called()
+        self.assertEqual(result, dict(pi=dict(pending=1, security=0)))
+        self.assertNotIn("server_updates", sysmon.snapshot_fields(None, result))
