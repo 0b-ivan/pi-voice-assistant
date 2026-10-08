@@ -152,7 +152,7 @@ SNAPSHOT_FIELDS = {
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
 SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
                    'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off'),
-                   'llm_mode': ('auto', 'local')}
+                   'llm_mode': ('auto', 'local'), 'memory': ('on', 'off')}
 
 
 def sanitize_snapshot(value):
@@ -192,7 +192,7 @@ def _swap_used_percent(path=MEMINFO_PATH):
 
 
 def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=None,
-                     llm_mode=None,
+                     llm_mode=None, extra=None,
                      thermal_path=THERMAL_PATH, meminfo_path=MEMINFO_PATH,
                      loadavg_path=LOADAVG_PATH, uptime_path=UPTIME_PATH,
                      disk_path="/", disk_usage=shutil.disk_usage, cpu_count=os.cpu_count):
@@ -214,6 +214,7 @@ def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=
         raw['uptime_s'] = int(float(text.split()[0])) if text else None
     except (ValueError, IndexError):
         pass
+    raw.update(extra or {})
     if battery:
         raw.update(battery_pct=battery.get('percent'),
                    battery_charging=bool(battery.get('charging')),

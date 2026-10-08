@@ -26,6 +26,7 @@ install -m 0644 "${repo_root}/src/menu.py" /opt/pi-voice-assistant/src/menu.py
 install -m 0644 "${repo_root}/src/intents.py" /opt/pi-voice-assistant/src/intents.py
 install -m 0644 "${repo_root}/src/power.py" /opt/pi-voice-assistant/src/power.py
 install -m 0644 "${repo_root}/src/netprobe.py" /opt/pi-voice-assistant/src/netprobe.py
+install -m 0644 "${repo_root}/src/memory.py" /opt/pi-voice-assistant/src/memory.py
 install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/alarm_audio.py
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py

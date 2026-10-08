@@ -111,9 +111,18 @@ def lore_level(level=None):
     return level if level in LORE_LEVELS else DEFAULT_LORE
 
 
-def system_prompt(lore=None):
-    """Persona, lore level, then the time last (prompt-cache friendly)."""
-    return f"{SERVITOR_SYSTEM_PROMPT}\n\n{LORE_PROMPTS[lore_level(lore)]}\n\n{time_context()}"
+NO_MEMORY = object()  # memory feature not in use (unlike a missing stick: None)
+
+
+def system_prompt(lore=None, memory=NO_MEMORY):
+    """Persona, lore level, memory, then the time last (prompt-cache friendly:
+    the parts that change least come first)."""
+    parts = [SERVITOR_SYSTEM_PROMPT, LORE_PROMPTS[lore_level(lore)]]
+    if memory is not NO_MEMORY:
+        from memory import prompt_section
+        parts.append(prompt_section(memory))
+    parts.append(time_context())
+    return '\n\n'.join(parts)
 
 
 class LLMError(RuntimeError):
@@ -181,14 +190,19 @@ def _extract_text(payload, label="OpenRouter"):
     return text
 
 
-def _chat(url, prompt, model, timeout, limit, headers, label, lore=None):
+def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=NO_MEMORY):
+    history = []
+    if memory is not NO_MEMORY:
+        from memory import history_messages
+        history = history_messages(memory)
     body = json.dumps(
         {
             "model": model,
             "stream": False,
             **limit,
             "messages": [
-                {"role": "system", "content": system_prompt(lore)},
+                {"role": "system", "content": system_prompt(lore, memory)},
+                *history,
                 {"role": "user", "content": prompt},
             ],
         }
@@ -225,7 +239,7 @@ def _prompt(prompt):
     return prompt
 
 
-def generate_reply(prompt, lore=None):
+def generate_reply(prompt, lore=None, memory=NO_MEMORY):
     """Return a reply and model from one non-streaming OpenRouter request."""
     prompt = _prompt(prompt)
 
@@ -238,7 +252,7 @@ def generate_reply(prompt, lore=None):
     max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
     url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
     text = _chat(url, prompt, model, timeout, {"max_completion_tokens": max_tokens},
-                 {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore)
+                 {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, memory)
     return text, model
 
 
@@ -247,7 +261,7 @@ def local_model_name():
     return f"local/{name or 'llama.cpp'}"
 
 
-def generate_local_reply(prompt, lore=None):
+def generate_local_reply(prompt, lore=None, memory=NO_MEMORY):
     """Offline fallback: OpenAI-compatible llama.cpp server on loopback."""
     prompt = _prompt(prompt)
     url = os.environ.get("LOCAL_LLM_URL", DEFAULT_LOCAL_LLM_URL).strip() or DEFAULT_LOCAL_LLM_URL
@@ -255,4 +269,4 @@ def generate_local_reply(prompt, lore=None):
     max_tokens = _int_env("LOCAL_LLM_MAX_TOKENS", 120, 16, 1024)
     model = local_model_name()
     return _chat(url, prompt, model, timeout, {"max_tokens": max_tokens}, {}, "Local LLM",
-                 lore), model
+                 lore, memory), model

@@ -287,6 +287,44 @@ class WakeGreetingTests(PowerStageTests):
         self.c.recorder.start.assert_called_once_with(auto_stop=True)
 
 
+class MemoryCoreControllerTests(ControllerAlarmTests):
+    def setUp(self):
+        super().setUp()
+        import memory
+        root = Path(self.tmp.name) / 'stick' / 'proximus'
+        root.mkdir(parents=True)
+        self.device = Path(self.tmp.name) / 'device'
+        self.c.memory = memory.MemoryCore(root, self.device)
+        self.c.memory_present = False
+
+    def test_plugging_and_pulling_is_announced(self):
+        self.assertEqual(self.c._check_memory(), [])
+        self.device.touch()
+        self.assertEqual(self.c._check_memory(), ['Gedächtniskern verbunden. Kern ist leer.'])
+        self.assertEqual(self.c.status_snapshot()['memory'], 'on')
+        self.device.unlink()
+        self.assertIn('entfernt', self.c._check_memory()[0])
+        self.assertEqual(self.c.status_snapshot()['memory'], 'off')
+
+    def test_server_memory_events_and_history_are_stored(self):
+        self.device.touch()
+        self.c._remote_progress(dict(event='transcript', text='ich heiße ivan'))
+        self.c._remote_progress(dict(event='memory', op='add_fact', text='Bediener heißt Ivan',
+                                     learned=True))
+        self.c._remote_progress(dict(event='reply', text='Gegrüßt, Ivan.', model='test/m'))
+        context = self.c.memory.context()
+        self.assertEqual(context['facts'], ['Bediener heißt Ivan'])
+        self.assertEqual(context['history'], [dict(q='ich heiße ivan', a='Gegrüßt, Ivan')])
+
+    def test_local_fallback_handles_memory_commands(self):
+        self.device.touch()
+        self.c._start_llm('installiere humor erweiterung')
+        self.assertEqual(self.c.memory.context()['directives'], ['Humor-Erweiterung installiert'])
+        self.assertIn('Direktive', self.speech.start.call_args.args[0])
+        self.assertEqual(self.c._learn('Gut. DIREKTIVE: kurz antworten'), 'Gut.')
+        self.assertIn('kurz antworten', self.c.memory.context()['directives'])
+
+
 class ShutdownAndModeTests(ControllerAlarmTests):
     def test_battery_shutdown_powers_off(self):
         for t, pct in ((0, 15), (10, 10), (20, 6)):

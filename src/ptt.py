@@ -15,7 +15,9 @@ import wave
 import functools
 from llm import LORE_LEVELS, configured_model, generate_reply, lore_level
 import alarm_audio
-from alarms import ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor
+import memory as memory_core
+from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor,
+                    memory_phrase)
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
 import wlan as wlan_radio
@@ -103,6 +105,7 @@ DISPLAY_STATUS_VALUES = {
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
     'power': {'awake', 'rest', 'sleep'},
+    'memory': {'on', 'off'},
     'opt_wake': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
     'opt_wlan': {'on', 'off'},
@@ -520,6 +523,9 @@ class VoiceController:
         self.sleep_wlan_off = os.environ.get('PTT_SLEEP_WLAN', 'keep') == 'off'
         self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
         self.listen_after_greeting = False  # wake word woke us: listen after the greeting
+        self.memory = memory_core.MemoryCore()
+        self.memory_present = self.memory.present()
+        self.turn_transcript = None
         self.internet_probe = None  # netprobe.InternetProbe
         self.llm_mode = 'local' if os.environ.get('PTT_LLM_MODE', 'auto') == 'local' else 'auto'
         self.shutting_down = False
@@ -696,7 +702,8 @@ class VoiceController:
         server = self.server_state()
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
                                 lore=self.lore, wlan='on' if self.wlan_on else 'off',
-                                llm_mode=self.llm_mode)
+                                llm_mode=self.llm_mode,
+                                extra=dict(memory='on' if self.memory_present else 'off'))
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
@@ -709,6 +716,7 @@ class VoiceController:
                                    network=network if links else None,
                                    server=self.server_state() if links else 'off',
                                    lore=self.lore, internet=internet)
+        texts += self._check_memory()
         for text in texts:
             event('alarm', text=text, active=self.alarms.active)
         if self.alarms_enabled:
@@ -717,6 +725,40 @@ class VoiceController:
         publish_display_status(alarm=active[0] if active else None)
         if self.alarms.shutdown_due(now) and not self.shutting_down:
             self.shutdown()
+
+    def _check_memory(self):
+        """Announce plugging or pulling the memory stick."""
+        present = self.memory.present()
+        publish_display_status(memory='on' if present else 'off')
+        if present == self.memory_present:
+            return []
+        self.memory_present = present
+        counts = self.memory.counts() if present else None
+        event('memory_core', present=present, **(counts or {}))
+        if present and counts is None:
+            return []  # plugged but not readable yet: next check
+        return [memory_phrase(present, (counts or {}).get('facts'), self.lore)]
+
+    def _memory_command(self, text):
+        """Local fallback: memory commands answered and applied on the Pi."""
+        command = memory_core.command(intents.normalize(text))
+        if command is None:
+            return None
+        op, argument = command
+        context = self.memory.context()
+        reply = memory_core.reply(op, argument, context, self.lore)
+        if context is not None and op in ('add_fact', 'add_directive', 'forget'):
+            self.memory.apply(dict(op=op, text=argument))
+            event('memory', op=op)
+        return reply
+
+    def _learn(self, reply):
+        """Strip MERKE/DIREKTIVE lines from an LLM reply and store them."""
+        spoken, learned = memory_core.split_learned(reply)
+        for op, value in learned:
+            if self.memory.apply(dict(op=op, text=value)):
+                event('memory', op=op, learned=True)
+        return spoken
 
     def shutdown(self):
         """Battery empty: say so, then power off (polkit rule for obivan)."""
@@ -894,6 +936,12 @@ class VoiceController:
             self.job_started_at = time.monotonic()
 
     def _start_llm(self, text):
+        self.turn_transcript = text
+        reply = self._memory_command(text)
+        if reply is not None:
+            event('llm_response', text=reply, model='local/memory')
+            self._start_speech(reply, source='assistant', model='local/memory')
+            return
         intent = intents.match(text)
         if intent is None and self.llm_mode == 'local':
             # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
@@ -909,7 +957,9 @@ class VoiceController:
             print(f'SERVITOR: {reply}', flush=True)
             self._start_speech(reply, source='assistant', model='local/intent')
             return
-        self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore), text)
+        context = self.memory.context()
+        self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore,
+                                                      memory=context), text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
@@ -938,10 +988,16 @@ class VoiceController:
                 display_progress('tts', 'dsp_render')
         elif kind == 'transcript':
             text = str(item.get('text', ''))
+            self.turn_transcript = text
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
+        elif kind == 'memory':
+            if self.memory.apply(item):
+                event('memory', op=item.get('op'), learned=bool(item.get('learned')))
         elif kind == 'reply':
             text = str(item.get('text', ''))
+            if self.turn_transcript:
+                self.memory.remember_turn(self.turn_transcript, text)
             self.turn_llm = llm_kind(item.get('model'))
             event('llm_response', text=text, model=item.get('model'))
             print(f'SERVITOR: {text}', flush=True)
@@ -1078,6 +1134,8 @@ class VoiceController:
                 self._start_llm(text)
             elif stage == 'llm':
                 reply, model = job.result
+                reply = self._learn(reply)
+                self.memory.remember_turn(self.turn_transcript or '', reply)
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
@@ -1227,8 +1285,11 @@ def main():
             remote_config = None
         if remote_config is not None:
             def uplink_factory():
-                status = controller_ref[0].status_snapshot() if controller_ref else None
-                return RemoteTurnUplink(remote_config, status=status)
+                controller = controller_ref[0] if controller_ref else None
+                status = controller.status_snapshot() if controller else None
+                memory_copy = (memory_core.encode_header(controller.memory.context())
+                               if controller else None)
+                return RemoteTurnUplink(remote_config, status=status, memory=memory_copy)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,

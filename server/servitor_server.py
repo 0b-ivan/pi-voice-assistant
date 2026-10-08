@@ -38,6 +38,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import intents  # noqa: E402
+import memory  # noqa: E402
+from llm import NO_MEMORY  # noqa: E402
 from system_status import sanitize_snapshot  # noqa: E402
 
 PCM_RATE = 16000
@@ -126,19 +128,19 @@ class RealPipeline:
             return 'offline'
         return 'openrouter'
 
-    def reply(self, text, lore=None, mode=None):
+    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
         from llm import LLMError, generate_local_reply, generate_reply
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
-            return generate_local_reply(text, lore=lore)
+            return generate_local_reply(text, lore=lore, memory=memory)
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
-                return generate_reply(text, lore=lore)
+                return generate_reply(text, lore=lore, memory=memory)
             except LLMError as exc:
                 if not local:
                     raise
@@ -147,7 +149,7 @@ class RealPipeline:
                 self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
-            return generate_local_reply(text, lore=lore)
+            return generate_local_reply(text, lore=lore, memory=memory)
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
@@ -226,11 +228,13 @@ class Service:
         except (zoneinfo.ZoneInfoNotFoundError, ValueError):
             return datetime.datetime.now()
 
-    def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None):
+    def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
-        time, date or status are answered from it without the LLM."""
+        time, date or status are answered from it without the LLM.
+        ``memory_copy``: the Pi's memory core (None: stick absent, NO_MEMORY:
+        Pi without memory support). Changes go back as ``memory`` events."""
         timings = {}
         temporary = []
 
@@ -275,7 +279,16 @@ class Service:
                     raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
                 intent = intents.match(text)
-                if intent is not None:
+                command = (memory.command(intents.normalize(text))
+                           if memory_copy is not NO_MEMORY else None)
+                if command is not None:
+                    op, argument = command
+                    lore = (device or {}).get('lore')
+                    answer = memory.reply(op, argument, memory_copy, lore or 'off')
+                    if memory_copy is not None and op in ('add_fact', 'add_directive', 'forget'):
+                        emit(dict(event='memory', op=op, text=memory.clean_text(argument)))
+                    model = 'local/memory'
+                elif intent is not None:
                     snapshot = dict(device or {}, server='ok')
                     state = getattr(self.pipeline, 'llm_state', None)
                     if state is not None:
@@ -287,9 +300,15 @@ class Service:
                     try:
                         lore = (device or {}).get('lore')
                         mode = (device or {}).get('llm_mode')
-                        answer, model = timed('llm', self.pipeline.reply, text, lore, mode)
+                        answer, model = timed('llm', self.pipeline.reply, text, lore, mode,
+                                              memory_copy)
                     except Exception as exc:
                         raise TurnError('think', 'llm', str(exc)) from exc
+                    # Facts/directives the model picked up are never spoken.
+                    answer, learned = memory.split_learned(answer)
+                    if memory_copy not in (None, NO_MEMORY):
+                        for op, value in learned:
+                            emit(dict(event='memory', op=op, text=value, learned=True))
                 emit(dict(event='reply', text=answer, model=model))
             else:
                 upload_end = time.monotonic()
@@ -457,6 +476,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 device = sanitize_snapshot(json.loads(header))
             except ValueError:
                 device = None
+        state = (device or {}).get('memory')
+        memory_copy = (memory.decode_header(self.headers.get('X-Servitor-Memory', ''))
+                       if state == 'on' else None if state == 'off' else NO_MEMORY)
 
         if not self.service.turn_lock.acquire(blocking=False):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
@@ -474,7 +496,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
 
             try:
-                self.service.run_turn(body, emit, fmt, text=text, device=device)
+                self.service.run_turn(body, emit, fmt, text=text, device=device,
+                                      memory_copy=memory_copy)
             except TurnError as exc:
                 emit(dict(event='error', stage=exc.stage, code=exc.code, message=exc.message))
             except (OSError, TimeoutError):

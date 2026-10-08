@@ -45,13 +45,13 @@ class FakePipeline:
     def recognizer(self):
         return FakeRecognizer(self)
 
-    def reply(self, text, lore=None, mode=None):
-        self.lore, self.mode = lore, mode
+    def reply(self, text, lore=None, mode=None, memory=None):
+        self.lore, self.mode, self.memory = lore, mode, memory
         if self.fail_llm:
             raise RuntimeError('OpenRouter request failed: timeout')
         if self.block:
             self.block.wait(5)
-        return f'Antwort auf {text}', 'test/model'
+        return f'Antwort auf {text}{getattr(self, "suffix", "")}', 'test/model'
 
     def _wav(self, prefix, rate):
         fd, name = tempfile.mkstemp(prefix=prefix, suffix='.wav', dir=self.workdir)
@@ -288,6 +288,50 @@ class ServerTest(unittest.TestCase):
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertIn('Omnissiah', reply['text'])
+
+    def turn_with_memory(self, state, copy=None):
+        import memory
+        headers = {'Authorization': f'Bearer {TOKEN}',
+                   'X-Servitor-Status': json.dumps({'memory': state})}
+        if copy is not None:
+            headers['X-Servitor-Memory'] = memory.encode_header(copy)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+        data = conn.getresponse().read()
+        conn.close()
+        return self.events(data)
+
+    def test_memory_copy_reaches_llm_and_learned_lines_are_not_spoken(self):
+        copy = dict(facts=['Bediener heißt Ivan'], directives=['Städte heißen Makropolen'],
+                    history=[dict(q='hallo', a='Gruß.')], total_facts=1)
+        self.pipeline.suffix = ' MERKE: Bediener mag Kaffee.'
+        events = self.turn_with_memory('on', copy)
+        self.assertEqual(self.pipeline.memory['facts'], ['Bediener heißt Ivan'])
+        self.assertEqual(self.pipeline.memory['history'], [dict(q='hallo', a='Gruß')])
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertNotIn('MERKE', reply['text'])
+        learned = [e for e in events if e['event'] == 'memory']
+        self.assertEqual(learned, [dict(event='memory', op='add_fact',
+                                        text='Bediener mag Kaffee', learned=True)])
+
+    def test_memory_command_without_llm_and_without_stick(self):
+        self.pipeline.transcript = 'installiere humor erweiterung'
+        events = self.turn_with_memory('on', dict(facts=[], directives=[], history=[]))
+        self.assertIn(dict(event='memory', op='add_directive',
+                           text='Humor-Erweiterung installiert'), events)
+        self.assertEqual(next(e for e in events if e['event'] == 'reply')['model'],
+                         'local/memory')
+        events = self.turn_with_memory('off')
+        self.assertFalse([e for e in events if e['event'] == 'memory'])
+        self.assertIn('Kein Gedächtnisspeicher', next(e for e in events if e['event'] == 'reply')['text'])
+
+    def test_pi_without_memory_support_is_unchanged(self):
+        import llm
+        self.pipeline.transcript = 'merk dir dass ich ivan heiße'
+        events = self.request('/v1/turn', b'\1' * 16000)[1]
+        reply = next(e for e in self.events(events) if e['event'] == 'reply')
+        self.assertEqual(reply['model'], 'test/model')
+        self.assertIs(self.pipeline.memory, llm.NO_MEMORY)
 
     def test_local_mode_skips_openrouter(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))

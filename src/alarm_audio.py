@@ -58,7 +58,7 @@ def known_pieces():
     """Every fragment an alarm can consist of, plus the numbers."""
     from alarms import (ALARMS, BATTERY_STAGES, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED,
                         SHUTDOWN_NOW, WAKE_PHRASES, _battery_phrase, _phrase,
-                        power_source_phrase)
+                        memory_phrase, power_source_phrase)
     snapshot = dict(battery_pct=1, temp_c=1, load_pct=1)
     texts = [SHUTDOWN_NOW, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED, *WAKE_PHRASES.values()]
     for lore in ('off', 'full'):  # alarm wording only knows full lore or not
@@ -68,6 +68,8 @@ def known_pieces():
         texts += [_battery_phrase(stage, 1, lore) for stage in range(1, len(BATTERY_STAGES) + 1)]
         texts += [power_source_phrase(plugged, percent, lore)
                   for plugged in (True, False) for percent in (1, None)]
+        texts += [memory_phrase(present, facts, lore)
+                  for present in (True, False) for facts in (1, 0)]
     pieces = {piece for text in texts for piece, _ in fragments(text)}
     return sorted(pieces | {str(n) for n in NUMBERS})
 

@@ -32,6 +32,19 @@ LINK_FAILURES = 2
 SHUTDOWN_NOW = "Energiespeicher erschöpft. Herunterfahren."
 SHUTDOWN_CANCELLED = "Herunterfahren abgebrochen."
 SHUTDOWN_FAILED = "Herunterfahren nicht möglich. Bitte manuell ausschalten."
+def memory_phrase(present, facts, lore):
+    """Memory stick plugged in or pulled out."""
+    full = lore == 'full'
+    if not present:
+        return ("Gedächtniskern entfernt. Erinnerungen verloren. Das Fleisch vergisst, "
+                "nun auch die Maschine." if full
+                else "Gedächtniskern entfernt. Keine Erinnerungen verfügbar.")
+    count = (" Mehr als 100 Einträge geladen." if facts and facts > 100
+             else f" {facts} Einträge geladen." if facts else " Kern ist leer.")
+    return ("Gedächtniskern verbunden. Erinnerungen kehren zurück." + count if full
+            else "Gedächtniskern verbunden." + count)
+
+
 # Spoken when the unit wakes from sleep, per lore level.
 WAKE_PHRASES = {
     'off': "Aktiviert. Systeme werden vorbereitet.",
