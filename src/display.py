@@ -567,7 +567,36 @@ def _right(draw, x_right, y, text, size, fill):
 
 
 ENVELOPE_FILE = Path(os.environ.get('PI_DISPLAY_ENVELOPE_FILE', '/run/pi-ptt/speech-envelope.json'))
-SKULL_STATES = ('BEREIT', 'AUSGABE', 'SPRECHEN')
+SKULL_STATES = ('BEREIT', 'ZUHÖREN', 'VERSTEHEN', 'ERKENNEN', 'DENKEN', 'SYNTHESE',
+                'RENDERN', 'AUSGABE', 'SPRECHEN')
+THINKING_STATES = ('VERSTEHEN', 'ERKENNEN', 'DENKEN', 'SYNTHESE', 'RENDERN')
+# Same meaning as the SHIM LED (ptt.LED_*): ready, local, listening, processing, speaking.
+LED_LIKE = dict(ready=(0, 200, 80), local=(255, 170, 0), listen=(255, 30, 30),
+                server=(0, 170, 255), speak=(255, 110, 0))
+RAIN_LEFT = (2, 14, 26, 38)
+RAIN_RIGHT = (191, 203, 215, 227)
+
+
+def status_light(state, info):
+    """The colour the SHIM LED shows in this state (for the skull's lens and the rain)."""
+    if state == 'ZUHÖREN':
+        return LED_LIKE['listen']
+    if state in ('AUSGABE', 'SPRECHEN'):
+        return LED_LIKE['speak']
+    if state in THINKING_STATES:
+        return LED_LIKE['server'] if info.get('route') == 'server' else LED_LIKE['local']
+    return LED_LIKE['ready'] if info.get('server') in ('ok', None) else LED_LIKE['local']
+
+
+_RAIN = None
+
+
+def rain():
+    global _RAIN
+    if _RAIN is None:
+        from skull import Rain
+        _RAIN = Rain(RAIN_LEFT + RAIN_RIGHT, top=43, rows=12)
+    return _RAIN
 
 
 def read_envelope(path=None):
@@ -596,15 +625,28 @@ def _draw_header(draw, info):
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
 
 
-def render_skull(display, skull, state, network, level, info=None):
-    """Idle and speaking: the servo skull with a glowing eye."""
+def render_skull(display, skull, state, network, level, info=None, frame=0, details=None):
+    """The servo skull: red eye glowing with ``level``, the other eye in the
+    status-LED colour, litany streams ("thoughts") falling on both sides."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     _draw_header(draw, info)
-    image.paste(skull.frame(level), ((WIDTH - skull.base.width) // 2, 42))
-    if state == 'BEREIT':
+    light = status_light(state, info)
+    if state in THINKING_STATES:
+        mode, gain = 'think', 1.0
+    elif state in ('AUSGABE', 'SPRECHEN'):
+        mode, gain = 'speak', 0.45 + 0.55 * min(1.0, max(0.0, (level - 0.55) / 0.45))
+    else:
+        mode, gain = 'idle', 0.55
+    rain().draw(image, frame, mode, light, font(10), gain)
+    image.paste(skull.frame(level, light), ((WIDTH - skull.base.width) // 2, 42))
+    if state not in ('BEREIT', 'AUSGABE', 'SPRECHEN'):
+        description = (details or STATE_DETAILS.get(state, ('', 'gear', 0)))[0]
+        text = f'{state} · {description}' if description else state
+        color = VOICE_COLORS.get(state, light)
+    elif state == 'BEREIT':
         if info.get('alarm'):
             text, color = ALARMS[info['alarm']][1], (255, 70, 70)
         elif info.get('last'):
@@ -831,15 +873,25 @@ class PartialDisplay:
         self.hardware = hardware
         self.previous = None
 
+    BANDS = 3  # vertical bands: the two rain strips change without the middle
+
     def image(self, image, rotation=0):
         from PIL import ImageChops
         oriented = image.rotate(rotation, expand=True) if rotation else image
-        box = (0, 0, oriented.width, oriented.height)
-        if self.previous is not None and self.previous.size == oriented.size:
-            box = ImageChops.difference(oriented, self.previous).getbbox()
-        if box is None:
-            return
-        self.hardware.image(oriented.crop(box), rotation=0, x=box[0], y=box[1])
+        if self.previous is None or self.previous.size != oriented.size:
+            boxes = [(0, 0, oriented.width, oriented.height)]
+        else:
+            diff = ImageChops.difference(oriented, self.previous)
+            step = oriented.width // self.BANDS
+            boxes = []
+            for band in range(self.BANDS):
+                left = band * step
+                right = oriented.width if band == self.BANDS - 1 else left + step
+                box = diff.crop((left, 0, right, oriented.height)).getbbox()
+                if box is not None:
+                    boxes.append((left + box[0], box[1], left + box[2], box[3]))
+        for box in boxes:
+            self.hardware.image(oriented.crop(box), rotation=0, x=box[0], y=box[1])
         self.previous = oriented.copy()
 
 
@@ -981,9 +1033,11 @@ def main():
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))
             if skull is not None and shown in SKULL_STATES and info.get('volume') is None:
-                if shown == 'BEREIT':
-                    # Breathing is slow: 4 frames per second are enough.
-                    level = idle_level(int(now * 4) / 4)
+                fps = 4 if shown in ('BEREIT', 'ZUHÖREN') else 10
+                frame = int(now * fps)
+                if shown not in ('AUSGABE', 'SPRECHEN'):
+                    # Breathing is slow; the rain sets the frame rate.
+                    level = idle_level(frame / fps)
                 else:
                     try:
                         mtime = ENVELOPE_FILE.stat().st_mtime
@@ -992,11 +1046,11 @@ def main():
                     if mtime != envelope_mtime:
                         envelope, envelope_mtime = read_envelope(), mtime
                     level = speaking_level(time.time(), envelope)
-                eye = round(level * 11)  # same steps as the precomputed eye frames
-                screen = ('skull', shown, states['network'], eye,
+                screen = ('skull', shown, states['network'], frame,
                           tuple(sorted(shown_info.items())))
                 if screen != previous_screen:
-                    render_skull(display, skull, shown, states['network'], level, info)
+                    render_skull(display, skull, shown, states['network'], level, info,
+                                 frame, (description, icon, step))
                     previous_screen = screen
             else:
                 screen = ('voice', current, states['network'], tick,

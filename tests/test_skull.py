@@ -81,3 +81,53 @@ class EnvelopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RainTests(unittest.TestCase):
+    def test_rain_is_deterministic_moves_and_spells_litanies(self):
+        from PIL import Image
+        r = skull.Rain((2, 14), top=0, rows=12)
+        font = display.font(10)
+        frames = []
+        for frame in (5, 5, 6):
+            image = Image.new("RGB", (30, 140), "black")
+            r.draw(image, frame, "think", (0, 170, 255), font)
+            frames.append(image.tobytes())
+        self.assertEqual(frames[0], frames[1])      # same frame index, same picture
+        self.assertNotEqual(frames[0], frames[2])   # next frame: the streams moved
+        self.assertTrue(all(t.isupper() or not t.isalpha() for texts in skull.LITANIES.values()
+                            for t in texts))
+
+    def test_status_light_follows_led_meaning(self):
+        self.assertEqual(display.status_light("BEREIT", dict(server="ok")), display.LED_LIKE["ready"])
+        self.assertEqual(display.status_light("BEREIT", dict(server="down")), display.LED_LIKE["local"])
+        self.assertEqual(display.status_light("DENKEN", dict(route="server")), display.LED_LIKE["server"])
+        self.assertEqual(display.status_light("ZUHÖREN", {}), display.LED_LIKE["listen"])
+        self.assertEqual(display.status_light("AUSGABE", {}), display.LED_LIKE["speak"])
+
+    def test_other_eye_takes_the_status_colour(self):
+        s = skull.Skull("/does/not/exist")
+        self.assertTrue(s.lens)
+        x, y = s.lens[len(s.lens) // 2]
+        plain, tinted = s.frame(0.5), s.frame(0.5, (0, 170, 255))
+        self.assertGreater(tinted.getpixel((x, y))[2], plain.getpixel((x, y))[2])
+
+    def test_partial_display_sends_side_bands_separately(self):
+        from PIL import Image
+
+        class Hardware:
+            def __init__(self):
+                self.calls = []
+
+            def image(self, image, rotation=0, x=0, y=0):
+                self.calls.append((x, y, image.size))
+
+        hw = Hardware()
+        partial = display.PartialDisplay(hw)
+        first = Image.new("RGB", (240, 240), "black")
+        partial.image(first)
+        second = first.copy()
+        second.putpixel((5, 100), (255, 0, 0))
+        second.putpixel((230, 100), (255, 0, 0))
+        partial.image(second)
+        self.assertEqual(hw.calls[1:], [(5, 100, (1, 1)), (230, 100, (1, 1))])
