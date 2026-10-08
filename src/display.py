@@ -47,6 +47,7 @@ VOICE_EVENT_STATES = {
     "llm_error": "FEHLER",
     "tts_error": "FEHLER",
     "speech_error": "FEHLER",
+    "wake_timeout": "BEREIT",
 }
 
 VOICE_COLORS = {
@@ -66,12 +67,14 @@ VOLUME_SHOW_SECONDS = 2.5
 MENU_LABELS = (
     ('info', 'Systeminfo'),
     ('server', 'Server nutzen'),
+    ('wake', 'Aktivierungswort'),
     ('led', 'Status-LED'),
     ('screen', 'Display aus'),
     ('status', 'Status ansagen'),
     ('close', 'Schließen'),
 )
 DEPLOYED_FILE = Path('/opt/pi-voice-assistant/src/DEPLOYED')
+WAKE_WORD_LABELS = {'hey_jarvis': 'Hey Jarvis', 'hey_servitor': 'Hey Servitor'}
 SERVER_PROBE_TIMEOUT_SECONDS = 0.5
 ROUTE_LABELS = {'server': ('SERVER', (80, 210, 235)), 'pi': ('LOKAL', (255, 180, 0))}
 SERVER_FOOTER = {
@@ -151,6 +154,8 @@ def read_status(path=None):
         status['menu_index'] = index
         status['menu_page'] = value['menu_page']
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
+                         ('opt_wake', ('on', 'off', 'none')),
+                         ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off'))):
         if value.get(key) in allowed:
             status[key] = value[key]
@@ -633,6 +638,8 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
         _draw_footer(draw, network, info)
         display.image(image, 180)
         return
+    if state == 'BEREIT' and info.get('wake'):
+        description = f"„{info['wake']}“ oder Taste"
     draw.text((12, 139), description, font=font(14), fill=(215,220,225))
     if not idle:
         draw.text((12, 165), f'Seit {max(0, int(elapsed))} s', font=font(12), fill=(145,155,165))
@@ -655,6 +662,8 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
+    if item == 'wake':
+        return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_wake'), '')
     return ''
 
 
@@ -671,9 +680,9 @@ def render_menu(display, status, info=None):
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
     for row, (item, label) in enumerate(MENU_LABELS):
-        y = 47 + row * 24
+        y = 46 + row * 21
         if row == selected:
-            draw.rectangle((10, y - 2, 230, y + 19), fill=(40, 32, 70))
+            draw.rectangle((10, y - 2, 230, y + 18), fill=(40, 32, 70))
             draw.text((14, y), '›', font=font(15), fill=accent)
         color = accent if row == selected else (215, 220, 225)
         draw.text((28, y), label, font=font(15), fill=color)
@@ -924,7 +933,9 @@ def main():
             info = dict(route=status.get('route'), server=server_shown, temp_c=temp,
                         wifi_dbm=wifi, clock=time.strftime('%H:%M'),
                         last=last_answer_text(status), throttled=throttled,
-                        battery=battery, volume=volume_overlay(status))
+                        battery=battery, volume=volume_overlay(status),
+                        wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
+                              if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))

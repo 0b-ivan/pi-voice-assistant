@@ -13,6 +13,7 @@ import time
 import wave
 
 from llm import configured_model, generate_reply
+from endpoint import Endpointer
 from menu import ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
 import datetime
@@ -33,6 +34,7 @@ DISPLAY_EVENTS = {
     'transcript', 'transcript_discarded', 'cancelled', 'busy',
     'llm_start', 'llm_response', 'llm_discarded', 'llm_error',
     'status', 'speech_started', 'speech_finished', 'speech_error',
+    'wake_timeout',
 }
 DISPLAY_ERROR_EVENTS = {'stt_error', 'llm_error', 'tts_error', 'speech_error'}
 DISPLAY_ERROR_HOLD_SECONDS = 3.0
@@ -80,6 +82,9 @@ def publish_display_event(name):
             pass
 
 
+# Wake word: published label per model file, echo pause after own speech.
+WAKE_LABELS = {'hey_jarvis_v0.1': 'hey_jarvis', 'hey_servitor': 'hey_servitor'}
+WAKE_ECHO_PAUSE = 0.6
 # Display status: fixed identifiers and numbers only, never transcripts or
 # reply text. route/last_route: 'server' (CT 107) or 'pi'; last_llm:
 # 'openrouter' or 'offline' (local model on the server).
@@ -92,6 +97,8 @@ DISPLAY_STATUS_VALUES = {
     'opt_server': {'on', 'off', 'none'},
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
+    'opt_wake': {'on', 'off', 'none'},
+    'wake_word': set(WAKE_LABELS.values()),
 }
 # SHIM LED palette (APA102 at the driver's fixed low global brightness).
 LED_OFF = (0, 0, 0)
@@ -242,6 +249,8 @@ class Recorder:
         self._capture_rate = 48000
         self._capture_channels = 2
         self._live_recognizer = None
+        self._endpoint = None  # set for wake-word recordings without a button
+        self.endpoint_result = None
 
     def _pump_live_audio(self, proc, recognizer, uplink=None):
         recognizer_ok = recognizer is not None
@@ -252,6 +261,8 @@ class Recorder:
                     if not chunk:
                         break
                     sink.write(chunk)
+                    if self._endpoint is not None and self.endpoint_result is None:
+                        self.endpoint_result = self._endpoint.feed(chunk)
                     if uplink is not None:
                         uplink.accept_pcm(chunk)
                     if recognizer_ok:
@@ -273,7 +284,9 @@ class Recorder:
             if proc.stdout is not None:
                 proc.stdout.close()
 
-    def start(self):
+    def start(self, auto_stop=False):
+        """auto_stop: no button to release (wake word); endpoint_result turns
+        'end' after speech plus a pause or 'timeout' if nobody speaks."""
         # A timed-out native recognizer still owns its file and result fields.
         # Never reset them or start a second recognizer before it has exited.
         if self._pump_thread is not None:
@@ -290,6 +303,8 @@ class Recorder:
         self._live_error = None
         self._pump_thread = None
         self.drop_uplink()
+        self._endpoint = Endpointer() if auto_stop else None
+        self.endpoint_result = None
 
         uplink = None
         if self.uplink_factory is not None and self.uplink_enabled:
@@ -308,7 +323,7 @@ class Recorder:
             except (OSError, TranscriptionError) as exc:
                 self._live_error = str(exc)
 
-        if recognizer is not None or uplink is not None:
+        if recognizer is not None or uplink is not None or auto_stop:
             self._live_recognizer = recognizer
             self._capture_rate = 16000
             self._capture_channels = 1
@@ -320,13 +335,15 @@ class Recorder:
             self._pump_thread = threading.Thread(
                 target=self._pump_live_audio,
                 args=(self.process, recognizer, uplink),
-                name='vosk-live' if recognizer is not None else 'remote-pump',
+                name='vosk-live' if recognizer is not None else 'capture-pump',
                 daemon=True,
             )
             self._pump_thread.start()
             fields = dict(remote=True) if uplink is not None else {}
-            event('recording', stt='vosk-live' if recognizer is not None else 'remote',
-                  sample_rate=16000, channels=1, **fields)
+            if auto_stop:
+                fields['trigger'] = 'wake'
+            stt = 'vosk-live' if recognizer is not None else 'remote' if uplink is not None else 'file'
+            event('recording', stt=stt, sample_rate=16000, channels=1, **fields)
             return
 
         isolated = os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
@@ -445,8 +462,14 @@ class Recorder:
 
 class VoiceController:
     """One capture/STT/LLM slot, with A and GPIO17 combined as hold-to-talk."""
-    def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False):
+    def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False,
+                 wake=None, wake_word=None):
         self.recorder, self.speech, self.probe = recorder, speech, probe
+        self.wake = wake                  # WakeListener or None
+        self.wake_word = wake_word        # published label, e.g. 'hey_jarvis'
+        self.wake_enabled = wake is not None
+        self.wake_recording = False       # current recording ends on a pause
+        self.wake_resume_at = 0.0
         self.remote = remote
         self.remote_capture = None
         # Release-to-playback bookkeeping for the display's "last answer" line.
@@ -506,6 +529,7 @@ class VoiceController:
         self.speech.stop()
         self.speech_started_at = None
         self.recorder.finish('cancel', publish=False)
+        self.wake_recording = False
         if self.remote:
             self.recorder.drop_uplink()
         if self.job is not None:
@@ -567,8 +591,12 @@ class VoiceController:
             server = 'none'
         else:
             server = 'on' if self.remote_enabled else 'off'
+        if self.wake is None:
+            wake = 'none'
+        else:
+            wake = 'on' if self.wake_enabled else 'off'
         publish_display_status(menu_index=self.menu.index, menu_page=self.menu.page,
-                               opt_server=server,
+                               opt_server=server, opt_wake=wake, wake_word=self.wake_word,
                                opt_led='on' if self.led_enabled else 'off',
                                screen='on' if self.screen_on else 'off')
 
@@ -578,6 +606,11 @@ class VoiceController:
             self.remote_enabled = not self.remote_enabled
             self.recorder.uplink_enabled = self.remote_enabled
             event('menu', item='server', value='on' if self.remote_enabled else 'off')
+        elif item == 'wake' and self.wake is not None:
+            self.wake_enabled = not self.wake_enabled
+            if not self.wake_enabled:
+                self._release_microphone()
+            event('menu', item='wake', value='on' if self.wake_enabled else 'off')
         elif item == 'led':
             self.led_enabled = not self.led_enabled
             event('menu', item='led', value='on' if self.led_enabled else 'off')
@@ -596,6 +629,46 @@ class VoiceController:
         else:
             server = 'down' if self.remote_failed else 'ok'
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server)
+
+    def _release_microphone(self):
+        """The wake listener holds the capture device; free it before recording."""
+        if self.wake is not None and self.wake.running:
+            self.wake.stop()
+
+    def _idle(self):
+        return (self.recorder.process is None and self.job is None
+                and not self.speech.active and not getattr(self.speech, 'synthesizing', False))
+
+    def _wake_tick(self, now):
+        if self.wake.error:
+            event('wake_error', message=self.wake.error)
+            self.wake.error = None
+            self.wake_resume_at = now + 30.0  # retry later, buttons keep working
+        if self.wake.take_detection() and self._idle():
+            event('wake', word=self.wake_word)
+            if self.menu.open:
+                self.menu.close()
+                self._publish_menu()
+            self._release_microphone()
+            self.speech_started_at = None
+            self.recorder.start(auto_stop=True)
+            self.wake_recording = True
+        if self.wake_recording and self.recorder.process is not None:
+            result = self.recorder.endpoint_result
+            if result == 'end':
+                self.wake_recording = False
+                self.submit('silence')
+            elif result == 'timeout':
+                self.wake_recording = False
+                self.recorder.finish('wake_timeout', publish=False)
+                if self.remote:
+                    self.recorder.drop_uplink()
+                event('wake_timeout')
+        listen = self.wake_enabled and self._idle() and now >= self.wake_resume_at
+        if listen and not self.wake.running:
+            self.wake.start()
+        elif not listen and self.wake.running:
+            self.wake.stop()
 
     def _speak_status(self, action):
         if (self.recorder.process is not None or action == 'start'
@@ -799,6 +872,7 @@ class VoiceController:
                 )
                 self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
+            self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
         if self.job is not None and self.job_stage == 'remote' and not self.job.done.is_set():
             for item in self.job.drain():
                 self._remote_progress(item)
@@ -838,6 +912,10 @@ class VoiceController:
         if action == 'start' and self.menu.open:
             self.menu.close()
             self._publish_menu()
+        if action == 'start' and self.wake_recording and self.recorder.process is not None:
+            # Button pressed during a wake-word recording: it ends on release now.
+            self.wake_recording = False
+            action = None
         if action == 'start':
             if (self.job is not None or (os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
                     and getattr(self.speech, 'synthesizing', False))):
@@ -845,12 +923,16 @@ class VoiceController:
             else:
                 self.speech.stop()
                 self.speech_started_at = None
+                self._release_microphone()
                 self.recorder.start()
         elif action in ('release', 'limit') and self.recorder.process is not None:
             self.submit(action)
         if self.recorder.process is not None and self.recorder.process.poll() is not None:
+            self.wake_recording = False
             self.submit('process_exit')
             self.ptt.resync(held, now)
+        if self.wake is not None and not self.probe:
+            self._wake_tick(now)
 
         if (not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
                 and self.job is None and not self.speech.active
@@ -859,6 +941,8 @@ class VoiceController:
             prepare_vosk_worker()
 
     def close(self):
+        if self.wake is not None:
+            self.wake.stop()
         stop_prepared_vosk()
         if self.job is not None:
             self.job.cancel()
@@ -980,8 +1064,32 @@ def main():
     if uplink_factory is not None:
         speech = RemoteCapableSpeech(
             speech, os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'))
+    wake, wake_label = None, None
+    wake_word = os.environ.get('PTT_WAKE_WORD', '').strip()
+    if wake_word and not args.probe:
+        wake_dir = Path(os.environ.get('PTT_WAKE_MODEL_DIR',
+                                       '/opt/pi-voice-assistant/models/wakeword'))
+        threshold = float(os.environ.get('PTT_WAKE_THRESHOLD', '0.5'))
+        if not (wake_dir / f'{wake_word}.onnx').is_file():
+            event('wake_error', message=f'model {wake_word} missing in {wake_dir}')
+        else:
+            def detector_factory():
+                # numpy/onnxruntime live in the Piper venv (also used by Piper).
+                venv = Path(os.environ.get('PIPER_VENV', '/opt/pi-voice-assistant/.venv'))
+                site = venv / 'lib' / f'python{os.sys.version_info.major}.{os.sys.version_info.minor}' / 'site-packages'
+                if site.is_dir() and str(site) not in os.sys.path:
+                    os.sys.path.insert(0, str(site))
+                from wakeword import Detector, WakeWord
+                return Detector(WakeWord(wake_dir, wake_word, gate=True), threshold=threshold)
+            from wake_listener import WakeListener
+            wake = WakeListener(os.environ.get('PTT_AUDIO_DEVICE',
+                                               'plughw:CARD=wm8960soundcard,DEV=0'),
+                                detector_factory)
+            wake_label = WAKE_LABELS.get(wake_word)
+            event('wake_ready', word=wake_word, threshold=threshold)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
-                                 remote=uplink_factory is not None)
+                                 remote=uplink_factory is not None,
+                                 wake=wake, wake_word=wake_label)
     controller_ref.append(controller)
     battery_monitor = Battery()
     next_power = 0.0
