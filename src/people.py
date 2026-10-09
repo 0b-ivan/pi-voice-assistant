@@ -3,10 +3,14 @@
 Menu "Personen" lists the voice profiles on the memory stick. E on a person
 opens ACTIONS; every action first authenticates that person:
 
-- After a beep the person speaks the passphrase (4 s). The server returns a
-  voiceprint and a transcript of the same take.
+- After a beep the person speaks the passphrase (PHRASE_SECONDS). Silence
+  around it is cut off, then the server returns a voiceprint and a
+  transcript of the same take.
+- Not recognized: one more try (ATTEMPTS). Every try is logged as an
+  'auth' event (scores only, never the passphrase) for the journal.
 - The voice must match the selected profile (cosine >= speaker.THRESHOLD)
-  and the transcript the stored passphrase (fuzzy, Vosk spells differently).
+  and the transcript the stored passphrase (fuzzy, Vosk spells differently
+  and splits or joins words; extra words around the phrase are ignored).
 - Passphrase right but the voice only weakly recognized (>= WEAK_VOICE):
   accepted, with the advice to retrain; the action list then offers
   "Nachtrainieren" first.
@@ -27,7 +31,8 @@ from pathlib import Path
 ACTIONS = ('refine', 'details', 'passphrase', 'delete', 'back')
 ACTION_LABELS = {'refine': 'Nachtrainieren', 'details': 'Details anzeigen',
                  'passphrase': 'Passphrase festlegen', 'delete': 'Löschen', 'back': 'Zurück'}
-PHRASE_SECONDS = 4
+PHRASE_SECONDS = 6
+ATTEMPTS = 2
 PHRASE_MATCH = 0.75     # difflib ratio between spoken and stored passphrase
 WEAK_VOICE = 0.3        # below speaker.THRESHOLD but still plausibly the same person
 DELETE_CONFIRM_SECONDS = 20.0
@@ -35,6 +40,7 @@ DELETE_CONFIRM_SECONDS = 20.0
 AUTH_PROMPT = "Authentifizierung. Nach dem Signalton die Passphrase sprechen."
 AUTH_VOICE_ONLY = "Authentifizierung. Nach dem Signalton einen Satz sprechen."
 AUTH_FAILED = "Authentifizierung fehlgeschlagen."
+AUTH_RETRY = "Nicht erkannt. Nach dem Signalton noch einmal."
 AUTH_WEAK = "Passphrase korrekt. Stimme nur unsicher erkannt. Nachtrainieren empfohlen."
 AUTH_OK = "Authentifiziert."
 SET_PHRASE_FIRST = "Bitte Passphrase festlegen."
@@ -51,16 +57,24 @@ def normalize(text):
     return ' '.join(re.findall(r'[a-zäöüß0-9]+', str(text).lower()))
 
 
-def phrase_matches(spoken, stored):
-    spoken, stored = normalize(spoken), normalize(stored)
+def phrase_score(spoken, stored):
+    """Best similarity of the stored phrase with the spoken words or any run
+    of them (filler words around it); spaces are ignored, since Vosk splits
+    and joins words differently from take to take."""
+    spoken, stored = normalize(spoken).split()[:30], normalize(stored).replace(' ', '')
     if not spoken or not stored:
-        return False
-    return difflib.SequenceMatcher(None, spoken, stored).ratio() >= PHRASE_MATCH
+        return 0.0
+    runs = [''.join(spoken[i:j]) for i in range(len(spoken)) for j in range(i + 1, len(spoken) + 1)]
+    return max(difflib.SequenceMatcher(None, run, stored).ratio() for run in runs)
+
+
+def phrase_matches(spoken, stored):
+    return phrase_score(spoken, stored) >= PHRASE_MATCH
 
 
 def phrases():
     """Fixed sentences, for prerecorded clips."""
-    return [AUTH_PROMPT, AUTH_VOICE_ONLY, AUTH_FAILED, AUTH_WEAK, AUTH_OK, SET_PHRASE_FIRST,
+    return [AUTH_PROMPT, AUTH_VOICE_ONLY, AUTH_FAILED, AUTH_RETRY, AUTH_WEAK, AUTH_OK, SET_PHRASE_FIRST,
             PHRASE_PROMPT, PHRASE_REPEAT, PHRASE_MISMATCH, PHRASE_SAVED, DELETE_ASK, DELETED,
             NO_SERVER]
 
@@ -194,33 +208,46 @@ class Flow:
 
     def authenticate(self):
         """'ok', 'weak' or None (failed)."""
-        from speaker import THRESHOLD, cosine, decode
+        from speaker import THRESHOLD, cosine, decode, trim_silence
         person = self.core.profile(self.name)
         if person is None:
             return None
         stored = person.get('passphrase')
         path = self.core.voice_dir / 'auth.wav'
-        pcm = self._take(AUTH_PROMPT if stored else AUTH_VOICE_ONLY, path)
-        Path(path).unlink(missing_ok=True)   # nothing of the passphrase stays on disk
-        if pcm is None:
-            return None
-        print_ = self.io.voiceprint(pcm)
-        if print_ is None:
-            self.io.say(NO_SERVER)
-            return None
-        score = cosine(decode(print_), decode(person['print'])) or 0.0
-        self.core.update_profile(self.name, last_score=round(score, 3))
-        phrase_ok = True
-        if stored:
-            phrase_ok = phrase_matches(self.io.transcribe(pcm) or '', stored)
-        if phrase_ok and score >= THRESHOLD:
-            self.io.say(AUTH_OK)
-            return 'ok'
-        if phrase_ok and stored and score >= WEAK_VOICE:
-            self.io.say(AUTH_WEAK)
-            return 'weak'
-        self.io.say(AUTH_FAILED)
-        return None
+        prompt = AUTH_PROMPT if stored else AUTH_VOICE_ONLY
+        best = None
+        for attempt in range(1, ATTEMPTS + 1):
+            pcm = self._take(prompt, path)
+            Path(path).unlink(missing_ok=True)   # nothing of the passphrase stays on disk
+            if pcm is None:
+                return None
+            pcm = trim_silence(pcm)
+            print_ = self.io.voiceprint(pcm)
+            if print_ is None:
+                self.io.say(NO_SERVER)
+                return None
+            score = cosine(decode(print_), decode(person['print'])) or 0.0
+            best = score if best is None else max(best, score)
+            phrase = phrase_score(self.io.transcribe(pcm) or '', stored) if stored else None
+            phrase_ok = phrase is None or phrase >= PHRASE_MATCH
+            if phrase_ok and score >= THRESHOLD:
+                state = 'ok'
+            elif phrase_ok and stored and score >= WEAK_VOICE:
+                state = 'weak'
+            else:
+                state = None
+            print(json.dumps(dict(version=1, event='auth', person=self.name, attempt=attempt,
+                                  voice=round(score, 3), threshold=THRESHOLD,
+                                  phrase=None if phrase is None else round(phrase, 2),
+                                  seconds=round(len(pcm) / 32000, 1), result=state or 'failed')),
+                  flush=True)
+            if state is not None or self.cancelled.is_set():
+                break
+            if attempt < ATTEMPTS:
+                prompt = AUTH_RETRY
+        self.core.update_profile(self.name, last_score=round(best, 3))
+        self.io.say({'ok': AUTH_OK, 'weak': AUTH_WEAK}.get(state, AUTH_FAILED))
+        return state
 
     def run(self):
         self.io.publish(stage='auth', rec=False)
