@@ -571,3 +571,15 @@ class MenuScrollTests(unittest.TestCase):
         capture = Capture()
         display.render_voice(capture, "BEREIT", True, info=dict(alarm="battery", wlan="off"))
         self.assertEqual(capture.frame.size, (display.WIDTH, display.HEIGHT))
+
+
+class CodeChangeTests(unittest.TestCase):
+    def test_detects_a_module_changed_after_start(self):
+        import time as _time
+        with tempfile.TemporaryDirectory() as tmp:
+            module = Path(tmp) / "menu.py"
+            module.write_text("x = 1\n")
+            started = _time.time() + 1
+            self.assertFalse(display.code_changed(started, tmp))
+            __import__("os").utime(module, (started + 5, started + 5))
+            self.assertTrue(display.code_changed(started, tmp))

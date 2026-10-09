@@ -1165,6 +1165,16 @@ class PartialDisplay:
         self.previous = oriented.copy()
 
 
+def code_changed(started, directory=None):
+    """True when a module of this program changed after it started (a partial
+    install): the display exits and systemd starts it on the new code."""
+    directory = Path(directory or Path(__file__).resolve().parent)
+    try:
+        return any(path.stat().st_mtime > started for path in directory.glob('*.py'))
+    except OSError:
+        return False
+
+
 def main():
     import board
     import digitalio
@@ -1190,6 +1200,7 @@ def main():
     )
 
     display = PartialDisplay(display)
+    code_started, next_code_check = time.time(), 0.0
     screen_lit = True
     try:
         from skull import Skull, idle_level, speaking_level
@@ -1364,6 +1375,11 @@ def main():
                                  (description, icon, step), tick, elapsed, info)
                     previous_screen = screen
 
+        if now >= next_code_check:
+            next_code_check = now + 5.0
+            if code_changed(code_started):
+                print(json.dumps(dict(event='display_code_changed')), flush=True)
+                raise SystemExit(75)  # Restart=on-failure brings up the new code
         time.sleep(EVENT_INTERVAL_SECONDS)
 
 
