@@ -1113,6 +1113,8 @@ class VoiceController:
             self.device_pending = op
             self.device_pending_until = time.monotonic() + device_control.CONFIRM_SECONDS
             event('device', op=op, result='ask')
+        elif op == 'sleep':
+            self._device_arm(op)            # once "Ruhemodus." has been said
         elif (op == 'wlan_on') != self.wlan_on:
             ok = self.set_wlan(op == 'wlan_on')
             event('device', op=op, result='done' if ok else 'failed')
@@ -1150,7 +1152,9 @@ class VoiceController:
                 self._device_arm(op)            # the server's reply announces it
             return
         self.turn_device_pending = None
-        if op in device_control.CONFIRM_OPS:
+        if op == 'sleep':
+            self._device_arm(op)            # after the server's reply
+        elif op in device_control.CONFIRM_OPS:
             if not (op == 'reboot' and self.maint.active):
                 self.device_pending = op
                 self.device_pending_until = time.monotonic() + device_control.CONFIRM_SECONDS
@@ -1161,7 +1165,12 @@ class VoiceController:
                 self.alarm_queue.append(device_control.failed_text(self.style))
 
     def _device_run(self, op):
-        if op == 'shutdown':
+        if op == 'sleep':
+            # The usual idle path (_update_power): screen and LED off, WLAN as
+            # configured; a button or the wake word wakes it as always.
+            event('device', op=op, result='done')
+            self.last_activity = time.monotonic() - self.sleep_after - 1.0
+        elif op == 'shutdown':
             self.power_off('command')
         elif op == 'reboot':
             event('reboot', reason='command')

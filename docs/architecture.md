@@ -164,7 +164,8 @@ Die Markierung `[stimmung:…]` wird auf dem Server und auf dem Pi entfernt und 
 | „WLAN aus“, „Schalte das WLAN aus“ | WLAN sofort per `rfkill` aus; danach läuft alles lokal („WLAN deaktiviert. Lokaler Betrieb.“) |
 | „WLAN an“, „WLAN einschalten“ | WLAN wieder an (wird offline auf dem Pi erkannt) |
 | „Starte dich neu“, „Neustart“ | Rückfrage, dann Neustart des Pi über den Wartungsdienst (sonst `systemctl reboot`) |
-| „Fahr dich herunter“, „Herunterfahren“, „Schalt dich aus“ | Rückfrage, dann `systemctl poweroff`; wieder an nur per Schalter |
+| „Geh schlafen“, „Ruhemodus“, „Energiesparmodus“ | ohne Rückfrage in den Schlafzustand (Display und LED aus, WLAN je nach `PTT_SLEEP_WLAN`); Aktivierungswort oder Taste weckt |
+| „Fahr dich herunter“, „Herunterfahren“, „Schalt dich aus“, „Mach dich aus“, „Terminiere dich selbst“, „Zerstöre dich“, „Geh sterben“ | Rückfrage, dann `systemctl poweroff`; wieder an nur per Schalter |
 
 **Bestätigung:** Neustart und Herunterfahren fragen zurück („… Bestätigen: Bestätigt oder Taste E.“). Bestätigt wird innerhalb von 20 s mit „Bestätigt“, „Ja“ oder Taste E; die Antwort muss allein stehen (höchstens mit „bitte“), „Mach das Licht an“ bestätigt nie. „Nein“/„Abbrechen“ oder Taste B brechen ab („Abgebrochen.“), jede andere Frage verwirft die Rückfrage und wird normal beantwortet. Der Pi hält die offene Rückfrage und schickt sie im Status-Snapshot mit (`pending`), so erkennt auch der Server die Bestätigung. Ausgeführt wird erst, wenn die Ansage („Einheit fährt herunter.“) gesprochen ist.
 

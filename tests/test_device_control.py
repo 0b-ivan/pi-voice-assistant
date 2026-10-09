@@ -16,6 +16,11 @@ class CommandTests(unittest.TestCase):
             'fahr dich herunter': 'shutdown', 'herunterfahren': 'shutdown',
             'runter fahren': 'shutdown', 'schalt dich aus': 'shutdown',
             'starte dich neu': 'reboot', 'neustart': 'reboot',
+            'terminiere dich selbst': 'shutdown', 'geh sterben': 'shutdown',
+            'zerstöre dich': 'shutdown', 'mach dich aus': 'shutdown',
+            'schalte dich aus': 'shutdown',
+            'geh schlafen': 'sleep', 'versetze dich in den ruhemodus': 'sleep',
+            'energiesparmodus': 'sleep', 'schlafmodus': 'sleep',
         }
         for text, op in cases.items():
             with self.subTest(text=text):
@@ -24,6 +29,7 @@ class CommandTests(unittest.TestCase):
     def test_not_commands(self):
         for text in ('wie ist das wlan', 'wie ist das wetter', 'starte den server neu',
                      'schalte das licht aus', 'fahr nach hause', 'starte die musik', '',
+                     'zerstöre den server', 'wie lange soll ich schlafen',
                      'erzähl mir wie man einen computer herunterfährt und wieder startet bitte'):
             with self.subTest(text=text):
                 self.assertIsNone(dc.command(text))

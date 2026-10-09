@@ -20,6 +20,7 @@ class DeviceCommandTests(unittest.TestCase):
         self.recorder.process = None
         self.recorder.take_live_transcript.return_value = None
         self.speech.active = False
+        self.speech.synthesizing = False
         self.speech.poll.return_value = None
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -67,6 +68,18 @@ class DeviceCommandTests(unittest.TestCase):
         self.turn('wlan einschalten')
         self.wlan.assert_called_with(True)
         self.assertTrue(self.c.wlan_on)
+
+    def test_sleep_without_question_once_said(self):
+        self.turn('geh schlafen')
+        self.assertEqual(self.spoken[-1], "Ruhemodus. Aktivierungswort bleibt aktiv.")
+        self.assertIsNone(self.c.device_pending)            # no confirmation needed
+        self.assertEqual(self.c.device_after_speech, 'sleep')
+        self.speech.poll.return_value = 0                  # announcement finished
+        self.press('')
+        self.c._update_power(ptt.time.monotonic())
+        self.assertEqual(self.c.power, 'sleep')
+        self.c._remote_progress(dict(event='device', op='sleep'))   # server path
+        self.assertEqual(self.c.device_after_speech, 'sleep')
 
     def test_wlan_failure_is_reported(self):
         self.wlan.side_effect = OSError('no rfkill permission')

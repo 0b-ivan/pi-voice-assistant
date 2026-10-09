@@ -1,6 +1,8 @@
-"""Spoken device commands: WLAN off/on, reboot and shut down the Pi.
+"""Spoken device commands: WLAN off/on, sleep, reboot and shut down the Pi.
 
-WLAN switches at once. Reboot and shutdown ask back first: the operator
+WLAN switches at once; "geh schlafen" puts the unit into its sleep state
+(screen and LED off, the wake word keeps listening) once that is said.
+Reboot and shutdown ask back first: the operator
 confirms by saying "bestätigt" (or "ja") or with button E within
 CONFIRM_SECONDS; "nein"/"abbrechen" or button B cancel, anything else drops
 the request and is answered as usual. The Pi keeps the pending request and
@@ -14,7 +16,7 @@ Text only (no hardware): ptt.py switches WLAN (rfkill), requests the reboot
 """
 import re
 
-OPS = ('wlan_off', 'wlan_on', 'reboot', 'shutdown')
+OPS = ('wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown')
 CONFIRM_OPS = ('reboot', 'shutdown')
 CONFIRM_SECONDS = 20.0   # from the question; the answer's recording starts well before
 
@@ -24,7 +26,12 @@ _ON = re.compile(r'\b(an|ein|aktivier\w*|einschalt\w*|anschalt\w*)\b')
 _SHUTDOWN = re.compile(
     r'\b((her)?(unter|runter) ?fahr\w*'
     r'|fahr\w* (dich |das system |den pi |die einheit )?(her)?(unter|runter)'
-    r'|schalt\w* dich (aus|ab)|shut ?down)\b')
+    r'|schalt\w* dich (selbst )?(aus|ab)|mach\w* dich (selbst )?aus|shut ?down'
+    r'|terminier\w* dich|selbst ?terminier\w*|geh\w* sterben|stirb'
+    r'|zerstör\w* dich|selbst ?zerstör\w*)\b')
+_SLEEP = re.compile(
+    r'\b(geh\w* (jetzt )?schlafen|schlafen gehen|leg dich schlafen|schlaf (jetzt )?ein'
+    r'|ruhe ?modus|schlaf ?modus|energie ?spar ?modus|stand ?by)\b')
 _REBOOT = re.compile(r'\b(neu ?start\w*|starte?\b.*\bneu|reboot\w*)\b')
 _SERVER = re.compile(r'\b(server|kogitator|ct ?107|container)\b')
 # The whole answer must be one of these (plus fillers): "mach das licht an" never confirms.
@@ -36,7 +43,7 @@ _CANCEL = re.compile(r'(nein|nee|abbrechen|abbruch|brich ab|halt|negativ|doch ni
 
 
 def command(text):
-    """'wlan_off', 'wlan_on', 'reboot', 'shutdown' or None. ``text`` is normalized
+    """'wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown' or None. ``text`` is normalized
     (lower case, no punctuation). Reboot of the server is not ours (maintenance)."""
     text = str(text).strip()
     if not text or len(text.split()) > 8:
@@ -51,6 +58,8 @@ def command(text):
         return None
     if _SHUTDOWN.search(text):
         return 'shutdown'
+    if _SLEEP.search(text):
+        return 'sleep'
     if _REBOOT.search(text):
         return 'reboot'
     return None
@@ -82,16 +91,19 @@ ASK_BILLY = {
 START = {
     'wlan_off': "WLAN deaktiviert. Lokaler Betrieb.",
     'wlan_on': "WLAN aktiviert. Verbindung wird aufgebaut.",
+    'sleep': "Ruhemodus. Aktivierungswort bleibt aktiv.",
     'reboot': "Neustart eingeleitet.",
     'shutdown': "Einheit fährt herunter.",
 }
 START_FULL = {
+    'sleep': "Ruhemodus. Der Maschinengeist schlummert, das Auspex wacht.",
     'reboot': "Neustart eingeleitet. Der Maschinengeist ruht kurz.",
     'shutdown': "Einheit fährt herunter. Der Maschinengeist schläft. Lob dem Omnissiah.",
 }
 START_BILLY = {
     'wlan_off': "WLAN ist aus. Ich mach lokal weiter.",
     'wlan_on': "WLAN geht an, Moment.",
+    'sleep': "Ich hau mich hin. Ruf mich, wenn was ist.",
     'reboot': "Ich starte neu. Bis gleich.",
     'shutdown': "Ich mach dann mal aus.",
 }
