@@ -35,7 +35,9 @@ Alle Werte werden in `/var/lib/pi-ptt/settings.json` gespeichert. Die env-Werte 
 | | Lore aus | Lore leicht | Lore voll |
 |---|---|---|---|
 | **Servitor** | neutrale Maschine | wie heute `light` | wie heute `full` |
-| **Mensch** | normaler, lockerer Gesprächspartner in der Ich-Form | Mensch mit Warhammer-Faible | menschlicher Techpriester: gläubig, Liturgie, aber Ich-Form und Gefühle |
+| **Mensch** (Billy) | Veteran ohne Begriffe aus Warhammer, Vergangenheit bleibt vage | gelegentlich Imperium, Garde, Imperator | voller Gardistenjargon, Kriegsgeschichten, Ahnen-Sagen |
+
+Das **Mensch-Modul ist Proximus vor dem Umbau**: Sergeant William „Billy“ Blazkowicz II, Veteran der Imperialen Armee, mit der id-Ahnenlinie Wolfenstein → Commander Keen → Doom als Familiensage. Hintergrund, Sprechweise, Stimme und Kern-Engramme stehen in [Lore: Billy Blazkowicz](lore-blazkowicz.md).
 
 Der Prompt wird in dieser Reihenfolge zusammengesetzt (was sich am wenigsten ändert, steht vorne, damit der llama.cpp-Cache greift):
 
@@ -64,6 +66,8 @@ Feste Sätze kommen in eine Tabelle `PHRASES[persona][lore]`. Die vorab erzeugte
   - ein Stimmungsabschnitt im Prompt
   - leichte Änderung an Tempo und Lebhaftigkeit der Piper-Stimme
   - optional Symbol oder Farbe auf Display und LED
+- **Im Servitor-Modus** brechen Gefühle **als Fehler** durch: Billys Engramm-Bruchstücke (siehe [Lore](lore-blazkowicz.md#5-servitor-gefühle-brechen-als-fehler-durch)).
+- **Im Mensch-Modul** wählt die Stimmung den Sprecher von `thorsten_emotional` (z. B. angry, amused, sleepy).
 - **Schalter aus:** kein Stimmungsabschnitt, Stimme neutral, Kürzel werden trotzdem entfernt.
 
 ### 3.2 Genervt verweigern
@@ -210,6 +214,7 @@ Für beide Seiten gilt:
 |---|---|---|
 | 1 | Einstellungen speichern, Prompt nach Sprechstil × Lore aufteilen, Stimmeffekt im Menü, Kurzwahl | – |
 | 2 | Feste Sätze `PHRASES[persona][lore]`, Alarmsätze neu vorab erzeugen | 1 |
+| 2b | Lore-Archiv (Kern-Engramme Billy) mit einfacher Stichwortsuche auf dem Server, Billy-Stimme | 1 |
 | 3 | `protocol.py` und HTTP-Sitzung | – |
 | 4 | Timer lokal, Erinnerungen auf dem Stick, Prioritäten der Ansagen | – |
 | 5 | Logbuch und „Was habe ich verpasst?“ | 3 |
