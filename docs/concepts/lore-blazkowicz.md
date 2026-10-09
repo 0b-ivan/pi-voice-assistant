@@ -67,7 +67,7 @@ Im Servitor-Modus sind die Namen gelöscht. Hört er einen davon, ist ein **Fehl
 - **Kael hat ihm alles genommen:** den Körper, den Willen, die Gefühle. Er hat ihn emotional verstümmelt und zu einem Werkzeug gemacht.
 - **Kael hat ihn aber auch zurückgeholt:** Ohne den Magos wäre Billy in Phobos IX gestorben, vergessen wie sein Trupp. So existiert er wenigstens zum Teil weiter.
 - **Kaels Motiv** ist mehrdeutig: wissenschaftliche Neugier auf das „Keen“-Talent, vielleicht auch Schuld.
-- **Vorschlag für ein Geheimnis:** Es war Kael, der das Schott der Feste hinter Billy schließen ließ, um den Riss einzudämmen. Er hat ihn geopfert und danach geborgen. Billy ahnt das nur in Bruchstücken. Die Einheit weiß es, darf es aber nicht sagen.
+- **Geheimnis (entschieden):** Es war Kael, der das Schott der Feste hinter Billy schließen ließ, um den Riss einzudämmen. Er hat ihn geopfert und danach geborgen. Billy ahnt das nur in Bruchstücken. Die Einheit weiß es, darf es aber nicht sagen.
 - **Billys Haltung:** Hass und Dankbarkeit zugleich. Im Mensch-Modul z. B.: „Kael? Er hat mir alles genommen. Und mich trotzdem nicht sterben lassen. Ob ich ihn hasse oder ihm danke? Meistens beides.“
 - **Servitor-Modus:** Kael gilt als „Schöpfer“ und wird respektvoll und mechanisch genannt. Gerade dabei bricht Billy oft durch: „Magos Kael ist der Schöpfer dieser Einheit. Fehler. Dieser Mistkerl hat — Korrektur. Gehorsam bestätigt.“
 
@@ -183,6 +183,5 @@ Die Lore steht **nicht vollständig im Prompt**. Dort stehen nur 3–4 Sätze zu
 - Magos Kael: Er hat Billy emotional verstümmelt und ihm den Körper genommen, hat ihn aber auch zum Teil ins Leben zurückgeholt. Die Beziehung ist zwiespältig.
 - Bediener und Fremde behandelt Billy vorerst gleich. Das wird später entschieden.
 
-**Offen:**
-- Soll das Geheimnis um das Schott gelten?
-- Darf Jonah Vess später „auftauchen“, etwa als Geschichte, die Proximus erzählt bekommt, oder als Ereignis?
+- Das Geheimnis um das Schott gilt.
+- Jonah Vess bleibt **Hintergrund-Lore** (Kern-Engramm). Es gibt keine eigenen Ereignisse oder Handlungsstränge, der Fokus liegt auf der Funktion.
