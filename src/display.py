@@ -626,7 +626,13 @@ def read_envelope(path=None):
         if (isinstance(value['start'], (int, float)) and isinstance(value['step'], (int, float))
                 and value['step'] > 0 and isinstance(levels, list)
                 and all(isinstance(v, int) and 0 <= v <= 100 for v in levels)):
-            return dict(start=float(value['start']), step=float(value['step']), levels=levels)
+            envelope = dict(start=float(value['start']), step=float(value['step']),
+                            levels=levels)
+            mouth = value.get('mouth')
+            if (isinstance(mouth, str) and len(mouth) <= len(levels) + 2
+                    and set(mouth) <= set('.aAeEoO')):
+                envelope['mouth'] = mouth
+            return envelope
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return None
@@ -743,6 +749,15 @@ def _face_panel(draw, image, picture):
 GLITCH_EVERY = 15.0      # Servitor with a strong feeling: Billy flashes through ...
 GLITCH_SECONDS = 0.5     # ... this long, as an engram error
 GLITCH_FROM = 50         # mood_level (0..100) needed for that
+
+
+def mouth_now(envelope, now):
+    """Billy's mouth code for this moment of the reply (visemes.track), or None."""
+    mouth = (envelope or {}).get('mouth')
+    if not mouth:
+        return None
+    index = int((now - envelope['start']) / envelope['step'])
+    return mouth[index] if 0 <= index < len(mouth) else None
 
 
 def mood_now(status):
@@ -1300,7 +1315,7 @@ def main():
     except Exception:  # never let the artwork take the status display down
         skull = None
     try:
-        from face import Face, choose as choose_face, health_row
+        from face import Face, choose as choose_face, health_row, resting as face_resting
         face = Face()
     except Exception:  # without the sheet Billy keeps the skull
         face = None
@@ -1473,9 +1488,8 @@ def main():
                           info.get('alarm'), info.get('server'), info.get('wlan'),
                           info.get('memory'))
                 if screen != previous_screen:
-                    row = health_row((battery or {}).get('percent'))
                     render_rest(display, skull, states['network'], info,
-                                picture=face.frame((row, 'look')))
+                                picture=face.frame(face_resting(battery)))
                     previous_screen = screen
             elif billy and shown in SKULL_STATES and info.get('volume') is None:
                 level = 0.0
@@ -1493,6 +1507,7 @@ def main():
                     plugged_at = time.time()
                 was_plugged = plugged
                 key = choose_face(shown, time.time(), level, battery, mood=mood_now(status),
+                                  viseme=mouth_now(envelope, time.time()),
                                   alarm=bool(info.get('alarm')), hushed_at=hushed_at,
                                   plugged_at=plugged_at)
                 # Only a new face (or text) is drawn: idle costs a redraw every few seconds.

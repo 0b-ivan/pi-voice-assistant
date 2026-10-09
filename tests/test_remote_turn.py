@@ -383,7 +383,7 @@ class RemoteControllerTests(unittest.TestCase):
         for name in ('transcript', 'llm_start', 'llm_response', 'speech_started', 'latency'):
             self.assertIn(name, names)
         self.assertLess(names.index('transcript'), names.index('llm_response'))
-        self.speech.play.assert_called_once_with(Path('/tmp/remote-reply.wav'))
+        self.speech.play.assert_called_once_with(Path('/tmp/remote-reply.wav'), text=None)
         progress = json.loads(self.progress.read_text())
         self.assertEqual((progress['stage'], progress['metric']), ('tts', 'playback'))
 

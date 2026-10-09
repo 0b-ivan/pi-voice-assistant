@@ -32,7 +32,8 @@ class SheetTests(unittest.TestCase):
     def test_slices_all_faces_and_extras_without_rescaling(self):
         make_sheet(self.path)
         sheet = face.Face(self.path)
-        self.assertEqual(len(sheet.frames), 42)
+        originals = [k for k in sheet.frames if isinstance(k, str) or k[1] in face.COLUMNS]
+        self.assertEqual(len(originals), 42)
         self.assertEqual(sheet.size, (120, 124))   # widest turned head, 4x already fits
         self.assertEqual(sheet.frame((4, 'teeth')).getpixel((60, 62)), (170, 145, 200))
         self.assertEqual(sheet.frame('god').getpixel((60, 62)), (10, 165, 200))
@@ -47,8 +48,11 @@ class SheetTests(unittest.TestCase):
     def test_bundled_sheet_has_every_face(self):
         sheet = face.Face(Path(__file__).resolve().parents[1] / 'assets' / 'display'
                           / 'doom-faces.png')
-        self.assertEqual(len(sheet.frames), 42)
+        self.assertEqual(len([k for k in sheet.frames
+                              if isinstance(k, str) or k[1] in face.COLUMNS]), 42)
         self.assertEqual(sheet.size, (120, 124))
+        for name in face.DERIVED:                          # made from the sheet itself
+            self.assertNotEqual(sheet.frame((0, name)), sheet.frame((0, 'look')), name)
         for key in ('god', 'dead', (0, 'look'), (4, 'teeth')):
             self.assertIn(key, sheet.frames)
 
@@ -69,9 +73,20 @@ class ChooseTests(unittest.TestCase):
 
     def test_speaking_follows_loudness(self):
         battery = dict(percent=90)
-        self.assertEqual(face.choose('SPRECHEN', 0, 0.1, battery), (0, 'look'))
-        self.assertEqual(face.choose('SPRECHEN', 0, 0.4, battery), (0, 'teeth'))
-        self.assertEqual(face.choose('AUSGABE', 0, 0.9, battery), (0, 'ouch'))
+        now = 2.0                                          # not blinking
+        self.assertFalse(face.blinking(now, every=5.0))
+        self.assertEqual(face.choose('SPRECHEN', now, 0.1, battery), (0, 'look'))
+        self.assertEqual(face.choose('SPRECHEN', now, 0.4, battery), (0, 'talk_half'))
+        self.assertEqual(face.choose('AUSGABE', now, 0.9, battery), (0, 'talk_open'))
+        angry = ('gereizt', 0.8)
+        self.assertEqual(face.choose('AUSGABE', now, 0.9, battery, mood=angry), (0, 'ouch'))
+        self.assertEqual(face.choose('AUSGABE', now, 0.1, battery, mood=angry), (0, 'teeth'))
+
+    def test_blinks_now_and_then(self):
+        blinks = [face.blinking(t / 20) for t in range(20 * 60)]       # one minute
+        self.assertTrue(12 <= blinks.count(True) / 3 <= 20)           # ~15 blinks of 3 ticks
+        self.assertEqual(face.choose('BEREIT', 0.05), (0, 'blink'))
+        self.assertEqual(face.resting(dict(percent=50)), (2, 'blink'))
 
     def test_thinking_turns_the_head_and_idle_glances(self):
         turns = {face.choose('DENKEN', t / 10)[1] for t in range(30)}

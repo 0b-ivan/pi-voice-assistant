@@ -439,13 +439,18 @@ def speech_envelope(path, step=ENVELOPE_STEP):
     return [round(100 * (level / peak) ** 0.7) if peak else 0 for level in levels]
 
 
-def publish_envelope(path, started):
-    """For the display's eye; computed after playback started, never blocking it."""
+def publish_envelope(path, started, text=None):
+    """For the display's eye and Billy's mouth; computed after playback
+    started, never blocking it. ``text`` (the reply) only becomes mouth codes."""
     target = envelope_path()
     try:
         levels = speech_envelope(path)
+        envelope = dict(start=started, step=ENVELOPE_STEP, levels=levels)
+        if text:
+            from visemes import track
+            envelope['mouth'] = track(levels, text)
         temporary = target.with_name(f'.{target.name}.tmp')
-        temporary.write_text(json.dumps(dict(start=started, step=ENVELOPE_STEP, levels=levels)))
+        temporary.write_text(json.dumps(envelope))
         os.replace(temporary, target)
     except (OSError, EOFError, wave.Error, ValueError):
         pass
@@ -488,13 +493,13 @@ class RemoteCapableSpeech:
         self._stop_player()
         self.speech.start(text)
 
-    def play(self, path):
+    def play(self, path, text=None):
         self.stop()
         self.player = self.popen(
             ['/usr/bin/aplay', '-q', '-D', audio_output.current(self.device), str(path)],
             stdin=subprocess.DEVNULL, start_new_session=True)
         started = time.time()
-        threading.Thread(target=publish_envelope, args=(path, started),
+        threading.Thread(target=publish_envelope, args=(path, started, text),
                          name='speech-envelope', daemon=True).start()
 
     def poll(self):

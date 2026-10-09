@@ -1705,7 +1705,7 @@ class VoiceController:
                 event('speech_started', source='remote')
                 display_progress('tts', 'playback')
                 self._settle_cue()
-                self.speech.play(job.result['audio'])
+                self.speech.play(job.result['audio'], text=job.reply)
                 self.speech_started_at = time.monotonic()
                 self._turn_spoken()
             except (OSError, RuntimeError, ValueError) as exc:
