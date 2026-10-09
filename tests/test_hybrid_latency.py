@@ -117,11 +117,13 @@ class HybridControllerTests(unittest.TestCase):
     def controller(self, synthesizing=False):
         from types import SimpleNamespace
         from ptt import VoiceController
+        from ptt_config import PttConfig
         recorder = SimpleNamespace(process=None, start=Mock(), finish=Mock(), close=Mock())
         recorder.start.side_effect = lambda: setattr(recorder, 'process', Mock(poll=lambda: None))
         speech = SimpleNamespace(active=False, synthesizing=synthesizing,
                                  start=Mock(), stop=Mock(), poll=lambda: None)
-        return VoiceController(recorder, speech, 0.04, 30), recorder
+        config = PttConfig(memory_mode='hybrid')
+        return VoiceController(recorder, speech, 0.04, 30, config=config), recorder
 
     def test_capture_does_not_spawn_a_second_prepared_model(self):
         controller, recorder = self.controller()

@@ -106,12 +106,13 @@ class BuildTests(unittest.TestCase):
 class ControllerAlarmTests(unittest.TestCase):
     def test_alarm_uses_clips_when_complete_else_synthesis(self):
         import ptt
+        from ptt_config import PttConfig
         speech = Mock()
         controller = Mock(speech=speech)
         with tempfile.TemporaryDirectory() as tmp, \
-                unittest.mock.patch.dict(os.environ, {"PTT_RUNTIME_DIR": tmp}), \
                 unittest.mock.patch.object(ptt, "event"), \
                 unittest.mock.patch.object(ptt.alarm_audio, "assemble", return_value=True):
+            controller.config = PttConfig(runtime_dir=Path(tmp))
             ptt.VoiceController._say_alarm(controller, ["Netzbetrieb."])
             speech.play.assert_called_once_with(Path(tmp) / "alarm.wav")
             speech.start.assert_not_called()
