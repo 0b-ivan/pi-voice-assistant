@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import shutil
 
+from mood import EMOTIONS
+
 
 THERMAL_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
 MEMINFO_PATH = Path("/proc/meminfo")
@@ -156,11 +158,13 @@ SNAPSHOT_FIELDS = {
     'server_updates': (int, 0, 9999),
     'server_updates_security': (int, 0, 9999),
     'apt_age_days': (int, 0, 3650),
+    'mood_level': (int, 0, 100),
 }
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
 SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
                    'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off'),
                    'persona': ('servitor', 'mensch'), 'voice': ('servitor', 'natural'),
+                   'mood': EMOTIONS, 'mood_refuse': ('on', 'off'),
                    'llm_mode': ('auto', 'free', 'local'), 'memory': ('on', 'off'),
                    'dns': ('ok', 'fail'), 'maintenance': ('on', 'off')}
 

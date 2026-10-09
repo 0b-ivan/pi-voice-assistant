@@ -43,6 +43,7 @@ from transcribe import (
     LiveVoskRecognizer, RemoteLiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider, prepare_vosk_worker, stop_prepared_vosk
 )
 from runtime_metrics import display_progress, phase
+from mood import EMOTIONS, Mood, split_tag
 from settings import Settings
 from voice_effects import VOICE_EFFECTS, voice_effect
 from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
@@ -141,6 +142,8 @@ DISPLAY_STATUS_VALUES = {
     'opt_lore': set(LORE_LEVELS),
     'opt_persona': set(PERSONAS),
     'opt_voice': set(VOICE_EFFECTS),
+    'opt_emotions': {'on', 'off'},
+    'mood': set(EMOTIONS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
     'opt_llm': set(LLM_MODES),
@@ -285,6 +288,9 @@ def publish_display_status(**fields):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 continue
         elif key == 'volume':
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                continue
+        elif key == 'mood_level':
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
                 continue
         elif key == 'menu_index':
@@ -637,6 +643,9 @@ class VoiceController:
         self.lore = lore_level(saved.get('lore') or os.environ.get('PTT_LORE_LEVEL'))
         self.persona = persona_name(saved.get('persona') or os.environ.get('PTT_PERSONA'))
         self.voice = voice_effect(saved.get('voice') or os.environ.get('PTT_VOICE_EFFECT'))
+        emotions = saved.get('emotions') or os.environ.get('PTT_EMOTIONS', 'on')
+        self.mood = Mood(enabled=emotions.strip().lower() != 'off')
+        self.mood_shown = None
         self._apply_voice_effect()
         self.battery = None      # power.Battery reading, refreshed by main()
         self.throttled = None
@@ -658,6 +667,11 @@ class VoiceController:
         self.agenda = agenda_feed.Agenda()  # CALDAV_*; refreshed by a thread (main)
         self.memory = memory_core.MemoryCore()
         self.memory_present = self.memory.present()
+        try:  # restart: neutral, with a faint echo of the newest remembered turns
+            data = self.memory.load() if self.memory_present else None
+            self.mood.baseline((data or {}).get('history'), time.time())
+        except (OSError, ValueError, AttributeError):
+            pass
         self.turn_transcript = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.maint = maintenance.Mode()
@@ -693,13 +707,49 @@ class VoiceController:
         if isinstance(getattr(self.speech, 'effect', None), str):
             self.speech.effect = self.voice
 
-    def _set_personality(self, persona=None, voice=None, lore=None):
+    def _set_personality(self, persona=None, voice=None, lore=None, emotions=None):
         """Change and remember the personality switches of the menu."""
         self.persona = persona or self.persona
         self.voice = voice or self.voice
         self.lore = lore or self.lore
+        if emotions is not None:
+            self.mood.enabled = emotions
+            if not emotions:
+                self.mood.reset()
         self._apply_voice_effect()
-        self.settings.save(persona=self.persona, voice=self.voice, lore=self.lore)
+        self.settings.save(persona=self.persona, voice=self.voice, lore=self.lore,
+                           emotions='on' if self.mood.enabled else 'off')
+        self._publish_mood()
+
+    def _publish_mood(self):
+        """Current emotion for the display (Billy's face, the Servitor's glitches)."""
+        emotion, level = self.mood.current(time.time())
+        shown = (emotion, round(level * 10))
+        if shown != self.mood_shown:
+            self.mood_shown = shown
+            publish_display_status(mood=emotion, mood_level=round(level * 100))
+
+    def _mood_fields(self):
+        if not self.mood.enabled:
+            return {}
+        emotion, level = self.mood.current(time.time())
+        return dict(mood=emotion, mood_level=round(level * 100))
+
+    def turn_snapshot(self, text=None):
+        """Status for one LLM turn: the snapshot plus whether Proximus may refuse."""
+        snapshot = self.status_snapshot()
+        if self.mood.enabled:
+            turn = self.mood.turn(text, time.time())
+            snapshot.update(mood=turn['emotion'], mood_level=turn['level'],
+                            mood_refuse='on' if turn['refuse'] else 'off')
+        return snapshot
+
+    def _mood_state(self, text):
+        """Mood argument for the Pi's own LLM call (None: feelings off)."""
+        if not self.mood.enabled:
+            return None
+        turn = self.mood.turn(text, time.time())
+        return dict(emotion=turn['emotion'], level=turn['level'], refuse=turn['refuse'])
 
     @staticmethod
     def _scale(color, factor):
@@ -833,6 +883,7 @@ class VoiceController:
                                opt_server=server, opt_wake=wake, wake_word=self.wake_word,
                                opt_lore=self.lore, opt_persona=self.persona,
                                opt_voice=self.voice,
+                               opt_emotions='on' if self.mood.enabled else 'off',
                                opt_wlan='on' if self.wlan_on else 'off',
                                opt_alarms='on' if self.alarms_enabled else 'off',
                                opt_llm=self.llm_mode,
@@ -879,6 +930,9 @@ class VoiceController:
         elif item == 'voice_fx':
             self._set_personality(voice='natural' if self.voice == 'servitor' else 'servitor')
             event('menu', item='voice_fx', value=self.voice)
+        elif item == 'emotions':
+            self._set_personality(emotions=not self.mood.enabled)
+            event('menu', item='emotions', value='on' if self.mood.enabled else 'off')
         elif item == 'human':
             # Shortcut: Billy with his own voice, or back to the machine. Lore stays.
             human = self.persona == 'mensch' and self.voice == 'natural'
@@ -930,7 +984,8 @@ class VoiceController:
                                     if self.wlan_on else None,
                                     getattr(self.update_watch, 'result', None)),
                                     memory='on' if self.memory_present else 'off',
-                                    maintenance='on' if self.maint.active else 'off'))
+                                    maintenance='on' if self.maint.active else 'off',
+                                    **self._mood_fields()))
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
@@ -939,7 +994,10 @@ class VoiceController:
         if network is None and links:
             network = network_up()
         internet = getattr(self.internet_probe, 'state', None) if links else None
-        texts = self.alarms.update(self.status_snapshot(), now,
+        snapshot = self.status_snapshot()
+        self.mood.sense(snapshot, time.time())
+        self._publish_mood()
+        texts = self.alarms.update(snapshot, now,
                                    network=network if links else None,
                                    server=self.server_state() if links else 'off',
                                    lore=self.style, internet=internet)
@@ -1513,6 +1571,7 @@ class VoiceController:
 
     def _start_llm(self, text):
         self.turn_transcript = text
+        self.mood.hear(text, time.time())
         if intents.is_stop(text):
             self.stop_by_voice()
             return
@@ -1559,7 +1618,8 @@ class VoiceController:
         model = free_model() if self.llm_mode == 'free' else None
         self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore,
                                                       memory=context, model=model,
-                                                      persona=self.persona), text)
+                                                      persona=self.persona,
+                                                      mood=self._mood_state(text)), text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
@@ -1595,6 +1655,7 @@ class VoiceController:
         elif kind == 'transcript':
             text = str(item.get('text', ''))
             self.turn_transcript = text
+            self.mood.hear(text, time.time())
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
         elif kind == 'enroll':
@@ -1603,13 +1664,17 @@ class VoiceController:
         elif kind == 'maintenance':
             if item.get('op') in maintenance.ITEMS + ('enter',):
                 self._maintenance_op(item['op'], speak=False)  # the server's reply speaks
+        elif kind == 'mood':
+            self.mood.react(item.get('emotion'), time.time())
+            self._publish_mood()
         elif kind == 'memory':
             if self.memory.apply(item):
                 event('memory', op=item.get('op'), learned=bool(item.get('learned')))
         elif kind == 'reply':
             text = str(item.get('text', ''))
             if self.turn_transcript and not intents.is_stop(self.turn_transcript):
-                self.memory.remember_turn(self.turn_transcript, text)
+                self.memory.remember_turn(self.turn_transcript, text,
+                                          mood=self.mood.label(time.time()))
             self.turn_llm = llm_kind(item.get('model'))
             event('llm_response', text=text, model=item.get('model'))
             print(f'SERVITOR: {text}', flush=True)
@@ -1779,8 +1844,12 @@ class VoiceController:
                 self._start_llm(text)
             elif stage == 'llm':
                 reply, model = job.result
+                reply, feeling = split_tag(reply)
+                self.mood.react(feeling, time.time())
+                self._publish_mood()
                 reply = self._learn(reply)
-                self.memory.remember_turn(self.turn_transcript or '', reply)
+                self.memory.remember_turn(self.turn_transcript or '', reply,
+                                          mood=self.mood.label(time.time()))
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
@@ -1842,6 +1911,7 @@ class VoiceController:
 
     def _update_power(self, now, pressed=False):
         """awake -> rest -> sleep while nothing happens; any activity wakes."""
+        quiet = now - self.last_activity
         if pressed or self._busy():
             self.last_activity = now
         idle = now - self.last_activity
@@ -1859,6 +1929,7 @@ class VoiceController:
                 event('board_led_error', message=error)
         elif previous == 'sleep':
             self.board_leds.restore()
+            self.mood.woke_up(quiet, time.time())
         if power == 'sleep' and self.sleep_wlan_off and self.wlan_on:
             self.wlan_slept = self.set_wlan(False)
         elif previous == 'sleep' and self.wlan_slept:
@@ -1939,7 +2010,7 @@ def main():
         if remote_config is not None:
             def uplink_factory():
                 controller = controller_ref[0] if controller_ref else None
-                status = controller.status_snapshot() if controller else None
+                status = controller.turn_snapshot() if controller else None
                 memory_copy = (memory_core.encode_header(controller.memory.context())
                                if controller else None)
                 appointments = (agenda_feed.encode_header(controller.agenda.today())

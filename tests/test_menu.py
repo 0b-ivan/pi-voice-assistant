@@ -186,7 +186,8 @@ class ControllerMenuTests(unittest.TestCase):
         self.c.menu.select('lore')
         self.press(down='E')
         self.assertEqual(json.loads(self.settings_path.read_text()),
-                         {'lore': 'full', 'persona': 'mensch', 'voice': 'servitor'})
+                         {'emotions': 'on', 'lore': 'full', 'persona': 'mensch',
+                          'voice': 'servitor'})
         with patch.dict(os.environ, {'PTT_LORE_LEVEL': 'off', 'PTT_PERSONA': 'servitor'}):
             restarted = VoiceController(Mock(), Mock(), .04, 30)
         self.assertEqual((restarted.persona, restarted.lore, restarted.voice),
@@ -206,8 +207,9 @@ class ControllerMenuTests(unittest.TestCase):
         with patch('ptt.TranscriptionJob') as job:
             self.c._start_llm('wie hoch ist der eiffelturm')
         function = job.call_args.args[0]
-        self.assertEqual(function.keywords, {'lore': 'light', 'memory': None, 'model': None,
-                                             'persona': 'servitor'})
+        self.assertEqual(function.keywords, {
+            'lore': 'light', 'memory': None, 'model': None, 'persona': 'servitor',
+            'mood': {'emotion': 'neutral', 'level': 0, 'refuse': False}})
 
     def test_local_fallback_uses_the_pis_own_calendar(self):
         import datetime
