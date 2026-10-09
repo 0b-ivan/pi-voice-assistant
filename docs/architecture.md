@@ -160,6 +160,21 @@ alle Bausteine und die Zahlen 0–100 über `/v1/speak` in der Servitor-Stimme (
 
 Im Ruhezustand und beim Sprechen zeigt das PiTFT einen Servo-Skull ([`src/skull.py`](../src/skull.py)) mit rot pulsierendem Auge: ruhig atmend im Leerlauf (4 Bilder/s), beim Sprechen im Takt der Lautstärke der Antwort (Hüllkurve der WAV, 50-ms-Schritte, `/run/pi-ptt/speech-envelope.json`). Das Auge wird automatisch gefunden und in 12 Stufen vorberechnet. Das verwendete Pixel-Art-Bild (r/PixelArt, „16-color Warhammer servo skull wallpaper“) liegt **nur auf dem Pi** (`PI_DISPLAY_SKULL`, Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`), nicht in diesem öffentlichen Repository; ohne Datei zeichnet der Code einen eigenen schlichten Schädel. Display-CPU im Leerlauf ~10 % eines Kerns.
 
+**Billy (Sprechstil `mensch`)** zeigt statt des Schädels das Gesicht aus der Doom-Statusleiste ([`src/face.py`](../src/face.py)) in einem grauen, abgeschrägten Rahmen. Die Zeile richtet sich nach dem **Akku** wie die Gesundheit im Spiel (100–80 % sauber … unter 20 % blutig, ab 3 % ohne Netzteil tot), die Spalte nach dem, was er tut:
+
+| Zustand | Gesicht |
+|---|---|
+| Bereit | geradeaus, alle paar Sekunden ein kurzer Blick zur Seite |
+| Zuhören | geradeaus |
+| Verstehen/Denken/Synthese | Kopf dreht sich langsam links und rechts |
+| Sprechen | nach der Lautstärke der Antwort: leise geradeaus, mittel Zähne, laut offener Mund |
+| Abbruch (B, „Stop“, „Klappe halten“) | kurz zusammenzucken, dann den Kopf wegdrehen (2,5 s) |
+| Alarm | abwechselnd zusammenzucken und geradeaus |
+| Laden | ab und zu ein Blitz „Gottmodus“ (gelbe Augen) |
+| Ruhe | gedimmt, geradeaus |
+
+Neu gezeichnet wird nur, wenn sich das Gesicht ändert. Beim Umschalten zwischen Servitor und Billy flackert nach dem Schließen des Menüs knapp eine Sekunde lang eine Bildstörung aus Schädel und Gesicht. Die Sprites (id Software) liegen **nur auf dem Pi** (`PI_DISPLAY_FACE`, Standard `/opt/pi-voice-assistant/models/display/doom-faces.png`): das übliche Sheet mit fünf Zeilen à acht Gesichtern auf transparentem Grund, „Gottmodus“ hinter der ersten und „tot“ hinter der letzten Zeile. `face.py` findet die Sprites an den transparenten Lücken und skaliert nur ganzzahlig. Ohne Datei behält Billy den Schädel.
+
 ## Sprachausgabe
 
 Im Normalbetrieb erzeugt CT 107 die Stimme (Piper Thorsten Emotional, Speaker 4, Referenz-DSP aus PR #26) und der Pi spielt die fertige WAV nur ab. Lokal auf dem Pi (Statusansage mit E, Fallback) bleibt Piper 1.8.0 resident: `servitor` nutzt dasselbe Modell mit einer Sprechkonfiguration, bei der Wörter nur leicht langsamer sind und zusätzliche Satzpausen den schweren Befehlston erzeugen; `normal` nutzt Thorsten Low.
