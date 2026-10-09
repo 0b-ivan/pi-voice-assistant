@@ -1434,8 +1434,12 @@ class VoiceController:
             self.wake.stop()
 
     def _idle(self):
+        # A running enrollment/authentication owns the microphone: the wake
+        # listener must not grab it back in the same tick.
+        session = getattr(self, 'enroll', None)
         return (self.recorder.process is None and self.job is None
-                and not self.speech.active and not getattr(self.speech, 'synthesizing', False))
+                and not self.speech.active and not getattr(self.speech, 'synthesizing', False)
+                and (session is None or not session.running))
 
     def _wake_tick(self, now):
         if self.wake.error:
