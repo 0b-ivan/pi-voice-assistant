@@ -12,6 +12,7 @@ fragment is missing, pi-ptt falls back to live synthesis.
 """
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -206,8 +207,8 @@ def build(directory=None, force=False, prune=False, out=None, pace=PACE):
                 if exc.code not in (429, 503):  # rate limit, server still loading
                     raise
                 time.sleep(float(exc.headers.get('Retry-After') or 30))
-            except (OSError, RuntimeError):
-                time.sleep(2)
+            except (OSError, RuntimeError, http.client.HTTPException):
+                time.sleep(2)  # also a reply cut short (IncompleteRead) is retried
         else:
             raise SystemExit(f'could not render fragment {done}')
         _store(audio, clip_path(piece, directory, voice))

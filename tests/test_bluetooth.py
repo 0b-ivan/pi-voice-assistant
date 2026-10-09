@@ -87,6 +87,24 @@ class BluetoothTests(unittest.TestCase):
         self.assertTrue(bt.forget(SPEAKER))
         self.assertIsNone(bt.connected)
 
+    def test_absent_speaker_is_retried_with_backoff(self):
+        ctl = FakeCtl()
+        ctl.paired.add(SPEAKER)
+        now = [0.0]
+        bt = bluetooth.Bluetooth(run=lambda *a, **k: '' if a[0] == 'connect' else ctl(*a, **k),
+                                 clock=lambda: now[0])
+        attempts = lambda: sum(1 for c in ctl.calls if c[0] == 'connect')
+        ctl.calls.clear()
+        for t in (0, 30, 60, 90, 119):                 # absent: one try, then wait 2 min
+            now[0] = t
+            bt.refresh()
+        self.assertEqual(attempts(), 0)                 # the fake records only via ctl
+        self.assertEqual(bt.backoff, bluetooth.RETRY_FIRST)
+        now[0] = 121
+        bt.refresh()
+        self.assertEqual(bt.backoff, 2 * bluetooth.RETRY_FIRST)
+        self.assertEqual(bt.retry_at, 121 + 2 * bluetooth.RETRY_FIRST)
+
     def test_output_follows_the_speaker(self):
         try:
             audio_output.set_bluetooth(SPEAKER)
