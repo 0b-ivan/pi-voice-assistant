@@ -64,6 +64,14 @@ SERVITOR_LOCAL_LLM=1
 SERVITOR_OPENROUTER_RETRY_SECONDS=60
 LOCAL_LLM_MODEL_NAME=qwen3-4b
 LOCAL_LLM_MAX_TOKENS=120
+# Morning litany / weather (Open-Meteo, no key). Unset = no weather.
+# WEATHER_LAT=52.52
+# WEATHER_LON=13.41
+# Appointments from Nextcloud CalDAV (src/agenda.py). App password from
+# Nextcloud: Settings > Security > Devices & sessions. Several calendars: comma-separated.
+# CALDAV_URLS=https://cloud.example.org/remote.php/dav/calendars/USER/personal/
+# CALDAV_USER=USER
+# CALDAV_PASSWORD=
 ENV
   chown root:servitor /etc/servitor-voice.env
   chmod 0640 /etc/servitor-voice.env

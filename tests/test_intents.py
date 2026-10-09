@@ -33,6 +33,9 @@ class MatchTests(unittest.TestCase):
             "wie ist das wetter": "weather",
             "regnet es heute": "weather",
             "brauche ich einen regenschirm": "weather",
+            "welche termine habe ich heute": "calendar",
+            "was steht heute an": "calendar",
+            "habe ich heute was vor": "calendar",
         }
         for text, intent in cases.items():
             with self.subTest(text=text):
@@ -104,6 +107,21 @@ class AnswerTests(unittest.TestCase):
                                 "Zeitindex: 14 Uhr 32. Bericht Ende.")
         self.assertIn("Server nicht erreichbar",
                       intents.answer("briefing", self.NOW, {"server": "down"}))
+
+    def test_calendar_and_briefing(self):
+        dentist = dict(summary="Zahnarzt", start=self.NOW.replace(hour=15, minute=30),
+                       end=None, all_day=False)
+        self.assertEqual(intents.answer("calendar", self.NOW, {}), "Kalenderdaten nicht verfügbar.")
+        self.assertEqual(intents.answer("calendar", self.NOW, {"agenda": [dentist]}),
+                         "Termine heute. 15 Uhr 30: Zahnarzt.")
+        self.assertIn("Termine heute. 15 Uhr 30: Zahnarzt. Bericht Ende.",
+                      intents.answer("briefing", self.NOW, {"agenda": [dentist]}))
+        self.assertIn("Keine weiteren Termine heute.",
+                      intents.answer("briefing", self.NOW, {"agenda": []}))
+        # Unrecognized voice: refused on request, silently left out of the briefing.
+        self.assertIn("nicht als Bediener erkannt",
+                      intents.answer("calendar", self.NOW, {"agenda": "denied"}))
+        self.assertNotIn("Bediener", intents.answer("briefing", self.NOW, {"agenda": "denied"}))
 
     def test_briefing_lore(self):
         text = intents.answer("briefing", datetime.datetime(2026, 10, 9, 21, 0),

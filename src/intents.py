@@ -1,5 +1,5 @@
 """Questions answered without the LLM: time, date, status, battery, identity,
-weather and the morning litany (a short briefing of all of these).
+weather, today's appointments and the morning litany (a short briefing).
 
 Runs on the server (normal path, before OpenRouter) and on the Pi (local
 fallback), so these answers also work offline. Input is the recognized text
@@ -10,6 +10,7 @@ import re
 
 from system_status import (battery_sentence, network_text, status_text, updates_sentence,
                            updates_text)
+import agenda
 import weather
 
 WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
@@ -37,6 +38,8 @@ _PATTERNS = (
                         r'den wievielten|was für ein tag|datum)\b')),
     ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es regnen|regenschirm|'
                            r'außentemperatur|wie warm ist es|wie kalt ist es)\b')),
+    ('calendar', re.compile(r'\b(termine?|kalender|was steht heute an|was steht an|'
+                            r'habe ich heute (?:was|etwas) vor)\b')),
     ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
@@ -96,6 +99,10 @@ def weather_text(snapshot, lore='off'):
     return f"Auspex meldet: {text}" if lore == 'full' else text
 
 
+def calendar_text(snapshot, lore='off'):
+    return agenda.sentence(snapshot.get('agenda'), lore) or "Kalenderdaten nicht verfügbar."
+
+
 def _opening(now, lore, name=None):
     """No human greeting: a servitor identifies the operator and starts the report."""
     part = 'Morgen' if now.hour < 11 else 'Tages' if now.hour < 18 else 'Abend'
@@ -122,6 +129,9 @@ def briefing_text(now, snapshot, lore='off'):
     sky = weather.sentence(snapshot.get('weather'), lore)
     if sky:
         parts.append(sky)
+    appointments = snapshot.get('agenda')
+    if appointments is not None and appointments != agenda.DENIED:  # guests: just left out
+        parts.append(agenda.sentence(appointments, lore))
     battery = snapshot.get('battery_pct')
     if battery is not None and not snapshot.get('battery_plugged'):
         parts.append(battery_sentence(snapshot))
@@ -156,6 +166,8 @@ def answer(intent, now, snapshot=None, lore=None):
         return weather_text(snapshot, lore)
     if intent == 'briefing':
         return briefing_text(now, snapshot, lore)
+    if intent == 'calendar':
+        return calendar_text(snapshot, lore)
     if intent == 'identity':
         return IDENTITY.get(lore, IDENTITY['off'])
     raise ValueError(f'unknown intent {intent!r}')

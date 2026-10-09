@@ -467,6 +467,23 @@ class IntentServerTest(ServerTest):
         self.request('/v1/turn', b'\1' * 16000)
         self.service.weather.get.assert_called_once()   # only weather questions ask
 
+    def test_calendar_only_for_a_recognized_voice(self):
+        self.pipeline.transcript = 'was steht heute an'
+        self.pipeline.fail_llm = True
+        self.service.agenda = unittest.mock.Mock()
+        self.service.agenda.get.return_value = []
+        _, data = self.request('/v1/turn', b'\1' * 16000)
+        reply = next(e for e in self.events(data) if e['event'] == 'reply')
+        self.assertEqual(reply['text'], 'Keine weiteren Termine heute.')
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, copy, emit:
+                                        dict(copy, speaker='unknown')):
+            events = self.turn_with_memory('on', dict(facts=[], directives=[], history=[],
+                                                      voiceprints=[dict(name='Ivan', print='AAAA')]))
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertIn('nicht als Bediener erkannt', reply['text'])
+        self.service.agenda.get.assert_called_once()   # the guest turn never asked
+
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')
 

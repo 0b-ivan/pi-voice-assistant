@@ -39,6 +39,7 @@ if str(SRC) not in sys.path:
 
 import intents  # noqa: E402
 import weather  # noqa: E402
+import agenda  # noqa: E402
 import enroll  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
@@ -229,6 +230,7 @@ class Service:
         self.maintenance_dir = maintenance.DIR
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.weather = weather.Forecast()  # WEATHER_LAT/WEATHER_LON, else no weather
+        self.agenda = agenda.Agenda()      # CALDAV_*, else no appointments
         self.ready = False
 
     def authorized(self, header):
@@ -368,6 +370,11 @@ class Service:
                         snapshot['llm'] = state()
                     if intent in ('weather', 'briefing'):
                         snapshot['weather'] = timed('weather', self.weather.get)
+                    if intent in ('calendar', 'briefing'):
+                        if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
+                            snapshot['agenda'] = agenda.DENIED
+                        else:
+                            snapshot['agenda'] = timed('agenda', self.agenda.get, self.now())
                     if (isinstance(memory_copy, dict) and memory_copy.get('speaker')
                             and not memory.unknown_speaker(memory_copy)):
                         snapshot['operator'] = memory_copy['speaker']  # recognized voice
