@@ -225,8 +225,7 @@ def _lipline(look):
     pixels = look.load()
     best = None
     for y in range(int(look.height * 0.7), int(look.height * 0.9)):
-        xs = [x for x in range(look.width) if pixels[x, y][3]
-              and pixels[x, y][0] > 130 and 70 <= pixels[x, y][1] <= 110 and pixels[x, y][2] < 40]
+        xs = [x for x in range(look.width) if _orange(pixels[x, y])]
         if xs and (best is None or len(xs) > len(best[1])):
             best = (y, xs)
     if best is None or len(best[1]) < 3:
@@ -234,51 +233,60 @@ def _lipline(look):
     return best[0], min(best[1]), max(best[1])
 
 
-LIP = (155, 91, 19, 255)          # the closed mouth's own orange: lower lip
-UPPER = (107, 71, 39, 255)        # upper lip in shadow, like the sheet's mouth corners
-CAVITY = (47, 0, 0, 255)
-TEETH = (207, 207, 207, 255)
-TONGUE = (143, 43, 43, 255)
+JAW = 1                         # Doom pixels the jaw drops (room below every face)
+TALK = ('talk_e', 'talk_half', 'talk_open', 'talk_round')
+
+
+def _orange(pixel):
+    r, g, b, a = pixel
+    return a and r > 130 and 70 <= g <= 110 and b < 40
 
 
 def _mouths(look, lips):
-    """Talking mouths drawn at the calm face's own lips (the sheet's open
-    mouths sit lower, on a dropped jaw, and read as screaming):
-    talk_e teeth, talk_half a slit, talk_open open with tongue, talk_round an "o"."""
-    row, left, right = lips
-    shapes = {}
+    """Talking mouths from the face's own pixels, as a speaking face moves: the
+    upper lip and everything above stay, the jaw drops one pixel, the closed
+    lip line goes down with it as the lower lip and the gap between shows the
+    inside of the mouth. Colours come from the face itself, nothing pasted on.
 
-    def draw(cells):
-        out = look.copy()
+    talk_half   a (quiet), and any vowel when unsure: a slit
+    talk_open   a (loud): the full width of the lips open
+    talk_round  o/u: only the middle open, corners drawn in
+    talk_e      e/i: lips spread, a muted row of teeth
+
+    Frames are JAW pixels taller than the calm face, with the head in the same
+    place (the room below is transparent while the jaw is up)."""
+    from collections import Counter
+    from PIL import Image
+    row, left, right = lips
+    width, height = look.size
+    src = look.load()
+    # Inside of the mouth: the darkest warm tone of this face's lower half.
+    darks = Counter(src[x, y] for y in range(height // 2, height) for x in range(width)
+                    if src[x, y][3] and 0 < sum(src[x, y][:3]) < 200)
+    cavity = min(darks, key=lambda c: sum(c[:3])) if darks else (43, 35, 15, 255)
+    whites = Counter(src[x, y] for y in range(height) for x in range(width)
+                     if src[x, y][3] and abs(src[x, y][0] - src[x, y][2]) < 16
+                     and 120 <= src[x, y][0] <= 180)
+    teeth = whites.most_common(1)[0][0] if whites else (159, 159, 159, 255)
+
+    def opened(columns, fill=None):
+        out = Image.new('RGBA', (width, height + JAW), (0, 0, 0, 0))
+        out.paste(look.crop((0, 0, width, row)), (0, 0))
+        out.paste(look.crop((0, row, width, height)), (0, row + JAW))
         pixels = out.load()
-        for (x, y), colour in cells.items():
-            if 0 <= x < out.width and 0 <= y < out.height and pixels[x, y][3]:
-                pixels[x, y] = colour
+        for x in range(width):                   # the cheeks stretch over the gap
+            pixels[x, row] = src[x, row - 1] if left <= x <= right else src[x, row]
+        for x in columns:
+            pixels[x, row] = (fill or {}).get(x, cavity)
         return out
 
-    span = range(left, right + 1)
-    inner = range(left + 1, right)
-    skin = look.load()[max(0, left - 1), row]
-    shapes['talk_e'] = draw({**{(x, row - 1): UPPER for x in span},
-                             **{(x, row): TEETH for x in inner},
-                             **{(x, row + 1): LIP for x in inner}})
-    shapes['talk_half'] = draw({**{(x, row - 1): UPPER for x in span},
-                                **{(x, row): CAVITY for x in inner},
-                                **{(x, row + 1): LIP for x in inner}})
-    shapes['talk_open'] = draw({**{(x, row - 1): UPPER for x in span},
-                                **{(x, row): TEETH for x in inner},
-                                **{(x, row + 1): CAVITY for x in inner},
-                                **{(x, row + 1): TONGUE for x in range(left + 2, right - 1)},
-                                **{(x, row + 2): LIP for x in inner}})
     middle = range(left + 2, right - 1)
-    shapes['talk_round'] = draw({(left, row): skin, (right, row): skin,
-                                 **{(x, row - 1): UPPER for x in inner},
-                                 (left + 1, row): UPPER, (right - 1, row): UPPER,
-                                 (left + 1, row + 1): LIP, (right - 1, row + 1): LIP,
-                                 **{(x, row): CAVITY for x in middle},
-                                 **{(x, row + 1): CAVITY for x in middle},
-                                 **{(x, row + 2): LIP for x in middle}})
-    return shapes
+    return {
+        'talk_half': opened(range(left + 1, right)),
+        'talk_open': opened(range(left, right + 1)),
+        'talk_round': opened(middle),
+        'talk_e': opened(range(left + 1, right), {x: teeth for x in middle}),
+    }
 
 
 def derive(sprites, scale):
@@ -299,6 +307,9 @@ def derive(sprites, scale):
             continue
         look = _shrink(sprites[(row, 'look')], scale)
         made = {}
+        if lips:
+            dx, dy = _offset(look, clean) if row else (0, 0)
+            where = (lips[0] + dy, lips[1] + dx, lips[2] + dx)
         own = sprites.get((row, 'look_b')) or sprites.get((row, 'look_a'))
         mask = eye_mask(look, _shrink(own, scale)) if own is not None and row else eyes
         if not (mask[0] and len(mask[0]) >= len(eyes[0]) * 0.6
@@ -319,8 +330,7 @@ def derive(sprites, scale):
                 if region:
                     made[name] = _patch(look, other, region)
         if lips:
-            dx, dy = _offset(look, clean) if row else (0, 0)
-            made.update(_mouths(look, (lips[0] + dy, lips[1] + dx, lips[2] + dx)))
+            made.update(_mouths(look, where))
         for name, image in made.items():
             out[(row, name)] = image.resize((image.width * scale, image.height * scale),
                                             Image.NEAREST)
@@ -340,8 +350,15 @@ class Face:
         sprites = slice_sheet(Image.open(path))
         scale = max(1, round(sprites[(0, 'look')].width / 24))   # sheet pixels per Doom pixel
         sprites.update(derive(sprites, scale))
+        # Talking frames carry JAW extra rows for the dropped chin; every other
+        # face sits that much higher, so the head does not jump while speaking.
+        room = JAW * scale
+
+        def extra(key):
+            return 0 if isinstance(key, tuple) and key[1] in TALK else room
+
         width = max(sprite.width for sprite in sprites.values())
-        height = max(sprite.height for sprite in sprites.values())
+        height = max(sprite.height + extra(key) for key, sprite in sprites.items())
         up, down = _factor(width, height)
         self.size = (width * up // down, height * up // down)
         self.frames = {}
@@ -351,7 +368,8 @@ class Face:
             canvas = Image.new('RGB', self.size, backdrop)
             # Bottom-aligned and centred: the neck stays put when the head turns.
             canvas.paste(sprite, ((self.size[0] - sprite.width) // 2,
-                                  self.size[1] - sprite.height), sprite)
+                                  self.size[1] - sprite.height - extra(key) * up // down),
+                         sprite)
             self.frames[key] = canvas
 
     def frame(self, key):

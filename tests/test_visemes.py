@@ -70,13 +70,12 @@ class FaceTests(unittest.TestCase):
         row, left, right = face._lipline(clean)
         self.assertEqual((row, left, right), (23, 9, 14))
         look = sheet.frame((0, 'look'))
-        top = (sheet.size[1] - clean.height * 4)
-        for shape in shapes:          # only the mouth changes, the eyes and the jaw stay
+        top = sheet.size[1] - (clean.height + face.JAW) * 4
+        for shape in shapes:          # eyes and upper lip stay; the jaw moves below the lips
             frame = sheet.frame((0, shape))
-            changed = {(x // 4, (y - top) // 4) for y in range(sheet.size[1])
-                       for x in range(sheet.size[0])
+            changed = {(y - top) // 4 for y in range(sheet.size[1]) for x in range(sheet.size[0])
                        if frame.getpixel((x, y)) != look.getpixel((x, y))}
-            self.assertTrue(all(row - 1 <= y <= row + 2 for _, y in changed), shape)
+            self.assertTrue(changed and min(changed) >= row, shape)
 
 
 class EnvelopeTests(unittest.TestCase):
