@@ -53,16 +53,30 @@ class FaceTests(unittest.TestCase):
         now = 2.0
         self.assertEqual(face.choose('SPRECHEN', now, 0.9, viseme='O'), (0, 'talk_round'))
         self.assertEqual(face.choose('SPRECHEN', now, 0.9, viseme='A'), (0, 'talk_open'))
-        self.assertEqual(face.choose('SPRECHEN', now, 0.9, viseme='e'), (0, 'talk_half'))
+        self.assertEqual(face.choose('SPRECHEN', now, 0.9, viseme='e'), (0, 'talk_e'))
+        self.assertEqual(face.choose('SPRECHEN', now, 0.9, viseme='a'), (0, 'talk_half'))
         self.assertEqual(face.choose('SPRECHEN', now, 0.9, viseme='.'), (0, 'look'))
         self.assertEqual(face.choose('SPRECHEN', now, 0.9, viseme=None), (0, 'talk_open'))
         angry = ('gereizt', 0.9)
         self.assertEqual(face.choose('SPRECHEN', now, 0.9, mood=angry, viseme='O'), (0, 'ouch'))
 
-    def test_round_mouth_is_its_own_shape(self):
-        sheet = face.Face(Path(__file__).resolve().parents[1] / 'assets' / 'display'
-                          / 'doom-faces.png')
-        self.assertNotEqual(sheet.frame((0, 'talk_round')), sheet.frame((0, 'talk_open')))
+    def test_mouths_are_drawn_at_the_calm_lips(self):
+        from PIL import Image
+        path = Path(__file__).resolve().parents[1] / 'assets' / 'display' / 'doom-faces.png'
+        sheet = face.Face(path)
+        shapes = ('talk_e', 'talk_half', 'talk_open', 'talk_round')
+        self.assertEqual(len({sheet.frame((0, s)).tobytes() for s in shapes}), 4)
+        clean = face._shrink(face.slice_sheet(Image.open(path))[(0, 'look')], 4)
+        row, left, right = face._lipline(clean)
+        self.assertEqual((row, left, right), (23, 9, 14))
+        look = sheet.frame((0, 'look'))
+        top = (sheet.size[1] - clean.height * 4)
+        for shape in shapes:          # only the mouth changes, the eyes and the jaw stay
+            frame = sheet.frame((0, shape))
+            changed = {(x // 4, (y - top) // 4) for y in range(sheet.size[1])
+                       for x in range(sheet.size[0])
+                       if frame.getpixel((x, y)) != look.getpixel((x, y))}
+            self.assertTrue(all(row - 1 <= y <= row + 2 for _, y in changed), shape)
 
 
 class EnvelopeTests(unittest.TestCase):

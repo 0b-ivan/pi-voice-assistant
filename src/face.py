@@ -64,7 +64,7 @@ def slice_sheet(image):
 # Frames made from the sheet's own pixels for smoother animation. Work is done
 # at Doom's pixel size: eyes are where the straight faces differ (they only
 # glance), the mouth is where "ouch"/"teeth" differ from the calm face.
-DERIVED = ('blink', 'squint', 'talk_half', 'talk_open', 'talk_round', 'wide')
+DERIVED = ('blink', 'squint', 'talk_e', 'talk_half', 'talk_open', 'talk_round', 'wide')
 
 
 def _shrink(sprite, scale):
@@ -220,24 +220,65 @@ def _patch(base, source, mask):
     return out
 
 
-def _rounded(look, open_mouth):
-    """An "o": the dark mouth cavity narrowed by a pixel on each side, closed
-    with the lip colour just above it."""
-    region = _diff(look, open_mouth, 0.68, 1.0)
-    pixels = open_mouth.load()
-    cavity = {(x, y) for x, y in region if _dark(pixels[x, y])}
-    if not cavity:
-        return open_mouth
-    left, right = min(x for x, _ in cavity), max(x for x, _ in cavity)
-    if right - left < 3:
-        return open_mouth
-    out = open_mouth.copy()
-    shaped = out.load()
-    top = min(y for _, y in cavity)
-    for x, y in cavity:
-        if x in (left, right):
-            shaped[x, y] = pixels[x, max(0, top - 1)]
-    return out
+def _lipline(look):
+    """(row, left, right) of the closed lips: the orange line in the lower face."""
+    pixels = look.load()
+    best = None
+    for y in range(int(look.height * 0.7), int(look.height * 0.9)):
+        xs = [x for x in range(look.width) if pixels[x, y][3]
+              and pixels[x, y][0] > 130 and 70 <= pixels[x, y][1] <= 110 and pixels[x, y][2] < 40]
+        if xs and (best is None or len(xs) > len(best[1])):
+            best = (y, xs)
+    if best is None or len(best[1]) < 3:
+        return None
+    return best[0], min(best[1]), max(best[1])
+
+
+LIP = (155, 91, 19, 255)          # the closed mouth's own orange: lower lip
+UPPER = (107, 71, 39, 255)        # upper lip in shadow, like the sheet's mouth corners
+CAVITY = (47, 0, 0, 255)
+TEETH = (207, 207, 207, 255)
+TONGUE = (143, 43, 43, 255)
+
+
+def _mouths(look, lips):
+    """Talking mouths drawn at the calm face's own lips (the sheet's open
+    mouths sit lower, on a dropped jaw, and read as screaming):
+    talk_e teeth, talk_half a slit, talk_open open with tongue, talk_round an "o"."""
+    row, left, right = lips
+    shapes = {}
+
+    def draw(cells):
+        out = look.copy()
+        pixels = out.load()
+        for (x, y), colour in cells.items():
+            if 0 <= x < out.width and 0 <= y < out.height and pixels[x, y][3]:
+                pixels[x, y] = colour
+        return out
+
+    span = range(left, right + 1)
+    inner = range(left + 1, right)
+    skin = look.load()[max(0, left - 1), row]
+    shapes['talk_e'] = draw({**{(x, row - 1): UPPER for x in span},
+                             **{(x, row): TEETH for x in inner},
+                             **{(x, row + 1): LIP for x in inner}})
+    shapes['talk_half'] = draw({**{(x, row - 1): UPPER for x in span},
+                                **{(x, row): CAVITY for x in inner},
+                                **{(x, row + 1): LIP for x in inner}})
+    shapes['talk_open'] = draw({**{(x, row - 1): UPPER for x in span},
+                                **{(x, row): TEETH for x in inner},
+                                **{(x, row + 1): CAVITY for x in inner},
+                                **{(x, row + 1): TONGUE for x in range(left + 2, right - 1)},
+                                **{(x, row + 2): LIP for x in inner}})
+    middle = range(left + 2, right - 1)
+    shapes['talk_round'] = draw({(left, row): skin, (right, row): skin,
+                                 **{(x, row - 1): UPPER for x in inner},
+                                 (left + 1, row): UPPER, (right - 1, row): UPPER,
+                                 (left + 1, row + 1): LIP, (right - 1, row + 1): LIP,
+                                 **{(x, row): CAVITY for x in middle},
+                                 **{(x, row + 1): CAVITY for x in middle},
+                                 **{(x, row + 2): LIP for x in middle}})
+    return shapes
 
 
 def derive(sprites, scale):
@@ -252,6 +293,7 @@ def derive(sprites, scale):
     clean = _shrink(sprites[(0, 'look')], scale)
     glance = sprites.get((0, 'look_b')) or sprites.get((0, 'look_a'))
     eyes = eye_mask(clean, _shrink(glance, scale)) if glance is not None else (set(), set())
+    lips = _lipline(clean)
     for row in range(ROWS):
         if (row, 'look') not in sprites:
             continue
@@ -270,16 +312,15 @@ def derive(sprites, scale):
         if mask[0]:
             made['blink'] = _lid(look, mask, closed=True)
             made['squint'] = _lid(look, mask, closed=False)
-        for name, source, band in (('talk_half', 'teeth', (0.68, 1.0)),
-                                   ('talk_open', 'ouch', (0.68, 1.0)),
-                                   ('wide', 'ouch', (0.25, 0.62))):
+        for name, source, band in (('wide', 'ouch', (0.25, 0.62)),):
             if (row, source) in sprites:
                 other = _aligned(look, _shrink(sprites[(row, source)], scale))
                 region = _diff(look, other, *band)
                 if region:
                     made[name] = _patch(look, other, region)
-        if 'talk_open' in made:
-            made['talk_round'] = _rounded(look, made['talk_open'])
+        if lips:
+            dx, dy = _offset(look, clean) if row else (0, 0)
+            made.update(_mouths(look, (lips[0] + dy, lips[1] + dx, lips[2] + dx)))
         for name, image in made.items():
             out[(row, name)] = image.resize((image.width * scale, image.height * scale),
                                             Image.NEAREST)
@@ -373,8 +414,8 @@ def _mood_face(emotion, level, now):
 
 
 # Mouth codes from visemes.track() while speaking.
-VISEMES = {'.': 'look', 'a': 'talk_half', 'A': 'talk_open', 'e': 'talk_half',
-           'E': 'talk_half', 'o': 'talk_round', 'O': 'talk_round'}
+VISEMES = {'.': 'look', 'a': 'talk_half', 'A': 'talk_open', 'e': 'talk_e',
+           'E': 'talk_e', 'o': 'talk_round', 'O': 'talk_round'}
 
 
 def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plugged_at=None,
