@@ -1300,7 +1300,7 @@ def main():
     except Exception:  # never let the artwork take the status display down
         skull = None
     try:
-        from face import Face, choose as choose_face, health_row
+        from face import Face, choose as choose_face, health_row, resting as face_resting
         face = Face()
     except Exception:  # without the sheet Billy keeps the skull
         face = None
@@ -1473,9 +1473,8 @@ def main():
                           info.get('alarm'), info.get('server'), info.get('wlan'),
                           info.get('memory'))
                 if screen != previous_screen:
-                    row = health_row((battery or {}).get('percent'))
                     render_rest(display, skull, states['network'], info,
-                                picture=face.frame((row, 'look')))
+                                picture=face.frame(face_resting(battery)))
                     previous_screen = screen
             elif billy and shown in SKULL_STATES and info.get('volume') is None:
                 level = 0.0

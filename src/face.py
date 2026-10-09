@@ -61,6 +61,140 @@ def slice_sheet(image):
     return sprites
 
 
+# Frames made from the sheet's own pixels for smoother animation. Work is done
+# at Doom's pixel size: eyes are where the straight faces differ (they only
+# glance), the mouth is where "ouch"/"teeth" differ from the calm face.
+DERIVED = ('blink', 'squint', 'talk_half', 'talk_open', 'wide')
+
+
+def _shrink(sprite, scale):
+    from PIL import Image
+    return sprite.resize((sprite.width // scale, sprite.height // scale), Image.NEAREST)
+
+
+def _aligned(base, other, reach=2):
+    """``other`` moved onto ``base``'s canvas where the two match best."""
+    from PIL import Image
+    best = None
+    pa = base.load()
+    for dx in range(-reach, reach + 1):
+        for dy in range(-reach, reach + 1):
+            canvas = Image.new('RGBA', base.size, (0, 0, 0, 0))
+            canvas.paste(other, ((base.width - other.width) // 2 + dx,
+                                 base.height - other.height + dy))
+            pb = canvas.load()
+            misses = sum(pa[x, y] != pb[x, y] for y in range(base.height)
+                         for x in range(base.width))
+            if best is None or misses < best[0]:
+                best = (misses, canvas)
+    return best[1]
+
+
+def _diff(a, b, top=0.0, bottom=1.0):
+    pa, pb = a.load(), b.load()
+    width, height = a.size
+    return {(x, y) for y in range(int(height * top), int(height * bottom))
+            for x in range(width) if pa[x, y] != pb[x, y] and pa[x, y][3] and pb[x, y][3]}
+
+
+def _columns(mask):
+    """{x: (top, bottom)} of a mask."""
+    spans = {}
+    for x, y in mask:
+        top, bottom = spans.get(x, (y, y))
+        spans[x] = (min(top, y), max(bottom, y))
+    return spans
+
+
+def _skinlike(pixel):
+    r, g, b, a = pixel
+    return a and r - b > 50 and g > 40 and r > g      # warm skin, not grey eye or red blood
+
+
+def eye_mask(look, glance):
+    """Eye pixels of the clean face: where the glance moves the pupils, widened
+    to every grey/dark pixel in those rows (eye whites, lids)."""
+    pixels = look.load()
+    moved = _diff(look, _aligned(look, glance), 0.35, 0.62)
+    if not moved:
+        return set()
+    top, bottom = min(y for _, y in moved), max(y for _, y in moved)
+    left, right = min(x for x, _ in moved) - 1, max(x for x, _ in moved) + 1
+    return moved | {(x, y) for y in range(top, bottom + 1)
+                    for x in range(max(0, left), min(look.width, right + 1))
+                    if pixels[x, y][3] and not _skinlike(pixels[x, y])}
+
+
+def _lid(sprite, eyes, closed):
+    """Eyelids over the eyes: closed (blink) or half-closed (squint), in the
+    face's own skin tone, with a dark lash line."""
+    from collections import Counter
+    out = sprite.copy()
+    pixels = out.load()
+    width, height = out.size
+    eyes = {(x, y) for x, y in eyes if x < width and y < height}
+    if not eyes:
+        return out
+    top, bottom = min(y for _, y in eyes), max(y for _, y in eyes)
+    left, right = min(x for x, _ in eyes), max(x for x, _ in eyes)
+    tones = Counter(pixels[x, y] for y in range(max(0, top - 3), min(height, bottom + 4))
+                    for x in range(left, right + 1) if _skinlike(pixels[x, y]))
+    if not tones:
+        return out
+    skin = tones.most_common(1)[0][0]
+    lash_color = tuple(int(c * 0.4) for c in skin[:3]) + (255,)
+    for x, (first, last) in _columns(eyes).items():
+        lash = first + (last - first + 1) // (1 if closed else 2) - 1
+        for y in range(first, last + 1):
+            if y < lash:
+                pixels[x, y] = skin
+            elif y == lash:
+                pixels[x, y] = lash_color
+    return out
+
+
+def _patch(base, source, mask):
+    out = base.copy()
+    pixels, src = out.load(), source.load()
+    for x, y in mask:
+        pixels[x, y] = src[x, y]
+    return out
+
+
+def derive(sprites, scale):
+    """Extra frames per health row: blinking, half-closed eyes, a half and a
+    fully open talking mouth with calm eyes, raised eyebrows and wide eyes."""
+    from PIL import Image
+    out = {}
+    if (0, 'look') not in sprites:
+        return out
+    # The eyes sit in the same place in every row; blood and hair make the
+    # bloodier rows unreliable, so the clean face defines them.
+    clean = _shrink(sprites[(0, 'look')], scale)
+    glance = sprites.get((0, 'look_b')) or sprites.get((0, 'look_a'))
+    eyes = eye_mask(clean, _shrink(glance, scale)) if glance is not None else set()
+    for row in range(ROWS):
+        if (row, 'look') not in sprites:
+            continue
+        look = _shrink(sprites[(row, 'look')], scale)
+        made = {}
+        if eyes and look.size == clean.size:
+            made['blink'] = _lid(look, eyes, closed=True)
+            made['squint'] = _lid(look, eyes, closed=False)
+        for name, source, band in (('talk_half', 'teeth', (0.68, 1.0)),
+                                   ('talk_open', 'ouch', (0.68, 1.0)),
+                                   ('wide', 'ouch', (0.25, 0.62))):
+            if (row, source) in sprites:
+                other = _aligned(look, _shrink(sprites[(row, source)], scale))
+                region = _diff(look, other, *band)
+                if region:
+                    made[name] = _patch(look, other, region)
+        for name, image in made.items():
+            out[(row, name)] = image.resize((image.width * scale, image.height * scale),
+                                            Image.NEAREST)
+    return out
+
+
 def _factor(width, height, box=BOX):
     """Integer up- or downscaling so the largest sprite fits the box."""
     if width <= box[0] and height <= box[1]:
@@ -72,6 +206,8 @@ class Face:
     def __init__(self, path=FACE_FILE, backdrop=(0, 0, 0)):
         from PIL import Image
         sprites = slice_sheet(Image.open(path))
+        scale = max(1, round(sprites[(0, 'look')].width / 24))   # sheet pixels per Doom pixel
+        sprites.update(derive(sprites, scale))
         width = max(sprite.width for sprite in sprites.values())
         height = max(sprite.height for sprite in sprites.values())
         up, down = _factor(width, height)
@@ -114,6 +250,14 @@ GOD_SECONDS = 2.0
 
 
 MOOD_FROM = 0.3       # weaker feelings leave the face alone
+BLINK_SECONDS = 0.15
+
+
+def blinking(now, every=4.0, length=BLINK_SECONDS):
+    """True during a blink: once per ``every`` seconds at an irregular moment."""
+    slot = int(now / every)
+    moment = ((slot * 2654435761) % 1000) / 1000 * (every - length)
+    return 0 <= now - slot * every - moment < length
 
 
 def _mood_face(emotion, level, now):
@@ -127,13 +271,13 @@ def _mood_face(emotion, level, now):
     if emotion == 'gereizt':
         return 'teeth' if level >= 0.5 or int(now / 3) % 2 == 0 else 'look'
     if emotion == 'besorgt':
-        return ('look_a', 'look_b')[int(now / 0.7) % 2]      # eyes darting
+        return ('look_a', 'wide', 'look_b', 'wide')[int(now / 0.7) % 4]   # eyes darting
     if emotion == 'neugierig':
-        return ('turn_a', 'look', 'turn_b', 'look')[int(now / 2) % 4]
+        return ('turn_a', 'wide', 'turn_b', 'look')[int(now / 2) % 4]
     if emotion == 'gelangweilt':
         return 'turn_b' if int(now / 5) % 3 else 'look'       # looking away
     if emotion == 'müde':
-        return 'look'                                         # too tired to glance
+        return 'blink' if blinking(now, every=2.5, length=0.4) else 'squint'   # heavy lids
     return None
 
 
@@ -152,13 +296,17 @@ def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plu
     row = health_row(percent)
     if state in SPEAKING:
         loud = max(0.0, min(1.0, level))
-        return (row, 'ouch' if loud > 0.6 else 'teeth' if loud > 0.25 else 'look')
+        if mood and mood[0] == 'gereizt' and mood[1] >= MOOD_FROM:   # talking angrily
+            return (row, 'ouch' if loud > 0.6 else 'teeth' if loud > 0.25 else 'teeth')
+        if blinking(now, every=5.0):
+            return (row, 'blink')
+        return (row, 'talk_open' if loud > 0.55 else 'talk_half' if loud > 0.2 else 'look')
     if hushed_at is not None and 0 <= now - hushed_at < HUSH_SECONDS:
         return (row, 'ouch' if now - hushed_at < 0.4 else 'turn_a')
     if state in THINKING:
         return (row, ('turn_a', 'look', 'turn_b', 'look')[int(now / 0.6) % 4])
     if state == 'ZUHÖREN':
-        return (row, 'look')
+        return (row, 'blink' if blinking(now) else 'look')
     if alarm:
         return (row, 'ouch' if int(now) % 2 == 0 else 'look')
     if plugged_at is not None and 0 <= now - plugged_at < GOD_SECONDS:
@@ -167,4 +315,11 @@ def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plu
         face = _mood_face(mood[0], mood[1], now)
         if face:
             return (row, face)
+    if blinking(now):
+        return (row, 'blink')
     return (row, _glance(now))
+
+
+def resting(battery=None):
+    """Dimmed rest screen: Billy dozes with closed eyes."""
+    return (health_row((battery or {}).get('percent')), 'blink')

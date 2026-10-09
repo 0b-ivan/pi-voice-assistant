@@ -214,6 +214,8 @@ Im Ruhezustand und beim Sprechen zeigt das PiTFT einen Servo-Skull ([`src/skull.
 | Laden | ab und zu ein Blitz „Gottmodus“ (gelbe Augen) |
 | Ruhe | gedimmt, geradeaus |
 
+**Zusätzliche Bilder** erzeugt `face.derive()` beim Start aus den Pixeln des Sheets, je Gesundheitsstufe: `blink` (Augen zu), `squint` (halb geschlossen), `talk_half` und `talk_open` (Mund wie bei „Zähne“ bzw. „Autsch“, aber mit ruhigen Augen) und `wide` (Brauen hoch, große Augen). Die Augen findet `face.py` dort, wo sich die beiden Geradeaus-Bilder unterscheiden, erweitert um alle nicht hautfarbenen Pixel in diesen Zeilen; die Augenmaske stammt vom sauberen Gesicht, weil Blut und Haare die anderen Zeilen verfälschen. Den Mund findet es durch den Vergleich mit „Zähne“ und „Autsch“. Damit blinzelt Billy alle paar Sekunden, spricht mit zwei Mundstellungen statt Grimassen (wütend weiter mit „Zähne“ und „Autsch“), hat bei Müdigkeit schwere Lider, schaut neugierig oder besorgt mit großen Augen und döst im gedimmten Ruhezustand mit geschlossenen Augen.
+
 Neu gezeichnet wird nur, wenn sich das Gesicht ändert. Beim Umschalten zwischen Servitor und Billy flackert nach dem Schließen des Menüs knapp eine Sekunde lang eine Bildstörung aus Schädel und Gesicht. Die Sprites (id Software) liegen in [`assets/display/doom-faces.png`](../assets/display/doom-faces.png); `install-voice-service.sh` kopiert sie nach `PI_DISPLAY_FACE` (Standard `/opt/pi-voice-assistant/models/display/doom-faces.png`). Erwartet wird das übliche Sheet mit fünf Zeilen à acht Gesichtern auf transparentem Grund, „Gottmodus“ hinter der ersten und „tot“ hinter der letzten Zeile. `face.py` findet die Sprites an den transparenten Lücken und skaliert nur ganzzahlig. Ohne Datei behält Billy den Schädel.
 
 ## Sprachausgabe

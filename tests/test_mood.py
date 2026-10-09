@@ -124,7 +124,7 @@ class FaceAndDisplayTests(unittest.TestCase):
     def test_billy_shows_the_mood_when_idle(self):
         self.assertEqual(face.choose('BEREIT', 0.1, mood=('gereizt', 0.8)), (0, 'teeth'))
         self.assertEqual(face.choose('BEREIT', 1.0, mood=('freudig', 0.6)), (0, 'grin'))
-        self.assertEqual(face.choose('BEREIT', 3.0, mood=('müde', 0.6)), (0, 'look'))
+        self.assertEqual(face.choose('BEREIT', 3.0, mood=('müde', 0.6)), (0, 'squint'))
         self.assertIn(face.choose('BEREIT', 3.0, mood=('besorgt', 0.6))[1], ('look_a', 'look_b'))
         weak = face.choose('BEREIT', 3.0, mood=('gereizt', 0.1))
         self.assertNotEqual(weak[1], 'teeth')
