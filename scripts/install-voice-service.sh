@@ -76,6 +76,11 @@ if [[ ${created_voice_env} -eq 1 ]]; then
 elif [[ ${service_was_active} -eq 1 ]]; then
   systemctl start pi-ptt.service
   echo "pi-ptt.service restarted."
+  # The display shares menu.py and other modules: never leave it on the old code.
+  if systemctl is-active --quiet pi-display.service; then
+    systemctl restart pi-display.service
+    echo "pi-display.service restarted."
+  fi
 else
   echo "Install complete. Start with: sudo systemctl enable --now pi-ptt.service"
 fi
