@@ -22,6 +22,16 @@ class InstallerTests(unittest.TestCase):
             pending.extend(module for module in imports if module in local)
         self.assertEqual(needed - installed, set())
 
+    def test_voice_service_keeps_the_display_in_step(self):
+        """pi-display imports menu.py etc.; an old display process shifts the menu."""
+        installer = (ROOT / 'scripts' / 'install-voice-service.sh').read_text()
+        installed = set(re.findall(r'src/(\w+)\.py', installer))
+        source = (ROOT / 'src' / 'display.py').read_text()
+        local = {path.stem for path in (ROOT / 'src').glob('*.py')}
+        imports = set(re.findall(r'^\s*(?:from|import)\s+(\w+)', source, re.MULTILINE)) & local
+        self.assertEqual((imports | {'display'}) - installed, set())
+        self.assertIn('systemctl restart pi-display.service', installer)
+
 
 if __name__ == '__main__':
     unittest.main()

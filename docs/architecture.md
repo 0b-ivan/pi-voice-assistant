@@ -130,6 +130,14 @@ Neben dem Servitor gibt es das **Mensch-Modul**: Proximus vor seinem Umbau, Serg
 
 Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt danach Prompt und Effekt. Ältere Pis ohne die Felder bekommen den Servitor. Lokal auf dem Pi wirkt der Stimmeffekt nur mit `TTS_VOICE_PROFILE=servitor` (dort ist das `thorsten_emotional`-Modell geladen); vorgefertigte Ansagen (Alarme, Aufwachen) klingen vorerst weiter nach Servitor.
 
+„Wer bist du?“ und „Wie geht es dir?“ beantwortet der Servitor mit festen Sätzen ([`src/intents.py`](../src/intents.py)); im Sprechstil Billy gehen beide Fragen an das Sprachmodell, damit er selbst antwortet. „Systemstatus“, Uhrzeit, Akku usw. bleiben in beiden Stilen feste Antworten.
+
+### Stoppwörter
+
+„Stop“, „Abbruch“, „Sei still“, „Klappe halten“, „Halt den Mund“, „Hör auf“, „Das reicht“, „Ruhe“ und ähnliche Wörter beenden die Antwort in beiden Sprechstilen: Proximus sagt nichts, verwirft wartende Ansagen und kehrt in den Ruhezustand zurück (das Aktivierungswort hört wieder mit). Erkannt wird das nur, wenn die ganze Äußerung ein solches Wort ist, höchstens mit Füllwörtern wie „bitte“, „jetzt“ oder „Proximus“ (`intents.is_stop`); „Wie stoppt man eine Blutung?“ geht weiter an das Sprachmodell. Der Server antwortet dann mit dem Ereignis `stop` ohne Audio; der Pi prüft das Transkript zusätzlich selbst, auch gegenüber älteren Servern.
+
+Während Proximus spricht, ist das Mikrofon aus (sonst hört es die eigene Stimme). Unterbrechen geht dann mit der Sprechtaste (stoppt die Ausgabe sofort; „Stop“ hineinsprechen beendet ohne neue Antwort) oder mit B. Unterbrechen nur per Stimme bräuchte Echounterdrückung und ist noch offen.
+
 ## Aktivierungswort
 
 Neben den Tasten startet **„Hey Jarvis“** eine Anfrage (vortrainiertes openWakeWord-Modell; ein eigenes „Hey Servitor“ ist geplant). Ist `PTT_WAKE_WORD` gesetzt, hört [`src/wake_listener.py`](../src/wake_listener.py) im Ruhezustand mit und gibt das Mikrofon frei, sobald eine Taste gedrückt wird, eine Anfrage läuft oder der Servitor spricht (plus 0,6 s gegen das eigene Echo). Nach dem Wort startet die normale Aufnahme; [`src/endpoint.py`](../src/endpoint.py) beendet sie nach 0,9 s Sprechpause oder verwirft sie still, wenn 5 s lang niemand spricht. Eine Taste während einer solchen Aufnahme übernimmt sie (Ende beim Loslassen). Das Menü schaltet das Mithören ab („Aktivierungswort AUS“); das Display zeigt dann wieder „Zum Sprechen halten“ statt „„Hey Jarvis“ oder Taste“. Audio verlässt den Pi erst nach dem Aktivierungswort.

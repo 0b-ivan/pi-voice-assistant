@@ -70,6 +70,24 @@ class AnswerTests(unittest.TestCase):
         self.assertEqual(intents.answer("battery", self.NOW, {}), "Energiedaten nicht verfügbar.")
         self.assertIn("Servitor Proximus", intents.answer("identity", self.NOW))
 
+    def test_stop_phrases_only_as_whole_utterance(self):
+        for text in ('Stop', 'stopp', 'Abbruch!', 'abbrechen', 'Sei still', 'sei ruhig',
+                     'Klappe halten', 'halt die Klappe Proximus', 'Halt den Mund',
+                     'Hör auf bitte', 'ok danke das reicht', 'Ruhe jetzt', 'Schnauze Billy'):
+            self.assertTrue(intents.is_stop(text), text)
+        for text in ('wie stoppt man eine blutung', 'stop die musik und erzähl mir was',
+                     'schalte das licht aus', 'genug für heute danke', '', 'bitte',
+                     'was bedeutet abbruch'):
+            self.assertFalse(intents.is_stop(text), text)
+
+    def test_billy_answers_identity_and_wellbeing_himself(self):
+        self.assertEqual(intents.match('wer bist du'), 'identity')
+        self.assertEqual(intents.match('wie geht es dir'), 'status')
+        self.assertIsNone(intents.match('wer bist du', 'mensch'))
+        self.assertIsNone(intents.match('wie geht es dir', 'mensch'))
+        self.assertEqual(intents.match('systemstatus', 'mensch'), 'status')
+        self.assertEqual(intents.match('wie spät ist es', 'mensch'), 'time')
+
     def test_lore_levels_change_wording_not_facts(self):
         off = intents.answer("time", self.NOW, {"lore": "off"})
         full = intents.answer("time", self.NOW, {"lore": "full"})

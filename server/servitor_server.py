@@ -341,9 +341,14 @@ class Service:
                 if transcribe_only:  # enrollment answers: the Pi stores them itself
                     emit(dict(event='done', timings=timings))
                     return
+                if intents.is_stop(text):
+                    # "Stop", "Sei still": the Pi goes back to idle, nothing is spoken.
+                    emit(dict(event='stop'))
+                    emit(dict(event='done', timings=timings))
+                    return
                 if keep:
                     memory_copy = timed('speaker', self._identify, audio, memory_copy, emit)
-                intent = intents.match(text)
+                intent = intents.match(text, (device or {}).get('persona'))
                 command = (memory.command(intents.normalize(text))
                            if memory_copy is not NO_MEMORY else None)
                 service_op = maintenance.command(intents.normalize(text))

@@ -113,6 +113,14 @@ class RemoteTurnTests(LiveServerCase):
         self.assertEqual(sorted(p.name for p in self.client_dir.iterdir()),
                          ['remote-reply.wav'])
 
+    def test_stop_phrase_returns_without_audio(self):
+        self.pipeline.transcript = 'klappe halten'
+        job = self.turn()
+        self.assertIsNone(job.error)
+        self.assertTrue(job.result['stop'])
+        self.assertIsNone(job.result['audio'])
+        self.assertEqual(job.transcript, 'klappe halten')
+
     def test_opus_reply_is_decoded_before_playback(self):
         def decode(source, target):
             self.assertEqual(Path(source).suffix, '.part')
@@ -378,6 +386,33 @@ class RemoteControllerTests(unittest.TestCase):
         self.speech.play.assert_called_once_with(Path('/tmp/remote-reply.wav'))
         progress = json.loads(self.progress.read_text())
         self.assertEqual((progress['stage'], progress['metric']), ('tts', 'playback'))
+
+    def test_stop_phrase_goes_idle_and_plays_nothing(self):
+        self.c.alarm_queue = ['Warnung.']
+        job = FakeJob(transcript='sei still', result=dict(audio=None, stop=True, host='h'),
+                      events=[dict(event='transcript', text='sei still'), dict(event='stop')])
+        self.finish(job)
+        self.speech.play.assert_not_called()
+        self.speech.stop.assert_called()
+        self.assertEqual(self.c.alarm_queue, [])
+        self.assertIsNone(self.c.job)
+        self.assertIn('cancelled', [e['event'] for e in self.events()])
+
+    def test_stop_phrase_ignores_an_older_servers_spoken_reply(self):
+        job = FakeJob(transcript='stopp', result=dict(audio=Path('/tmp/r.wav'), host='h'),
+                      events=[dict(event='transcript', text='stopp'),
+                              dict(event='reply', text='Bestätigt.', model='m')])
+        with patch.object(self.c.memory, 'remember_turn') as remember:
+            self.finish(job)
+        self.speech.play.assert_not_called()
+        remember.assert_not_called()
+
+    def test_local_stop_phrase_skips_the_llm(self):
+        with patch('ptt.TranscriptionJob') as worker:
+            self.c._start_llm('Halt die Klappe')
+        worker.assert_not_called()
+        self.speech.start.assert_not_called()
+        self.speech.stop.assert_called()
 
     def test_llm_failure_resumes_with_local_llm(self):
         job = FakeJob(error='timeout', error_stage='think', error_code='llm', transcript='hallo')
