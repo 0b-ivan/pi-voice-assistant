@@ -8,9 +8,9 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 |---|---|
 | A | Halten: aufnehmen; Loslassen: Quittungston, dann STT |
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
-| B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: eine Ebene zurück, oben schließen (erst danach bricht B ab) |
+| B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: eine Ebene zurück, oben schließen (erst danach bricht B ab); bei offener Rückfrage zu Neustart/Herunterfahren: abbrechen |
 | C / D | Digitalen `Playback`-Pegel um 2 dB senken/erhöhen, gehalten wiederholt |
-| E | Ohne Menü: Status ansagen (Warnungen zuerst, dann Akku, Temperatur, Serververbindung, Sprachkern, Laufzeit; siehe [Architektur](architecture.md#antworten-ohne-llm-status-und-charakter)). Bei offenem Menü: **Bestätigen** |
+| E | Ohne Menü: Status ansagen (Warnungen zuerst, dann Akku, Temperatur, Serververbindung, Sprachkern, Laufzeit; siehe [Architektur](architecture.md#antworten-ohne-llm-status-und-charakter)). Bei offenem Menü: **Bestätigen**; bei offener Rückfrage zu Neustart/Herunterfahren (per Sprache angefordert, 20 s): **ausführen** ([Gerätesteuerung](architecture.md#gerätesteuerung-per-sprache)) |
 | PiTFT-Taste oben (GPIO23) / unten (GPIO24) | Menü öffnen, Auswahl hoch/runter; bei ausgeschaltetem Display nur aufwecken |
 
 A und GPIO17 bilden gemeinsam einen Aufnahmetaster: Aufnahme endet erst, wenn beide losgelassen sind. Alle Tasten beim Start loslassen; B–E lösen einmal pro Druck aus. B hat bei gleichzeitigen Aktionen Vorrang.

@@ -40,6 +40,7 @@ if str(SRC) not in sys.path:
 import intents  # noqa: E402
 import weather  # noqa: E402
 import agenda  # noqa: E402
+import device_control  # noqa: E402
 import enroll  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
@@ -272,6 +273,30 @@ class Service:
             return maintenance.NEED_MODE_TEXT
         return maintenance.confirm_prompt(op, device)
 
+    @staticmethod
+    def _device_reply(text, device, memory_copy, emit):
+        """WLAN/reboot/shutdown by voice (device_control): the sentence, or None.
+        The Pi acts on the 'device' event; only Pis that know it (devctl) get one."""
+        if device.get('devctl') != 'on':
+            return None
+        style = phrase_style(device.get('lore'), device.get('persona'))
+        pending = device.get('pending')
+        answer = device_control.answer(text) if pending else None
+        op = device_control.command(text)
+        if op == 'reboot' and device.get('maintenance') == 'on':
+            op = None   # maintenance mode: "starte neu" is its action, confirmed with E
+        if answer is None and op is None:
+            return None
+        if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
+            return device_control.denied_text(style)
+        if answer == 'confirm':
+            emit(dict(event='device', op=pending, confirm=True))
+            return device_control.start_text(pending, style)
+        if answer == 'cancel':
+            return device_control.cancelled_text(style)
+        emit(dict(event='device', op=op))
+        return device_control.reply(op, device.get('wlan'), style)
+
     def _identify(self, audio, memory_copy, emit):
         """Compare the turn's voice with the enrolled voiceprint; returns the
         memory copy the turn may use (guest view for an unknown voice)."""
@@ -365,7 +390,11 @@ class Service:
                 command = (memory.command(intents.normalize(text))
                            if memory_copy is not NO_MEMORY else None)
                 service_op = maintenance.command(intents.normalize(text))
-                if (enroll.command(intents.normalize(text)) and memory_copy is not NO_MEMORY
+                device_reply = self._device_reply(intents.normalize(text), device or {},
+                                                  memory_copy, emit)
+                if device_reply is not None:
+                    answer, model = device_reply, 'local/device'
+                elif (enroll.command(intents.normalize(text)) and memory_copy is not NO_MEMORY
                         and not memory.unknown_speaker(memory_copy)):
                     # Only the operator (or anyone before enrollment) may start it.
                     answer, model = enroll.ANNOUNCE, 'local/enroll'

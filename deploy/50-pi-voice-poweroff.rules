@@ -1,9 +1,14 @@
-// Let the voice service user power the Pi off when the battery is empty
-// (src/alarms.py, last of three warnings). Nothing else is allowed here.
+// Let the voice service user power the Pi off or restart it: when the
+// battery is empty (src/alarms.py, last of three warnings) and on a confirmed
+// spoken command (src/device_control.py). Nothing else is allowed here.
+// Installed by scripts/install-voice-service.sh to /etc/polkit-1/rules.d/.
 polkit.addRule(function(action, subject) {
     if ((action.id == "org.freedesktop.login1.power-off" ||
          action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
-         action.id == "org.freedesktop.login1.power-off-ignore-inhibit") &&
+         action.id == "org.freedesktop.login1.power-off-ignore-inhibit" ||
+         action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.reboot-ignore-inhibit") &&
         subject.user == "obivan") {
         return polkit.Result.YES;
     }

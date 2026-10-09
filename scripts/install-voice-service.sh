@@ -39,6 +39,7 @@ install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/al
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
 install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
+install -m 0644 "${repo_root}/src/device_control.py" /opt/pi-voice-assistant/src/device_control.py
 install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
 install -m 0644 "${repo_root}/src/agenda.py" /opt/pi-voice-assistant/src/agenda.py
 install -m 0644 "${repo_root}/src/pronounce.py" /opt/pi-voice-assistant/src/pronounce.py
@@ -67,6 +68,11 @@ install -m 0644 "${repo_root}/src/display.py" /opt/pi-voice-assistant/src/displa
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
+# Power off / reboot for the service user (empty battery, confirmed voice command).
+if [[ -d /etc/polkit-1/rules.d ]]; then
+  install -m 0644 "${repo_root}/deploy/50-pi-voice-poweroff.rules" \
+    /etc/polkit-1/rules.d/50-pi-voice-poweroff.rules
+fi
 
 if [[ ! -e /etc/pi-ptt.env ]]; then
   install -m 0644 "${repo_root}/config/ptt.env.example" /etc/pi-ptt.env
