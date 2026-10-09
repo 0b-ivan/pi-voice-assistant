@@ -15,6 +15,7 @@ SCAN_SECONDS = 12
 CONNECTED = "Bluetooth-Lautsprecher verbunden. Ausgabe über Bluetooth."
 DISCONNECTED = "Bluetooth-Lautsprecher getrennt. Ausgabe über den eingebauten Lautsprecher."
 SCANNING = "Suche Lautsprecher. Lautsprecher in den Kopplungsmodus versetzen."
+CONNECTING = "Verbinde Lautsprecher."
 NONE_FOUND = "Kein Lautsprecher gefunden."
 NONE_PAIRED = "Kein Lautsprecher gekoppelt."
 PAIRING = "Kopplung läuft."
@@ -25,7 +26,7 @@ BUSY = "Bluetooth ist beschäftigt. Bitte warten."
 
 
 def phrases():
-    return [CONNECTED, DISCONNECTED, SCANNING, NONE_FOUND, NONE_PAIRED, PAIRING, PAIR_FAILED,
+    return [CONNECTED, DISCONNECTED, SCANNING, CONNECTING, NONE_FOUND, NONE_PAIRED, PAIRING, PAIR_FAILED,
             FORGOTTEN, UNAVAILABLE, BUSY]
 _MAC = re.compile(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$')
 
@@ -84,29 +85,52 @@ class Bluetooth:
                 result.append((mac, name, flags))
         return result
 
-    def scan(self, seconds=SCAN_SECONDS):
-        """Discover nearby speakers (blocking ~seconds)."""
+    def _sinks(self, cache):
+        """Audio sinks known to BlueZ now: [(mac, name, paired)]."""
+        sinks = []
+        for mac, name in devices(self.run('devices', timeout=10)):
+            if mac not in cache:
+                cache[mac] = info(self.run('info', mac, timeout=10))
+            if cache[mac]['sink']:
+                sinks.append((mac, name, cache[mac]['paired']))
+        return sinks
+
+    def scan(self, seconds=SCAN_SECONDS, on_update=None, poll=2.0, popen=subprocess.Popen,
+             sleep=time.sleep):
+        """Discover speakers for ``seconds``; ``on_update(list)`` gets the growing
+        list every ``poll`` seconds. Returns [(mac, name, paired)]."""
         with self.lock:
             self.scanning = True
+        cache, sinks, process = {}, [], None
         try:
             self.run('power', 'on', timeout=10)
-            self.run('--timeout', str(seconds), 'scan', 'on', timeout=seconds + 10)
-            sinks = []
-            for mac, name in devices(self.run('devices', timeout=10)):
-                flags = info(self.run('info', mac, timeout=10))
-                if flags['sink'] and not flags['paired']:
-                    sinks.append((mac, name))
+            try:
+                process = popen(['bluetoothctl', '--timeout', str(seconds), 'scan', 'on'],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                process = None
+            deadline = self.clock() + seconds
+            while True:
+                sinks = self._sinks(cache)
+                if on_update is not None:
+                    on_update(sinks)
+                if self.clock() >= deadline or (process is not None and process.poll() is not None):
+                    break
+                sleep(poll)
             self.found = sinks
             return sinks
         finally:
+            if process is not None and process.poll() is None:
+                process.terminate()
             with self.lock:
                 self.scanning = False
 
     def pair(self, mac, name=None):
-        """Pair, trust and connect a speaker; True on success."""
+        """Pair (if needed), trust and connect a speaker; True on success."""
         if not valid(mac):
             return False
-        self.run('pair', mac, timeout=30)
+        if not info(self.run('info', mac, timeout=10))['paired']:
+            self.run('pair', mac, timeout=30)
         self.run('trust', mac, timeout=10)
         return self.connect(mac, name)
 

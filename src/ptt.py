@@ -800,7 +800,7 @@ class VoiceController:
             self._publish_menu()
             self._open_people()
             return
-        if item in ('bt_speaker', 'bt_scan', 'bt_forget'):
+        if item in ('bt_speaker', 'bt_scan', 'bt_forget', 'bt_connect'):
             self._bluetooth_item(item)
             self._publish_menu()
             return
@@ -1044,7 +1044,7 @@ class VoiceController:
         if self.bt is None or not self.bt.available():
             self._say(bluetooth.UNAVAILABLE)
             return
-        if self.bt_busy:
+        if self.bt_busy and item != 'bt_connect':
             self._say(bluetooth.BUSY)
             return
         if item == 'bt_speaker':
@@ -1056,15 +1056,37 @@ class VoiceController:
                 self._bt_job(self._bt_refresh)
         elif item == 'bt_scan':
             self._say(bluetooth.SCANNING)
+            # The list shows up at once and grows while the scan runs.
+            self.picker = dict(title='SUCHE …', items=[], index=0, action='pair')
+            self._publish_picker()
+
+            def update(found):
+                picker = self.picker
+                if picker is None or picker['action'] != 'pair':
+                    return                        # closed or replaced meanwhile
+                picker['items'] = [(mac, name + (' ✓' if paired else ''))
+                                   for mac, name, paired in found]
+                picker['index'] = min(picker['index'], len(picker['items']))
+                self._publish_picker()
 
             def scan():
-                found = self.bt.scan()
-                if found:
-                    self.picker = dict(title='LAUTSPRECHER', items=found, index=0, action='pair')
-                    self._publish_picker()
-                else:
-                    self.bt_notes.append(bluetooth.NONE_FOUND)
+                found = self.bt.scan(on_update=update)
+                if self.picker is not None and self.picker['action'] == 'pair':
+                    if found:
+                        self.picker['title'] = 'LAUTSPRECHER'
+                        self._publish_picker()
+                    else:
+                        self.picker = None
+                        self._publish_picker()
+                        self.bt_notes.append(bluetooth.NONE_FOUND)
             self._bt_job(scan)
+        elif item == 'bt_connect':
+            paired = [(mac, name) for mac, name, _ in self.bt.speakers()]
+            if not paired:
+                self._say(bluetooth.NONE_PAIRED)
+                return
+            self.picker = dict(title='VERBINDEN', items=paired, index=0, action='pair')
+            self._publish_picker()
         elif item == 'bt_forget':
             paired = [(mac, name) for mac, name, _ in self.bt.speakers()]
             if not paired:
@@ -1091,7 +1113,9 @@ class VoiceController:
         if confirm and index < len(picker['items']):
             mac, name = picker['items'][index]
             if picker['action'] == 'pair':
-                self._say(bluetooth.PAIRING)
+                self._say(bluetooth.PAIRING if not name.endswith('✓') and picker['title'] != 'VERBINDEN'
+                          else bluetooth.CONNECTING)
+                name = name.removesuffix(' ✓')
 
                 def pair():
                     ok = self.bt.pair(mac, name)

@@ -37,7 +37,8 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | | Kennenlernen | Neue Person: Stimmproben, Fragen, Stimmprofil |
 | | Stimme nachtrainieren | 20 Stimmproben, dem passenden Profil zugerechnet |
 | Audio | BT-Lautsprecher AN/AUS | Gekoppelten Bluetooth-Lautsprecher verbinden/trennen; verbunden geht jede Sprachausgabe dorthin, sonst über den eingebauten Lautsprecher |
-| | Lautsprecher suchen | 12 s Suche (Lautsprecher im Kopplungsmodus), Liste nur mit Audiogeräten, E koppelt und verbindet |
+| | Lautsprecher verbinden | Liste der gekoppelten Lautsprecher, E verbindet den gewählten |
+| | Lautsprecher suchen | Liste erscheint sofort und wächst während der 12 s Suche (nur Audiogeräte, gekoppelte mit ✓); E auf einen Eintrag koppelt (falls nötig) und verbindet |
 | | Lautsprecher entfernen | Gekoppelten Lautsprecher vergessen |
 | Gerät | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
 | | Alarme AN/AUS | Ansagen stumm; Herunterfahren bei leerem Akku bleibt aktiv |

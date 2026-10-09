@@ -10,7 +10,7 @@ owns a Menu and publishes its state for display.py, which shares LABELS.
 GROUPS = {
     'voice': ('wake', 'llm', 'lore', 'server', 'back'),
     'people': ('people', 'enroll', 'refine', 'back'),
-    'audio': ('bt_speaker', 'bt_scan', 'bt_forget', 'back'),
+    'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
     'device': ('wlan', 'alarms', 'led', 'screen', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
@@ -20,7 +20,7 @@ ITEMS = tuple(item for group in GROUPS.values() for item in group if item != 'ba
 LABELS = {
     'voice': 'Sprache', 'people': 'Personen', 'audio': 'Audio', 'device': 'Gerät',
     'system': 'System', 'bt_speaker': 'BT-Lautsprecher', 'bt_scan': 'Lautsprecher suchen',
-    'bt_forget': 'Lautsprecher entfernen',
+    'bt_forget': 'Lautsprecher entfernen', 'bt_connect': 'Lautsprecher verbinden',
     'close': 'Schließen', 'back': 'Zurück',
     'wake': 'Aktivierungswort', 'llm': 'Sprachkern', 'lore': 'Lore-Stufe',
     'server': 'Server nutzen', 'enroll': 'Kennenlernen', 'refine': 'Stimme nachtrainieren',
@@ -31,7 +31,7 @@ LABELS = {
 LABELS_IN_GROUP = {'people': 'Bekannte Personen'}
 # Selecting these leaves the menu (another screen or an action takes over).
 CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'people', 'bt_scan',
-           'bt_forget')
+           'bt_forget', 'bt_connect')
 TIMEOUT_SECONDS = 15.0
 
 

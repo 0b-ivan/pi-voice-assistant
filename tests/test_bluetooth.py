@@ -52,14 +52,30 @@ class FakeCtl:
 
 
 class BluetoothTests(unittest.TestCase):
-    def test_scan_offers_only_unpaired_speakers_and_pairing_connects(self):
+    def scan(self, bt, updates=None):
+        now = [0.0]
+        bt.clock = lambda: now[0]
+        process = Mock()
+        process.poll.return_value = None
+
+        def sleep(seconds):
+            now[0] += seconds
+        return bt.scan(seconds=4, on_update=updates, popen=lambda *a, **k: process, sleep=sleep)
+
+    def test_live_scan_lists_speakers_and_pairing_connects(self):
         ctl = FakeCtl()
         bt = bluetooth.Bluetooth(run=ctl)
         self.assertTrue(bt.available())
-        self.assertEqual(bt.scan(seconds=1), [(SPEAKER, "JBL Flip")])
+        updates = []
+        self.assertEqual(self.scan(bt, updates.append), [(SPEAKER, "JBL Flip", False)])
+        self.assertEqual(len(updates), 3)                    # every 2 s of 4 s, plus the end
         self.assertTrue(bt.pair(SPEAKER, "JBL Flip"))
         self.assertEqual(bt.connected, (SPEAKER, "JBL Flip"))
-        self.assertEqual(bt.scan(seconds=1), [])            # paired: not offered again
+        self.assertEqual(self.scan(bluetooth.Bluetooth(run=ctl)), [(SPEAKER, "JBL Flip", True)])
+        bt.disconnect()
+        ctl.calls.clear()
+        self.assertTrue(bt.pair(SPEAKER))                    # already paired: just connects
+        self.assertNotIn(('pair', SPEAKER), ctl.calls)
         self.assertFalse(bt.pair("not a mac"))
 
     def test_refresh_reconnects_a_trusted_speaker_and_forget_removes_it(self):
@@ -110,6 +126,11 @@ class ControllerTests(unittest.TestCase):
         return json.loads((Path(self.tmp.name) / "display-people.json").read_text())
 
     def test_scan_pick_pair_and_output_switch(self):
+        process = Mock()
+        process.poll.return_value = 0                        # scan finished at once
+        scan = self.c.bt.scan
+        self.c.bt.scan = lambda on_update=None: scan(seconds=0, on_update=on_update,
+                                                     popen=lambda *a, **k: process)
         self.c._bluetooth_item("bt_scan")
         self.assertEqual(self.view()["items"], ["JBL Flip", "Zurück"])
         self.c._picker_buttons(confirm=True)
@@ -118,6 +139,14 @@ class ControllerTests(unittest.TestCase):
         self.c._bluetooth_item("bt_speaker")                # connected: E disconnects
         self.assertIsNone(audio_output.bluetooth())
         self.assertFalse(self.c.bt_wanted)
+
+    def test_manual_connect_from_the_paired_list(self):
+        self.ctl.paired.add(SPEAKER)
+        self.c._bluetooth_item("bt_connect")
+        self.assertEqual(self.view()["title"], "VERBINDEN")
+        self.c._picker_buttons(confirm=True)
+        self.assertEqual(audio_output.bluetooth(), SPEAKER)
+        self.assertEqual(self.said[-1], bluetooth.CONNECTING)
 
     def test_forget_needs_a_paired_speaker(self):
         self.c._bluetooth_item("bt_forget")
