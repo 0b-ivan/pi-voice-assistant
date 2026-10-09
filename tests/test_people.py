@@ -221,3 +221,18 @@ class ControllerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MicrophoneTests(ControllerTests):
+    def test_wake_listener_stays_off_while_a_flow_runs(self):
+        wake = Mock(running=False, error=None, detector=None)
+        wake.take_detection.return_value = False
+        self.c.wake = wake
+        self.c.wake_enabled = True
+        self.c.wake_resume_at = 0
+        self.c.enroll = Mock(running=True)
+        self.c._wake_tick(100.0)
+        wake.start.assert_not_called()
+        self.c.enroll = None
+        self.c._wake_tick(101.0)
+        wake.start.assert_called_once()
