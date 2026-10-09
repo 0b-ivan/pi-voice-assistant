@@ -34,11 +34,13 @@ class ParseTests(unittest.TestCase):
         seen = {}
 
         def opener(url, timeout):
-            seen['url'], seen['timeout'] = url, timeout
+            seen['url'], seen['timeout'] = url.full_url, timeout
+            seen['agent'] = url.get_header('User-agent')
             return io.BytesIO(json.dumps(PAYLOAD).encode())
         self.assertEqual(weather.fetch(52.5, 13.4, opener=opener)['now'], 12)
         self.assertIn('latitude=52.5', seen['url'])
         self.assertIn('longitude=13.4', seen['url'])
+        self.assertEqual(seen['agent'], 'pi-voice-assistant/1')
         self.assertEqual(seen['timeout'], weather.TIMEOUT_SECONDS)
 
     def test_location(self):

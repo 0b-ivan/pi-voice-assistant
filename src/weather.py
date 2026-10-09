@@ -70,7 +70,9 @@ def fetch(lat, lon, timeout=TIMEOUT_SECONDS, opener=urllib.request.urlopen):
         latitude=lat, longitude=lon, timezone='auto', forecast_days=1,
         current='temperature_2m,weather_code',
         daily='temperature_2m_max,temperature_2m_min,precipitation_probability_max'))
-    with opener(f'{URL}?{query}', timeout=timeout) as response:
+    # Own User-Agent: Cloudflare-fronted hosts reject Python's default (error 1010).
+    request = urllib.request.Request(f'{URL}?{query}', headers={'User-Agent': 'pi-voice-assistant/1'})
+    with opener(request, timeout=timeout) as response:
         return parse(json.loads(response.read().decode('utf-8')))
 
 

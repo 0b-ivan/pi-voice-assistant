@@ -211,3 +211,34 @@ class SentenceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DiscoveryTests(unittest.TestCase):
+    def test_root_url_finds_event_calendars_and_sends_user_agent(self):
+        import io
+        from types import SimpleNamespace
+        pages = {
+            "https://cloud.example/remote.php/dav": b'<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:current-user-principal><d:href>/remote.php/dav/principals/users/ivan/</d:href></d:current-user-principal></d:prop></d:propstat></d:response></d:multistatus>',
+            "https://cloud.example/remote.php/dav/principals/users/ivan/": b'<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:propstat><d:prop><c:calendar-home-set><d:href>/remote.php/dav/calendars/ivan/</d:href></c:calendar-home-set></d:prop></d:propstat></d:response></d:multistatus>',
+            "https://cloud.example/remote.php/dav/calendars/ivan/": b'''<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+<d:response><d:href>/remote.php/dav/calendars/ivan/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>
+<d:response><d:href>/remote.php/dav/calendars/ivan/personal/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set></d:prop></d:propstat></d:response>
+<d:response><d:href>/remote.php/dav/calendars/ivan/tasks/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><c:supported-calendar-component-set><c:comp name="VTODO"/></c:supported-calendar-component-set></d:prop></d:propstat></d:response>
+</d:multistatus>''',
+        }
+        agents = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def opener(request, timeout):
+            agents.append(request.get_header("User-agent"))
+            return Response(pages[request.full_url])
+
+        found = agenda.discover("https://cloud.example/remote.php/dav", "x", opener)
+        self.assertEqual(found, ["https://cloud.example/remote.php/dav/calendars/ivan/personal/"])
+        self.assertEqual(set(agents), {"pi-voice-assistant/1"})

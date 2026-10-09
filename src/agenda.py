@@ -134,14 +134,59 @@ def parse_multistatus(body, tz):
     return events
 
 
+USER_AGENT = 'pi-voice-assistant/1'   # Cloudflare rejects Python's default (error 1010)
+_DAV = '{DAV:}'
+_CALDAV = '{urn:ietf:params:xml:ns:caldav}'
+
+
+def _request(url, credentials, method, body, depth):
+    return urllib.request.Request(url, data=body, method=method, headers={
+        'Authorization': f'Basic {credentials}', 'User-Agent': USER_AGENT,
+        'Content-Type': 'application/xml; charset=utf-8', 'Depth': depth})
+
+
+def _propfind(url, credentials, prop, depth, opener, timeout):
+    body = (f'<?xml version="1.0"?><d:propfind xmlns:d="DAV:" '
+            f'xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop>{prop}</d:prop></d:propfind>')
+    with opener(_request(url, credentials, 'PROPFIND', body.encode(), depth),
+                timeout=timeout) as response:
+        return ET.fromstring(response.read())
+
+
+def discover(url, credentials, opener=urllib.request.urlopen, timeout=TIMEOUT_SECONDS):
+    """Calendar URLs below a CalDAV root or account URL (e.g. .../remote.php/dav):
+    current-user-principal -> calendar-home-set -> calendars with VEVENT."""
+    from urllib.parse import urljoin
+    root = _propfind(url, credentials, '<d:current-user-principal/>', '0', opener, timeout)
+    principal = root.find(f'.//{_DAV}current-user-principal/{_DAV}href')
+    if principal is None:
+        return [url]
+    home = _propfind(urljoin(url, principal.text), credentials, '<c:calendar-home-set/>', '0',
+                     opener, timeout).find(f'.//{_CALDAV}calendar-home-set/{_DAV}href')
+    if home is None:
+        return [url]
+    listing = _propfind(urljoin(url, home.text), credentials,
+                        '<d:resourcetype/><c:supported-calendar-component-set/>', '1', opener,
+                        timeout)
+    found = []
+    for response in listing.findall(f'{_DAV}response'):
+        href = response.find(f'{_DAV}href')
+        is_calendar = response.find(f'.//{_DAV}resourcetype/{_CALDAV}calendar') is not None
+        components = [c.get('name') for c in response.iter(f'{_CALDAV}comp')]
+        if href is not None and is_calendar and (not components or 'VEVENT' in components):
+            found.append(urljoin(url, href.text))
+    return found
+
+
 def fetch(config, start, end, opener=urllib.request.urlopen, timeout=TIMEOUT_SECONDS):
     credentials = base64.b64encode(f'{config.user}:{config.password}'.encode()).decode()
     events = []
+    urls = []
     for url in config.urls:
-        request = urllib.request.Request(url, data=query_body(start, end), method='REPORT',
-                                         headers={'Authorization': f'Basic {credentials}',
-                                                  'Content-Type': 'application/xml; charset=utf-8',
-                                                  'Depth': '1'})
+        # A calendar URL is used as is; anything else (DAV root, account) is searched.
+        urls += [url] if '/calendars/' in url else discover(url, credentials, opener, timeout)
+    for url in urls:
+        request = _request(url, credentials, 'REPORT', query_body(start, end), '1')
         with opener(request, timeout=timeout) as response:
             events.extend(parse_multistatus(response.read(), start.tzinfo))
     return events
