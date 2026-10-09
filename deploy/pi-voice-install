@@ -1,0 +1,18 @@
+#!/bin/sh
+# Install a pi-voice-assistant commit from GitHub as root (sudo rule for obivan,
+# deploy/pi-voice-install.sudoers). Takes only a full commit hash and fetches
+# the code itself, so nothing writable by obivan is executed as root.
+set -eu
+commit="${1:-}"
+case "$commit" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+  *) echo "usage: pi-voice-install <40-character commit hash>" >&2; exit 2 ;;
+esac
+[ "${#commit}" -eq 40 ] || { echo "need the full 40-character commit hash" >&2; exit 2; }
+echo "$commit" | grep -qE '^[0-9a-f]{40}$' || exit 2
+work="$(mktemp -d /var/tmp/pi-voice-install.XXXXXX)"
+trap 'rm -rf "$work"' EXIT
+curl -fsSL "https://codeload.github.com/0b-ivan/pi-voice-assistant/tar.gz/$commit" \
+  | tar -xz -C "$work" --strip-components=1
+bash "$work/scripts/install-voice-service.sh"
+echo "$commit" | cut -c1-7 > /opt/pi-voice-assistant/src/DEPLOYED
