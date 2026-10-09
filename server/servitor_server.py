@@ -288,7 +288,12 @@ class Service:
         if answer is None and op is None:
             return None
         if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
-            return device_control.denied_text(style)
+            # Short commands often miss the voice threshold: no spoken
+            # confirmation then, but button E at the device still works.
+            if answer == 'confirm' or op in device_control.CONFIRM_OPS:
+                target = pending if answer == 'confirm' else op
+                emit(dict(event='device', op=target))   # (re)asks; the Pi waits for E
+                return device_control.button_only_text(target, style)
         if answer == 'confirm':
             emit(dict(event='device', op=pending, confirm=True))
             return device_control.start_text(pending, style)

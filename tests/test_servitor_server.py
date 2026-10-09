@@ -606,16 +606,23 @@ class IntentServerTest(ServerTest):
                                                        'memory': 'off'})
         self.assertEqual(device, [])            # the maintenance mode's own reboot
 
-    def test_device_commands_refused_to_an_unknown_voice(self):
+    def test_unknown_voice_confirms_only_with_button_e(self):
+        guest = dict(facts=[], directives=[], history=[],
+                     voiceprints=[dict(name='Ivan', print='AAAA')])
         with unittest.mock.patch.object(ss.Service, '_identify',
                                         lambda self, audio, copy, emit:
                                         dict(copy, speaker='unknown')):
+            text, device = self.device_turn('fahr dich herunter',
+                                            {'devctl': 'on', 'memory': 'on'}, guest)
+            self.assertIn('Bestätigen nur mit Taste E', text)
+            self.assertEqual(device, [{'event': 'device', 'op': 'shutdown'}])  # Pi waits for E
             text, device = self.device_turn(
-                'bestätigt', {'devctl': 'on', 'pending': 'shutdown', 'memory': 'on'},
-                dict(facts=[], directives=[], history=[],
-                     voiceprints=[dict(name='Ivan', print='AAAA')]))
-        self.assertIn('Befehl verweigert', text)
-        self.assertEqual(device, [])
+                'bestätigt', {'devctl': 'on', 'pending': 'shutdown', 'memory': 'on'}, guest)
+            self.assertIn('Taste E', text)
+            self.assertEqual(device, [{'event': 'device', 'op': 'shutdown'}])  # asks again
+            text, device = self.device_turn('wlan aus', {'devctl': 'on', 'wlan': 'on',
+                                                         'memory': 'on'}, guest)
+            self.assertEqual(device, [{'event': 'device', 'op': 'wlan_off'}])  # harmless
 
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')

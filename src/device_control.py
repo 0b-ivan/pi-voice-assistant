@@ -7,8 +7,10 @@ confirms by saying "bestätigt" (or "ja") or with button E within
 CONFIRM_SECONDS; "nein"/"abbrechen" or button B cancel, anything else drops
 the request and is answered as usual. The Pi keeps the pending request and
 sends it with its status snapshot (``pending``), so the server can recognize
-the spoken confirmation. The server refuses all of this to an unrecognized
-voice. "Starte neu" in the maintenance mode stays the maintenance action
+the spoken confirmation. When the server does not recognize the voice (short
+commands often score below the speaker threshold), reboot and shutdown can
+only be confirmed with button E: whoever presses it stands at the device.
+WLAN and sleep are harmless and undone with a word, so they always work. "Starte neu" in the maintenance mode stays the maintenance action
 (confirmed with E); the server itself is only restarted from there.
 
 Text only (no hardware): ptt.py switches WLAN (rfkill), requests the reboot
@@ -111,8 +113,8 @@ ALREADY = {'wlan_off': "WLAN ist bereits deaktiviert.", 'wlan_on': "WLAN ist ber
 ALREADY_BILLY = {'wlan_off': "WLAN ist schon aus.", 'wlan_on': "WLAN ist schon an."}
 CANCELLED = "Abgebrochen."
 CANCELLED_BILLY = "Okay, lass ich."
-DENIED = "Stimme nicht als Bediener erkannt. Befehl verweigert."
-DENIED_BILLY = "Dich kenn ich nicht. Das macht nur der Boss."
+BUTTON_ONLY = "Stimme nicht erkannt. Bestätigen nur mit Taste E."
+BUTTON_ONLY_BILLY = "Deine Stimme hab ich nicht erkannt. Wenn du's ernst meinst, drück E."
 AUTO_WLAN = "Anfrage braucht Netz. WLAN wird aktiviert."
 AUTO_WLAN_BILLY = "Dafür brauch ich Netz, ich mach das WLAN an."
 AUTO_WLAN_RETRY = "WLAN aktiviert. Anfrage in einigen Sekunden wiederholen."
@@ -141,8 +143,12 @@ def cancelled_text(style='off'):
     return CANCELLED_BILLY if _billy(style) else CANCELLED
 
 
-def denied_text(style='off'):
-    return DENIED_BILLY if _billy(style) else DENIED
+def button_only_text(op, style='off'):
+    """Unrecognized voice: what will happen, confirmed only with button E."""
+    what = {'reboot': "Neustart", 'shutdown': "Herunterfahren"}[op]
+    if _billy(style):
+        return f"{what}? {BUTTON_ONLY_BILLY}"
+    return f"{what} angefordert. {BUTTON_ONLY}"
 
 
 def auto_wlan_text(style='off', retry=False):

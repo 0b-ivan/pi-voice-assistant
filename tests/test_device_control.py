@@ -60,7 +60,10 @@ class TextTests(unittest.TestCase):
         self.assertEqual(dc.start_text('wlan_off', 'full'), dc.START['wlan_off'])
         for op in dc.OPS:
             self.assertNotEqual(dc.start_text(op, 'billy'), dc.start_text(op, 'off'))
-        self.assertIn('Boss', dc.denied_text('billy_full'))
+        self.assertEqual(dc.button_only_text('shutdown'),
+                         "Herunterfahren angefordert. Stimme nicht erkannt. "
+                         "Bestätigen nur mit Taste E.")
+        self.assertIn('drück E', dc.button_only_text('reboot', 'billy'))
         self.assertTrue(dc.auto_wlan_text('off', retry=True).endswith('wiederholen.'))
 
 
