@@ -247,10 +247,37 @@ def _uptime_from_seconds(seconds):
     return _duration_words(minutes, 'Minute', 'Minuten', feminine=True)
 
 
-def battery_sentence(snapshot):
+# Wording of the fixed sentences: the Servitor's lore level, or Billy (the
+# human module) plain or with full lore. The LLM gets persona and lore itself.
+STYLES = ('off', 'light', 'full', 'billy', 'billy_full')
+
+
+def phrase_style(lore=None, persona=None):
+    lore = lore if lore in ('off', 'light', 'full') else 'off'
+    if persona == 'mensch':
+        return 'billy_full' if lore == 'full' else 'billy'
+    return lore
+
+
+def _style(snapshot, lore=None):
+    """An explicit style or lore level wins; else what the snapshot says."""
+    return lore or phrase_style(snapshot.get('lore'), snapshot.get('persona'))
+
+
+def is_billy(style):
+    return style in ('billy', 'billy_full')
+
+
+def battery_sentence(snapshot, style='off'):
     percent = snapshot.get('battery_pct')
     if percent is None:
         return None
+    if is_billy(style):
+        if snapshot.get('battery_charging'):
+            return f"Akku bei {percent} Prozent, ich lade gerade."
+        if snapshot.get('battery_plugged'):
+            return f"Akku bei {percent} Prozent, hänge am Netz."
+        return f"Akku bei {percent} Prozent."
     if snapshot.get('battery_charging'):
         return f"Energiespeicher {percent} Prozent. Ladung aktiv."
     if snapshot.get('battery_plugged'):
@@ -289,9 +316,13 @@ def status_text(snapshot, processing=False, lore=None):
     elif snapshot.get('server') == 'down':
         warnings.append("Server nicht erreichbar. Lokaler Betrieb.")
 
-    lore = lore or snapshot.get('lore', 'off')
+    lore = _style(snapshot, lore)
+    billy = is_billy(lore)
+    trouble = any(w.startswith("Warnung") for w in warnings)
     if processing:
-        parts = ["Direktive in Bearbeitung."]
+        parts = ["Bin noch dran." if billy else "Direktive in Bearbeitung."]
+    elif billy:
+        parts = ["Lagebericht." + (" Nicht alles rund." if trouble else "")]
     elif lore == 'full':
         parts = ["Status-Litanei beginnt."]
         if any(w.startswith("Warnung") for w in warnings):
@@ -302,7 +333,7 @@ def status_text(snapshot, processing=False, lore=None):
         parts = ["Status nominal."]
     parts += warnings
     if not low_battery:
-        sentence = battery_sentence(snapshot)
+        sentence = battery_sentence(snapshot, lore)
         if sentence:
             parts.append(sentence)
     if temperature is not None and not hot:
@@ -327,7 +358,10 @@ def status_text(snapshot, processing=False, lore=None):
     if uptime is not None:
         parts.append(f"Laufzeit {_uptime_from_seconds(uptime)}.")
     if not processing:
-        if lore == 'full':
+        if billy:
+            parts.append("Für den Imperator. Was brauchst du?" if lore == 'billy_full'
+                         else "Was brauchst du?" if trouble else "Sonst alles ruhig, Boss.")
+        elif lore == 'full':
             parts.append("Der Maschinengeist ist besänftigt. Lob dem Omnissiah.")
         elif lore == 'light' and not any(w.startswith("Warnung") for w in warnings):
             parts.append("Maschinengeist ruhig. Befehl erwartet.")
@@ -348,10 +382,12 @@ def _wifi_quality(dbm):
 def network_text(snapshot, lore=None):
     """Spoken network report from the Pi's measurements."""
     snapshot = sanitize_snapshot(snapshot)
-    lore = lore or snapshot.get('lore', 'off')
+    lore = _style(snapshot, lore)
     if snapshot.get('wlan') == 'off':
-        return "WLAN deaktiviert. Keine Netzwerkverbindung."
-    parts = ["Netzwerkbericht." if lore != 'full' else "Abtastung der Noosphäre."]
+        return ("WLAN ist aus, ich bin offline." if is_billy(lore)
+                else "WLAN deaktiviert. Keine Netzwerkverbindung.")
+    parts = ["Funkcheck." if is_billy(lore) else
+             "Netzwerkbericht." if lore != 'full' else "Abtastung der Noosphäre."]
     dbm = snapshot.get('wifi_dbm')
     if dbm is not None:
         parts.append(f"WLAN-Signal minus {abs(dbm)} dBm, {_wifi_quality(dbm)}.")
@@ -401,7 +437,7 @@ def updates_sentence(snapshot, short=False):
 
 def updates_text(snapshot, lore=None):
     snapshot = sanitize_snapshot(snapshot)
-    lore = lore or snapshot.get('lore', 'off')
+    lore = _style(snapshot, lore)
     sentence = updates_sentence(snapshot)
     if 'updates' not in snapshot and 'server_updates' not in snapshot:
         return "Wartungsdaten noch nicht erhoben."
@@ -412,4 +448,6 @@ def updates_text(snapshot, lore=None):
     if lore == 'full':
         parts.append("Die Riten der Wartung sind fällig." if sentence
                      else "Der Maschinengeist ist rein.")
+    elif lore == 'billy_full' and sentence:
+        parts.append("Soll sich ein Techpriester drum kümmern.")
     return " ".join(parts)

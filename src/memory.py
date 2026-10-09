@@ -408,6 +408,15 @@ ABSENT = {
     'light': "Gedächtniskern fehlt. Speichern nicht möglich.",
     'full': "Gedächtniskern fehlt. Die Einheit kann nichts bewahren. Das Fleisch vergisst, "
             "die Maschine ohne Kern ebenso.",
+    'billy': "Kein Gedächtnis-Stick drin. Ich kann mir gerade nichts merken.",
+    'billy_full': "Kein Gedächtnis-Stick drin. Ohne den vergesse ich alles, Boss.",
+}
+# Billy (persona "mensch"): (plain, full lore) per memory command.
+BILLY_REPLIES = {
+    'add_fact': ("Gemerkt.", "Gemerkt. Steht jetzt in meinem Kopf."),
+    'add_directive': ("Verstanden. Mach ich ab jetzt so.",
+                      "Verstanden. Befehl ist Befehl, ab jetzt so."),
+    'forget': ("{count} {noun} vergessen.", "{count} {noun} vergessen. Sauber weg."),
 }
 
 
@@ -420,10 +429,13 @@ def reply(op, argument, context, lore='off'):
     """Sentence for a memory command. ``context`` is the memory copy (None:
     stick absent). Changes themselves are applied by the caller."""
     full = lore == 'full'
+    billy = lore in ('billy', 'billy_full')
     if context is None:
         return ABSENT.get(lore, ABSENT['light'])
     if unknown_speaker(context):
         return GUEST_TEXT
+    if billy and op in ('add_fact', 'add_directive'):
+        return BILLY_REPLIES[op][lore == 'billy_full']
     if op == 'add_fact':
         return ("Heilige Daten im Gedächtniskern versiegelt." if full
                 else "Gespeichert im Gedächtniskern.")
@@ -434,14 +446,17 @@ def reply(op, argument, context, lore='off'):
         known = (context.get('facts') or []) + (context.get('directives') or [])
         count = sum(matches(argument, text) for text in known)
         if not count:
-            return "Kein passender Eintrag im Gedächtniskern gefunden."
+            return ("Dazu hab ich nichts gespeichert." if billy
+                    else "Kein passender Eintrag im Gedächtniskern gefunden.")
         noun = 'Eintrag' if count == 1 else 'Einträge'
+        if billy:
+            return BILLY_REPLIES['forget'][lore == 'billy_full'].format(count=count, noun=noun)
         return (f"{count} {noun} aus dem Kern getilgt. Das Vergessen ist vollzogen." if full
                 else f"{count} {noun} gelöscht.")
     if op == 'recall':
         facts = context.get('facts') or []
         if not facts:
-            return "Der Gedächtniskern ist leer."
+            return "Da ist noch nichts drin." if billy else "Der Gedächtniskern ist leer."
         total = context.get('total_facts') or len(facts)
         head = f"{total} Einträge gespeichert. Zuletzt: "
         return head + _list(facts) + "."
