@@ -47,6 +47,39 @@ class IO:
         pass
 
 
+def pcm(*parts):
+    """(seconds, amplitude) pieces -> 16 kHz int16 PCM (a 440 Hz tone or silence)."""
+    import math
+    from array import array
+    samples = array("h")
+    for seconds, amplitude in parts:
+        samples.extend(int(amplitude * math.sin(2 * math.pi * 440 * i / 16000))
+                       for i in range(int(seconds * 16000)))
+    return samples.tobytes()
+
+
+class MatchingTests(unittest.TestCase):
+    def test_phrase_tolerates_split_words_and_fillers(self):
+        stored = "omnissiah segne diese maschine"
+        self.assertTrue(people.phrase_matches("omni sia segne diese maschine", stored))
+        self.assertTrue(people.phrase_matches("äh omnissiah segne diese maschine ok", stored))
+        self.assertTrue(people.phrase_matches("omnissiah segnet diese maschine", stored))
+        self.assertFalse(people.phrase_matches("hallo welt", stored))
+        self.assertFalse(people.phrase_matches("diese maschine", stored))
+        self.assertFalse(people.phrase_matches("", stored))
+
+    def test_trim_silence_keeps_speech_only(self):
+        take = pcm((2.0, 0), (1.5, 8000), (2.5, 30))
+        trimmed = speaker.trim_silence(take)
+        self.assertAlmostEqual(len(trimmed) / 32000, 1.5 + 2 * 0.2, delta=0.1)
+
+    def test_trim_silence_never_goes_below_a_second(self):
+        take = pcm((2.0, 0), (0.3, 8000), (2.0, 0))
+        self.assertEqual(speaker.trim_silence(take), take)
+        silent = pcm((4.0, 0))
+        self.assertEqual(speaker.trim_silence(silent), silent)
+
+
 class FlowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -57,9 +90,34 @@ class FlowTests(unittest.TestCase):
         self.core = memory.MemoryCore(root, Path(self.tmp.name) / "dev")
         self.core.save_voiceprint("Ivan", speaker.encode(IVAN), 7)
 
-    def flow(self, voice, words, action):
-        io = IO(voice, words)
-        return people.Flow(self.core, io, "Ivan", action).run(), io
+    def flow(self, voice, words, action, io=None):
+        io = io or IO(voice, words)
+        self.log = StringIO()
+        with redirect_stdout(self.log):
+            return people.Flow(self.core, io, "Ivan", action).run(), io
+
+    def events(self):
+        return [json.loads(line) for line in self.log.getvalue().splitlines()]
+
+    def test_second_attempt_after_a_miss(self):
+        self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
+        io = IO(IVAN, ["hallo welt", "omnissiah segne diese maschine"])
+        result, io = self.flow(None, None, "details", io)
+        self.assertTrue(result["auth"])
+        self.assertIn(people.AUTH_RETRY, io.said)
+        self.assertEqual([e["result"] for e in self.events()], ["failed", "ok"])
+
+    def test_auth_log_has_scores_but_never_the_phrase(self):
+        self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
+        result, io = self.flow(OTHER, ["omnissiah segne diese maschine"] * 2, "details")
+        self.assertFalse(result["auth"])
+        self.assertEqual(io.said[-1], people.AUTH_FAILED)
+        events = self.events()
+        self.assertEqual(len(events), people.ATTEMPTS)
+        self.assertEqual(events[0]["phrase"], 1.0)
+        self.assertLess(events[0]["voice"], speaker.THRESHOLD)
+        self.assertNotIn("omnissiah", self.log.getvalue())
+        self.assertLess(self.core.profile("Ivan")["last_score"], speaker.THRESHOLD)
 
     def test_first_time_voice_only_then_passphrase_is_required(self):
         result, io = self.flow(IVAN, ["omnissiah segne diese maschine"] * 2, "details")

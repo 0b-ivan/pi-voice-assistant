@@ -13,6 +13,7 @@ personal memories and cannot change them.
 import base64
 import math
 import os
+import sys
 from pathlib import Path
 
 MODEL = Path(os.environ.get('SERVITOR_SPEAKER_MODEL',
@@ -57,6 +58,32 @@ def average(vectors):
     dim = len(vectors[0])
     vectors = [v for v in vectors if len(v) == dim]
     return normalize([sum(v[i] for v in vectors) / len(vectors) for i in range(dim)])
+
+
+def trim_silence(pcm, rate=16000, frame_seconds=0.03, pad_seconds=0.2):
+    """16 kHz mono int16 PCM without the quiet start and end (beep echo, waiting
+    for the speaker); silence dilutes the embedding of a short take. Returns
+    the input unchanged when too little speech (< MIN_SECONDS) would remain."""
+    from array import array
+    samples = array('h', pcm[:len(pcm) - len(pcm) % 2])
+    if sys.byteorder == 'big':
+        samples.byteswap()
+    size = max(1, int(rate * frame_seconds))
+    levels = [math.sqrt(sum(s * s for s in samples[i:i + size]) / size)
+              for i in range(0, len(samples) - size + 1, size)]
+    if not levels:
+        return pcm
+    floor = sorted(levels)[len(levels) // 5]
+    limit = max(200.0, floor * 3, max(levels) * 0.05)
+    loud = [i for i, level in enumerate(levels) if level >= limit]
+    if not loud:
+        return pcm
+    pad = int(pad_seconds / frame_seconds)
+    start = max(0, loud[0] - pad) * size
+    end = min(len(samples), (loud[-1] + 1 + pad) * size)
+    if end - start < MIN_SECONDS * rate:
+        return pcm
+    return pcm[start * 2:end * 2]
 
 
 def identify(embedding, voiceprints, threshold=THRESHOLD):
