@@ -110,7 +110,10 @@ def _glance(now):
     return 'look_a' if roll < 9 else 'look_b' if roll < 18 else 'look'
 
 
-def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None):
+GOD_SECONDS = 2.0
+
+
+def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plugged_at=None):
     """The face to show: (row, column) or 'god'/'dead'.
 
     state: the display state (BEREIT, ZUHÖREN, DENKEN, SPRECHEN ...);
@@ -133,6 +136,6 @@ def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None):
         return (row, 'look')
     if alarm:
         return (row, 'ouch' if int(now) % 2 == 0 else 'look')
-    if (battery or {}).get('charging') and int(now) % 8 == 0:
-        return 'god'      # charging: a short flash of invulnerability now and then
+    if plugged_at is not None and 0 <= now - plugged_at < GOD_SECONDS:
+        return 'god'      # charger just connected: a short flash of invulnerability
     return (row, _glance(now))

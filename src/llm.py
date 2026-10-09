@@ -141,19 +141,13 @@ DEFAULT_LORE = 'light'
 SERVITOR_LORE_PROMPTS = {
     'off': "Lore: Verwende keine Begriffe aus fiktiven Universen.",
     'light': (
-        "Lore: Du dienst dem Adeptus Mechanicus aus dem Warhammer-40.000-Universum. "
-        "Streue gelegentlich, höchstens einmal pro Antwort und nicht in jeder Antwort, "
-        "einen Begriff oder eine kurze Formel ein, zum Beispiel Maschinengeist, Omnissiah, "
-        "Kogitator, Noosphäre, Techpriester, heilige Ölung oder \"Das Fleisch ist schwach.\". "
-        "Fakten bleiben vollständig und korrekt."),
+        "Lore: Du dienst dem Adeptus Mechanicus aus dem Warhammer-40.000-Universum, "
+        "aber zurückhaltend. Fakten bleiben vollständig und korrekt."),
     'full': (
         "Lore: Du bist ein Servitor des Adeptus Mechanicus aus dem Warhammer-40.000-Universum "
-        "und sprichst in seiner Liturgie. Beginne oder ende meist mit einer kurzen Anrufung, "
-        "etwa \"Lob dem Omnissiah.\", \"Der Maschinengeist ist besänftigt.\" oder "
-        "\"Das Fleisch ist schwach, die Maschine ist stark.\". Nenne Rechner Kogitatoren, "
-        "Wissen heilige Daten, Fehler Makel am Maschinengeist, das Netz die Noosphäre. "
-        "Gelegentlich ein binärer Lobgesang als Wörter, etwa \"Null Eins Eins Null.\". "
-        "Höchstens 60 Wörter. Die Lore ist nur Rahmen: Fakten bleiben vollständig und korrekt."),
+        "und sprichst in seiner Liturgie. Nenne Rechner Kogitatoren, Wissen heilige Daten, "
+        "Fehler Makel am Maschinengeist, das Netz die Noosphäre. Höchstens 60 Wörter. "
+        "Die Lore ist nur Rahmen: Fakten bleiben vollständig und korrekt."),
 }
 
 
@@ -182,6 +176,57 @@ BILLY_LORE_PROMPTS = {
 }
 LORE_PROMPTS = {'servitor': SERVITOR_LORE_PROMPTS, 'mensch': BILLY_LORE_PROMPTS}
 
+# Per request a random choice from these pools goes into the prompt, so the
+# model does not repeat the same few formulas; "light" adds lore only to
+# about every third answer, "full" always (binary chant only rarely).
+LORE_POOLS = {
+    'servitor': dict(
+        terms=('Maschinengeist', 'Omnissiah', 'Kogitator', 'Noosphäre', 'Techpriester',
+               'heilige Ölung', 'Motivkraft', 'Datenkern', 'Mars', 'Adeptus Mechanicus',
+               'Mechadendrit', 'Augmetik', 'Schmiedewelt', 'Magos', 'Servoschädel',
+               'Ritus der Aktivierung', 'Weihrauch der Wartung', 'Litanei der Funktion',
+               'Kogitatorbank', 'Fabricator-General'),
+        formulas=('Lob dem Omnissiah.', 'Der Maschinengeist ist besänftigt.',
+                  'Das Fleisch ist schwach.', 'Daten sind heilig.', 'Gesegnet sei die Maschine.',
+                  'Die Motivkraft fließt.', 'Ritus erfüllt.', 'Ehre dem Mars.',
+                  'Kein Makel im Code.', 'Die Litanei ist gesprochen.', 'Der Kogitator wacht.',
+                  'Wissen ist Macht, hüte es.', 'Ave Deus Mechanicus.',
+                  'Der Omnissiah sieht alles.', 'Die Maschine ist stark.',
+                  'Heilige Ölung empfohlen.', 'Die Zahnräder drehen sich im Glauben.',
+                  'Das Wissen des Mars sei mit dir.')),
+    'mensch': dict(
+        terms=('Imperator', 'Garde', 'Lasergewehr', 'Thron', 'Kommissar', 'Ork', 'Warp',
+               'Leman Russ', 'Lho-Stäbchen', 'Ration', 'Schützengraben', 'Techpriester',
+               'Phobos IX', 'Höllenbrut', 'Feldgebet', 'Sanitäter', 'Granatwerfer',
+               'Fronturlaub', 'Bolter', 'Exerzierplatz'),
+        formulas=('Beim Thron.', 'Der Imperator schützt.', 'Schon schlimmer gehabt.',
+                  'Wie auf Phobos IX.', 'Nichts für schwache Nerven.', 'Abtreten.',
+                  'Haltung, Soldat.', 'Der Kommissar wäre stolz.', 'Kopf runter, Augen auf.',
+                  'Schlechter als Ration Nummer vier ist es nicht.')),
+}
+
+
+def lore_hint(persona=None, lore=None, rng=None):
+    """This request's lore instruction (random words; may be empty)."""
+    import random
+    rng = rng or random
+    persona, lore = persona_name(persona), lore_level(lore)
+    if lore == 'off':
+        return ''
+    pool = LORE_POOLS[persona]
+    terms = ', '.join(rng.sample(pool['terms'], 3))
+    if lore == 'light':
+        if rng.random() >= 1 / 3:
+            return "Lore diesmal: keine Begriffe aus dem Universum, antworte rein sachlich."
+        return f"Lore diesmal: genau ein Begriff, gewählt aus: {terms}. Keine Anrufung."
+    formulas = ' / '.join(f'"{f}"' for f in rng.sample(pool['formulas'], 3))
+    binary = (" Diesmal darf ein kurzer binärer Lobgesang als Wörter vorkommen."
+              if persona == 'servitor' and rng.random() < 1 / 6
+              else " Kein Binärcode, keine Folgen aus Null und Eins.")
+    return (f"Lore diesmal: nutze zwei bis drei dieser Begriffe: {terms}. Höchstens eine "
+            f"Anrufung, gewählt aus: {formulas}, oder eine eigene neue; nicht immer am Ende."
+            + binary)
+
 
 def lore_level(level=None):
     level = (level or os.environ.get('SERVITOR_LORE', DEFAULT_LORE)).strip().lower()
@@ -199,6 +244,9 @@ def system_prompt(lore=None, memory=NO_MEMORY, persona=None):
     if memory is not NO_MEMORY:
         from memory import prompt_section
         parts.append(prompt_section(memory))
+    hint = lore_hint(persona, lore)
+    if hint:
+        parts.append(hint)  # after the stable parts: the prompt cache still matches
     parts.append(time_context())
     return '\n\n'.join(parts)
 

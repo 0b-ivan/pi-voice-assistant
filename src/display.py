@@ -1276,6 +1276,7 @@ def main():
     except Exception:  # without the sheet Billy keeps the skull
         face = None
     persona_shown, glitch_until, hushed_at = None, 0.0, None
+    was_plugged, plugged_at = None, None   # charger connected: Billy's short god mode
     envelope, envelope_mtime = None, None
     info_rows, next_info = None, 0.0
     states = None
@@ -1446,8 +1447,13 @@ def main():
                         envelope, envelope_mtime = read_envelope(), mtime
                     from skull import speaking_level as loudness
                     level = (loudness(time.time(), envelope) - 0.55) / 0.45
+                plugged = bool((battery or {}).get('plugged'))
+                if plugged and was_plugged is False:
+                    plugged_at = time.time()
+                was_plugged = plugged
                 key = choose_face(shown, time.time(), level, battery,
-                                  alarm=bool(info.get('alarm')), hushed_at=hushed_at)
+                                  alarm=bool(info.get('alarm')), hushed_at=hushed_at,
+                                  plugged_at=plugged_at)
                 # Only a new face (or text) is drawn: idle costs a redraw every few seconds.
                 screen = ('face', shown, states['network'], key,
                           tuple(sorted(shown_info.items())))
