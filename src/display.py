@@ -165,6 +165,7 @@ def read_status(path=None):
                          ('screen', ('on', 'off')),
                          ('power', ('awake', 'rest', 'sleep')),
                          ('memory', ('on', 'off')),
+                         ('opt_bt', ('on', 'off', 'none')),
                          ('maint', ('on', 'off')),
                          ('enroll', ('intro', 'wake', 'ask', 'process', 'done', 'auth')),
                          ('people', ('on', 'off')),
@@ -776,6 +777,8 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
         return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
+    if item == 'bt_speaker':
+        return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_bt'), '')
     if item == 'wake':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_wake'), '')
     return ''
@@ -876,7 +879,8 @@ def read_people(path=None):
     return dict(page=data.get('page') if data.get('page') in ('list', 'actions', 'details')
                 else 'list', index=index, items=items,
                 person=str(data.get('person') or '')[:28], details=details,
-                confirm_delete=data.get('confirm_delete') is True)
+                confirm_delete=data.get('confirm_delete') is True,
+                title=str(data.get('title') or '')[:16])
 
 
 def render_people(display, view, info=None):
@@ -886,7 +890,8 @@ def render_people(display, view, info=None):
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     accent = (0, 200, 170)
-    title = 'PERSONEN' if view['page'] == 'list' else view['person'].upper()[:16]
+    title = view.get('title') or ('PERSONEN' if view['page'] == 'list'
+                                  else view['person'].upper()[:16])
     draw.text((12, 12), title, font=font(17), fill=accent)
     if info.get('battery'):
         draw_battery(draw, 228, 14, info['battery'])

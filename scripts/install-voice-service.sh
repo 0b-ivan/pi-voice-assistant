@@ -30,6 +30,8 @@ install -m 0644 "${repo_root}/src/sysmon.py" /opt/pi-voice-assistant/src/sysmon.
 install -m 0644 "${repo_root}/src/memory.py" /opt/pi-voice-assistant/src/memory.py
 install -m 0644 "${repo_root}/src/maintenance.py" /opt/pi-voice-assistant/src/maintenance.py
 install -m 0644 "${repo_root}/src/enroll.py" /opt/pi-voice-assistant/src/enroll.py
+install -m 0644 "${repo_root}/src/audio_output.py" /opt/pi-voice-assistant/src/audio_output.py
+install -m 0644 "${repo_root}/src/bluetooth.py" /opt/pi-voice-assistant/src/bluetooth.py
 install -m 0644 "${repo_root}/src/boardled.py" /opt/pi-voice-assistant/src/boardled.py
 install -m 0644 "${repo_root}/src/people.py" /opt/pi-voice-assistant/src/people.py
 install -m 0644 "${repo_root}/src/speaker.py" /opt/pi-voice-assistant/src/speaker.py

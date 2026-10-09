@@ -23,6 +23,8 @@ C/D ändern nur den digitalen `Playback`-Regler (0,5-dB-Raster, 255 = 0 dB), nic
 
 Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B schließt**, nach 15 s ohne Taste schließt es selbst, PTT schließt es sofort. `pi-ptt` liest beide Tasten (Pull-up, aktiv Low, `PTT_PITFT_BUTTONS=23,24`, leer = aus) und besitzt den Menüzustand; das Display zeigt ihn nur an (feste Werte in `display-status.json`).
 
+Bluetooth-Lautsprecher ([`src/bluetooth.py`](../src/bluetooth.py)) brauchen einmal [`deploy/install-bluetooth.sh`](../deploy/install-bluetooth.sh) (bluez-alsa, Gruppe bluetooth). Ein gekoppelter Lautsprecher wird alle 30 s geprüft und neu verbunden; Proximus sagt Verbinden und Trennen an. Die Lautstärke regelt der Lautsprecher selbst (C/D wirken nur auf den eingebauten). Auf dem Pi Zero 2 W teilen sich WLAN und Bluetooth einen Funkchip.
+
 Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B geht eine Ebene zurück und schließt oben.
 
 | Gruppe | Eintrag | Wirkung |
@@ -34,6 +36,9 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | Personen | Bekannte Personen | Liste der Stimmprofile, je Person Nachtrainieren/Details/Passphrase/Löschen mit Stimm- und Passphrase-Anmeldung ([Gedächtnis](memory.md#kennenlernen-und-stimmerkennung)) |
 | | Kennenlernen | Neue Person: Stimmproben, Fragen, Stimmprofil |
 | | Stimme nachtrainieren | 20 Stimmproben, dem passenden Profil zugerechnet |
+| Audio | BT-Lautsprecher AN/AUS | Gekoppelten Bluetooth-Lautsprecher verbinden/trennen; verbunden geht jede Sprachausgabe dorthin, sonst über den eingebauten Lautsprecher |
+| | Lautsprecher suchen | 12 s Suche (Lautsprecher im Kopplungsmodus), Liste nur mit Audiogeräten, E koppelt und verbindet |
+| | Lautsprecher entfernen | Gekoppelten Lautsprecher vergessen |
 | Gerät | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
 | | Alarme AN/AUS | Ansagen stumm; Herunterfahren bei leerem Akku bleibt aktiv |
 | | Status-LED AN/AUS | SHIM-LED aus; Aufnahme und Fehler zeigt sie trotzdem |

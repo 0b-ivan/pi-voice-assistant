@@ -15,6 +15,8 @@ import wave
 import functools
 from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
 import alarm_audio
+import audio_output
+import bluetooth
 import boardled
 import enroll
 import people
@@ -114,6 +116,7 @@ DISPLAY_STATUS_VALUES = {
     'screen': {'on', 'off'},
     'power': {'awake', 'rest', 'sleep'},
     'memory': {'on', 'off'},
+    'opt_bt': {'on', 'off', 'none'},
     'menu_group': {'top', *MENU_GROUPS},
     'maint': {'on', 'off'},
     'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth'},
@@ -201,7 +204,8 @@ class EnrollIO:
             process.terminate()
 
     def _play(self, path, timeout=60):
-        self._run(['/usr/bin/aplay', '-q', '-D', self.output, str(path)], timeout)
+        self._run(['/usr/bin/aplay', '-q', '-D', audio_output.current(self.output), str(path)],
+                  timeout)
 
     def say(self, text):
         path = self.runtime / 'enroll-say.wav'
@@ -640,6 +644,11 @@ class VoiceController:
         self.enroll = None                 # running enroll.Session or people.Flow
         self.people = people.Browser()
         self.board_leds = boardled.BoardLeds()
+        self.bt = None                     # bluetooth.Bluetooth, started by main()
+        self.bt_wanted = True              # reconnect the paired speaker automatically
+        self.bt_busy = False               # scan/pair running in a thread
+        self.bt_notes = []                 # sentences from the Bluetooth thread
+        self.picker = None                 # dict(title, items=[(mac, name)], index, action)
         self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
         self.alarms.notice_store = maintenance.NoticeStore()
@@ -777,7 +786,9 @@ class VoiceController:
                                opt_alarms='on' if self.alarms_enabled else 'off',
                                opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
-                               screen='on' if self.screen_on else 'off')
+                               screen='on' if self.screen_on else 'off',
+                               opt_bt='none' if self.bt is None else
+                               'on' if self.bt.connected else 'off')
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
@@ -788,6 +799,10 @@ class VoiceController:
         if item == 'people':
             self._publish_menu()
             self._open_people()
+            return
+        if item in ('bt_speaker', 'bt_scan', 'bt_forget'):
+            self._bluetooth_item(item)
+            self._publish_menu()
             return
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
@@ -859,6 +874,8 @@ class VoiceController:
                                    server=self.server_state() if links else 'off',
                                    lore=self.lore, internet=internet)
         texts += self._check_memory()
+        notes, self.bt_notes = self.bt_notes, []
+        texts += notes
         maintenance_texts = self._check_maintenance()  # spoken even with alarms muted
         if self.power != 'sleep':  # maintenance can wait until someone is around
             # Wall clock: the last announcement survives service restarts.
@@ -991,6 +1008,104 @@ class VoiceController:
         return out
 
     # --- Getting to know the operator ------------------------------------
+
+    # --- Bluetooth speakers ------------------------------------------------
+
+    def start_bluetooth(self, interval=30.0):
+        """Watch for the paired speaker in a daemon thread (main() calls this)."""
+        self.bt = bluetooth.Bluetooth()
+
+        def watch():
+            while True:
+                if not self.bt_busy:
+                    self._bt_refresh()
+                time.sleep(interval)
+        threading.Thread(target=watch, name='bluetooth', daemon=True).start()
+
+    def _bt_refresh(self):
+        before = audio_output.bluetooth()   # what playback currently uses
+        live = self.bt.refresh(reconnect=self.bt_wanted)
+        mac = live[0] if live else None
+        audio_output.set_bluetooth(mac)
+        if mac != before:
+            event('bluetooth', connected=mac is not None)
+            self.bt_notes.append(bluetooth.CONNECTED if mac else bluetooth.DISCONNECTED)
+
+    def _bt_job(self, work):
+        def run():
+            self.bt_busy = True
+            try:
+                work()
+            finally:
+                self.bt_busy = False
+        threading.Thread(target=run, name='bluetooth-job', daemon=True).start()
+
+    def _bluetooth_item(self, item):
+        if self.bt is None or not self.bt.available():
+            self._say(bluetooth.UNAVAILABLE)
+            return
+        if self.bt_busy:
+            self._say(bluetooth.BUSY)
+            return
+        if item == 'bt_speaker':
+            if self.bt.connected:
+                self.bt_wanted = False
+                self._bt_job(lambda: (self.bt.disconnect(), self._bt_refresh()))
+            else:
+                self.bt_wanted = True
+                self._bt_job(self._bt_refresh)
+        elif item == 'bt_scan':
+            self._say(bluetooth.SCANNING)
+
+            def scan():
+                found = self.bt.scan()
+                if found:
+                    self.picker = dict(title='LAUTSPRECHER', items=found, index=0, action='pair')
+                    self._publish_picker()
+                else:
+                    self.bt_notes.append(bluetooth.NONE_FOUND)
+            self._bt_job(scan)
+        elif item == 'bt_forget':
+            paired = [(mac, name) for mac, name, _ in self.bt.speakers()]
+            if not paired:
+                self._say(bluetooth.NONE_PAIRED)
+                return
+            self.picker = dict(title='ENTFERNEN', items=paired, index=0, action='forget')
+            self._publish_picker()
+
+    def _publish_picker(self):
+        path = Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'display-people.json'
+        if self.picker:
+            items = [name[:24] for _, name in self.picker['items']] + ['Zurück']
+            try:
+                people.write_view(path, dict(page='list', index=self.picker['index'], items=items,
+                                             person='', title=self.picker['title']))
+            except OSError:
+                pass
+        self.people_rev = (self.people_rev + 1) % 10000
+        publish_display_status(people='on' if self.picker else 'off', people_rev=self.people_rev)
+
+    def _picker_buttons(self, confirm):
+        picker, self.picker = self.picker, None
+        index = picker['index']
+        if confirm and index < len(picker['items']):
+            mac, name = picker['items'][index]
+            if picker['action'] == 'pair':
+                self._say(bluetooth.PAIRING)
+
+                def pair():
+                    ok = self.bt.pair(mac, name)
+                    self.bt_wanted = True
+                    if ok:
+                        self._bt_refresh()
+                    else:
+                        self.bt_notes.append(bluetooth.PAIR_FAILED)
+                self._bt_job(pair)
+            else:
+                self.bt.forget(mac)
+                audio_output.set_bluetooth(self.bt.connected[0] if self.bt.connected else None)
+                self._say(bluetooth.FORGOTTEN)
+        self._publish_picker()
 
     def _open_people(self):
         if not self.memory.present():
@@ -1247,6 +1362,11 @@ class VoiceController:
     def _pitft_input(self, pitft_pressed, now):
         up = self.pitft[0].update(pitft_pressed[0], now) == 'start'
         down = self.pitft[1].update(pitft_pressed[1], now) == 'start'
+        if (up or down) and self.picker and self.power == 'awake':
+            items = self.picker['items']
+            self.picker['index'] = (self.picker['index'] + (-1 if up else 1)) % (len(items) + 1)
+            self._publish_picker()
+            return
         if (up or down) and self.people.active and self.power == 'awake':
             self.people.move(-1 if up else 1)
             self._publish_people()
@@ -1456,6 +1576,9 @@ class VoiceController:
                     event('button', button=name, action='start')
             return
         self._pitft_input(pitft_pressed, now)
+        if self.picker and not self.menu.open and ('B' in commands or 'E' in commands):
+            self._picker_buttons('E' in commands)
+            commands = [name for name in commands if name not in 'BE']
         if self.people.active and not self.menu.open and ('B' in commands or 'E' in commands):
             self._people_buttons('E' in commands, 'B' in commands, now)
             commands = [name for name in commands if name not in 'BE']
@@ -1812,6 +1935,8 @@ def main():
     if not args.probe:
         controller.internet_probe = InternetProbe().start()
         controller.network_watch = sysmon.network_watch().start()
+        if os.environ.get('PTT_BLUETOOTH', '1') != '0':
+            controller.start_bluetooth()
         controller.update_watch = sysmon.update_watch().start()
     battery_monitor = Battery()
     next_power = 0.0

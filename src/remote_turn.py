@@ -9,6 +9,7 @@ No GPIO, ALSA capture or Piper in here. The bearer token is only sent as a
 header and never logged.
 """
 from dataclasses import dataclass
+import audio_output
 import base64
 import binascii
 import http.client
@@ -469,7 +470,7 @@ class RemoteCapableSpeech:
     def play(self, path):
         self.stop()
         self.player = self.popen(
-            ['/usr/bin/aplay', '-q', '-D', self.device, str(path)],
+            ['/usr/bin/aplay', '-q', '-D', audio_output.current(self.device), str(path)],
             stdin=subprocess.DEVNULL, start_new_session=True)
         started = time.time()
         threading.Thread(target=publish_envelope, args=(path, started),

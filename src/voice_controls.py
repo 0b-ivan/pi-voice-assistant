@@ -1,4 +1,5 @@
 """Nonblocking STT job, owned speech subprocess and WM8960 playback volume."""
+import audio_output
 import os
 from pathlib import Path
 import shlex
@@ -336,7 +337,7 @@ class ResidentSpeechOutput:
                 build_stream_playback_command(
                     sample_rate,
                     channels,
-                    self.audio_device,
+                    audio_output.current(self.audio_device),
                     profile=self.profile,
                 ),
                 stdin=subprocess.PIPE,
@@ -452,10 +453,11 @@ class ResidentSpeechOutput:
                     return
                 if code != 0:
                     raise RuntimeError(f'Servitor rendering failed ({code})')
-                playback = ['/usr/bin/aplay', '-q', '-D', self.audio_device,
+                playback = ['/usr/bin/aplay', '-q', '-D', audio_output.current(self.audio_device),
                             '-B', '500000', str(rendered)]
             else:
-                playback = build_playback_command(path, self.audio_device, profile=self.profile)
+                playback = build_playback_command(path, audio_output.current(self.audio_device),
+                                                  profile=self.profile)
             if self._current(job):
                 code = self._run_owned(job, playback, 'playback')
                 if self._current(job):
