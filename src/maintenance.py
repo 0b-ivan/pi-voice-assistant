@@ -141,6 +141,14 @@ def confirm_prompt(item, snapshot=None):
 def result_text(target, data, lore='off'):
     """Spoken when a worker finished."""
     name = 'Pi' if target == 'pi' else 'Server'
+    if lore in ('billy', 'billy_full'):
+        if data.get('state') == 'failed':
+            return f"{name}: Update ist schiefgegangen. Schau ins Protokoll."
+        count = data.get('upgraded', 0)
+        if not count:
+            return f"{name} ist schon aktuell."
+        return (f"{name}: Update fertig, {count} Pakete."
+                + (" Ein Neustart wäre gut." if data.get('reboot') else ""))
     if data.get('state') == 'failed':
         return f"{name}: Aktualisierung fehlgeschlagen. Protokoll prüfen."
     count = data.get('upgraded', 0)
@@ -262,10 +270,11 @@ def phrases():
     for item in ITEMS[:-1]:
         texts += [confirm_prompt(item, dict(updates=2, server_updates=2)), confirm_prompt(item)]
     for target in ('pi',):  # only the Pi is ever updated
-        for lore in ('off', 'full'):
+        for lore in ('off', 'full', 'billy'):
             texts += [result_text(target, dict(state='done', upgraded=n, reboot=reboot), lore)
                       for reboot in (True, False) for n in (0, 2)]
         texts.append(result_text(target, dict(state='failed')))
+        texts.append(result_text(target, dict(state='failed'), 'billy'))
     return texts
 
 

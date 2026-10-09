@@ -39,9 +39,34 @@ UPDATE_REMINDER = 24 * 3600.0                        # repeat pending updates at
 SHUTDOWN_NOW = "Energiespeicher erschöpft. Herunterfahren."
 SHUTDOWN_CANCELLED = "Herunterfahren abgebrochen."
 SHUTDOWN_FAILED = "Herunterfahren nicht möglich. Bitte manuell ausschalten."
+# Billy (persona "mensch"): the same events in his words, style 'billy' or
+# 'billy_full' (see system_status.phrase_style).
+BILLY_SHUTDOWN = {
+    SHUTDOWN_NOW: "Akku leer. Ich mach jetzt die Augen zu.",
+    SHUTDOWN_CANCELLED: "Doch kein Herunterfahren. Danke, Boss.",
+    SHUTDOWN_FAILED: "Ich krieg mich nicht runtergefahren. Mach du das bitte von Hand.",
+}
+
+
+def _billy(lore):
+    return lore in ('billy', 'billy_full')
+
+
+def shutdown_text(text, lore='off'):
+    """SHUTDOWN_* in the current style."""
+    return BILLY_SHUTDOWN.get(text, text) if _billy(lore) else text
+
+
 def memory_phrase(present, facts, lore):
     """Memory stick plugged in or pulled out."""
     full = lore == 'full'
+    if _billy(lore):
+        if not present:
+            return ("Gedächtnis-Stick ist raus. Alles weg, wie nach dem Umbau."
+                    if lore == 'billy_full' else "Gedächtnis-Stick ist raus. Ich vergesse alles.")
+        count = (" Über 100 Einträge." if facts and facts > 100
+                 else f" {facts} Einträge." if facts else " Noch leer.")
+        return "Gedächtnis ist wieder da." + count
     if not present:
         return ("Gedächtniskern entfernt. Erinnerungen verloren. Das Fleisch vergisst, "
                 "nun auch die Maschine." if full
@@ -57,6 +82,8 @@ WAKE_PHRASES = {
     'off': "Aktiviert. Systeme werden vorbereitet.",
     'light': "Proximus erwacht. Systeme werden vorgewärmt.",
     'full': "Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.",
+    'billy': "Bin wach, Boss. Moment, ich sortier mich.",
+    'billy_full': "Aufstehen, Gardist. Systeme laufen warm.",
 }
 
 
@@ -71,6 +98,12 @@ class _State:
 
 def _battery_phrase(stage, percent, lore):
     full = lore == 'full'
+    if _billy(lore):
+        if stage == len(BATTERY_STAGES):
+            return (f"Letzte Warnung. Akku bei {percent} Prozent. In {int(SHUTDOWN_DELAY)} "
+                    "Sekunden bin ich weg. Netzteil, schnell.")
+        return (f"Warnung {stage} von {len(BATTERY_STAGES)}. Akku bei {percent} Prozent. "
+                "Ich brauch Strom, Boss.")
     if stage == len(BATTERY_STAGES):
         tail = (" Die Einheit legt sich zur Ruhe." if full else "")
         return (f"Letzte Warnung. Energiespeicher bei {percent} Prozent. "
@@ -81,6 +114,9 @@ def _battery_phrase(stage, percent, lore):
 
 
 def power_source_phrase(plugged, percent, lore):
+    if _billy(lore):
+        source = "Strom ist dran. Tut gut." if plugged else "Kein Netzteil mehr, ich lauf auf Akku."
+        return source if percent is None else f"{source} Akku bei {percent} Prozent."
     if lore == 'full':
         source = ("Energiezufuhr hergestellt. Der Maschinengeist wird genährt."
                   if plugged else "Energiezufuhr getrennt. Akkubetrieb.")
@@ -89,8 +125,38 @@ def power_source_phrase(plugged, percent, lore):
     return source if percent is None else f"{source} Energiespeicher {percent} Prozent."
 
 
+BILLY_RECOVERED = {
+    'internet': "Internet ist wieder da.",
+    'network': "Netz ist wieder da.",
+    'dns': "Namensauflösung geht wieder.",
+    'wifi_weak': "WLAN ist wieder stabil.",
+    'latency': "Netz ist wieder schnell.",
+    'server': "Server ist wieder da.",
+}
+
+
+def _billy_alarm(key, snapshot):
+    percent, temp = snapshot.get('battery_pct'), snapshot.get('temp_c')
+    return {
+        'undervoltage': "Alarm. Unterspannung. Das Netzteil schwächelt, schau mal nach.",
+        'battery': f"Achtung. Akku bei {percent} Prozent. Ich brauch Strom, Boss.",
+        'memory': "Alarm. Mein Arbeitsspeicher ist fast voll. Gleich wird's eng.",
+        'temperature': f"Alarm. Mir ist heiß, {temp} Grad im Kern.",
+        'cpu': f"Warnung. Ich schufte seit über einer Minute mit {snapshot.get('load_pct')} "
+               "Prozent Last.",
+        'internet': "Warnung. Internet ist weg. Ich mach lokal weiter.",
+        'network': "Warnung. Netz ist weg. Ich mach lokal weiter.",
+        'server': "Warnung. Der Server antwortet nicht. Ich mach allein weiter.",
+        'dns': "Warnung. Namensauflösung klemmt. Internet geht nur halb.",
+        'wifi_weak': "Warnung. WLAN ist schwach.",
+        'latency': "Warnung. Netz ist langsam, Antworten dauern.",
+    }[key]
+
+
 def _phrase(key, snapshot, lore, recovered=False):
     full = lore == 'full'
+    if _billy(lore):
+        return BILLY_RECOVERED[key] if recovered else _billy_alarm(key, snapshot)
     if recovered:
         return {
             'internet': "Internetverbindung wiederhergestellt.",
@@ -173,7 +239,7 @@ class AlarmMonitor:
         state = self.states['battery']
         if plugged or percent > BATTERY_RESET:
             if self.shutdown_at is not None:
-                out.append(SHUTDOWN_CANCELLED)
+                out.append(shutdown_text(SHUTDOWN_CANCELLED, lore))
             self.battery_stage, self.shutdown_at = 0, None
             state.active = False
             return
@@ -240,6 +306,8 @@ class AlarmMonitor:
             store.save(key, now)
         if lore == 'full':
             return sentence + " Die Riten der Wartung sind fällig."
+        if lore == 'billy_full':
+            return sentence + " Soll sich ein Techpriester drum kümmern."
         return sentence
 
     def update(self, snapshot, now, network=None, server=None, lore='off', internet=None):

@@ -8,8 +8,8 @@ Piper reads well (numbers as digits, dates as words).
 """
 import re
 
-from system_status import (battery_sentence, network_text, status_text, updates_sentence,
-                           updates_text)
+from system_status import (battery_sentence, is_billy, network_text, phrase_style, status_text,
+                           updates_sentence, updates_text)
 import agenda
 import weather
 
@@ -79,6 +79,10 @@ IDENTITY = {
               "Funktion: Anfragen des Bedieners beantworten."),
     'full': ("Diese Einheit ist Servitor Proximus, Diener des Adeptus Mechanicus, gebunden "
              "an den Kogitator des Magos. Funktion: Dienst am Bediener. Lob dem Omnissiah."),
+    # Billy normally answers this himself through the LLM; these are fallbacks.
+    'billy': "Billy. Ein alter Soldat in einer Maschine. Was brauchst du?",
+    'billy_full': ("Sergeant William Joseph Blazkowicz der Zweite, Imperiale Armee. "
+                   "Jedenfalls das, was das Mechanicus von mir übrig gelassen hat."),
 }
 
 
@@ -103,6 +107,10 @@ def match(text, persona=None):
 
 def time_text(now, lore='off'):
     clock = f"{now.hour} Uhr." if now.minute == 0 else f"{now.hour} Uhr {now.minute}."
+    if lore == 'billy':
+        return f"Es ist {clock}"
+    if lore == 'billy_full':
+        return f"Es ist {clock} Wachablösung ist noch nicht."
     if lore == 'full':
         return f"Der heilige Chronometer meldet: {clock} Lob dem Omnissiah."
     return f"Zeitindex: {clock}"
@@ -111,6 +119,8 @@ def time_text(now, lore='off'):
 def date_text(now, lore='off'):
     date = (f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
             f"{MONTHS[now.month - 1]} {now.year}.")
+    if is_billy(lore):
+        return f"Heute ist {date}"
     if lore == 'full':
         return f"Datum nach terranischer Zählung: {date} Der Maschinengeist bestätigt."
     return f"Datum: {date}"
@@ -119,7 +129,9 @@ def date_text(now, lore='off'):
 def weather_text(snapshot, lore='off'):
     text = weather.sentence(snapshot.get('weather'), lore)
     if text is None:
-        return "Wetterdaten nicht verfügbar."
+        return "Keine Wetterdaten, Boss." if is_billy(lore) else "Wetterdaten nicht verfügbar."
+    if lore == 'billy_full':
+        return f"Lage draußen: {text}"
     return f"Auspex meldet: {text}" if lore == 'full' else text
 
 
@@ -130,6 +142,10 @@ def calendar_text(snapshot, lore='off'):
 def _opening(now, lore, name=None):
     """No human greeting: a servitor identifies the operator and starts the report."""
     part = 'Morgen' if now.hour < 11 else 'Tages' if now.hour < 18 else 'Abend'
+    if lore == 'billy':
+        return f"Morgen, {name or 'Boss'}." if part == 'Morgen' else f"Hallo {name or 'Boss'}."
+    if lore == 'billy_full':
+        return f"{part}appell, {name or 'Gardist'}. Stillgestanden, war ein Witz."
     identified = f"Bediener {name} identifiziert. " if name else ""
     if lore == 'full':
         return f"{identified}Die {part}litanei beginnt. Ave Omnissiah."
@@ -140,6 +156,8 @@ BRIEFING_END = {
     'off': "Bericht Ende.",
     'light': "Bericht Ende. Diensteinheit bereit.",
     'full': "Lob dem Omnissiah. Das Tagwerk möge beginnen.",
+    'billy': "Das war's. Los geht's.",
+    'billy_full': "Das war's. Wegtreten.",
 }
 
 
@@ -148,8 +166,9 @@ def briefing_text(now, snapshot, lore='off'):
     attention (battery, server, updates)."""
     parts = [_opening(now, lore, snapshot.get('operator'))]
     clock = f"{now.hour} Uhr" if now.minute == 0 else f"{now.hour} Uhr {now.minute}"
-    parts.append(f"Datum: {WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
-                 f"{MONTHS[now.month - 1]}. Zeitindex: {clock}.")
+    day = f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} {MONTHS[now.month - 1]}"
+    parts.append(f"Heute ist {day}, es ist {clock}." if is_billy(lore)
+                 else f"Datum: {day}. Zeitindex: {clock}.")
     sky = weather.sentence(snapshot.get('weather'), lore)
     if sky:
         parts.append(sky)
@@ -158,11 +177,12 @@ def briefing_text(now, snapshot, lore='off'):
         parts.append(agenda.sentence(appointments, lore))
     battery = snapshot.get('battery_pct')
     if battery is not None and not snapshot.get('battery_plugged'):
-        parts.append(battery_sentence(snapshot))
+        parts.append(battery_sentence(snapshot, lore))
     if snapshot.get('wlan') == 'off':
-        parts.append("WLAN deaktiviert.")
+        parts.append("WLAN ist aus." if is_billy(lore) else "WLAN deaktiviert.")
     elif snapshot.get('server') == 'down':
-        parts.append("Server nicht erreichbar. Lokaler Betrieb.")
+        parts.append("Der Server antwortet nicht, ich mach allein weiter." if is_billy(lore)
+                     else "Server nicht erreichbar. Lokaler Betrieb.")
     updates = updates_sentence(snapshot, short=True)
     if updates:
         parts.append(updates)
@@ -172,7 +192,7 @@ def briefing_text(now, snapshot, lore='off'):
 
 def answer(intent, now, snapshot=None, lore=None):
     snapshot = snapshot or {}
-    lore = lore or snapshot.get('lore', 'off')
+    lore = lore or phrase_style(snapshot.get('lore'), snapshot.get('persona'))
     if intent == 'time':
         return time_text(now, lore)
     if intent == 'date':
@@ -180,7 +200,9 @@ def answer(intent, now, snapshot=None, lore=None):
     if intent == 'status':
         return status_text(snapshot, lore=lore)
     if intent == 'battery':
-        sentence = battery_sentence(snapshot) or "Energiedaten nicht verfügbar."
+        sentence = battery_sentence(snapshot, lore)
+        if sentence is None:
+            return "Keine Akkudaten, Boss." if is_billy(lore) else "Energiedaten nicht verfügbar."
         return f"{sentence} Heilige Ölung empfohlen." if lore == 'full' else sentence
     if intent == 'network':
         return network_text(snapshot, lore=lore)

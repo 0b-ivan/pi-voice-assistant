@@ -45,7 +45,7 @@ import maintenance  # noqa: E402
 import memory  # noqa: E402
 import speaker  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
-from system_status import sanitize_snapshot  # noqa: E402
+from system_status import phrase_style, sanitize_snapshot  # noqa: E402
 
 PCM_RATE = 16000
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
@@ -364,8 +364,9 @@ class Service:
                     model = 'local/maintenance'
                 elif command is not None:
                     op, argument = command
-                    lore = (device or {}).get('lore')
-                    answer = memory.reply(op, argument, memory_copy, lore or 'off')
+                    style = phrase_style((device or {}).get('lore'),
+                                         (device or {}).get('persona'))
+                    answer = memory.reply(op, argument, memory_copy, style)
                     if (memory_copy is not None and op in ('add_fact', 'add_directive', 'forget')
                             and not memory.unknown_speaker(memory_copy)):
                         emit(dict(event='memory', op=op, text=memory.clean_text(argument)))

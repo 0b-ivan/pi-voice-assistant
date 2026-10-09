@@ -130,6 +130,8 @@ Neben dem Servitor gibt es das **Mensch-Modul**: Proximus vor seinem Umbau, Serg
 
 Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt danach Prompt und Effekt. Ältere Pis ohne die Felder bekommen den Servitor. Lokal auf dem Pi wirkt der Stimmeffekt nur mit `TTS_VOICE_PROFILE=servitor` (dort ist das `thorsten_emotional`-Modell geladen); vorgefertigte Ansagen (Alarme, Aufwachen) klingen vorerst weiter nach Servitor.
 
+**Feste Sätze** (Uhrzeit, Datum, Akku, Status, Netz, Updates, Morgenbericht, Alarme, Aufwachen, Herunterfahren, Gedächtnisbefehle, Wartungsergebnisse) gibt es in fünf Stilen (`system_status.phrase_style`): `off`, `light`, `full` für den Servitor sowie `billy` und `billy_full` für Billy, also ohne bzw. mit voller Lore. Billy sagt dann z. B. „Es ist 7 Uhr 15.“ statt „Zeitindex: 7 Uhr 15.“, „Achtung. Akku bei 9 Prozent. Ich brauch Strom, Boss.“ oder „Gemerkt.“. Die Fakten bleiben gleich. Den Stil leiten Pi und Server aus `lore` und `persona` im Status-Snapshot ab.
+
 „Wer bist du?“ und „Wie geht es dir?“ beantwortet der Servitor mit festen Sätzen ([`src/intents.py`](../src/intents.py)); im Sprechstil Billy gehen beide Fragen an das Sprachmodell, damit er selbst antwortet. „Systemstatus“, Uhrzeit, Akku usw. bleiben in beiden Stilen feste Antworten.
 
 ### Stoppwörter
@@ -165,6 +167,8 @@ python3 /opt/pi-voice-assistant/src/alarm_audio.py build --prune
 ```
 
 alle Bausteine und die Zahlen 0–100 über `/v1/speak` in der Servitor-Stimme (144 Clips, nur fehlende; ein Clip alle 6 s, damit das Ratenlimit für echte Anfragen frei bleibt, ~15 min beim ersten Mal) nach `models/alarm-voice/` und schneidet die Stille an den Rändern ab. `pi-ptt` liest die Clips nur (der Dienst hat `ProtectSystem=strict`), hängt die WAV-Daten mit kurzen Pausen aneinander und spielt sie mit `aplay`. So kommen Alarme auch offline, ohne Server und bei Volllast oder Speichermangel ohne Rechenaufwand. Fehlt ein Baustein (neuer Text, Build nicht gelaufen), wird wie früher lokal mit Piper gesprochen; das Journal zeigt `speech_started` mit `clips=false`.
+
+Es gibt zwei Clip-Sätze: die Servitor-Sätze in der Maschinenstimme (Dateinamen wie bisher) und Billys Sätze (Sprechstil `mensch`) in der natürlichen Stimme. Für diese schickt `build` `X-Servitor-Status: {"voice": "natural"}` mit, und ihr Name enthält die Stimme. Nach dem Update auf diese Version einmal `alarm_audio.py build --prune` laufen lassen: Die vorhandenen Servitor-Clips bleiben, Billys etwa 240 Clips kommen dazu (~25 min). Andere Kombinationen, also Servitor mit natürlicher Stimme oder Billy mit Maschinenstimme, finden keine Clips und werden live gesprochen.
 
 **WLAN** lässt sich über `PTT_WLAN=on|off` (beim Dienststart) und das Menü schalten (`rfkill`, udev-Regel [`deploy/90-rfkill-netdev.rules`](../deploy/90-rfkill-netdev.rules)). Ohne LAN-Kabel ist der Pi dann offline: lokaler Betrieb, keine Server-/Netzalarme, Status „WLAN deaktiviert“.
 

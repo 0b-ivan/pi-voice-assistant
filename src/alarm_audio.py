@@ -49,21 +49,32 @@ def fragments(text):
     return out
 
 
-def clip_path(piece, directory=None):
+VOICES = ('servitor', 'natural')
+# Phrase styles (system_status.phrase_style) recorded in each voice: the
+# Servitor in the machine voice, Billy in his natural one.
+VOICE_STYLES = {'servitor': ('off', 'light', 'full'), 'natural': ('billy', 'billy_full')}
+
+
+def clip_path(piece, directory=None, voice='servitor'):
     # Keyed by the spoken form: a new respelling makes "build" render it again.
+    # The machine voice keeps its old names, so existing clips stay valid.
     from pronounce import spoken
-    name = hashlib.sha1(spoken(piece).encode('utf-8')).hexdigest()[:16]
+    key = spoken(piece) if voice == 'servitor' else f'{voice}|{spoken(piece)}'
+    name = hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
     return Path(directory or VOICE_DIR) / f'{name}.wav'
 
 
-def known_pieces():
-    """Every fragment an alarm can consist of, plus the numbers."""
+def known_pieces(voice='servitor'):
+    """Every fragment an alarm can consist of in this voice, plus the numbers."""
     from alarms import (ALARMS, BATTERY_STAGES, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED,
                         SHUTDOWN_NOW, WAKE_PHRASES, _battery_phrase, _phrase,
-                        AlarmMonitor, memory_phrase, power_source_phrase)
+                        AlarmMonitor, memory_phrase, power_source_phrase, shutdown_text)
     snapshot = dict(battery_pct=1, temp_c=1, load_pct=1)
-    texts = [SHUTDOWN_NOW, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED, *WAKE_PHRASES.values()]
-    for lore in ('off', 'full'):  # alarm wording only knows full lore or not
+    texts = []
+    for lore in VOICE_STYLES[voice]:
+        texts += [shutdown_text(text, lore)
+                  for text in (SHUTDOWN_NOW, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED)]
+        texts.append(WAKE_PHRASES[lore])
         texts += [_phrase(key, snapshot, lore) for key in ALARMS]
         texts += [_phrase(key, snapshot, lore, recovered=True)
                   for key in ('internet', 'network', 'server')]
@@ -121,7 +132,7 @@ def _store(audio, path):
     temporary.replace(path)
 
 
-def assemble(texts, out_path, directory=None):
+def assemble(texts, out_path, directory=None, voice='servitor'):
     """Write one WAV for the alarm sentences; False if a clip is missing."""
     parts, params = [], None
     for index, text in enumerate(texts):
@@ -129,7 +140,7 @@ def assemble(texts, out_path, directory=None):
             if index and not number:
                 pause = SENTENCE_GAP
             try:
-                with wave.open(str(clip_path(piece, directory)), 'rb') as clip:
+                with wave.open(str(clip_path(piece, directory, voice)), 'rb') as clip:
                     clip_params = (clip.getnchannels(), clip.getsampwidth(), clip.getframerate())
                     frames = clip.readframes(clip.getnframes())
             except (OSError, EOFError, wave.Error):
@@ -154,11 +165,14 @@ def assemble(texts, out_path, directory=None):
     return True
 
 
-def _render(url, token, piece, user_agent):
+def _render(url, token, piece, user_agent, voice='servitor'):
+    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json',
+               'User-Agent': user_agent}
+    if voice != 'servitor':  # the server renders the voice effect named in the status
+        headers['X-Servitor-Status'] = json.dumps({'voice': voice})
     request = urllib.request.Request(
         f'{url}/v1/speak?format=wav', data=json.dumps({'text': piece}).encode(), method='POST',
-        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json',
-                 'User-Agent': user_agent})
+        headers=headers)
     with urllib.request.urlopen(request, timeout=60) as response:
         for line in response:
             if line.strip():
@@ -179,14 +193,14 @@ def build(directory=None, force=False, prune=False, out=None, pace=PACE):
         raise SystemExit('ASSISTANT_BASE_URL is not set')
     directory = Path(directory or VOICE_DIR)
     directory.mkdir(parents=True, exist_ok=True)
-    pieces = known_pieces()
-    todo = [p for p in pieces if force or not clip_path(p, directory).is_file()]
-    out(f'{len(pieces)} fragments, {len(todo)} to render')
-    for done, piece in enumerate(todo, 1):
+    wanted = [(voice, piece) for voice in VOICES for piece in known_pieces(voice)]
+    todo = [(v, p) for v, p in wanted if force or not clip_path(p, directory, v).is_file()]
+    out(f'{len(wanted)} fragments, {len(todo)} to render')
+    for done, (voice, piece) in enumerate(todo, 1):
         for attempt in range(20):
             url = config.base_urls[attempt % len(config.base_urls)]
             try:
-                audio = _render(url, config.token, piece, USER_AGENT)
+                audio = _render(url, config.token, piece, USER_AGENT, voice)
                 break
             except urllib.error.HTTPError as exc:
                 if exc.code not in (429, 503):  # rate limit, server still loading
@@ -196,13 +210,13 @@ def build(directory=None, force=False, prune=False, out=None, pace=PACE):
                 time.sleep(2)
         else:
             raise SystemExit(f'could not render fragment {done}')
-        _store(audio, clip_path(piece, directory))
+        _store(audio, clip_path(piece, directory, voice))
         if done < len(todo):
             time.sleep(pace)
         if done % 20 == 0 or done == len(todo):
             out(f'{done}/{len(todo)}')
     if prune:
-        keep = {clip_path(p, directory).name for p in pieces}
+        keep = {clip_path(p, directory, v).name for v, p in wanted}
         stale = [f for f in directory.glob('*.wav') if f.name not in keep]
         for f in stale:
             f.unlink()

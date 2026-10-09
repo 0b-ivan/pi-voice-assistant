@@ -368,10 +368,10 @@ class ServerTest(unittest.TestCase):
             reply = next(e for e in self.events(data) if e['event'] == 'reply')
             self.assertIn(expected, reply['text'])
 
-    def turn_with_memory(self, state, copy=None):
+    def turn_with_memory(self, state, copy=None, **status):
         import memory
         headers = {'Authorization': f'Bearer {TOKEN}',
-                   'X-Servitor-Status': json.dumps({'memory': state})}
+                   'X-Servitor-Status': json.dumps(dict(status, memory=state))}
         if copy is not None:
             headers['X-Servitor-Memory'] = memory.encode_header(copy)
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
@@ -379,6 +379,15 @@ class ServerTest(unittest.TestCase):
         data = conn.getresponse().read()
         conn.close()
         return self.events(data)
+
+    def test_billy_words_for_memory_commands_and_intents(self):
+        self.pipeline.transcript = 'merk dir dass ich kaffee mag'
+        events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
+        self.assertEqual(next(e for e in events if e['event'] == 'reply')['text'], 'Gemerkt.')
+        self.pipeline.transcript = 'wie spät ist es'
+        events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
+        self.assertTrue(next(e for e in events if e['event'] == 'reply')['text']
+                        .startswith('Es ist '))
 
     def test_memory_copy_reaches_llm_and_learned_lines_are_not_spoken(self):
         copy = dict(facts=['Bediener heißt Ivan'], directives=['Städte heißen Makropolen'],

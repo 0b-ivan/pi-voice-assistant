@@ -27,6 +27,7 @@ import maintenance
 import memory as memory_core
 import sysmon
 from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor,
+                    shutdown_text,
                     memory_phrase)
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
@@ -37,7 +38,7 @@ from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, lo
 import datetime
 import intents
 from power import Battery, throttled_flags
-from system_status import collect_snapshot, status_text
+from system_status import collect_snapshot, phrase_style, status_text
 from transcribe import (
     LiveVoskRecognizer, RemoteLiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider, prepare_vosk_worker, stop_prepared_vosk
 )
@@ -683,6 +684,11 @@ class VoiceController:
         self.job_started_at = None
         self.speech_started_at = None
 
+    @property
+    def style(self):
+        """Wording of fixed sentences: lore level, or Billy (system_status.phrase_style)."""
+        return phrase_style(self.lore, self.persona)
+
     def _apply_voice_effect(self):
         if isinstance(getattr(self.speech, 'effect', None), str):
             self.speech.effect = self.voice
@@ -936,14 +942,14 @@ class VoiceController:
         texts = self.alarms.update(self.status_snapshot(), now,
                                    network=network if links else None,
                                    server=self.server_state() if links else 'off',
-                                   lore=self.lore, internet=internet)
+                                   lore=self.style, internet=internet)
         texts += self._check_memory()
         notes, self.bt_notes = self.bt_notes, []
         texts += notes
         maintenance_texts = self._check_maintenance()  # spoken even with alarms muted
         if self.power != 'sleep':  # maintenance can wait until someone is around
             # Wall clock: the last announcement survives service restarts.
-            notice = self.alarms.updates_notice(self.status_snapshot(), time.time(), self.lore)
+            notice = self.alarms.updates_notice(self.status_snapshot(), time.time(), self.style)
             if notice:
                 texts.append(notice)
         for text in texts:
@@ -1064,7 +1070,7 @@ class VoiceController:
                     and data['state'] in ('done', 'failed')):
                 del self.maint_jobs[target]
                 event('maintenance_done', target=target, **data)
-                out.append(maintenance.result_text(target, data, self.lore))
+                out.append(maintenance.result_text(target, data, self.style))
                 if self.update_watch is not None:
                     self.update_watch.refresh()
         self._maint_status = cache
@@ -1282,7 +1288,7 @@ class VoiceController:
         event('memory_core', present=present, **(counts or {}))
         if present and counts is None:
             return []  # plugged but not readable yet: next check
-        return [memory_phrase(present, (counts or {}).get('facts'), self.lore)]
+        return [memory_phrase(present, (counts or {}).get('facts'), self.style)]
 
     def _memory_command(self, text):
         """Local fallback: memory commands answered and applied on the Pi."""
@@ -1291,7 +1297,7 @@ class VoiceController:
             return None
         op, argument = command
         context = self.memory.context()
-        reply = memory_core.reply(op, argument, context, self.lore)
+        reply = memory_core.reply(op, argument, context, self.style)
         if context is not None and op in ('add_fact', 'add_directive', 'forget'):
             self.memory.apply(dict(op=op, text=argument))
             event('memory', op=op)
@@ -1311,7 +1317,7 @@ class VoiceController:
         event('shutdown', reason='battery')
         self.speech.stop()
         try:
-            self._say_alarm([SHUTDOWN_NOW])
+            self._say_alarm([shutdown_text(SHUTDOWN_NOW, self.style)])
             deadline = time.monotonic() + 8
             while self.speech.active and time.monotonic() < deadline:
                 time.sleep(0.1)
@@ -1323,7 +1329,7 @@ class VoiceController:
         except (OSError, subprocess.SubprocessError) as exc:
             self.shutting_down = False
             event('shutdown_error', message=str(exc))
-            self.alarm_queue.append(SHUTDOWN_FAILED)
+            self.alarm_queue.append(shutdown_text(SHUTDOWN_FAILED, self.style))
 
     def _speak_alarms(self):
         if not self.alarm_queue or not self._idle() or self.menu.open:
@@ -1341,7 +1347,8 @@ class VoiceController:
         play = getattr(self.speech, 'play', None)
         path = (Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'alarm.wav'
                 if play is not None else None)
-        if path is not None and alarm_audio.assemble(texts, path):
+        voice = self.voice if isinstance(getattr(self, 'voice', None), str) else 'servitor'
+        if path is not None and alarm_audio.assemble(texts, path, voice=voice):
             event('speech_started', source=source, clips=True)
             play(path)
             return
@@ -1428,7 +1435,7 @@ class VoiceController:
     def _greet(self):
         """Short prerecorded line when waking from sleep."""
         try:
-            self._say_alarm([WAKE_PHRASES.get(self.lore, WAKE_PHRASES['light'])], source='wake')
+            self._say_alarm([WAKE_PHRASES.get(self.style, WAKE_PHRASES['light'])], source='wake')
             self.speech_started_at = time.monotonic()
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
@@ -1529,7 +1536,9 @@ class VoiceController:
         intent = intents.match(text, self.persona)
         if intent is None and self.llm_mode == 'local':
             # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
-            reply = "Daten unzureichend. Lokaler Sprachkern nicht erreichbar."
+            reply = ("Ohne Server kann ich gerade nicht nachdenken, Boss."
+                     if self.persona == 'mensch'
+                     else "Daten unzureichend. Lokaler Sprachkern nicht erreichbar.")
             event('llm_response', text=reply, model='local/none')
             self._start_speech(reply, source='assistant', model='local/none')
             return
