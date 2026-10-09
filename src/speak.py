@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from pronounce import spoken
 from runtime_metrics import phase
 
 from voice_effects import build_playback_command, build_render_command, resolve_voice_profile
@@ -44,7 +45,7 @@ def _piper_command(piper_python, model, wav_file, text, profile):
 
 
 def speak(text: str) -> None:
-    text = text.strip()
+    text = spoken(text.strip())
     if not text:
         return
 

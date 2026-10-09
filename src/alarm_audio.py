@@ -50,7 +50,9 @@ def fragments(text):
 
 
 def clip_path(piece, directory=None):
-    name = hashlib.sha1(piece.encode('utf-8')).hexdigest()[:16]
+    # Keyed by the spoken form: a new respelling makes "build" render it again.
+    from pronounce import spoken
+    name = hashlib.sha1(spoken(piece).encode('utf-8')).hexdigest()[:16]
     return Path(directory or VOICE_DIR) / f'{name}.wav'
 
 
