@@ -29,6 +29,7 @@ ORDINALS = (
 _ELSEWHERE = re.compile(r'\bin\s+(?!der\b|dem\b|den\b)\w+')
 _PATTERNS = (
     # First: "guten morgen, wie spät ist es" gets the whole briefing (with the time).
+    # The operator may greet; the reply never does (see _opening).
     ('briefing', re.compile(r'\b(morgenbericht|morgenlitanei|tagesbericht|lagebericht|'
                             r'briefing|guten morgen|morgen litanei)\b')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
@@ -95,15 +96,13 @@ def weather_text(snapshot, lore='off'):
     return f"Auspex meldet: {text}" if lore == 'full' else text
 
 
-def _greeting(now, lore, name=None):
+def _opening(now, lore, name=None):
+    """No human greeting: a servitor identifies the operator and starts the report."""
+    part = 'Morgen' if now.hour < 11 else 'Tages' if now.hour < 18 else 'Abend'
+    identified = f"Bediener {name} identifiziert. " if name else ""
     if lore == 'full':
-        litany = "Morgenlitanei" if now.hour < 11 else "Tageslitanei"
-        return f"Die {litany} beginnt. " + (f"Ave, {name}." if name else "Ave Omnissiah.")
-    if now.hour < 11:
-        greeting = "Guten Morgen"
-    else:
-        greeting = "Guten Tag" if now.hour < 18 else "Guten Abend"
-    return greeting + (f", {name}." if name else ".")
+        return f"{identified}Die {part}litanei beginnt. Ave Omnissiah."
+    return f"{identified}{part}bericht."
 
 
 BRIEFING_END = {
@@ -114,12 +113,12 @@ BRIEFING_END = {
 
 
 def briefing_text(now, snapshot, lore='off'):
-    """Morning litany: greeting, date, time, weather, then only what needs
+    """Morning litany: opening, date, time, weather, then only what needs
     attention (battery, server, updates)."""
-    parts = [_greeting(now, lore, snapshot.get('operator'))]
+    parts = [_opening(now, lore, snapshot.get('operator'))]
     clock = f"{now.hour} Uhr" if now.minute == 0 else f"{now.hour} Uhr {now.minute}"
-    parts.append(f"Heute ist {WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
-                 f"{MONTHS[now.month - 1]}. Es ist {clock}.")
+    parts.append(f"Datum: {WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
+                 f"{MONTHS[now.month - 1]}. Zeitindex: {clock}.")
     sky = weather.sentence(snapshot.get('weather'), lore)
     if sky:
         parts.append(sky)

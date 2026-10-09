@@ -94,24 +94,27 @@ class AnswerTests(unittest.TestCase):
         morning = datetime.datetime(2026, 10, 9, 7, 5)
         text = intents.answer("briefing", morning, dict(
             weather=self.WEATHER, battery_pct=64, updates=3, operator="Ivan"))
-        self.assertTrue(text.startswith("Guten Morgen, Ivan. Heute ist Freitag, der neunte "
-                                        "Oktober. Es ist 7 Uhr 5."))
+        self.assertTrue(text.startswith("Bediener Ivan identifiziert. Morgenbericht. Datum: "
+                                        "Freitag, der neunte Oktober. Zeitindex: 7 Uhr 5."))
         for part in ("Außentemperatur minus 2 Grad", "Energiespeicher 64 Prozent",
                      "Pi: 3 Aktualisierungen", "Bericht Ende."):
             self.assertIn(part, text)
         quiet = intents.answer("briefing", self.NOW, dict(battery_pct=90, battery_plugged=True))
-        self.assertEqual(quiet, "Guten Tag. Heute ist Donnerstag, der achte Oktober. "
-                                "Es ist 14 Uhr 32. Bericht Ende.")
+        self.assertEqual(quiet, "Tagesbericht. Datum: Donnerstag, der achte Oktober. "
+                                "Zeitindex: 14 Uhr 32. Bericht Ende.")
         self.assertIn("Server nicht erreichbar",
                       intents.answer("briefing", self.NOW, {"server": "down"}))
 
     def test_briefing_lore(self):
         text = intents.answer("briefing", datetime.datetime(2026, 10, 9, 21, 0),
                               {"lore": "full", "operator": "Ivan"})
-        self.assertTrue(text.startswith("Die Tageslitanei beginnt. Ave, Ivan."))
+        self.assertTrue(text.startswith("Bediener Ivan identifiziert. Die Abendlitanei "
+                                        "beginnt. Ave Omnissiah."))
         self.assertTrue(text.endswith("Das Tagwerk möge beginnen."))
-        self.assertTrue(intents.answer("briefing", datetime.datetime(2026, 10, 9, 21, 0), {})
-                        .startswith("Guten Abend."))
+        for hour in (7, 14, 21):
+            text = intents.answer("briefing", datetime.datetime(2026, 10, 9, hour, 0), {})
+            self.assertNotIn("Guten", text)
+        self.assertTrue(text.startswith("Abendbericht."))
 
 
 if __name__ == "__main__":
