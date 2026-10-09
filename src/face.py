@@ -64,7 +64,7 @@ def slice_sheet(image):
 # Frames made from the sheet's own pixels for smoother animation. Work is done
 # at Doom's pixel size: eyes are where the straight faces differ (they only
 # glance), the mouth is where "ouch"/"teeth" differ from the calm face.
-DERIVED = ('blink', 'squint', 'talk_half', 'talk_open', 'wide')
+DERIVED = ('blink', 'squint', 'talk_half', 'talk_open', 'talk_round', 'wide')
 
 
 def _shrink(sprite, scale):
@@ -220,6 +220,26 @@ def _patch(base, source, mask):
     return out
 
 
+def _rounded(look, open_mouth):
+    """An "o": the dark mouth cavity narrowed by a pixel on each side, closed
+    with the lip colour just above it."""
+    region = _diff(look, open_mouth, 0.68, 1.0)
+    pixels = open_mouth.load()
+    cavity = {(x, y) for x, y in region if _dark(pixels[x, y])}
+    if not cavity:
+        return open_mouth
+    left, right = min(x for x, _ in cavity), max(x for x, _ in cavity)
+    if right - left < 3:
+        return open_mouth
+    out = open_mouth.copy()
+    shaped = out.load()
+    top = min(y for _, y in cavity)
+    for x, y in cavity:
+        if x in (left, right):
+            shaped[x, y] = pixels[x, max(0, top - 1)]
+    return out
+
+
 def derive(sprites, scale):
     """Extra frames per health row: blinking, half-closed eyes, a half and a
     fully open talking mouth with calm eyes, raised eyebrows and wide eyes."""
@@ -258,6 +278,8 @@ def derive(sprites, scale):
                 region = _diff(look, other, *band)
                 if region:
                     made[name] = _patch(look, other, region)
+        if 'talk_open' in made:
+            made['talk_round'] = _rounded(look, made['talk_open'])
         for name, image in made.items():
             out[(row, name)] = image.resize((image.width * scale, image.height * scale),
                                             Image.NEAREST)
@@ -350,14 +372,20 @@ def _mood_face(emotion, level, now):
     return None
 
 
+# Mouth codes from visemes.track() while speaking.
+VISEMES = {'.': 'look', 'a': 'talk_half', 'A': 'talk_open', 'e': 'talk_half',
+           'E': 'talk_half', 'o': 'talk_round', 'O': 'talk_round'}
+
+
 def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plugged_at=None,
-           mood=None):
+           mood=None, viseme=None):
     """The face to show: (row, column) or 'god'/'dead'.
 
     state: the display state (BEREIT, ZUHÖREN, DENKEN, SPRECHEN ...);
     level: speech loudness 0..1 while speaking; battery: power.Battery
     reading; alarm: a critical alarm is active; hushed_at: time.time() of
-    the last cancel ("Stop", "Klappe halten", B); mood: (emotion, 0..1).
+    the last cancel ("Stop", "Klappe halten", B); mood: (emotion, 0..1);
+    viseme: the mouth code of this moment of the reply, when known.
     """
     percent = (battery or {}).get('percent')
     if percent is not None and percent <= 3 and not (battery or {}).get('plugged'):
@@ -367,6 +395,11 @@ def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plu
         loud = max(0.0, min(1.0, level))
         if mood and mood[0] == 'gereizt' and mood[1] >= MOOD_FROM:   # talking angrily
             return (row, 'ouch' if loud > 0.6 else 'teeth' if loud > 0.25 else 'teeth')
+        if viseme in VISEMES:          # the vowel being spoken
+            mouth = VISEMES[viseme]
+            if mouth == 'look' and blinking(now, every=5.0):
+                return (row, 'blink')
+            return (row, mouth)
         if blinking(now, every=5.0):
             return (row, 'blink')
         return (row, 'talk_open' if loud > 0.55 else 'talk_half' if loud > 0.2 else 'look')

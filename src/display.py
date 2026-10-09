@@ -626,7 +626,13 @@ def read_envelope(path=None):
         if (isinstance(value['start'], (int, float)) and isinstance(value['step'], (int, float))
                 and value['step'] > 0 and isinstance(levels, list)
                 and all(isinstance(v, int) and 0 <= v <= 100 for v in levels)):
-            return dict(start=float(value['start']), step=float(value['step']), levels=levels)
+            envelope = dict(start=float(value['start']), step=float(value['step']),
+                            levels=levels)
+            mouth = value.get('mouth')
+            if (isinstance(mouth, str) and len(mouth) <= len(levels) + 2
+                    and set(mouth) <= set('.aAeEoO')):
+                envelope['mouth'] = mouth
+            return envelope
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return None
@@ -743,6 +749,15 @@ def _face_panel(draw, image, picture):
 GLITCH_EVERY = 15.0      # Servitor with a strong feeling: Billy flashes through ...
 GLITCH_SECONDS = 0.5     # ... this long, as an engram error
 GLITCH_FROM = 50         # mood_level (0..100) needed for that
+
+
+def mouth_now(envelope, now):
+    """Billy's mouth code for this moment of the reply (visemes.track), or None."""
+    mouth = (envelope or {}).get('mouth')
+    if not mouth:
+        return None
+    index = int((now - envelope['start']) / envelope['step'])
+    return mouth[index] if 0 <= index < len(mouth) else None
 
 
 def mood_now(status):
@@ -1492,6 +1507,7 @@ def main():
                     plugged_at = time.time()
                 was_plugged = plugged
                 key = choose_face(shown, time.time(), level, battery, mood=mood_now(status),
+                                  viseme=mouth_now(envelope, time.time()),
                                   alarm=bool(info.get('alarm')), hushed_at=hushed_at,
                                   plugged_at=plugged_at)
                 # Only a new face (or text) is drawn: idle costs a redraw every few seconds.
