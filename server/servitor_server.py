@@ -391,7 +391,7 @@ class Service:
                         snapshot['llm'] = state()
                     if intent in ('weather', 'briefing'):
                         snapshot['weather'] = timed('weather', self.weather.get)
-                    if intent in ('calendar', 'briefing'):
+                    if intent in ('calendar', 'calendar_ahead', 'briefing'):
                         if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
                             snapshot['agenda'] = agenda.DENIED
                         elif appointments is not None:

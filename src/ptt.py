@@ -1610,7 +1610,7 @@ class VoiceController:
             snapshot = self.status_snapshot()
             if intent in ('weather', 'briefing'):
                 snapshot['weather'] = self.weather.cached()
-            if intent in ('calendar', 'briefing'):
+            if intent in ('calendar', 'calendar_ahead', 'briefing'):
                 snapshot['agenda'] = self.agenda.today()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'

@@ -36,6 +36,11 @@ class MatchTests(unittest.TestCase):
             "welche termine habe ich heute": "calendar",
             "was steht heute an": "calendar",
             "habe ich heute was vor": "calendar",
+            "zeig meinen terminkalender": "calendar",
+            "was steht auf der agenda": "calendar",
+            "was steht die nächsten tage auf der agenda": "calendar_ahead",
+            "was steht morgen an": "calendar_ahead",
+            "was hab ich morgen vor": "calendar_ahead",
         }
         for text, intent in cases.items():
             with self.subTest(text=text):
@@ -45,7 +50,8 @@ class MatchTests(unittest.TestCase):
         for text in ("wie spät ist es in tokio", "wie ist das wetter in rom",
                      "bis morgen", "welcher tag ist heute in new york",
                      "wie hoch ist der eiffelturm", "erkläre kurz was ein raspberry pi ist",
-                     "wie viele minuten hat ein tag", "", "was ist der status quo in der "
+                     "wie viele minuten hat ein tag", "was ist die agenda 2030",
+                     "was hab ich gestern vor dem essen gemacht", "", "was ist der status quo in der "
                      "deutschen politik und warum ist das wichtig für die zukunft unseres landes"):
             with self.subTest(text=text):
                 self.assertIsNone(intents.match(text))
@@ -140,6 +146,11 @@ class AnswerTests(unittest.TestCase):
         self.assertIn("nicht als Bediener erkannt",
                       intents.answer("calendar", self.NOW, {"agenda": "denied"}))
         self.assertNotIn("Bediener", intents.answer("briefing", self.NOW, {"agenda": "denied"}))
+        # Only today is fetched: later days get today's list with a note, not the LLM.
+        self.assertEqual(intents.answer("calendar_ahead", self.NOW, {"agenda": [dentist]}),
+                         "Nur Termine von heute abrufbar. Termine heute. 15 Uhr 30: Zahnarzt.")
+        self.assertTrue(intents.answer("calendar_ahead", self.NOW, {"agenda": "denied"})
+                        .startswith("Stimme nicht als Bediener erkannt"))
 
     def test_briefing_lore(self):
         text = intents.answer("briefing", datetime.datetime(2026, 10, 9, 21, 0),

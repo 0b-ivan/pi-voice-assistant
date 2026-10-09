@@ -38,8 +38,11 @@ _PATTERNS = (
                         r'den wievielten|was für ein tag|datum)\b')),
     ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es regnen|regenschirm|'
                            r'außentemperatur|wie warm ist es|wie kalt ist es)\b')),
-    ('calendar', re.compile(r'\b(termine?|kalender|was steht heute an|was steht an|'
-                            r'habe ich heute (?:was|etwas) vor)\b')),
+    # Flexible phrasings only as the whole question ("was steht ... an", "was hab ich ... vor"),
+    # so "was hab ich gestern vor dem essen gemacht" still reaches the LLM.
+    ('calendar', re.compile(r'\b(termin(?:e|en|s)?|(?:termin)?kalender\w*|agenda(?! \d)|'
+                            r'tagesplan|was steht (?:\w+ ){0,5}(?:an|auf dem plan)$|'
+                            r'(?:was )?hab(?:e)? ich (?:\w+ ){0,4}vor$)\b')),
     ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
@@ -50,6 +53,10 @@ _PATTERNS = (
                            r'sicherheitsupdates?)\b')),
     ('identity', re.compile(r'\b(wer bist du|wie heißt du|was bist du)\b')),
 )
+# The Pi only fetches today's appointments (src/agenda.py); a question about
+# later days gets today's list with a note instead of the LLM's "no access".
+_AHEAD = re.compile(r'\b(morgen|übermorgen|nächsten? (?:\w+ )?(?:tage?n?|woche|wochen|monat)|'
+                    r'kommenden? (?:\w+ )?(?:tage?n?|woche|wochen)|diese woche|wochenende)\b')
 # "Wer bist du?" and "Wie geht es dir?" ask about the speaker himself: the
 # machine answers with fixed lines, Billy (persona "mensch") in his own words.
 _PERSONAL = re.compile(r"\b(wie geht es dir|wie gehts dir|wie geht's dir)\b")
@@ -101,6 +108,8 @@ def match(text, persona=None):
                 return None
             if persona == 'mensch' and (name == 'identity' or _PERSONAL.search(text)):
                 return None
+            if name == 'calendar' and _AHEAD.search(text):
+                return 'calendar_ahead'
             return name
     return None
 
@@ -137,6 +146,12 @@ def weather_text(snapshot, lore='off'):
 
 def calendar_text(snapshot, lore='off'):
     return agenda.sentence(snapshot.get('agenda'), lore) or "Kalenderdaten nicht verfügbar."
+
+
+def calendar_ahead_text(snapshot, lore='off'):
+    if snapshot.get('agenda') == agenda.DENIED:
+        return calendar_text(snapshot, lore)
+    return "Nur Termine von heute abrufbar. " + calendar_text(snapshot, lore)
 
 
 def _opening(now, lore, name=None):
@@ -214,6 +229,8 @@ def answer(intent, now, snapshot=None, lore=None):
         return briefing_text(now, snapshot, lore)
     if intent == 'calendar':
         return calendar_text(snapshot, lore)
+    if intent == 'calendar_ahead':
+        return calendar_ahead_text(snapshot, lore)
     if intent == 'identity':
         return IDENTITY.get(lore, IDENTITY['off'])
     raise ValueError(f'unknown intent {intent!r}')
