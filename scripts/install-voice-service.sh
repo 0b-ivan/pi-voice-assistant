@@ -38,6 +38,8 @@ install -m 0644 "${repo_root}/src/speaker.py" /opt/pi-voice-assistant/src/speake
 install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/alarm_audio.py
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
+install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
+install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
 install -m 0644 "${repo_root}/src/skull.py" /opt/pi-voice-assistant/src/skull.py
 install -m 0644 "${repo_root}/src/endpoint.py" /opt/pi-voice-assistant/src/endpoint.py
 install -m 0644 "${repo_root}/src/wake_listener.py" /opt/pi-voice-assistant/src/wake_listener.py

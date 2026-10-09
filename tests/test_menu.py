@@ -153,6 +153,31 @@ class ControllerMenuTests(unittest.TestCase):
         function = job.call_args.args[0]
         self.assertEqual(function.keywords, {'lore': 'light', 'memory': None, 'model': None})
 
+    def test_cue_item_toggles_the_acknowledgement_sound(self):
+        self.press(pitft='D')
+        self.assertEqual(self.status()['opt_cue'], 'none')   # no sound configured
+        self.c.cue = Mock(enabled=True)
+        self.c.menu.select('cue')
+        self.press(down='E')
+        self.assertFalse(self.c.cue.enabled)
+        self.assertEqual(self.status()['opt_cue'], 'off')
+        self.press(down='E')
+        self.assertEqual(self.status()['opt_cue'], 'on')
+
+    def test_submit_plays_cue_and_speech_waits_for_it(self):
+        order = Mock()
+        self.c.cue = order.cue
+        self.c.speech = order.speech
+        self.recorder.finish.return_value = Path(self.tmp.name) / 'turn.wav'
+        self.recorder.take_uplink.return_value = None
+        with patch.object(self.c, '_start_local_stt') as stt:
+            self.c.submit('release')
+        stt.assert_called_once()
+        self.c.cue.play.assert_called_once()
+        self.c._start_speech('Antwort.', source='assistant')
+        names = [name for name, *_ in order.mock_calls if name in ('cue.settle', 'speech.start')]
+        self.assertEqual(names, ['cue.settle', 'speech.start'])
+
     def test_menu_status_item_speaks(self):
         self.press(pitft='D')
         self.c.menu.select('status')

@@ -453,6 +453,20 @@ class IntentServerTest(ServerTest):
         self.assertNotIn('think', [e.get('stage') for e in events])
         self.assertEqual(events[-1]['event'], 'done')
 
+    def test_briefing_fetches_weather_on_the_server(self):
+        self.pipeline.transcript = 'guten morgen'
+        self.pipeline.fail_llm = True
+        self.service.weather = unittest.mock.Mock()
+        self.service.weather.get.return_value = dict(now=12, code=3, high=14, low=6, rain=10)
+        _, data = self.request('/v1/turn', b'\1' * 16000)
+        reply = next(e for e in self.events(data) if e['event'] == 'reply')
+        self.assertEqual(reply['model'], 'local/intent')
+        self.assertIn('Außentemperatur 12 Grad, bedeckt.', reply['text'])
+        self.assertNotIn('unknown', reply['text'])
+        self.pipeline.transcript = 'wie spät ist es'
+        self.request('/v1/turn', b'\1' * 16000)
+        self.service.weather.get.assert_called_once()   # only weather questions ask
+
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')
 

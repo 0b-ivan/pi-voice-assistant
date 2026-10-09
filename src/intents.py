@@ -1,4 +1,5 @@
-"""Questions answered without the LLM: time, date, status, battery, identity.
+"""Questions answered without the LLM: time, date, status, battery, identity,
+weather and the morning litany (a short briefing of all of these).
 
 Runs on the server (normal path, before OpenRouter) and on the Pi (local
 fallback), so these answers also work offline. Input is the recognized text
@@ -7,7 +8,9 @@ Piper reads well (numbers as digits, dates as words).
 """
 import re
 
-from system_status import battery_sentence, network_text, status_text, updates_text
+from system_status import (battery_sentence, network_text, status_text, updates_sentence,
+                           updates_text)
+import weather
 
 WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
 MONTHS = ('Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August',
@@ -25,9 +28,14 @@ ORDINALS = (
 # "wie spät ist es in tokio" asks about another place: leave that to the LLM.
 _ELSEWHERE = re.compile(r'\bin\s+(?!der\b|dem\b|den\b)\w+')
 _PATTERNS = (
+    # First: "guten morgen, wie spät ist es" gets the whole briefing (with the time).
+    ('briefing', re.compile(r'\b(morgenbericht|morgenlitanei|tagesbericht|lagebericht|'
+                            r'briefing|guten morgen|morgen litanei)\b')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
+    ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es regnen|regenschirm|'
+                           r'außentemperatur|wie warm ist es|wie kalt ist es)\b')),
     ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
@@ -59,7 +67,7 @@ def match(text):
         return None
     for name, pattern in _PATTERNS:
         if pattern.search(text):
-            if name in ('time', 'date') and _ELSEWHERE.search(text):
+            if name in ('time', 'date', 'weather') and _ELSEWHERE.search(text):
                 return None
             return name
     return None
@@ -80,6 +88,55 @@ def date_text(now, lore='off'):
     return f"Datum: {date}"
 
 
+def weather_text(snapshot, lore='off'):
+    text = weather.sentence(snapshot.get('weather'), lore)
+    if text is None:
+        return "Wetterdaten nicht verfügbar."
+    return f"Auspex meldet: {text}" if lore == 'full' else text
+
+
+def _greeting(now, lore, name=None):
+    if lore == 'full':
+        litany = "Morgenlitanei" if now.hour < 11 else "Tageslitanei"
+        return f"Die {litany} beginnt. " + (f"Ave, {name}." if name else "Ave Omnissiah.")
+    if now.hour < 11:
+        greeting = "Guten Morgen"
+    else:
+        greeting = "Guten Tag" if now.hour < 18 else "Guten Abend"
+    return greeting + (f", {name}." if name else ".")
+
+
+BRIEFING_END = {
+    'off': "Bericht Ende.",
+    'light': "Bericht Ende. Diensteinheit bereit.",
+    'full': "Lob dem Omnissiah. Das Tagwerk möge beginnen.",
+}
+
+
+def briefing_text(now, snapshot, lore='off'):
+    """Morning litany: greeting, date, time, weather, then only what needs
+    attention (battery, server, updates)."""
+    parts = [_greeting(now, lore, snapshot.get('operator'))]
+    clock = f"{now.hour} Uhr" if now.minute == 0 else f"{now.hour} Uhr {now.minute}"
+    parts.append(f"Heute ist {WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
+                 f"{MONTHS[now.month - 1]}. Es ist {clock}.")
+    sky = weather.sentence(snapshot.get('weather'), lore)
+    if sky:
+        parts.append(sky)
+    battery = snapshot.get('battery_pct')
+    if battery is not None and not snapshot.get('battery_plugged'):
+        parts.append(battery_sentence(snapshot))
+    if snapshot.get('wlan') == 'off':
+        parts.append("WLAN deaktiviert.")
+    elif snapshot.get('server') == 'down':
+        parts.append("Server nicht erreichbar. Lokaler Betrieb.")
+    updates = updates_sentence(snapshot, short=True)
+    if updates:
+        parts.append(updates)
+    parts.append(BRIEFING_END.get(lore, BRIEFING_END['off']))
+    return ' '.join(parts)
+
+
 def answer(intent, now, snapshot=None, lore=None):
     snapshot = snapshot or {}
     lore = lore or snapshot.get('lore', 'off')
@@ -96,6 +153,10 @@ def answer(intent, now, snapshot=None, lore=None):
         return network_text(snapshot, lore=lore)
     if intent == 'updates':
         return updates_text(snapshot, lore=lore)
+    if intent == 'weather':
+        return weather_text(snapshot, lore)
+    if intent == 'briefing':
+        return briefing_text(now, snapshot, lore)
     if intent == 'identity':
         return IDENTITY.get(lore, IDENTITY['off'])
     raise ValueError(f'unknown intent {intent!r}')

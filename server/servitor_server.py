@@ -38,6 +38,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import intents  # noqa: E402
+import weather  # noqa: E402
 import enroll  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
@@ -227,6 +228,7 @@ class Service:
         self.embedder = speaker.Embedder()
         self.maintenance_dir = maintenance.DIR
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
+        self.weather = weather.Forecast()  # WEATHER_LAT/WEATHER_LON, else no weather
         self.ready = False
 
     def authorized(self, header):
@@ -364,6 +366,11 @@ class Service:
                     state = getattr(self.pipeline, 'llm_state', None)
                     if state is not None:
                         snapshot['llm'] = state()
+                    if intent in ('weather', 'briefing'):
+                        snapshot['weather'] = timed('weather', self.weather.get)
+                    if (isinstance(memory_copy, dict) and memory_copy.get('speaker')
+                            and not memory.unknown_speaker(memory_copy)):
+                        snapshot['operator'] = memory_copy['speaker']  # recognized voice
                     answer = timed('intent', intents.answer, intent, self.now(), snapshot)
                     model = 'local/intent'
                 else:

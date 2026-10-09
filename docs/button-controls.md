@@ -6,7 +6,7 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 
 | Taste | Funktion |
 |---|---|
-| A | Halten: aufnehmen; Loslassen: STT |
+| A | Halten: aufnehmen; Loslassen: Quittungston, dann STT |
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
 | B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: eine Ebene zurück, oben schließen (erst danach bricht B ab) |
 | C / D | Digitalen `Playback`-Pegel um 2 dB senken/erhöhen, gehalten wiederholt |
@@ -33,6 +33,7 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | | Sprachkern AUTO/FREI/LOKAL | AUTO: OpenRouter (Mistral Medium 3.5), bei Ausfall lokal; FREI: wenig eingeschränktes Modell; LOKAL: nur das lokale Modell auf CT 107 |
 | | Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status (Grundeinstellung `PTT_LORE_LEVEL`) |
 | | Server nutzen AN/AUS | Zwischen CT 107 und rein lokalem Betrieb umschalten |
+| | Quittungston AN/AUS | Kurzer Servo-/Binärton beim Loslassen, wenn die Anfrage angenommen ist (Grundeinstellung `PTT_CUE`, [Architektur](architecture.md#sprachausgabe)) |
 | Personen | Bekannte Personen | Liste der Stimmprofile, je Person Nachtrainieren/Details/Passphrase/Löschen mit Stimm- und Passphrase-Anmeldung ([Gedächtnis](memory.md#kennenlernen-und-stimmerkennung)) |
 | | Kennenlernen | Neue Person: Stimmproben, Fragen, Stimmprofil |
 | | Stimme nachtrainieren | 20 Stimmproben, dem passenden Profil zugerechnet |
