@@ -43,6 +43,9 @@ install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weathe
 install -m 0644 "${repo_root}/src/agenda.py" /opt/pi-voice-assistant/src/agenda.py
 install -m 0644 "${repo_root}/src/pronounce.py" /opt/pi-voice-assistant/src/pronounce.py
 install -m 0644 "${repo_root}/src/skull.py" /opt/pi-voice-assistant/src/skull.py
+install -m 0644 "${repo_root}/src/face.py" /opt/pi-voice-assistant/src/face.py
+install -D -m 0644 "${repo_root}/assets/display/doom-faces.png" \
+  /opt/pi-voice-assistant/models/display/doom-faces.png
 install -m 0644 "${repo_root}/src/endpoint.py" /opt/pi-voice-assistant/src/endpoint.py
 install -m 0644 "${repo_root}/src/wake_listener.py" /opt/pi-voice-assistant/src/wake_listener.py
 install -m 0644 "${repo_root}/src/wakeword.py" /opt/pi-voice-assistant/src/wakeword.py

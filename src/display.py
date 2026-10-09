@@ -654,15 +654,19 @@ REST_LEVEL = 0.12        # red eye while resting: low and steady
 REST_BRIGHTNESS = 0.35   # whole picture dimmed while resting
 
 
-def render_rest(display, skull, network, info=None):
+def render_rest(display, skull, network, info=None, picture=None):
     """Idle for a while: dimmed, the red eye low and steady, the other eye
-    dark, no litanies. Only redrawn when clock, battery or alarm change."""
+    dark, no litanies. Only redrawn when clock, battery or alarm change.
+    ``picture``: Billy's face instead of the skull."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     _draw_header(draw, info)
-    image.paste(skull.frame(REST_LEVEL), ((WIDTH - skull.base.width) // 2, 42))
+    if picture is not None:
+        _face_panel(draw, image, picture)
+    else:
+        image.paste(skull.frame(REST_LEVEL), ((WIDTH - skull.base.width) // 2, 42))
     if info.get('alarm'):
         text = ALARMS[info['alarm']][1]
         width = draw.textlength(text, font=font(11))
@@ -689,6 +693,13 @@ def render_skull(display, skull, state, network, level, info=None, frame=0, deta
         mode, gain = 'idle', 0.55
     rain().draw(image, frame, mode, light, font(10), gain)
     image.paste(skull.frame(level, light), ((WIDTH - skull.base.width) // 2, 42))
+    _state_line(draw, state, info, details, light)
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
+
+
+def _state_line(draw, state, info, details, light):
+    """The line under the skull or face: state, last answer or a hint."""
     if state not in ('BEREIT', 'AUSGABE', 'SPRECHEN'):
         description = (details or STATE_DETAILS.get(state, ('', 'gear', 0)))[0]
         text = f'{state} · {description}' if description else state
@@ -706,6 +717,58 @@ def render_skull(display, skull, state, network, level, info=None, frame=0, deta
         text, color = 'AUSGABE', VOICE_COLORS['AUSGABE']
     width = draw.textlength(text, font=font(11))
     draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=color)
+
+
+FACE_PANEL = ((52, 52, 52), (92, 92, 92), (24, 24, 24))  # fill, light edge, dark edge
+FACE_TOP = 43
+
+
+def _face_panel(draw, image, picture):
+    """Billy's face in a bevelled grey box, like Doom's status bar."""
+    width, height = picture.size
+    x0, y0 = (WIDTH - width) // 2 - 4, FACE_TOP
+    x1, y1 = x0 + width + 7, y0 + height + 7
+    fill, light, dark = FACE_PANEL
+    draw.rectangle((x0, y0, x1, y1), fill=fill)
+    draw.line((x0, y1, x0, y0, x1, y0), fill=light, width=2)
+    draw.line((x1, y0, x1, y1, x0, y1), fill=dark, width=2)
+    image.paste(picture, (x0 + 4, y0 + 4))
+
+
+def glitch_picture(skull_image, face_image, frame):
+    """Persona switch: skull and face torn into shifted bands, like a bad
+    engram replay. Deterministic per frame for previews and tests."""
+    from PIL import Image
+    width = max(skull_image.width, face_image.width)
+    height = max(skull_image.height, face_image.height)
+    result = Image.new('RGB', (width, height), 'black')
+    sources = []
+    for picture in (skull_image, face_image):
+        canvas = Image.new('RGB', (width, height), 'black')
+        canvas.paste(picture, ((width - picture.width) // 2, height - picture.height))
+        sources.append(canvas)
+    band = 6
+    for index, top in enumerate(range(0, height, band)):
+        roll = (index * 7 + frame * 13) % 11
+        source = sources[1] if (roll + frame) % 3 else sources[0]
+        shift = (roll - 5) * 3 if roll % 4 == 0 else 0
+        strip = source.crop((0, top, width, min(height, top + band)))
+        if roll == 3:
+            strip = Image.eval(strip, lambda v: min(255, v + 60))
+        result.paste(strip, (shift, top))
+    return result.resize((face_image.width, face_image.height))
+
+
+def render_face(display, picture, state, network, info=None, details=None):
+    """Billy (persona "mensch"): the face picked by face.choose() instead of
+    the skull, same header, status line and footer."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    _face_panel(draw, image, picture)
+    _state_line(draw, state, info, details, status_light(state, info))
     _draw_footer(draw, network, info)
     display.image(image, 180)
 
@@ -1207,6 +1270,12 @@ def main():
         skull = Skull()
     except Exception:  # never let the artwork take the status display down
         skull = None
+    try:
+        from face import Face, choose as choose_face, health_row
+        face = Face()
+    except Exception:  # without the sheet Billy keeps the skull
+        face = None
+    persona_shown, glitch_until, hushed_at = None, 0.0, None
     envelope, envelope_mtime = None, None
     info_rows, next_info = None, 0.0
     states = None
@@ -1238,6 +1307,8 @@ def main():
         current_event = read_voice_event()
         if current_event is not None and current_event != last_event:
             last_event = current_event
+            if current_event['event'] == 'cancelled':  # B, "Stop", "Klappe halten"
+                hushed_at = current_event['timestamp']
             mapped = voice_state_for_event(current_event["event"])
             if mapped is not None and mapped != "FEHLER":
                 voice_state = mapped
@@ -1338,7 +1409,53 @@ def main():
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))
             resting = status.get('power') == 'rest' and shown == 'BEREIT'
-            if skull is not None and resting and info.get('volume') is None:
+            billy = face is not None and status.get('opt_persona') == 'mensch'
+            persona = 'mensch' if billy else 'servitor'
+            if (persona_shown is not None and persona != persona_shown
+                    and skull is not None and face is not None):
+                glitch_until = now + 0.9
+            persona_shown = persona
+            if now < glitch_until and info.get('volume') is None:
+                # Shown when the menu closes after the switch, in both directions.
+                frame = int(now * 12)
+                picture = glitch_picture(skull.frame(0.8),
+                                         face.frame((health_row((battery or {}).get('percent')),
+                                                     'look')), frame)
+                screen = ('glitch', frame)
+                if screen != previous_screen:
+                    render_face(display, picture, shown, states['network'], info,
+                                (description, icon, step))
+                    previous_screen = screen
+            elif billy and resting and info.get('volume') is None:
+                screen = ('rest-face', states['network'], info['clock'], shown_info['battery'],
+                          info.get('alarm'), info.get('server'), info.get('wlan'),
+                          info.get('memory'))
+                if screen != previous_screen:
+                    row = health_row((battery or {}).get('percent'))
+                    render_rest(display, skull, states['network'], info,
+                                picture=face.frame((row, 'look')))
+                    previous_screen = screen
+            elif billy and shown in SKULL_STATES and info.get('volume') is None:
+                level = 0.0
+                if shown in ('AUSGABE', 'SPRECHEN'):
+                    try:
+                        mtime = ENVELOPE_FILE.stat().st_mtime
+                    except OSError:
+                        mtime = None
+                    if mtime != envelope_mtime:
+                        envelope, envelope_mtime = read_envelope(), mtime
+                    from skull import speaking_level as loudness
+                    level = (loudness(time.time(), envelope) - 0.55) / 0.45
+                key = choose_face(shown, time.time(), level, battery,
+                                  alarm=bool(info.get('alarm')), hushed_at=hushed_at)
+                # Only a new face (or text) is drawn: idle costs a redraw every few seconds.
+                screen = ('face', shown, states['network'], key,
+                          tuple(sorted(shown_info.items())))
+                if screen != previous_screen:
+                    render_face(display, face.frame(key), shown, states['network'], info,
+                                (description, icon, step))
+                    previous_screen = screen
+            elif skull is not None and resting and info.get('volume') is None:
                 # Temperature and WLAN dBm wobble constantly; at rest they may
                 # lag up to a minute, so the screen is redrawn about once a minute.
                 screen = ('rest', states['network'], info['clock'], shown_info['battery'],
