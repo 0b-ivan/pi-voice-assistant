@@ -12,6 +12,9 @@ import time
 
 AUDIO_SINK = '0000110b-0000-1000-8000-00805f9b34fb'   # A2DP sink UUID
 SCAN_SECONDS = 12
+# Paging an absent speaker blocks the radio WLAN shares on the Pi Zero 2 W:
+# automatic reconnects back off from 2 to 30 minutes after failures.
+RETRY_FIRST, RETRY_MAX = 120.0, 1800.0
 CONNECTED = "Bluetooth-Lautsprecher verbunden. Ausgabe über Bluetooth."
 DISCONNECTED = "Bluetooth-Lautsprecher getrennt. Ausgabe über den eingebauten Lautsprecher."
 SCANNING = "Suche Lautsprecher. Lautsprecher in den Kopplungsmodus versetzen."
@@ -70,6 +73,7 @@ class Bluetooth:
         self.connected = None        # (mac, name) of the active speaker
         self.scanning = False
         self.found = []              # last scan: [(mac, name)] audio sinks
+        self.retry_at, self.backoff = 0.0, 0.0   # automatic reconnect pacing
 
     def available(self):
         return 'Controller' in self.run('list', timeout=5)
@@ -137,7 +141,7 @@ class Bluetooth:
     def connect(self, mac, name=None):
         if not valid(mac):
             return False
-        self.run('connect', mac, timeout=30)
+        self.run('connect', mac, timeout=15)
         flags = info(self.run('info', mac, timeout=10))
         if flags['connected']:
             self.connected = (mac, name or mac)
@@ -160,9 +164,13 @@ class Bluetooth:
         """Background check: is a paired speaker connected? Reconnect if wanted."""
         speakers = self.speakers()
         live = next(((mac, name) for mac, name, f in speakers if f['connected']), None)
-        if live is None and reconnect:
+        if live is None and reconnect and self.clock() >= self.retry_at:
             for mac, name, flags in speakers:
                 if flags['trusted'] and self.connect(mac, name):
+                    self.retry_at, self.backoff = 0.0, 0.0
                     return self.connected
+            if any(flags['trusted'] for _, _, flags in speakers):
+                self.backoff = min(RETRY_MAX, self.backoff * 2 or RETRY_FIRST)
+                self.retry_at = self.clock() + self.backoff
         self.connected = live
         return live
