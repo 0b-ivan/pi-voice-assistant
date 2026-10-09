@@ -24,6 +24,7 @@ import time
 import urllib.parse
 import wave
 
+import protocol
 from voice_controls import _terminate_process_group
 
 
@@ -129,8 +130,12 @@ class RemoteTurnUplink:
     order; once the body has started there is no switching to the next one.
     """
 
-    def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None):
+    def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None,
+                 session=None):
         self.config = config
+        # protocol.ClientSession shared by all turns: opened with /v1/hello on
+        # first use, then the memory core only travels when it changed.
+        self.session = session
         # Pi status snapshot (numbers only) so the server can answer "status".
         self.status = status
         # Base64 copy of the memory core (memory.encode_header), if plugged in.
@@ -171,7 +176,51 @@ class RemoteTurnUplink:
             except OSError:
                 pass
 
+    def _headers(self, connection, url):
+        connection.putheader('Authorization', f'Bearer {self.config.token}')
+        # Cloudflare rejects requests without a browser-like or named agent (error 1010).
+        connection.putheader('User-Agent', USER_AGENT)
+        # Access credentials only travel encrypted (Internet path), never
+        # to a plain-HTTP LAN endpoint configured alongside it.
+        if self.config.access_client_id and urllib.parse.urlsplit(url).scheme == 'https':
+            connection.putheader('CF-Access-Client-Id', self.config.access_client_id)
+            connection.putheader('CF-Access-Client-Secret', self.config.access_client_secret)
+
+    def _hello(self, url):
+        """Open a session (SPX/1 hello -> welcome). Failing is harmless: the
+        turn then goes without one, with the full memory as before."""
+        session = self.session
+        if session is None or not session.supported or session.id is not None:
+            return
+        body = protocol.encode(protocol.message('hello', dict(device='pi', agent=USER_AGENT)))
+        connection = self._connect(url, self.config.connect_timeout)
+        try:
+            connection.connect()
+            connection.sock.settimeout(self.config.connect_timeout * 2)
+            path = urllib.parse.urlsplit(url).path.rstrip('/')
+            connection.putrequest('POST', f'{path}/v1/hello', skip_accept_encoding=True)
+            self._headers(connection, url)
+            connection.putheader('Content-Type', 'application/json')
+            connection.putheader('Content-Length', str(len(body)))
+            connection.endheaders(body)
+            response = connection.getresponse()
+            raw = response.read(protocol.MAX_MESSAGE + 1)
+            if response.status == 404:
+                session.supported = False     # older server: no sessions
+                return
+            if response.status != 200:
+                return
+            welcome = protocol.decode(raw)
+            ident = welcome['body'].get('session') if welcome['type'] == 'welcome' else None
+            if isinstance(ident, str) and ident.isalnum() and len(ident) <= 64:
+                session.start(ident)
+        except (OSError, http.client.HTTPException, protocol.ProtocolError):
+            pass
+        finally:
+            connection.close()
+
     def _request(self, url):
+        self._hello(url)
         connection = self._connect(url, self.config.connect_timeout)
         try:
             connection.connect()
@@ -180,20 +229,15 @@ class RemoteTurnUplink:
             path = urllib.parse.urlsplit(url).path.rstrip('/')
             connection.putrequest('POST', f'{path}/v1/turn?format={self.config.audio_format}',
                                   skip_accept_encoding=True)
-            connection.putheader('Authorization', f'Bearer {self.config.token}')
-            # Cloudflare rejects requests without a browser-like or named agent (error 1010).
-            connection.putheader('User-Agent', USER_AGENT)
-            # Access credentials only travel encrypted (Internet path), never
-            # to a plain-HTTP LAN endpoint configured alongside it.
-            if self.config.access_client_id and urllib.parse.urlsplit(url).scheme == 'https':
-                connection.putheader('CF-Access-Client-Id', self.config.access_client_id)
-                connection.putheader('CF-Access-Client-Secret', self.config.access_client_secret)
+            self._headers(connection, url)
             connection.putheader('Content-Type', 'application/octet-stream')
             connection.putheader('Transfer-Encoding', 'chunked')
             connection.putheader('Accept', 'application/x-ndjson')
             if self.status:
                 connection.putheader('X-Servitor-Status',
                                      json.dumps(self.status, separators=(',', ':')))
+            if self.session is not None and self.session.id:
+                connection.putheader('X-Servitor-Session', self.session.id)
             if self.memory:
                 connection.putheader('X-Servitor-Memory', self.memory)
             if self.agenda:
@@ -286,7 +330,18 @@ class RemoteTurnUplink:
                 item = json.loads(line)
                 if not isinstance(item, dict):
                     raise RemoteTurnError('stream', 'protocol', 'event is not an object')
+                if item.get('event') == 'session':     # bookkeeping, not for the controller
+                    self._session_event(item)
+                    continue
                 yield item
+
+    def _session_event(self, item):
+        if self.session is None:
+            return
+        if item.get('state') == 'unknown':
+            self.session.reset()       # next turn: hello again, memory in full
+        elif isinstance(item.get('core'), str):
+            self.session.confirmed(item['core'])
 
 
 def decode_opus(source, target, ffmpeg=None, run=subprocess.run):

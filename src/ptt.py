@@ -36,6 +36,7 @@ import weather
 import wlan as wlan_radio
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
+from protocol import ClientSession
 import datetime
 import intents
 from power import Battery, throttled_flags
@@ -2206,15 +2207,17 @@ def main():
             event('remote_error', stage='config', code='config', message=str(exc))
             remote_config = None
         if remote_config is not None:
+            session = ClientSession()
+
             def uplink_factory():
                 controller = controller_ref[0] if controller_ref else None
                 status = controller.turn_snapshot() if controller else None
-                memory_copy = (memory_core.encode_header(controller.memory.context())
-                               if controller else None)
+                memory_copy = (memory_core.encode_header(
+                    session.memory_payload(controller.memory.context())) if controller else None)
                 appointments = (agenda_feed.encode_header(controller.agenda.today())
                                 if controller else None)
                 return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
-                                        agenda=appointments)
+                                        agenda=appointments, session=session)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,

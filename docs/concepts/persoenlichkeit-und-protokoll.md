@@ -1,6 +1,6 @@
 # Konzept: Persönlichkeit, Gefühle, Gedächtnisebenen und Kommunikationsprotokoll
 
-Stand 09.10.2026. Status: **Entwurf, in Arbeit**. Noch nichts davon ist umgesetzt; das Dokument sammelt die Entscheidungen, bevor die Schritte in [Abschnitt 9](#9-umsetzung-in-schritten) einzeln umgesetzt werden.
+Stand 09.10.2026. Status: **in Umsetzung**. Das Dokument sammelt die Entscheidungen; welche Schritte aus [Abschnitt 9](#9-umsetzung-in-schritten) schon umgesetzt sind, steht dort in der Spalte „Stand“.
 
 ## 1. Ausgangslage
 
@@ -169,6 +169,7 @@ Ein gemeinsames Modul `src/protocol.py` gilt für Pi und Server (der Server impo
 - Beim Verbinden schickt der Pi `hello`: Version, Gerät, Einstellungen, Stimmung, **Hash des Gedächtnisses**. Der Server antwortet mit `welcome` und seinen Fähigkeiten.
 - Danach gehen nur Änderungen über die Leitung: `settings.changed`, `mood.update`, `memory.delta`.
 - Bei einer Anfrage reicht der Hash. Das spart bis zu 12 KB pro Anfrage.
+- **Umgesetzt (Schritt 3):** `hello` trägt Gerät und Client-Version. Den Gedächtniskern (Fakten, Direktiven, Stimmabdrücke) schickt der Pi einmal mit dem ersten Turn der Sitzung, danach nur dessen Prüfsumme und die letzten Runden (Details in [memory.md](../memory.md)). Einstellungen und Stimmung bleiben vorerst im kleinen Statusheader (höchstens 1 KB); `settings.changed` und `mood.update` kommen mit der Outbox (Schritt 9).
 
 ### 6.3 Verbindung
 1. Zuerst **HTTP mit Sitzung** (`POST /v1/hello`, danach `/v1/turn` mit Sitzungs-ID).
@@ -210,17 +211,17 @@ Für beide Seiten gilt:
 
 ## 9. Umsetzung in Schritten
 
-| # | Schritt | Hängt ab von |
-|---|---|---|
-| 1 | Einstellungen speichern, Prompt nach Sprechstil × Lore aufteilen, Stimmeffekt im Menü, Kurzwahl | – |
-| 2 | Feste Sätze `PHRASES[persona][lore]`, Alarmsätze neu vorab erzeugen | 1 |
-| 2b | Lore-Archiv (Kern-Engramme Billy) mit einfacher Stichwortsuche auf dem Server, Billy-Stimme | 1 |
-| 3 | `protocol.py` und HTTP-Sitzung | – |
-| 4 | Timer lokal, Erinnerungen auf dem Stick, Prioritäten der Ansagen | – |
-| 5 | Logbuch und „Was habe ich verpasst?“ | 3 |
-| 6 | Gesprächserkennung im Raum, Unterbrechungsregeln, Inbox, Zusammenfassung beim Aufwachen | 4, 5 |
-| 7 | Gefühle: Regeln, Stimmung im Verlauf, Grundstimmung nach Neustart | 1 |
-| 8 | Gefühle: LLM-Kürzel, Verweigerung, Stimme, Display | 7 |
-| 9 | Outbox und Dead-Letter (Pi und Server) | 3 |
-| 10 | Unterbewusstsein auf dem Server (Logbuch → Erfahrungen → Abruf) | 5, 9 |
-| 11 | WebSocket nach Messung | 9 |
+| # | Schritt | Hängt ab von | Stand |
+|---|---|---|---|
+| 1 | Einstellungen speichern, Prompt nach Sprechstil × Lore aufteilen, Stimmeffekt im Menü, Kurzwahl | – | ✅ #54, #58 |
+| 2 | Feste Sätze `PHRASES[persona][lore]`, Alarmsätze neu vorab erzeugen | 1 | ✅ #63 |
+| 2b | Lore-Archiv (Kern-Engramme Billy) mit einfacher Stichwortsuche auf dem Server, Billy-Stimme | 1 | teilweise: Billy-Stimme ✅, Lore-Archiv offen |
+| 3 | `protocol.py` und HTTP-Sitzung | – | ✅ Hülle, `/v1/hello`, `/v1/message` (ping), Gedächtniskern pro Sitzung |
+| 4 | Timer lokal, Erinnerungen auf dem Stick, Prioritäten der Ansagen | – | offen |
+| 5 | Logbuch und „Was habe ich verpasst?“ | 3 | offen |
+| 6 | Gesprächserkennung im Raum, Unterbrechungsregeln, Inbox, Zusammenfassung beim Aufwachen | 4, 5 | offen |
+| 7 | Gefühle: Regeln, Stimmung im Verlauf, Grundstimmung nach Neustart | 1 | ✅ #65 |
+| 8 | Gefühle: LLM-Kürzel, Verweigerung, Stimme, Display | 7 | ✅ bis auf die Stimme |
+| 9 | Outbox und Dead-Letter (Pi und Server) | 3 | offen |
+| 10 | Unterbewusstsein auf dem Server (Logbuch → Erfahrungen → Abruf) | 5, 9 | offen |
+| 11 | WebSocket nach Messung | 9 | offen |

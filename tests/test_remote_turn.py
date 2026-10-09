@@ -84,8 +84,8 @@ class LiveServerCase(unittest.TestCase):
                                    'ASSISTANT_TOKEN': token, 'ASSISTANT_AUDIO_FORMAT': fmt,
                                    'ASSISTANT_RESPONSE_TIMEOUT_SECONDS': '5'})
 
-    def turn(self, config=None, pcm=b'\1\0' * 8000, decode=None):
-        uplink = RemoteTurnUplink(config or self.config())
+    def turn(self, config=None, pcm=b'\1\0' * 8000, decode=None, **uplink_args):
+        uplink = RemoteTurnUplink(config or self.config(), **uplink_args)
         for start in range(0, len(pcm), 3200):
             uplink.accept_pcm(pcm[start:start + 3200])
         uplink.finish()
@@ -112,6 +112,36 @@ class RemoteTurnTests(LiveServerCase):
         self.assertIn('server_total', events[-1]['timings'])
         self.assertEqual(sorted(p.name for p in self.client_dir.iterdir()),
                          ['remote-reply.wav'])
+
+    def test_session_sends_the_memory_core_only_once(self):
+        import memory
+        import protocol
+        session = protocol.ClientSession()
+        context = dict(facts=['Bediener heißt Ivan'], directives=[], total_facts=1,
+                       history=[dict(q='hallo', a='Gruß.')])
+        sizes = []
+        for _ in range(2):
+            header = memory.encode_header(session.memory_payload(context))
+            sizes.append(len(header))
+            job = self.turn(status=dict(memory='on'), memory=header, session=session)
+            self.assertIsNone(job.error)
+            self.assertNotIn('session', [e['event'] for e in job.drain()])
+            self.assertEqual(self.pipeline.memory['facts'], ['Bediener heißt Ivan'])
+        self.assertIsNotNone(session.id)
+        self.assertLess(sizes[1], sizes[0])                  # second turn: digest only
+        self.service.sessions = protocol.Sessions()          # server restarted
+        self.turn(status=dict(memory='on'),
+                  memory=memory.encode_header(session.memory_payload(context)), session=session)
+        self.assertIsNone(session.id)                        # next turn says hello again
+
+    def test_older_server_without_sessions_is_used_as_before(self):
+        import protocol
+        session = protocol.ClientSession()
+        with patch.object(ss.Handler, '_hello', lambda handler: handler._json(404, {})):
+            job = self.turn(session=session)
+        self.assertIsNone(job.error)
+        self.assertFalse(session.supported)
+        self.assertIsNone(session.id)
 
     def test_stop_phrase_returns_without_audio(self):
         self.pipeline.transcript = 'klappe halten'
