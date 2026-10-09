@@ -1,7 +1,7 @@
 """Billy's face for the PiTFT (persona "mensch"): the Doom status-bar face.
 
-The artwork is not part of this public repository (id Software's sprites);
-it is read from PI_DISPLAY_FACE on the Pi: the usual sheet with five rows
+The sprites (id Software) ship as assets/display/doom-faces.png and are
+installed to PI_DISPLAY_FACE on the Pi: the usual sheet with five rows
 (health 100 % ... 0 %) of eight faces, plus "god" after the first row and
 "dead" after the last, on a transparent background. Sprites are found by
 their transparent gaps, scaled by an integer factor only (crisp pixels) and

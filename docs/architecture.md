@@ -173,7 +173,7 @@ Im Ruhezustand und beim Sprechen zeigt das PiTFT einen Servo-Skull ([`src/skull.
 | Laden | ab und zu ein Blitz „Gottmodus“ (gelbe Augen) |
 | Ruhe | gedimmt, geradeaus |
 
-Neu gezeichnet wird nur, wenn sich das Gesicht ändert. Beim Umschalten zwischen Servitor und Billy flackert nach dem Schließen des Menüs knapp eine Sekunde lang eine Bildstörung aus Schädel und Gesicht. Die Sprites (id Software) liegen **nur auf dem Pi** (`PI_DISPLAY_FACE`, Standard `/opt/pi-voice-assistant/models/display/doom-faces.png`): das übliche Sheet mit fünf Zeilen à acht Gesichtern auf transparentem Grund, „Gottmodus“ hinter der ersten und „tot“ hinter der letzten Zeile. `face.py` findet die Sprites an den transparenten Lücken und skaliert nur ganzzahlig. Ohne Datei behält Billy den Schädel.
+Neu gezeichnet wird nur, wenn sich das Gesicht ändert. Beim Umschalten zwischen Servitor und Billy flackert nach dem Schließen des Menüs knapp eine Sekunde lang eine Bildstörung aus Schädel und Gesicht. Die Sprites (id Software) liegen in [`assets/display/doom-faces.png`](../assets/display/doom-faces.png); `install-voice-service.sh` kopiert sie nach `PI_DISPLAY_FACE` (Standard `/opt/pi-voice-assistant/models/display/doom-faces.png`). Erwartet wird das übliche Sheet mit fünf Zeilen à acht Gesichtern auf transparentem Grund, „Gottmodus“ hinter der ersten und „tot“ hinter der letzten Zeile. `face.py` findet die Sprites an den transparenten Lücken und skaliert nur ganzzahlig. Ohne Datei behält Billy den Schädel.
 
 ## Sprachausgabe
 

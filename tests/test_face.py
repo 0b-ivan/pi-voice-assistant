@@ -44,6 +44,14 @@ class SheetTests(unittest.TestCase):
         self.assertEqual(sheet.size, (120, 124))   # 30 x 31 times 4
         self.assertNotIn('dead', sheet.frames)
 
+    def test_bundled_sheet_has_every_face(self):
+        sheet = face.Face(Path(__file__).resolve().parents[1] / 'assets' / 'display'
+                          / 'doom-faces.png')
+        self.assertEqual(len(sheet.frames), 42)
+        self.assertEqual(sheet.size, (120, 124))
+        for key in ('god', 'dead', (0, 'look'), (4, 'teeth')):
+            self.assertIn(key, sheet.frames)
+
     def test_wrong_layout_is_rejected(self):
         from PIL import Image
         Image.new('RGBA', (50, 50), (255, 0, 0, 255)).save(self.path)
