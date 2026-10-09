@@ -63,8 +63,8 @@ def slice_sheet(image):
 
 # Frames made from the sheet's own pixels for smoother animation. Work is done
 # at Doom's pixel size: eyes are where the straight faces differ (they only
-# glance), the mouth is where "ouch"/"teeth" differ from the calm face.
-DERIVED = ('blink', 'squint', 'talk_half', 'talk_open', 'talk_round', 'wide')
+# glance), the mouth opens at the calm face's lip line.
+DERIVED = ('blink', 'squint', 'talk_e', 'talk_half', 'talk_open', 'talk_round', 'wide')
 
 
 def _shrink(sprite, scale):
@@ -220,24 +220,135 @@ def _patch(base, source, mask):
     return out
 
 
-def _rounded(look, open_mouth):
-    """An "o": the dark mouth cavity narrowed by a pixel on each side, closed
-    with the lip colour just above it."""
-    region = _diff(look, open_mouth, 0.68, 1.0)
-    pixels = open_mouth.load()
-    cavity = {(x, y) for x, y in region if _dark(pixels[x, y])}
-    if not cavity:
-        return open_mouth
-    left, right = min(x for x, _ in cavity), max(x for x, _ in cavity)
-    if right - left < 3:
-        return open_mouth
-    out = open_mouth.copy()
-    shaped = out.load()
-    top = min(y for _, y in cavity)
-    for x, y in cavity:
-        if x in (left, right):
-            shaped[x, y] = pixels[x, max(0, top - 1)]
-    return out
+def _brightness(pixel):
+    return sum(pixel[:3]) if pixel[3] else 765
+
+
+def _lower_offset(look, clean, reach=(2, 6)):
+    """(dx, dy) that moves the clean face's lower half (nose, mouth, chin) onto
+    ``look``: the hurt faces have longer hair and blood, their features sit up
+    to four pixels lower and the head outline does not show it."""
+    pa, pb = clean.load(), look.load()
+    best = None
+    for dy in range(-reach[0], reach[1] + 1):
+        for dx in range(-reach[0], reach[0] + 1):
+            cost = count = 0
+            for y in range(clean.height * 4 // 7, clean.height):     # below the eyes
+                for x in range(clean.width):
+                    a = pa[x, y]
+                    if not a[3]:
+                        continue
+                    count += 1
+                    if not (0 <= x + dx < look.width and 0 <= y + dy < look.height):
+                        cost += 300
+                        continue
+                    b = pb[x + dx, y + dy]
+                    cost += sum(abs(a[i] - b[i]) for i in range(3)) if b[3] else 300
+            score = cost / max(1, count)
+            if best is None or score < best[0]:
+                best = (score, dx, dy)
+    return best[1], best[2]
+
+
+def _seam(look, lips, reach=2):
+    """``lips`` moved up or down to this face's own closed mouth: the row near
+    the guess that is darkest against the rows above and below (the lip line
+    lies between bright lips; nostrils and blood are dark over several rows)."""
+    row, left, right = lips
+    pixels = look.load()
+
+    def line(y):
+        return sum(_brightness(pixels[x, y]) for x in range(left, right + 1))
+
+    def depth(y):
+        if not 0 < y < look.height - 2:
+            return float('-inf')
+        return min(line(y - 1), line(y + 1)) - line(y) - abs(y - row)
+    return max(range(row - reach, row + reach + 1), key=depth), left, right
+
+
+def _lipline(look):
+    """(row, left, right) of the closed lips: the orange line in the lower face."""
+    pixels = look.load()
+    best = None
+    for y in range(int(look.height * 0.7), int(look.height * 0.9)):
+        xs = [x for x in range(look.width) if _orange(pixels[x, y])]
+        if xs and (best is None or len(xs) > len(best[1])):
+            best = (y, xs)
+    if best is None or len(best[1]) < 3:
+        return None
+    return best[0], min(best[1]), max(best[1])
+
+
+JAW = 1                         # Doom pixels the jaw drops (room below every face)
+TALK = ('talk_e', 'talk_half', 'talk_open', 'talk_round')
+
+
+def _orange(pixel):
+    r, g, b, a = pixel
+    return a and r > 130 and 70 <= g <= 110 and b < 40
+
+
+# Inside of the mouth in the colours Doom itself uses for "ouch" and "teeth":
+# black, grey teeth, a dark red tongue.
+INSIDE = {'k': (0, 0, 0), 'd': (47, 47, 47), 'g': (91, 91, 91), 'G': (119, 119, 119),
+          'w': (203, 203, 203), 'W': (219, 219, 219), 't': (127, 27, 27),
+          'T': (143, 43, 43)}
+# Rows of the open mouth from the closed lip line down, across the width of
+# the lips. 'L' is the lip line's own pixel, '.' the lower lip's, any other
+# letter from INSIDE.
+MOUTHS = {
+    'talk_half': ('dgGGgd', 'LkkkkL'),              # a (quiet): upper teeth, dark
+    'talk_open': ('dgGGgd', 'kkkkkk', 'kTttTk'),    # a (loud): wide open, tongue
+    'talk_round': ('.dkkd.', '.LkkL.'),             # o/u: a small round hole
+    'talk_e': ('dwWWwd', 'LkkkkL'),                 # e/i: spread, teeth showing
+}
+
+
+def _mouths(look, lips):
+    """Talking mouths, as a speaking face moves: everything above the closed
+    lip line stays, the mouth opens on that line and the jaw with the lower
+    lip drops by JAW pixels. A taller mouth takes the shadow under the lower
+    lip instead of stretching the face further (a longer jaw stretches the
+    blood on the chin of the hurt faces).
+
+    Frames are JAW pixels taller than the calm face, with the head in the same
+    place (the room below is transparent while the jaw is up)."""
+    from PIL import Image
+    row, left, right = lips
+    width, height = look.size
+    src = look.load()
+
+    def opened(shape):
+        grow = len(shape) - 1                    # rows the mouth is taller than the lip line
+        skip = grow - min(grow, JAW)             # rows under the lower lip given up
+        lower = look.crop((0, row + 1, width, height))
+        if skip:
+            rest = look.crop((0, row + 2 + skip, width, height))
+            lower = Image.new('RGBA', (width, 1 + rest.height), (0, 0, 0, 0))
+            lower.paste(look.crop((0, row + 1, width, row + 2)), (0, 0))
+            lower.paste(rest, (0, 1))
+        out = Image.new('RGBA', (width, height + JAW), (0, 0, 0, 0))
+        out.paste(look.crop((0, 0, width, row + 1)), (0, 0))
+        out.paste(lower, (0, row + 1 + grow))
+        pixels = out.load()
+        for y in range(row + 1, row + 1 + grow):  # the cheeks stretch with the jaw
+            for x in range(width):
+                pixels[x, y] = src[x, row]
+        span = right - left + 1
+        for index, letters in enumerate(shape):
+            cut = max(0, len(letters) - span) // 2   # narrower lips: the middle
+            letters = letters[cut:cut + span].center(span, '.')
+            for x, letter in zip(range(left, right + 1), letters):
+                if letter == 'L':
+                    pixels[x, row + index] = src[x, row]
+                elif letter == '.':
+                    pixels[x, row + index] = src[x, min(row + 1, height - 1)]
+                else:
+                    pixels[x, row + index] = INSIDE[letter] + (255,)
+        return out
+
+    return {name: opened(shape) for name, shape in MOUTHS.items()}
 
 
 def derive(sprites, scale):
@@ -252,11 +363,15 @@ def derive(sprites, scale):
     clean = _shrink(sprites[(0, 'look')], scale)
     glance = sprites.get((0, 'look_b')) or sprites.get((0, 'look_a'))
     eyes = eye_mask(clean, _shrink(glance, scale)) if glance is not None else (set(), set())
+    lips = _lipline(clean)
     for row in range(ROWS):
         if (row, 'look') not in sprites:
             continue
         look = _shrink(sprites[(row, 'look')], scale)
         made = {}
+        if lips:
+            dx, dy = _lower_offset(look, clean) if row else (0, 0)
+            where = _seam(look, (lips[0] + dy, lips[1] + dx, lips[2] + dx))
         own = sprites.get((row, 'look_b')) or sprites.get((row, 'look_a'))
         mask = eye_mask(look, _shrink(own, scale)) if own is not None and row else eyes
         if not (mask[0] and len(mask[0]) >= len(eyes[0]) * 0.6
@@ -270,16 +385,14 @@ def derive(sprites, scale):
         if mask[0]:
             made['blink'] = _lid(look, mask, closed=True)
             made['squint'] = _lid(look, mask, closed=False)
-        for name, source, band in (('talk_half', 'teeth', (0.68, 1.0)),
-                                   ('talk_open', 'ouch', (0.68, 1.0)),
-                                   ('wide', 'ouch', (0.25, 0.62))):
+        for name, source, band in (('wide', 'ouch', (0.25, 0.62)),):
             if (row, source) in sprites:
                 other = _aligned(look, _shrink(sprites[(row, source)], scale))
                 region = _diff(look, other, *band)
                 if region:
                     made[name] = _patch(look, other, region)
-        if 'talk_open' in made:
-            made['talk_round'] = _rounded(look, made['talk_open'])
+        if lips:
+            made.update(_mouths(look, where))
         for name, image in made.items():
             out[(row, name)] = image.resize((image.width * scale, image.height * scale),
                                             Image.NEAREST)
@@ -299,8 +412,15 @@ class Face:
         sprites = slice_sheet(Image.open(path))
         scale = max(1, round(sprites[(0, 'look')].width / 24))   # sheet pixels per Doom pixel
         sprites.update(derive(sprites, scale))
+        # Talking frames carry JAW extra rows for the dropped chin; every other
+        # face sits that much higher, so the head does not jump while speaking.
+        room = JAW * scale
+
+        def extra(key):
+            return 0 if isinstance(key, tuple) and key[1] in TALK else room
+
         width = max(sprite.width for sprite in sprites.values())
-        height = max(sprite.height for sprite in sprites.values())
+        height = max(sprite.height + extra(key) for key, sprite in sprites.items())
         up, down = _factor(width, height)
         self.size = (width * up // down, height * up // down)
         self.frames = {}
@@ -310,7 +430,8 @@ class Face:
             canvas = Image.new('RGB', self.size, backdrop)
             # Bottom-aligned and centred: the neck stays put when the head turns.
             canvas.paste(sprite, ((self.size[0] - sprite.width) // 2,
-                                  self.size[1] - sprite.height), sprite)
+                                  self.size[1] - sprite.height - extra(key) * up // down),
+                         sprite)
             self.frames[key] = canvas
 
     def frame(self, key):
@@ -373,8 +494,8 @@ def _mood_face(emotion, level, now):
 
 
 # Mouth codes from visemes.track() while speaking.
-VISEMES = {'.': 'look', 'a': 'talk_half', 'A': 'talk_open', 'e': 'talk_half',
-           'E': 'talk_half', 'o': 'talk_round', 'O': 'talk_round'}
+VISEMES = {'.': 'look', 'a': 'talk_half', 'A': 'talk_open', 'e': 'talk_e',
+           'E': 'talk_e', 'o': 'talk_round', 'O': 'talk_round'}
 
 
 def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plugged_at=None,

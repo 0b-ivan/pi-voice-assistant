@@ -34,7 +34,7 @@ class SheetTests(unittest.TestCase):
         sheet = face.Face(self.path)
         originals = [k for k in sheet.frames if isinstance(k, str) or k[1] in face.COLUMNS]
         self.assertEqual(len(originals), 42)
-        self.assertEqual(sheet.size, (120, 124))   # widest turned head, 4x already fits
+        self.assertEqual(sheet.size, (120, 128))   # widest head, 4x, plus a pixel for the jaw
         self.assertEqual(sheet.frame((4, 'teeth')).getpixel((60, 62)), (170, 145, 200))
         self.assertEqual(sheet.frame('god').getpixel((60, 62)), (10, 165, 200))
         self.assertEqual(sheet.frame((2, 'unknown')), sheet.frame((2, 'look')))
@@ -42,7 +42,7 @@ class SheetTests(unittest.TestCase):
     def test_small_sheet_is_scaled_up_by_whole_pixels(self):
         make_sheet(self.path, extras=False, scale=1)
         sheet = face.Face(self.path)
-        self.assertEqual(sheet.size, (120, 124))   # 30 x 31 times 4
+        self.assertEqual(sheet.size, (120, 128))   # 30 x 31 times 4, plus the jaw
         self.assertNotIn('dead', sheet.frames)
 
     def test_bundled_sheet_has_every_face(self):
@@ -50,7 +50,7 @@ class SheetTests(unittest.TestCase):
                           / 'doom-faces.png')
         self.assertEqual(len([k for k in sheet.frames
                               if isinstance(k, str) or k[1] in face.COLUMNS]), 42)
-        self.assertEqual(sheet.size, (120, 124))
+        self.assertEqual(sheet.size, (120, 128))
         for name in face.DERIVED:                          # made from the sheet itself
             self.assertNotEqual(sheet.frame((0, name)), sheet.frame((0, 'look')), name)
         for key in ('god', 'dead', (0, 'look'), (4, 'teeth')):
