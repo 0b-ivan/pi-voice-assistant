@@ -86,8 +86,10 @@ class ChooseTests(unittest.TestCase):
         self.assertEqual(face.choose('BEREIT', 101.0, hushed_at=100.0), (0, 'turn_a'))
         self.assertNotIn(face.choose('BEREIT', 103.0, hushed_at=100.0)[1], ('ouch', 'turn_a'))
         self.assertEqual(face.choose('BEREIT', 10.0, alarm=True), (0, 'ouch'))
-        self.assertEqual(face.choose('BEREIT', 16.5, battery=dict(percent=50, charging=True)),
-                         'god')
+        charging = dict(percent=50, charging=True, plugged=True)
+        self.assertNotEqual(face.choose('BEREIT', 16.5, battery=charging), 'god')  # not while charging
+        self.assertEqual(face.choose('BEREIT', 16.5, battery=charging, plugged_at=15.0), 'god')
+        self.assertNotEqual(face.choose('BEREIT', 20.0, battery=charging, plugged_at=15.0), 'god')
 
 
 class RenderTests(unittest.TestCase):

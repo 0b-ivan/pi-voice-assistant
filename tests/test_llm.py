@@ -226,7 +226,7 @@ class SpeechTextTests(unittest.TestCase):
                          "Der Eiffelturm misst 330 Meter, 3,5 Prozent.")
 
     def test_lore_levels_in_system_prompt(self):
-        for level, word in (("off", "keine Begriffe"), ("light", "höchstens einmal"),
+        for level, word in (("off", "keine Begriffe"), ("light", "zurückhaltend"),
                             ("full", "Liturgie")):
             prompt = llm.system_prompt(level)
             self.assertTrue(prompt.startswith(llm.SERVITOR_SYSTEM_PROMPT))
@@ -266,3 +266,18 @@ class SpeechTextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoreHintTests(unittest.TestCase):
+    def test_light_is_mostly_plain_and_full_varies_without_constant_binary(self):
+        import random
+        rng = random.Random(3)
+        light = [llm.lore_hint("servitor", "light", rng) for _ in range(300)]
+        plain = sum("keine Begriffe" in h for h in light)
+        self.assertTrue(150 < plain < 250, plain)            # about two thirds plain
+        full = [llm.lore_hint("servitor", "full", rng) for _ in range(300)]
+        binary = sum("binärer Lobgesang" in h for h in full)
+        self.assertTrue(20 < binary < 90, binary)             # about one in six
+        self.assertGreater(len(set(full)), 250)               # hardly ever the same prompt
+        self.assertEqual(llm.lore_hint("mensch", "off", rng), "")
+        self.assertNotIn("Null Eins", llm.system_prompt("full", persona="servitor"))
