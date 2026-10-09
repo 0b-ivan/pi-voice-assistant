@@ -1,6 +1,7 @@
 import datetime
 import io
 import sys
+import threading
 import unittest
 import zoneinfo
 from pathlib import Path
@@ -118,25 +119,80 @@ class UpcomingTests(unittest.TestCase):
 
 class AgendaTests(unittest.TestCase):
     def setUp(self):
-        self.now = [0.0]
+        self.now = NOW
         self.fetcher = Mock(return_value=[event('Zahnarzt', NOW.replace(hour=9, minute=30))])
         self.agenda = agenda.Agenda(agenda.Config(['u'], 'u', 'p'), fetcher=self.fetcher,
-                                    clock=lambda: self.now[0])
+                                    now=lambda: self.now)
 
     def test_not_configured(self):
         with patch.dict(os.environ, {'CALDAV_URLS': ''}):
             calendar = agenda.Agenda(fetcher=self.fetcher)
-        self.assertIsNone(calendar.get(NOW))
+        self.assertFalse(calendar.start().configured)   # no thread, no request
+        self.assertIsNone(calendar.today(NOW))
         self.fetcher.assert_not_called()
 
-    def test_cache_and_failure(self):
-        self.assertEqual(len(self.agenda.get(NOW)), 1)
-        self.agenda.get(NOW)
-        self.assertEqual(self.fetcher.call_count, 1)
-        self.now[0] += agenda.CACHE_SECONDS
-        self.fetcher.side_effect = OSError('down')
-        self.assertEqual(len(self.agenda.get(NOW)), 1)            # keeps today's data
-        self.assertIsNone(self.agenda.get(NOW + datetime.timedelta(days=1)))  # not yesterday's
+    def test_today_never_fetches_itself(self):
+        self.assertIsNone(self.agenda.today())          # nothing fetched yet
+        self.fetcher.assert_not_called()
+        self.assertTrue(self.agenda.refresh())
+        self.assertEqual([e['summary'] for e in self.agenda.today()], ['Zahnarzt'])
+        self.assertEqual(self.agenda.today(NOW.replace(hour=11)), [])   # it is over
+
+    def test_failure_keeps_today_but_not_yesterday(self):
+        self.agenda.refresh()
+        self.fetcher.side_effect = OSError('nextcloud down')
+        self.assertFalse(self.agenda.refresh())
+        self.assertEqual(len(self.agenda.today()), 1)
+        self.assertEqual(self.agenda.error, 'nextcloud down')
+        self.now = NOW + datetime.timedelta(days=1)
+        self.agenda.refresh()
+        self.assertIsNone(self.agenda.today())
+
+    def test_background_thread(self):
+        self.agenda.start()
+        self.addCleanup(self.agenda.stop)
+        for _ in range(100):
+            if self.agenda.today() is not None:
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(len(self.agenda.today()), 1)
+
+
+class HeaderTests(unittest.TestCase):
+    def test_round_trip(self):
+        events = [event('Geburtstag Anna', NOW.date(), NOW.date() + datetime.timedelta(days=1),
+                        all_day=True),
+                  event('Zahnarzt', NOW.replace(hour=9, minute=30), NOW.replace(hour=10))]
+        value = agenda.encode_header(events)
+        self.assertEqual(agenda.decode_header(value, TZ), events)
+        self.assertEqual(agenda.decode_header(agenda.encode_header([]), TZ), [])
+        self.assertIsNone(agenda.encode_header(None))
+        self.assertIsNone(agenda.decode_header('', TZ))
+
+    def test_server_converts_to_its_clock(self):
+        utc = datetime.datetime(2026, 10, 9, 7, 30, tzinfo=datetime.timezone.utc)
+        decoded = agenda.decode_header(agenda.encode_header([event('X', utc)]), TZ)
+        self.assertEqual(decoded[0]['start'], datetime.datetime(2026, 10, 9, 9, 30, tzinfo=TZ))
+
+    def test_rejects_garbage(self):
+        import base64
+        import json
+
+        def header(items):
+            return base64.b64encode(json.dumps(items).encode()).decode()
+        self.assertIsNone(agenda.decode_header('not base64!', TZ))
+        self.assertIsNone(agenda.decode_header(header({'t': 'x'}), TZ))
+        self.assertEqual(agenda.decode_header(header([
+            {'t': 'naive', 's': '2026-10-09T09:00:00', 'a': False},
+            {'t': 'bad', 's': 'gestern', 'a': False},
+            {'t': 5, 's': '2026-10-09', 'a': True},
+            {'t': 'Lang ' * 40, 's': '2026-10-09', 'a': True},
+        ]), TZ), [event(('Lang ' * 40)[:agenda.MAX_TITLE].strip(), datetime.date(2026, 10, 9),
+                        all_day=True)])
+        self.assertIsNone(agenda.decode_header('A' * (agenda.HEADER_LIMIT + 4), TZ))
+        many = [event(f'T{i}', NOW.replace(hour=9)) for i in range(30)]
+        self.assertEqual(len(agenda.decode_header(agenda.encode_header(many), TZ)),
+                         agenda.MAX_SENT)
 
 
 class SentenceTests(unittest.TestCase):

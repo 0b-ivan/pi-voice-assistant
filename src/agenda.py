@@ -1,19 +1,23 @@
 """Today's appointments from CalDAV (Nextcloud) for the morning litany.
 
-Runs on the server only: the credentials (a Nextcloud app password) stay in
-/etc/servitor-voice.env on CT 107. Configuration:
+Runs on the Pi: the credentials (a Nextcloud app password) stay in
+/etc/pi-voice-assistant.env. A background thread refreshes the day every few
+minutes; the Pi sends today's remaining appointments with every turn
+(X-Servitor-Agenda), so the server needs no credentials and the Pi still
+knows them offline. Configuration:
 
     CALDAV_URLS=https://cloud.example.org/remote.php/dav/calendars/USER/personal/
     CALDAV_USER=USER
     CALDAV_PASSWORD=app-password      # Nextcloud: Settings > Security > App passwords
 
 Several calendars: comma-separated URLs. One REPORT per calendar asks for the
-day's events with <C:expand>, so the server resolves recurring events and
-time zones itself (results in UTC); no RRULE handling here. Unrecognized
-voices never hear appointments (same rule as the memory).
+day's events with <C:expand>, so Nextcloud resolves recurring events and
+time zones itself (results in UTC); no RRULE handling here. The server
+never speaks appointments to an unrecognized voice (same rule as the memory).
 """
 import base64
 import datetime
+import json
 import os
 import re
 import threading
@@ -23,8 +27,11 @@ import xml.etree.ElementTree as ET
 
 CACHE_SECONDS = 5 * 60
 RETRY_SECONDS = 60
-TIMEOUT_SECONDS = 4.0
+TIMEOUT_SECONDS = 8.0     # background thread: a slow Nextcloud blocks nothing
 MAX_SPOKEN = 5
+MAX_SENT = 12             # appointments per turn header
+MAX_TITLE = 80
+HEADER_LIMIT = 4096
 DENIED = 'denied'          # snapshot value for an unrecognized voice
 
 NS = {'d': 'DAV:', 'c': 'urn:ietf:params:xml:ns:caldav'}
@@ -164,35 +171,108 @@ def upcoming(events, now):
 
 
 class Agenda:
-    """Cached day view; get(now) may block for one round of requests (server)."""
+    """Pi side: today's calendar, refreshed in a background thread; reads
+    never block the button loop."""
 
-    def __init__(self, config=None, fetcher=fetch, clock=time.monotonic):
+    def __init__(self, config=None, fetcher=fetch, clock=time.monotonic,
+                 now=lambda: datetime.datetime.now().astimezone()):
         self.config = Config.from_env() if config is None else config
-        self.fetcher, self.clock = fetcher, clock
-        self.cache, self.day, self.next_at = None, None, 0.0
+        self.fetcher, self.clock, self.now = fetcher, clock, now
+        self.cache, self.day = None, None
         self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.error = None
 
     @property
     def configured(self):
         return self.config is not None
 
-    def get(self, now):
-        """Today's remaining events, or None (not configured / unreachable)."""
-        if self.config is None:
-            return None
+    def refresh(self):
+        """One round of requests; True when the calendar answered."""
+        now = self.now()
+        start, end = day_bounds(now)
+        try:
+            events = self.fetcher(self.config, start, end)
+        except (OSError, ValueError, ET.ParseError) as exc:
+            self.error = str(exc) or type(exc).__name__
+            with self.lock:
+                if self.day != now.date():   # never speak yesterday's list as today's
+                    self.cache, self.day = None, None
+            return False
         with self.lock:
-            if self.clock() >= self.next_at or self.day != now.date():
-                start, end = day_bounds(now)
-                try:
-                    self.cache = self.fetcher(self.config, start, end)
-                    self.next_at = self.clock() + CACHE_SECONDS
-                except (OSError, ValueError, ET.ParseError):
-                    self.cache = None if self.day != now.date() else self.cache
-                    self.next_at = self.clock() + RETRY_SECONDS
-                self.day = now.date()
-            if self.cache is None:
+            self.cache, self.day, self.error = events, now.date(), None
+        return True
+
+    def start(self):
+        """Refresh now and then every CACHE_SECONDS (RETRY_SECONDS after a failure)."""
+        if self.config is None:
+            return self
+
+        def loop():
+            while not self.stop_event.is_set():
+                ok = self.refresh()
+                self.stop_event.wait(CACHE_SECONDS if ok else RETRY_SECONDS)
+        threading.Thread(target=loop, name='agenda', daemon=True).start()
+        return self
+
+    def stop(self):
+        self.stop_event.set()
+
+    def today(self, now=None):
+        """Today's remaining events, or None (not configured / no data yet)."""
+        now = now or self.now()
+        with self.lock:
+            if self.cache is None or self.day != now.date():
                 return None
             return upcoming(self.cache, now)
+
+
+def _iso(moment):
+    return moment.isoformat()
+
+
+def encode_header(events):
+    """Pi side: today's remaining appointments for X-Servitor-Agenda (None: no data)."""
+    if events is None:
+        return None
+    items = [dict(t=e['summary'][:MAX_TITLE], s=_iso(e['start']),
+                  e=_iso(e['end']) if e['end'] else None, a=bool(e['all_day']))
+             for e in events[:MAX_SENT]]
+    raw = json.dumps(items, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    value = base64.b64encode(raw).decode('ascii')
+    return value if len(value) <= HEADER_LIMIT else None
+
+
+def decode_header(value, tz):
+    """Server side: validate the appointments sent by the Pi; None if absent or broken."""
+    if not value or len(value) > HEADER_LIMIT:
+        return None
+    try:
+        items = json.loads(base64.b64decode(value, validate=True).decode('utf-8'))
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(items, list):
+        return None
+    events = []
+    for item in items[:MAX_SENT]:
+        if not isinstance(item, dict) or not isinstance(item.get('t'), str):
+            continue
+        all_day = item.get('a') is True
+        try:
+            if all_day:
+                start = datetime.date.fromisoformat(item['s'])
+                end = datetime.date.fromisoformat(item['e']) if item.get('e') else None
+            else:
+                start = datetime.datetime.fromisoformat(item['s'])
+                end = datetime.datetime.fromisoformat(item['e']) if item.get('e') else None
+                if start.tzinfo is None or (end is not None and end.tzinfo is None):
+                    continue
+                start, end = start.astimezone(tz), end.astimezone(tz) if end else None
+        except (KeyError, TypeError, ValueError):
+            continue
+        title = re.sub(r'\s+', ' ', item['t'])[:MAX_TITLE].strip() or 'Termin ohne Titel'
+        events.append(dict(summary=title, start=start, end=end, all_day=all_day))
+    return events
 
 
 def _clock(moment):

@@ -467,22 +467,44 @@ class IntentServerTest(ServerTest):
         self.request('/v1/turn', b'\1' * 16000)
         self.service.weather.get.assert_called_once()   # only weather questions ask
 
-    def test_calendar_only_for_a_recognized_voice(self):
+    def test_calendar_comes_from_the_pi_and_only_for_a_recognized_voice(self):
+        import agenda
+        import datetime
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo('Europe/Berlin')
+        fixed = datetime.datetime(2026, 10, 9, 7, 5, tzinfo=tz)
+        dentist = dict(summary='Zahnarzt', start=fixed.replace(hour=9, minute=30), end=None,
+                       all_day=False)
+
+        def turn(header, memory_copy=None):
+            headers = {'Authorization': f'Bearer {TOKEN}'}
+            if header is not None:
+                headers['X-Servitor-Agenda'] = header
+            if memory_copy is not None:
+                headers['X-Servitor-Status'] = json.dumps({'memory': 'on'})
+                headers['X-Servitor-Memory'] = memory.encode_header(memory_copy)
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1],
+                                              timeout=10)
+            conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+            data = conn.getresponse().read()
+            conn.close()
+            return next(e for e in self.events(data) if e['event'] == 'reply')['text']
+
+        import memory
         self.pipeline.transcript = 'was steht heute an'
         self.pipeline.fail_llm = True
-        self.service.agenda = unittest.mock.Mock()
-        self.service.agenda.get.return_value = []
-        _, data = self.request('/v1/turn', b'\1' * 16000)
-        reply = next(e for e in self.events(data) if e['event'] == 'reply')
-        self.assertEqual(reply['text'], 'Keine weiteren Termine heute.')
-        with unittest.mock.patch.object(ss.Service, '_identify',
-                                        lambda self, audio, copy, emit:
-                                        dict(copy, speaker='unknown')):
-            events = self.turn_with_memory('on', dict(facts=[], directives=[], history=[],
-                                                      voiceprints=[dict(name='Ivan', print='AAAA')]))
-        reply = next(e for e in events if e['event'] == 'reply')
-        self.assertIn('nicht als Bediener erkannt', reply['text'])
-        self.service.agenda.get.assert_called_once()   # the guest turn never asked
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            self.assertEqual(turn(agenda.encode_header([dentist])),
+                             'Termine heute. 9 Uhr 30: Zahnarzt.')
+            self.assertEqual(turn(None), 'Kalenderdaten nicht verfügbar.')
+            with unittest.mock.patch.object(ss.Service, '_identify',
+                                            lambda self, audio, copy, emit:
+                                            dict(copy, speaker='unknown')):
+                text = turn(agenda.encode_header([dentist]),
+                            dict(facts=[], directives=[], history=[],
+                                 voiceprints=[dict(name='Ivan', print='AAAA')]))
+        self.assertIn('nicht als Bediener erkannt', text)
+        self.assertNotIn('Zahnarzt', text)
 
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')

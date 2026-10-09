@@ -14,6 +14,7 @@ import wave
 
 import functools
 from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
+import agenda as agenda_feed
 import alarm_audio
 import audio_output
 import bluetooth
@@ -641,6 +642,7 @@ class VoiceController:
         self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
         self.listen_after_greeting = False  # wake word woke us: listen after the greeting
         self.weather = weather.Forecast()  # cached only: never blocks the loop
+        self.agenda = agenda_feed.Agenda()  # CALDAV_*; refreshed by a thread (main)
         self.memory = memory_core.MemoryCore()
         self.memory_present = self.memory.present()
         self.turn_transcript = None
@@ -1483,6 +1485,8 @@ class VoiceController:
             snapshot = self.status_snapshot()
             if intent in ('weather', 'briefing'):
                 snapshot['weather'] = self.weather.cached()
+            if intent in ('calendar', 'briefing'):
+                snapshot['agenda'] = self.agenda.today()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'
             event('llm_response', text=reply, model='local/intent')
@@ -1869,7 +1873,10 @@ def main():
                 status = controller.status_snapshot() if controller else None
                 memory_copy = (memory_core.encode_header(controller.memory.context())
                                if controller else None)
-                return RemoteTurnUplink(remote_config, status=status, memory=memory_copy)
+                appointments = (agenda_feed.encode_header(controller.agenda.today())
+                                if controller else None)
+                return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
+                                        agenda=appointments)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
@@ -1977,6 +1984,8 @@ def main():
                                  remote=uplink_factory is not None,
                                  wake=wake, wake_word=wake_label, cue=acknowledge)
     controller_ref.append(controller)
+    if not args.probe and controller.agenda.start().configured:
+        event('agenda_ready', calendars=len(controller.agenda.config.urls))
     wlan_setting = os.environ.get('PTT_WLAN', '').strip().lower()
     if wlan_setting in ('on', 'off') and not args.probe:
         if not controller.set_wlan(wlan_setting == 'on'):

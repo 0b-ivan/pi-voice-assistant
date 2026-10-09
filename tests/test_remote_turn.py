@@ -538,11 +538,12 @@ class LocalIntentTests(RemoteControllerTests):
 
         config = load_remote_config({'ASSISTANT_BASE_URL': 'http://h:1', 'ASSISTANT_TOKEN': 'x' * 40})
         uplink = RemoteTurnUplink(config, connect=lambda u, _t: Recording(u),
-                                  status={'battery_pct': 83})
+                                  status={'battery_pct': 83}, agenda='W10=')
         uplink.cancel()
         uplink.thread.join(5)
         uplink._request('http://h:1')
         self.assertEqual(json.loads(sent['X-Servitor-Status']), {'battery_pct': 83})
+        self.assertEqual(sent['X-Servitor-Agenda'], 'W10=')   # Pi's appointments go along
 
 
 if __name__ == '__main__':

@@ -129,12 +129,14 @@ class RemoteTurnUplink:
     order; once the body has started there is no switching to the next one.
     """
 
-    def __init__(self, config, connect=_open_connection, status=None, memory=None):
+    def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None):
         self.config = config
         # Pi status snapshot (numbers only) so the server can answer "status".
         self.status = status
         # Base64 copy of the memory core (memory.encode_header), if plugged in.
         self.memory = memory
+        # Base64 list of today's remaining appointments (agenda.encode_header).
+        self.agenda = agenda
         self._connect = connect
         self._queue = queue.SimpleQueue()
         self._lock = threading.Lock()
@@ -194,6 +196,8 @@ class RemoteTurnUplink:
                                      json.dumps(self.status, separators=(',', ':')))
             if self.memory:
                 connection.putheader('X-Servitor-Memory', self.memory)
+            if self.agenda:
+                connection.putheader('X-Servitor-Agenda', self.agenda)
             connection.endheaders()
         except BaseException:
             connection.close()

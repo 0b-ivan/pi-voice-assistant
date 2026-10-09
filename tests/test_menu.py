@@ -153,6 +153,19 @@ class ControllerMenuTests(unittest.TestCase):
         function = job.call_args.args[0]
         self.assertEqual(function.keywords, {'lore': 'light', 'memory': None, 'model': None})
 
+    def test_local_fallback_uses_the_pis_own_calendar(self):
+        import datetime
+        now = datetime.datetime.now().astimezone()
+        later = now + datetime.timedelta(minutes=1)
+        self.c.agenda = Mock()
+        self.c.agenda.today.return_value = (
+            [dict(summary='Zahnarzt', start=later, end=None, all_day=False)]
+            if later.date() == now.date() else [])
+        with patch.object(self.c, '_start_speech') as speech:
+            self.c._start_llm('was steht heute an')
+        text = speech.call_args.args[0]
+        self.assertTrue(text.startswith('Termine heute.') or text.startswith('Keine weiteren'))
+
     def test_cue_item_toggles_the_acknowledgement_sound(self):
         self.press(pitft='D')
         self.assertEqual(self.status()['opt_cue'], 'none')   # no sound configured
