@@ -45,8 +45,9 @@ class FakePipeline:
     def recognizer(self):
         return FakeRecognizer(self)
 
-    def reply(self, text, lore=None, mode=None, memory=None, persona=None):
+    def reply(self, text, lore=None, mode=None, memory=None, persona=None, mood=None):
         self.lore, self.mode, self.memory, self.persona = lore, mode, memory, persona
+        self.mood = mood
         if self.fail_llm:
             raise RuntimeError('OpenRouter request failed: timeout')
         if self.block:
@@ -379,6 +380,19 @@ class ServerTest(unittest.TestCase):
         data = conn.getresponse().read()
         conn.close()
         return self.events(data)
+
+    def test_mood_reaches_llm_and_tag_is_not_spoken(self):
+        self.pipeline.suffix = ' [stimmung:gereizt]'
+        events = self.turn_with_memory('off', mood='gereizt', mood_level=80, mood_refuse='on')
+        self.assertEqual(self.pipeline.mood, dict(emotion='gereizt', level=80, refuse=True))
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertNotIn('stimmung', reply['text'])
+        self.assertIn(dict(event='mood', emotion='gereizt'), events)
+        self.pipeline.transcript = 'hilfe es brennt'
+        self.turn_with_memory('off', mood='gereizt', mood_level=80, mood_refuse='on')
+        self.assertFalse(self.pipeline.mood['refuse'])
+        self.turn_with_memory('off')                         # feelings off or an older Pi
+        self.assertIsNone(self.pipeline.mood)
 
     def test_billy_words_for_memory_commands_and_intents(self):
         self.pipeline.transcript = 'merk dir dass ich kaffee mag'

@@ -45,10 +45,21 @@ import maintenance  # noqa: E402
 import memory  # noqa: E402
 import speaker  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
+from mood import emergency, split_tag  # noqa: E402
 from system_status import phrase_style, sanitize_snapshot  # noqa: E402
 
 PCM_RATE = 16000
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
+
+
+def device_mood(device, text=''):
+    """The Pi's mood for the prompt; None when its feelings are off (or an old Pi).
+    The Pi allows refusing before it knows the words; a cry for help never is."""
+    device = device or {}
+    if 'mood' not in device:
+        return None
+    return dict(emotion=device['mood'], level=device.get('mood_level', 0),
+                refuse=device.get('mood_refuse') == 'on' and not emergency(text))
 
 
 class TurnError(Exception):
@@ -137,7 +148,7 @@ class RealPipeline:
             return 'offline'
         return 'openrouter'
 
-    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None):
+    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None, mood=None):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
         from llm import LLMError, free_model, generate_local_reply, generate_reply
@@ -146,13 +157,14 @@ class RealPipeline:
         chosen = free_model() if mode == 'free' else None
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
-            return generate_local_reply(text, lore=lore, memory=memory, persona=persona)
+            return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
+                                        mood=mood)
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
                 return generate_reply(text, lore=lore, memory=memory, model=chosen,
-                                      persona=persona)
+                                      persona=persona, mood=mood)
             except LLMError as exc:
                 if not local:
                     raise
@@ -161,7 +173,8 @@ class RealPipeline:
                 self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
-            return generate_local_reply(text, lore=lore, memory=memory, persona=persona)
+            return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
+                                        mood=mood)
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
@@ -395,9 +408,13 @@ class Service:
                         mode = (device or {}).get('llm_mode')
                         persona = (device or {}).get('persona')
                         answer, model = timed('llm', self.pipeline.reply, text, lore, mode,
-                                              memory_copy, persona)
+                                              memory_copy, persona, device_mood(device, text))
                     except Exception as exc:
                         raise TurnError('think', 'llm', str(exc)) from exc
+                    # The model's [stimmung:...] reaction is never spoken.
+                    answer, feeling = split_tag(answer)
+                    if feeling:
+                        emit(dict(event='mood', emotion=feeling))
                     # Facts/directives the model picked up are never spoken.
                     answer, learned = memory.split_learned(answer)
                     if (memory_copy not in (None, NO_MEMORY)

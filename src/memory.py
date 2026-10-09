@@ -156,14 +156,17 @@ class MemoryCore:
         self._change(update)
         return len(removed)
 
-    def remember_turn(self, question, answer):
+    def remember_turn(self, question, answer, mood=None):
+        """``mood``: 'gereizt:0.62', the feeling of this answer (restart baseline)."""
         question, answer = clean_text(question), clean_text(answer)
         if not question or not answer:
             return False
+        entry = dict(q=question, a=answer, at=int(self.clock()))
+        if isinstance(mood, str) and len(mood) <= 24:
+            entry['mood'] = mood
 
         def update(data):
-            data['history'] = (data['history'] + [dict(q=question, a=answer,
-                                                       at=int(self.clock()))])[-MAX_HISTORY:]
+            data['history'] = (data['history'] + [entry])[-MAX_HISTORY:]
         return self._change(update)
 
     def apply(self, item):

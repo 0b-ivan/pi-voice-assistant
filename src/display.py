@@ -12,6 +12,7 @@ import time
 
 from alarms import ALARMS
 import menu
+from mood import EMOTIONS as MOODS
 from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
 
@@ -144,6 +145,9 @@ def read_status(path=None):
         status['volume_at'] = float(volume_at)
         if value.get('volume_limit') in ('min', 'max'):
             status['volume_limit'] = value['volume_limit']
+    mood_level = value.get('mood_level')
+    if isinstance(mood_level, int) and not isinstance(mood_level, bool) and 0 <= mood_level <= 100:
+        status['mood_level'] = mood_level
     index = value.get('menu_index')
     group = value.get('menu_group')
     group = None if group == 'top' else group
@@ -159,6 +163,7 @@ def read_status(path=None):
                          ('opt_wake', ('on', 'off', 'none')), ('opt_cue', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
                          ('opt_persona', ('servitor', 'mensch')),
+                         ('opt_emotions', ('on', 'off')), ('mood', MOODS),
                          ('opt_voice', ('servitor', 'natural')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
                          ('opt_llm', ('auto', 'free', 'local')),
@@ -735,6 +740,25 @@ def _face_panel(draw, image, picture):
     image.paste(picture, (x0 + 4, y0 + 4))
 
 
+GLITCH_EVERY = 15.0      # Servitor with a strong feeling: Billy flashes through ...
+GLITCH_SECONDS = 0.5     # ... this long, as an engram error
+GLITCH_FROM = 50         # mood_level (0..100) needed for that
+
+
+def mood_now(status):
+    """(emotion, 0..1) published by ptt.py, or None (feelings off or neutral)."""
+    if status.get('opt_emotions') == 'off' or status.get('mood') in (None, 'neutral'):
+        return None
+    return status['mood'], status.get('mood_level', 0) / 100
+
+
+def engram_error(status, now):
+    """True while the Servitor's suppressed feeling breaks through."""
+    mood = mood_now(status)
+    return (mood is not None and mood[1] * 100 >= GLITCH_FROM
+            and now % GLITCH_EVERY < GLITCH_SECONDS)
+
+
 def glitch_picture(skull_image, face_image, frame):
     """Persona switch: skull and face torn into shifted bands, like a bad
     engram replay. Deterministic per frame for previews and tests."""
@@ -844,6 +868,8 @@ def _menu_value(item, status):
         return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
     if item == 'persona':
         return {'servitor': 'SERVITOR', 'mensch': 'BILLY'}.get(status.get('opt_persona'), '')
+    if item == 'emotions':
+        return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_emotions'), '')
     if item == 'voice_fx':
         return {'servitor': 'MASCHINE', 'natural': 'NATÜRLICH'}.get(status.get('opt_voice'), '')
     if item == 'human':
@@ -1430,6 +1456,18 @@ def main():
                     render_face(display, picture, shown, states['network'], info,
                                 (description, icon, step))
                     previous_screen = screen
+            elif (not billy and face is not None and skull is not None and shown == 'BEREIT'
+                  and not resting and info.get('volume') is None
+                  and engram_error(status, time.time())):
+                # Servitor: a strong feeling breaks through as Billy's face, torn.
+                key = choose_face('BEREIT', time.time(), battery=battery, mood=mood_now(status))
+                frame = int(now * 12)
+                picture = glitch_picture(skull.frame(0.9), face.frame(key), frame)
+                screen = ('engram', frame)
+                if screen != previous_screen:
+                    render_face(display, picture, shown, states['network'], info,
+                                (description, icon, step))
+                    previous_screen = screen
             elif billy and resting and info.get('volume') is None:
                 screen = ('rest-face', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
@@ -1454,7 +1492,7 @@ def main():
                 if plugged and was_plugged is False:
                     plugged_at = time.time()
                 was_plugged = plugged
-                key = choose_face(shown, time.time(), level, battery,
+                key = choose_face(shown, time.time(), level, battery, mood=mood_now(status),
                                   alarm=bool(info.get('alarm')), hushed_at=hushed_at,
                                   plugged_at=plugged_at)
                 # Only a new face (or text) is drawn: idle costs a redraw every few seconds.

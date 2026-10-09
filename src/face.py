@@ -113,13 +113,38 @@ def _glance(now):
 GOD_SECONDS = 2.0
 
 
-def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plugged_at=None):
+MOOD_FROM = 0.3       # weaker feelings leave the face alone
+
+
+def _mood_face(emotion, level, now):
+    """Idle face for a feeling (mood.EMOTIONS), or None to glance as usual."""
+    if level < MOOD_FROM:
+        return None
+    if emotion == 'freudig':
+        return 'grin' if int(now / 0.7) % 5 else _glance(now)
+    if emotion == 'zufrieden':
+        return 'grin' if int(now) % 4 == 0 else _glance(now)
+    if emotion == 'gereizt':
+        return 'teeth' if level >= 0.5 or int(now / 3) % 2 == 0 else 'look'
+    if emotion == 'besorgt':
+        return ('look_a', 'look_b')[int(now / 0.7) % 2]      # eyes darting
+    if emotion == 'neugierig':
+        return ('turn_a', 'look', 'turn_b', 'look')[int(now / 2) % 4]
+    if emotion == 'gelangweilt':
+        return 'turn_b' if int(now / 5) % 3 else 'look'       # looking away
+    if emotion == 'müde':
+        return 'look'                                         # too tired to glance
+    return None
+
+
+def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plugged_at=None,
+           mood=None):
     """The face to show: (row, column) or 'god'/'dead'.
 
     state: the display state (BEREIT, ZUHÖREN, DENKEN, SPRECHEN ...);
     level: speech loudness 0..1 while speaking; battery: power.Battery
     reading; alarm: a critical alarm is active; hushed_at: time.time() of
-    the last cancel ("Stop", "Klappe halten", B).
+    the last cancel ("Stop", "Klappe halten", B); mood: (emotion, 0..1).
     """
     percent = (battery or {}).get('percent')
     if percent is not None and percent <= 3 and not (battery or {}).get('plugged'):
@@ -138,4 +163,8 @@ def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plu
         return (row, 'ouch' if int(now) % 2 == 0 else 'look')
     if plugged_at is not None and 0 <= now - plugged_at < GOD_SECONDS:
         return 'god'      # charger just connected: a short flash of invulnerability
+    if mood:
+        face = _mood_face(mood[0], mood[1], now)
+        if face:
+            return (row, face)
     return (row, _glance(now))

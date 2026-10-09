@@ -9,7 +9,7 @@ owns a Menu and publishes its state for display.py, which shares LABELS.
 
 GROUPS = {
     'voice': ('wake', 'llm', 'server', 'cue', 'back'),
-    'persona': ('human', 'persona', 'voice_fx', 'lore', 'back'),
+    'persona': ('human', 'persona', 'voice_fx', 'lore', 'emotions', 'back'),
     'people': ('people', 'enroll', 'refine', 'back'),
     'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
     'device': ('wlan', 'alarms', 'led', 'screen', 'back'),
@@ -26,6 +26,7 @@ LABELS = {
     'close': 'Schließen', 'back': 'Zurück',
     'wake': 'Aktivierungswort', 'llm': 'Sprachkern', 'lore': 'Lore-Stufe',
     'server': 'Server nutzen', 'cue': 'Quittungston', 'human': 'Menschlich',
+    'emotions': 'Gefühle',
     'voice_fx': 'Stimmeffekt', 'enroll': 'Kennenlernen', 'refine': 'Stimme nachtrainieren',
     'wlan': 'WLAN', 'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',

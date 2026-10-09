@@ -134,6 +134,27 @@ Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt 
 
 „Wer bist du?“ und „Wie geht es dir?“ beantwortet der Servitor mit festen Sätzen ([`src/intents.py`](../src/intents.py)); im Sprechstil Billy gehen beide Fragen an das Sprachmodell, damit er selbst antwortet. „Systemstatus“, Uhrzeit, Akku usw. bleiben in beiden Stilen feste Antworten.
 
+### Gefühle
+
+[`src/mood.py`](../src/mood.py) simuliert genau eine Emotion mit einer Stärke von 0 bis 1: zufrieden, freudig, neugierig, gelangweilt, gereizt, müde oder besorgt. Sie halbiert sich alle 10 Minuten; unter 0,15 gilt sie als neutral. Der Pi führt die Stimmung, schickt sie mit jedem Turn im Status-Snapshot (`mood`, `mood_level`, `mood_refuse`) mit, und der Server baut daraus einen Prompt-Abschnitt. Schalter: Menü Persönlichkeit → **Gefühle AN/AUS** (gespeichert, Grundeinstellung `PTT_EMOTIONS`).
+
+| Auslöser | Gefühl |
+|---|---|
+| Lob, Dank | zufrieden, bei wiederholtem Lob freudig |
+| Beleidigung („Blechbüchse“, „Halt die Klappe“), dieselbe Frage zweimal binnen 2 min | gereizt (vom Bediener verursacht) |
+| „Warum …“, „Erzähl …“ | neugierig |
+| Akku unter 20 % ohne Netzteil | müde |
+| CPU-Temperatur ab 70 °C oder Last ab 90 % | gereizt (vom System verursacht) |
+| Server nicht erreichbar | besorgt |
+| Aufwachen nach über 1 Stunde Ruhe | gelangweilt |
+| Reaktion des Modells: `[stimmung:…]` am Anfang der Antwort | schiebt die Stimmung ein Stück in diese Richtung |
+
+Die Markierung `[stimmung:…]` wird auf dem Server und auf dem Pi entfernt und nie gesprochen. **Billy** zeigt die Stimmung offen im Ton. Beim **Servitor** bricht sie höchstens einmal pro Antwort als Fehler durch („Fehler. … Korrektur.“). **Verweigern** darf er nur, wenn er vom Bediener stark gereizt ist (ab 0,7), höchstens jede zweite Anfrage und nie bei Hilferufen („Hilfe“, „Notfall“, „brennt“, „Arzt“ …). Uhrzeit, Alarme, Gedächtnis- und Menübefehle laufen ohnehin nicht über das Sprachmodell.
+
+**Nach einem Neustart** ist er neutral. Jeder Verlaufseintrag auf dem Gedächtnis-Stick speichert die Stimmung seiner Antwort (`mood: "gereizt:0.62"`). Aus den neuesten drei, die jünger als 12 Stunden sind, entsteht eine schwache Grundstimmung (höchstens 0,3).
+
+**Display:** Billys Gesicht zeigt die Stimmung im Ruhezustand: Grinsen, Zähne, unruhiger Blick, abgewandter Kopf. Beim Servitor blitzt bei starker Stimmung (ab 0,5) alle 15 Sekunden für eine halbe Sekunde Billys Gesicht als Bildstörung durch den Schädel.
+
 ### Stoppwörter
 
 „Stop“, „Abbruch“, „Sei still“, „Klappe halten“, „Halt den Mund“, „Hör auf“, „Das reicht“, „Ruhe“ und ähnliche Wörter beenden die Antwort in beiden Sprechstilen: Proximus sagt nichts, verwirft wartende Ansagen und kehrt in den Ruhezustand zurück (das Aktivierungswort hört wieder mit). Erkannt wird das nur, wenn die ganze Äußerung ein solches Wort ist, höchstens mit Füllwörtern wie „bitte“, „jetzt“ oder „Proximus“ (`intents.is_stop`); „Wie stoppt man eine Blutung?“ geht weiter an das Sprachmodell. Der Server antwortet dann mit dem Ereignis `stop` ohne Audio; der Pi prüft das Transkript zusätzlich selbst, auch gegenüber älteren Servern.
