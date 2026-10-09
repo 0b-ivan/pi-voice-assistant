@@ -158,6 +158,8 @@ def read_status(path=None):
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
                          ('opt_wake', ('on', 'off', 'none')), ('opt_cue', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
+                         ('opt_persona', ('servitor', 'mensch')),
+                         ('opt_voice', ('servitor', 'natural')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
                          ('opt_llm', ('auto', 'free', 'local')),
                          ('alarm', tuple(ALARMS)),
@@ -777,6 +779,15 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
         return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
+    if item == 'persona':
+        return {'servitor': 'SERVITOR', 'mensch': 'BILLY'}.get(status.get('opt_persona'), '')
+    if item == 'voice_fx':
+        return {'servitor': 'MASCHINE', 'natural': 'NATÜRLICH'}.get(status.get('opt_voice'), '')
+    if item == 'human':
+        if 'opt_persona' not in status or 'opt_voice' not in status:
+            return ''
+        human = status['opt_persona'] == 'mensch' and status['opt_voice'] == 'natural'
+        return 'AN' if human else 'AUS'
     if item == 'bt_speaker':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_bt'), '')
     if item in ('wake', 'cue'):
@@ -1154,6 +1165,16 @@ class PartialDisplay:
         self.previous = oriented.copy()
 
 
+def code_changed(started, directory=None):
+    """True when a module of this program changed after it started (a partial
+    install): the display exits and systemd starts it on the new code."""
+    directory = Path(directory or Path(__file__).resolve().parent)
+    try:
+        return any(path.stat().st_mtime > started for path in directory.glob('*.py'))
+    except OSError:
+        return False
+
+
 def main():
     import board
     import digitalio
@@ -1179,6 +1200,7 @@ def main():
     )
 
     display = PartialDisplay(display)
+    code_started, next_code_check = time.time(), 0.0
     screen_lit = True
     try:
         from skull import Skull, idle_level, speaking_level
@@ -1353,6 +1375,11 @@ def main():
                                  (description, icon, step), tick, elapsed, info)
                     previous_screen = screen
 
+        if now >= next_code_check:
+            next_code_check = now + 5.0
+            if code_changed(code_started):
+                print(json.dumps(dict(event='display_code_changed')), flush=True)
+                raise SystemExit(75)  # Restart=on-failure brings up the new code
         time.sleep(EVENT_INTERVAL_SECONDS)
 
 

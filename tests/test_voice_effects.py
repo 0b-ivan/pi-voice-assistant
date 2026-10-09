@@ -78,6 +78,23 @@ class VoiceEffectsTests(unittest.TestCase):
         self.assertIn("-filter_complex", command)
         self.assertEqual(command[-3:], ["-f", "alsa", "test-device"])
 
+    def test_natural_effect_replaces_machine_layers(self):
+        from voice_effects import NATURAL_FILTER_GRAPH, build_render_command, voice_effect
+        stream = build_stream_playback_command(22050, 1, "test-device", effect="natural")
+        graph = stream[stream.index("-filter_complex") + 1]
+        self.assertEqual(graph, NATURAL_FILTER_GRAPH)
+        for layer in ("flanger", "chorus", "tremolo", "aphaser"):
+            self.assertNotIn(layer, graph)
+        self.assertTrue(graph.endswith("aresample=48000[out]"))
+        render = build_render_command("in.wav", "out.wav", effect="natural")
+        self.assertEqual(render[render.index("-filter_complex") + 1], NATURAL_FILTER_GRAPH)
+        file_play = build_playback_command("in.wav", "dev", profile="servitor", effect="natural")
+        self.assertIn(NATURAL_FILTER_GRAPH, file_play)
+        self.assertEqual(voice_effect("NATURAL"), "natural")
+        self.assertEqual(voice_effect("laut"), "servitor")
+        default = build_render_command("in.wav", "out.wav")
+        self.assertIn("flanger", default[default.index("-filter_complex") + 1])
+
     def test_servitor_ffmpeg_path_can_be_overridden(self):
         with patch.dict(os.environ, {"TTS_FFMPEG_BIN": "/custom/ffmpeg"}, clear=True):
             command = build_playback_command(

@@ -15,6 +15,9 @@ Restart=on-failure
 RestartSec=5
 RuntimeDirectory=pi-ptt
 RuntimeDirectoryMode=0700
+# /var/lib/pi-ptt: menu choices that survive a restart (src/settings.py).
+StateDirectory=pi-ptt
+StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict

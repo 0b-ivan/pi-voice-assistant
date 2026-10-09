@@ -3,7 +3,8 @@
 persona, to judge the character. Run on CT 107 with the service environment:
 
   set -a; . /etc/servitor-voice.env; set +a
-  /opt/servitor-voice/.venv/bin/python server/sample-persona.py [openrouter|local|both] [off|light|full]
+  /opt/servitor-voice/.venv/bin/python server/sample-persona.py
+      [openrouter|local|both] [off|light|full] [servitor|mensch]
 """
 from pathlib import Path
 import sys
@@ -23,23 +24,26 @@ QUESTIONS = (
     'Mach das Licht im Wohnzimmer an.',
     'Wer hat die Relativitätstheorie entwickelt?',
     'Was hältst du von Pizza?',
+    'Wer bist du?',
 )
 
 
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else 'both'
     lore = sys.argv[2] if len(sys.argv) > 2 else None
+    persona = sys.argv[3] if len(sys.argv) > 3 else None
     backends = []
     if which in ('openrouter', 'both'):
         backends.append(('OpenRouter', generate_reply))
     if which in ('local', 'both'):
         backends.append(('Lokal', generate_local_reply))
     for name, ask in backends:
-        print(f'===== {name} (Lore: {lore or "Standard"})', flush=True)
+        print(f'===== {name} (Lore: {lore or "Standard"}, '
+              f'Sprechstil: {persona or "Standard"})', flush=True)
         for question in QUESTIONS:
             started = time.monotonic()
             try:
-                answer, _model = ask(question, lore=lore)
+                answer, _model = ask(question, lore=lore, persona=persona)
             except LLMError as exc:
                 answer = f'FEHLER: {exc}'
             print(f'{time.monotonic() - started:5.1f}s  {question}\n       -> {answer}', flush=True)

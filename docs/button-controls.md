@@ -25,15 +25,18 @@ Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B schlie�
 
 Bluetooth-Lautsprecher ([`src/bluetooth.py`](../src/bluetooth.py)) brauchen einmal [`deploy/install-bluetooth.sh`](../deploy/install-bluetooth.sh) (bluez-alsa, Gruppe bluetooth). Ein gekoppelter Lautsprecher wird alle 30 s geprüft und neu verbunden; Proximus sagt Verbinden und Trennen an. Die Lautstärke regelt der Lautsprecher selbst (C/D wirken nur auf den eingebauten). Auf dem Pi Zero 2 W teilen sich WLAN und Bluetooth einen Funkchip.
 
-Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B geht eine Ebene zurück und schließt oben.
+Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B geht eine Ebene zurück und schließt oben. Die Einträge der Gruppe „Persönlichkeit“ bleiben über einen Neustart erhalten (`/var/lib/pi-ptt/settings.json`, systemd `StateDirectory`); die übrigen Schalter starten mit den Werten aus der env-Datei.
 
 | Gruppe | Eintrag | Wirkung |
 |---|---|---|
 | Sprache | Aktivierungswort AN/AUS | Mithören für „Proximus“/„Hey Jarvis“ ein/aus (nicht über Neustart gespeichert) |
 | | Sprachkern AUTO/FREI/LOKAL | AUTO: OpenRouter (Mistral Medium 3.5), bei Ausfall lokal; FREI: wenig eingeschränktes Modell; LOKAL: nur das lokale Modell auf CT 107 |
-| | Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status (Grundeinstellung `PTT_LORE_LEVEL`) |
 | | Server nutzen AN/AUS | Zwischen CT 107 und rein lokalem Betrieb umschalten |
 | | Quittungston AN/AUS | Kurzer Servo-/Binärton beim Loslassen, wenn die Anfrage angenommen ist (Grundeinstellung `PTT_CUE`, [Architektur](architecture.md#sprachausgabe)) |
+| Persönlichkeit | Menschlich AN/AUS | Kurzwahl: Sprechstil BILLY und Stimmeffekt NATÜRLICH zusammen, AUS schaltet beides auf Servitor zurück; die Lore-Stufe bleibt |
+| | Sprechstil SERVITOR/BILLY | Die Maschine oder das Mensch-Modul: Sergeant Billy Blazkowicz vor dem Umbau ([Lore](concepts/lore-blazkowicz.md)); Grundeinstellung `PTT_PERSONA` |
+| | Stimmeffekt MASCHINE/NATÜRLICH | Servitor-Klangeffekt oder Billys Stimme (gleicher Sprecher, etwas tiefer, ohne Maschinenschichten); Grundeinstellung `PTT_VOICE_EFFECT` |
+| | Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status, für beide Sprechstile (Grundeinstellung `PTT_LORE_LEVEL`) |
 | Personen | Bekannte Personen | Liste der Stimmprofile, je Person Nachtrainieren/Details/Passphrase/Löschen mit Stimm- und Passphrase-Anmeldung ([Gedächtnis](memory.md#kennenlernen-und-stimmerkennung)) |
 | | Kennenlernen | Neue Person: Stimmproben, Fragen, Stimmprofil |
 | | Stimme nachtrainieren | 20 Stimmproben, dem passenden Profil zugerechnet |

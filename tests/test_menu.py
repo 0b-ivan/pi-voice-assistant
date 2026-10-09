@@ -69,9 +69,11 @@ class ControllerMenuTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.status_path = Path(self.tmp.name) / 'display-status.json'
+        self.settings_path = Path(self.tmp.name) / 'settings.json'
         env = patch.dict(os.environ, {'PTT_DISPLAY_STATUS_PATH': str(self.status_path),
                                       'PTT_DISPLAY_EVENT_PATH':
-                                          str(Path(self.tmp.name) / 'event.json')})
+                                          str(Path(self.tmp.name) / 'event.json'),
+                                      'PTT_SETTINGS_FILE': str(self.settings_path)})
         env.start()
         self.addCleanup(env.stop)
         ptt._display_status.clear()
@@ -102,7 +104,7 @@ class ControllerMenuTests(unittest.TestCase):
         self.assertEqual((self.status()['menu_index'], self.status()['menu_page']), (0, 'list'))
         self.press(down='E')                           # into 'Sprache'
         self.assertEqual(self.status()['menu_group'], 'voice')
-        for _ in range(3):
+        for _ in range(2):
             self.press(pitft='D')
         self.assertEqual(self.c.menu.items[self.status()['menu_index']], 'server')
         self.press(down='E')
@@ -147,11 +149,65 @@ class ControllerMenuTests(unittest.TestCase):
         self.press(down='E')
         self.assertEqual(self.c.lore, 'light')
 
+    def test_persona_and_voice_items_toggle_and_reach_snapshot(self):
+        self.speech.effect = 'servitor'
+        self.press(pitft='D')
+        self.c.menu.select('persona')
+        self.assertEqual(self.c.menu.group, 'persona')
+        self.press(down='E')
+        self.assertEqual((self.c.persona, self.status()['opt_persona']), ('mensch', 'mensch'))
+        self.c.menu.select('voice_fx')
+        self.press(down='E')
+        self.assertEqual((self.c.voice, self.status()['opt_voice']), ('natural', 'natural'))
+        self.assertEqual(self.speech.effect, 'natural')
+        snapshot = self.c.status_snapshot()
+        self.assertEqual((snapshot['persona'], snapshot['voice']), ('mensch', 'natural'))
+        with patch('ptt.TranscriptionJob') as job:
+            self.c._start_llm('wie hoch ist der eiffelturm')
+        self.assertEqual(job.call_args.args[0].keywords['persona'], 'mensch')
+
+    def test_human_shortcut_switches_both_and_keeps_lore(self):
+        self.press(pitft='D')
+        self.c.menu.select('human')
+        self.press(down='E')
+        self.assertEqual((self.c.persona, self.c.voice, self.c.lore),
+                         ('mensch', 'natural', 'light'))
+        self.press(down='E')
+        self.assertEqual((self.c.persona, self.c.voice, self.c.lore),
+                         ('servitor', 'servitor', 'light'))
+        self.c.persona = 'mensch'                       # only half human: switch both on
+        self.press(down='E')
+        self.assertEqual((self.c.persona, self.c.voice), ('mensch', 'natural'))
+
+    def test_personality_survives_a_restart(self):
+        self.press(pitft='D')
+        self.c.menu.select('persona')
+        self.press(down='E')
+        self.c.menu.select('lore')
+        self.press(down='E')
+        self.assertEqual(json.loads(self.settings_path.read_text()),
+                         {'lore': 'full', 'persona': 'mensch', 'voice': 'servitor'})
+        with patch.dict(os.environ, {'PTT_LORE_LEVEL': 'off', 'PTT_PERSONA': 'servitor'}):
+            restarted = VoiceController(Mock(), Mock(), .04, 30)
+        self.assertEqual((restarted.persona, restarted.lore, restarted.voice),
+                         ('mensch', 'full', 'servitor'))
+
+    def test_broken_settings_fall_back_to_environment(self):
+        self.settings_path.write_text('{"persona": 7, "lore": "laut", "voice": "natural"')
+        with patch.dict(os.environ, {'PTT_PERSONA': 'mensch', 'PTT_LORE_LEVEL': 'off'}):
+            c = VoiceController(Mock(), Mock(), .04, 30)
+        self.assertEqual((c.persona, c.lore, c.voice), ('mensch', 'off', 'servitor'))
+        self.settings_path.write_text('{"persona": 7, "lore": "laut", "voice": "natural"}')
+        with patch.dict(os.environ, {'PTT_PERSONA': 'mensch'}):
+            c = VoiceController(Mock(), Mock(), .04, 30)
+        self.assertEqual((c.persona, c.lore, c.voice), ('mensch', 'light', 'natural'))
+
     def test_local_llm_gets_lore_level(self):
         with patch('ptt.TranscriptionJob') as job:
             self.c._start_llm('wie hoch ist der eiffelturm')
         function = job.call_args.args[0]
-        self.assertEqual(function.keywords, {'lore': 'light', 'memory': None, 'model': None})
+        self.assertEqual(function.keywords, {'lore': 'light', 'memory': None, 'model': None,
+                                             'persona': 'servitor'})
 
     def test_local_fallback_uses_the_pis_own_calendar(self):
         import datetime

@@ -205,6 +205,8 @@ class ResidentSpeechOutput:
         self.runtime_dir = Path(runtime_dir)
         self.runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.profile = resolve_voice_profile(profile)
+        # Menu "Stimmeffekt" (servitor/natural); only the servitor profile has DSP.
+        self.effect = 'servitor'
         self.playback_mode = os.environ.get("TTS_PLAYBACK_MODE", "stream").strip().lower()
         if self.playback_mode not in ("stream", "buffered"):
             raise ValueError("TTS_PLAYBACK_MODE must be stream or buffered")
@@ -341,6 +343,7 @@ class ResidentSpeechOutput:
                     channels,
                     audio_output.current(self.audio_device),
                     profile=self.profile,
+                    effect=self.effect,
                 ),
                 stdin=subprocess.PIPE,
                 start_new_session=True,
@@ -450,7 +453,8 @@ class ResidentSpeechOutput:
                 fd, name = tempfile.mkstemp(prefix='speech-dsp-', suffix='.wav', dir=self.runtime_dir)
                 os.close(fd)
                 rendered = Path(name)
-                code = self._run_owned(job, build_render_command(path, rendered), 'dsp_render', 120)
+                code = self._run_owned(job, build_render_command(path, rendered, effect=self.effect),
+                                      'dsp_render', 120)
                 if not self._current(job):
                     return
                 if code != 0:
@@ -459,7 +463,7 @@ class ResidentSpeechOutput:
                             '-B', '500000', str(rendered)]
             else:
                 playback = build_playback_command(path, audio_output.current(self.audio_device),
-                                                  profile=self.profile)
+                                                  profile=self.profile, effect=self.effect)
             if self._current(job):
                 code = self._run_owned(job, playback, 'playback')
                 if self._current(job):

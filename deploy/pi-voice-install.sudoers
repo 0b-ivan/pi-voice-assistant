@@ -1,0 +1,2 @@
+# obivan may install a pi-voice-assistant commit fetched from GitHub (root-owned wrapper).
+obivan ALL=(root) NOPASSWD: /usr/local/sbin/pi-voice-install

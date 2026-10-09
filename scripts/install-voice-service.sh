@@ -55,6 +55,7 @@ install -m 0644 "${repo_root}/src/button_shim.py" /opt/pi-voice-assistant/src/bu
 install -m 0644 "${repo_root}/src/voice_controls.py" /opt/pi-voice-assistant/src/voice_controls.py
 install -m 0644 "${repo_root}/src/voice_effects.py" /opt/pi-voice-assistant/src/voice_effects.py
 install -m 0644 "${repo_root}/src/system_status.py" /opt/pi-voice-assistant/src/system_status.py
+install -m 0644 "${repo_root}/src/settings.py" /opt/pi-voice-assistant/src/settings.py
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
@@ -79,6 +80,11 @@ if [[ ${created_voice_env} -eq 1 ]]; then
 elif [[ ${service_was_active} -eq 1 ]]; then
   systemctl start pi-ptt.service
   echo "pi-ptt.service restarted."
+  # The display shares menu.py and other modules: never leave it on the old code.
+  if systemctl is-active --quiet pi-display.service; then
+    systemctl restart pi-display.service
+    echo "pi-display.service restarted."
+  fi
 else
   echo "Install complete. Start with: sudo systemctl enable --now pi-ptt.service"
 fi

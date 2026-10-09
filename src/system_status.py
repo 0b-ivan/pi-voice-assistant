@@ -160,6 +160,7 @@ SNAPSHOT_FIELDS = {
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
 SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offline'),
                    'lore': ('off', 'light', 'full'), 'wlan': ('on', 'off'),
+                   'persona': ('servitor', 'mensch'), 'voice': ('servitor', 'natural'),
                    'llm_mode': ('auto', 'free', 'local'), 'memory': ('on', 'off'),
                    'dns': ('ok', 'fail'), 'maintenance': ('on', 'off')}
 
@@ -201,7 +202,7 @@ def _swap_used_percent(path=MEMINFO_PATH):
 
 
 def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=None,
-                     llm_mode=None, extra=None,
+                     llm_mode=None, extra=None, persona=None, voice=None,
                      thermal_path=THERMAL_PATH, meminfo_path=MEMINFO_PATH,
                      loadavg_path=LOADAVG_PATH, uptime_path=UPTIME_PATH,
                      disk_path="/", disk_usage=shutil.disk_usage, cpu_count=os.cpu_count):
@@ -214,6 +215,8 @@ def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=
         throttled=throttled,
         server=server,
         lore=lore,
+        persona=persona,
+        voice=voice,
         wlan=wlan,
         llm_mode=llm_mode,
         swap_used_pct=_swap_used_percent(meminfo_path),

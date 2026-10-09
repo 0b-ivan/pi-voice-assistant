@@ -13,7 +13,8 @@ import time
 import wave
 
 import functools
-from llm import LORE_LEVELS, configured_model, free_model, generate_reply, lore_level
+from llm import (LORE_LEVELS, PERSONAS, configured_model, free_model, generate_reply,
+                 lore_level, persona_name)
 import agenda as agenda_feed
 import alarm_audio
 import audio_output
@@ -41,6 +42,8 @@ from transcribe import (
     LiveVoskRecognizer, RemoteLiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider, prepare_vosk_worker, stop_prepared_vosk
 )
 from runtime_metrics import display_progress, phase
+from settings import Settings
+from voice_effects import VOICE_EFFECTS, voice_effect
 from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob, change_volume
 
 
@@ -135,6 +138,8 @@ DISPLAY_STATUS_VALUES = {
     'opt_wake': {'on', 'off', 'none'},
     'opt_cue': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
+    'opt_persona': set(PERSONAS),
+    'opt_voice': set(VOICE_EFFECTS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
     'opt_llm': set(LLM_MODES),
@@ -624,7 +629,14 @@ class VoiceController:
         self.remote_enabled = remote
         self.led_enabled = True
         self.screen_on = True
-        self.lore = lore_level(os.environ.get('PTT_LORE_LEVEL'))  # off / light / full
+        # Menu choices survive a restart; the environment only sets the defaults.
+        self.settings = Settings()
+        saved = {key: value for key, value in self.settings.load().items()
+                 if isinstance(value, str)}
+        self.lore = lore_level(saved.get('lore') or os.environ.get('PTT_LORE_LEVEL'))
+        self.persona = persona_name(saved.get('persona') or os.environ.get('PTT_PERSONA'))
+        self.voice = voice_effect(saved.get('voice') or os.environ.get('PTT_VOICE_EFFECT'))
+        self._apply_voice_effect()
         self.battery = None      # power.Battery reading, refreshed by main()
         self.throttled = None
         self.remote_failed = False
@@ -670,6 +682,18 @@ class VoiceController:
         self.job_stage = None
         self.job_started_at = None
         self.speech_started_at = None
+
+    def _apply_voice_effect(self):
+        if isinstance(getattr(self.speech, 'effect', None), str):
+            self.speech.effect = self.voice
+
+    def _set_personality(self, persona=None, voice=None, lore=None):
+        """Change and remember the personality switches of the menu."""
+        self.persona = persona or self.persona
+        self.voice = voice or self.voice
+        self.lore = lore or self.lore
+        self._apply_voice_effect()
+        self.settings.save(persona=self.persona, voice=self.voice, lore=self.lore)
 
     @staticmethod
     def _scale(color, factor):
@@ -790,7 +814,8 @@ class VoiceController:
         publish_display_status(menu_index=self.menu.index, menu_page=self.menu.page,
                                menu_group=self.menu.group or ('top' if self.menu.open else None),
                                opt_server=server, opt_wake=wake, wake_word=self.wake_word,
-                               opt_lore=self.lore,
+                               opt_lore=self.lore, opt_persona=self.persona,
+                               opt_voice=self.voice,
                                opt_wlan='on' if self.wlan_on else 'off',
                                opt_alarms='on' if self.alarms_enabled else 'off',
                                opt_llm=self.llm_mode,
@@ -828,8 +853,21 @@ class VoiceController:
                 self._release_microphone()
             event('menu', item='wake', value='on' if self.wake_enabled else 'off')
         elif item == 'lore':
-            self.lore = LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)]
+            self._set_personality(
+                lore=LORE_LEVELS[(LORE_LEVELS.index(self.lore) + 1) % len(LORE_LEVELS)])
             event('menu', item='lore', value=self.lore)
+        elif item == 'persona':
+            self._set_personality(persona='mensch' if self.persona == 'servitor' else 'servitor')
+            event('menu', item='persona', value=self.persona)
+        elif item == 'voice_fx':
+            self._set_personality(voice='natural' if self.voice == 'servitor' else 'servitor')
+            event('menu', item='voice_fx', value=self.voice)
+        elif item == 'human':
+            # Shortcut: Billy with his own voice, or back to the machine. Lore stays.
+            human = self.persona == 'mensch' and self.voice == 'natural'
+            self._set_personality(persona='servitor' if human else 'mensch',
+                                  voice='servitor' if human else 'natural')
+            event('menu', item='human', value='off' if human else 'on')
         elif item == 'llm':
             self.llm_mode = LLM_MODES[(LLM_MODES.index(self.llm_mode) + 1) % len(LLM_MODES)]
             event('menu', item='llm', value=self.llm_mode)
@@ -868,7 +906,8 @@ class VoiceController:
         server = self.server_state()
         return collect_snapshot(battery=self.battery, throttled=self.throttled, server=server,
                                 lore=self.lore, wlan='on' if self.wlan_on else 'off',
-                                llm_mode=self.llm_mode,
+                                llm_mode=self.llm_mode, persona=self.persona,
+                                voice=self.voice,
                                 extra=dict(sysmon.snapshot_fields(
                                     getattr(self.network_watch, 'result', None)
                                     if self.wlan_on else None,
@@ -1496,7 +1535,8 @@ class VoiceController:
         context = self.memory.context()
         model = free_model() if self.llm_mode == 'free' else None
         self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore,
-                                                      memory=context, model=model), text)
+                                                      memory=context, model=model,
+                                                      persona=self.persona), text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())

@@ -137,7 +137,7 @@ class RealPipeline:
             return 'offline'
         return 'openrouter'
 
-    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY):
+    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
         from llm import LLMError, free_model, generate_local_reply, generate_reply
@@ -146,12 +146,13 @@ class RealPipeline:
         chosen = free_model() if mode == 'free' else None
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
-            return generate_local_reply(text, lore=lore, memory=memory)
+            return generate_local_reply(text, lore=lore, memory=memory, persona=persona)
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
-                return generate_reply(text, lore=lore, memory=memory, model=chosen)
+                return generate_reply(text, lore=lore, memory=memory, model=chosen,
+                                      persona=persona)
             except LLMError as exc:
                 if not local:
                     raise
@@ -160,11 +161,12 @@ class RealPipeline:
                 self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
-            return generate_local_reply(text, lore=lore, memory=memory)
+            return generate_local_reply(text, lore=lore, memory=memory, persona=persona)
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
-    def synthesize(self, text):
+    def synthesize(self, text, voice='servitor'):
+        """Same speaker for both voice effects; only the rendering differs."""
         from voice_controls import _synthesize_voice
         target = _temporary_wav('syn-', self.workdir)
         try:
@@ -175,11 +177,11 @@ class RealPipeline:
             raise
         return target
 
-    def render(self, source):
+    def render(self, source, voice='servitor'):
         from voice_effects import build_render_command
         target = _temporary_wav('dsp-', self.workdir)
         try:
-            subprocess.run(build_render_command(source, target), check=True,
+            subprocess.run(build_render_command(source, target, effect=voice), check=True,
                            timeout=60, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except BaseException:
@@ -385,8 +387,9 @@ class Service:
                     try:
                         lore = (device or {}).get('lore')
                         mode = (device or {}).get('llm_mode')
+                        persona = (device or {}).get('persona')
                         answer, model = timed('llm', self.pipeline.reply, text, lore, mode,
-                                              memory_copy)
+                                              memory_copy, persona)
                     except Exception as exc:
                         raise TurnError('think', 'llm', str(exc)) from exc
                     # Facts/directives the model picked up are never spoken.
@@ -402,13 +405,14 @@ class Service:
             answer = answer.strip()[:self.config.max_text]
             emit(dict(event='stage', stage='synthesize'))
             try:
-                raw = timed('synthesis', self.pipeline.synthesize, answer)
+                voice = (device or {}).get('voice', 'servitor')
+                raw = timed('synthesis', self.pipeline.synthesize, answer, voice)
                 temporary.append(raw)
             except Exception as exc:
                 raise TurnError('synthesize', 'tts', str(exc)) from exc
             emit(dict(event='stage', stage='render'))
             try:
-                rendered = timed('render', self.pipeline.render, raw)
+                rendered = timed('render', self.pipeline.render, raw, voice)
                 temporary.append(rendered)
                 data = timed('encode', self.pipeline.encode, rendered, fmt)
                 duration = wav_duration_ms(rendered)
