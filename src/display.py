@@ -1055,10 +1055,13 @@ def render_menu(display, status, info=None):
     draw = ImageDraw.Draw(image)
     accent = (150, 120, 255)
     group = status.get('menu_group')
-    title = 'MENÜ' if group is None else f"MENÜ › {menu.LABELS[group].upper()}"
-    draw.text((12, 12), title, font=font(17), fill='white')
+    right = 228
     if info.get('battery'):
-        draw_battery(draw, 228, 14, info['battery'])
+        right = draw_battery(draw, 228, 14, info['battery']) - 8
+    # In a group the title is the group name; shrink it rather than run into the battery.
+    title = 'MENÜ' if group is None else menu.LABELS[group].upper()
+    size = next((n for n in (17, 15, 13) if 12 + draw.textlength(title, font=font(n)) <= right), 12)
+    draw.text((12, 12 + (17 - size) // 2), title, font=font(size), fill='white')
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
     rows = [(item, menu.label(item, group)) for item in menu.entries(group)]
