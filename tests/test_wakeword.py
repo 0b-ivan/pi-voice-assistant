@@ -295,7 +295,7 @@ class ControllerWakeTests(unittest.TestCase):
 
     def test_menu_switch(self):
         self.c.menu.show(self.now)
-        self.c.menu.index = ITEMS.index('wake')
+        self.c.menu.select('wake')
         self.assertTrue(self.wake.running)
         self.tick(down='E')
         self.tick(down='E')

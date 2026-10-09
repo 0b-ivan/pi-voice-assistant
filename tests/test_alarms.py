@@ -223,7 +223,7 @@ class PowerStageTests(ControllerAlarmTests):
         self.assertEqual(self.c.power, 'awake')
         self.c._update_power(31)
         self.assertEqual((self.c.power, self.status()['power']), ('rest', 'rest'))
-        self.assertEqual(self.c.color, self.c._scale(ptt.LED_READY, 0.3))
+        self.assertEqual(self.c.color, self.c._scale(ptt.LED_READY, ptt.REST_LED))
         self.c._update_power(601)
         self.assertEqual((self.c.power, self.status()['power']), ('sleep', 'sleep'))
         self.assertEqual(self.c.color, ptt.LED_OFF)
@@ -357,7 +357,7 @@ class ShutdownAndModeTests(ControllerAlarmTests):
         seen = []
         for _ in range(3):
             self.c.menu.show(0)
-            self.c.menu.index = ptt.MENU_ITEMS.index('llm')
+            self.c.menu.select('llm')
             self.c._menu_confirm(0)
             seen.append(self.c.llm_mode)
         self.assertEqual(seen, ['free', 'local', 'auto'])
