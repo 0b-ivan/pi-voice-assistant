@@ -41,6 +41,10 @@ TTS_PIPER_SENTENCE_SILENCE=0.32
 
 Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedrigere `noise_scale`/`noise_w` reduzieren emotionale Schwankung und machen die Ausgabe kälter. Die **320 ms Satzpause** bleibt bestehen; die Schwere kommt damit aus den Pausen statt aus gedehnten Wörtern. Der DSP senkt die Grundtonhöhe jetzt nur noch um rund **1,35 Halbtöne** ab. Metallische Resonanzen und Chorus liegen deutlich weiter vorn. Zusätzlich laufen zwei sprachgebundene Tracer-Ebenen sowie eine zeitstromgebundene Maschinen-Aura: kurze gestaffelte Digital-Echos, eine 6-Hz-Sägezahn-Hüllkurve durch einen Phaser und ein eigenes leises 220-Hz-Säge-/Phaser-Brummen mit 440-Hz-Oberwelle und deutlich langsamem Phaser-Sweep. Die Maschinen-Aura läuft auch durch Satzpausen weiter und endet erst mit der gesamten Ansage.
 
+## Aussprache
+
+Der deutsche espeak-Phonemizer hinter Piper betont manche Lore-Wörter falsch. [`src/pronounce.py`](../src/pronounce.py) schreibt sie direkt vor Piper um (Server, Pi, Streaming und `speak.py`); Display, Journal und Gedächtnis behalten die echte Schreibweise. Bisher: **Omnissiah → „Omnissi-ah“**. espeak machte daraus `ˈɔmnɪsˌiːɑː` (Betonung auf „OM“), jetzt `ɔmnˈɪsiːˈɑː` (Betonung auf „NIS“, wie in der Lore). Neue Regeln vorher mit dem Phonemizer aus Pipers venv prüfen (Befehl im Modulkopf). Die Alarm-Clips sind nach der gesprochenen Form benannt: nach einer neuen Regel `alarm_audio.py build --prune` laufen lassen, dann werden die betroffenen Clips neu gerendert.
+
 ## Servitor-DSP
 
 Das Profil rendert keine zweite Effekt-WAV mehr. Ablauf:

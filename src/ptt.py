@@ -15,10 +15,12 @@ import wave
 import functools
 from llm import (LORE_LEVELS, PERSONAS, configured_model, free_model, generate_reply,
                  lore_level, persona_name)
+import agenda as agenda_feed
 import alarm_audio
 import audio_output
 import bluetooth
 import boardled
+import cue as cue_sound
 import enroll
 import people
 import maintenance
@@ -28,6 +30,7 @@ from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMo
                     memory_phrase)
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
+import weather
 import wlan as wlan_radio
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
@@ -133,6 +136,7 @@ DISPLAY_STATUS_VALUES = {
     'maint_pi': set(maintenance.STATES),
     'maint_server': set(maintenance.STATES),
     'opt_wake': {'on', 'off', 'none'},
+    'opt_cue': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
     'opt_persona': set(PERSONAS),
     'opt_voice': set(VOICE_EFFECTS),
@@ -604,8 +608,9 @@ class Recorder:
 class VoiceController:
     """One capture/STT/LLM slot, with A and GPIO17 combined as hold-to-talk."""
     def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False,
-                 wake=None, wake_word=None):
+                 wake=None, wake_word=None, cue=None):
         self.recorder, self.speech, self.probe = recorder, speech, probe
+        self.cue = cue                    # cue.Cue: acknowledgement sound on submit
         self.wake = wake                  # WakeListener or None
         self.wake_word = wake_word        # published label, e.g. 'hey_jarvis'
         self.wake_enabled = wake is not None
@@ -648,6 +653,8 @@ class VoiceController:
         self.sleep_wlan_off = os.environ.get('PTT_SLEEP_WLAN', 'keep') == 'off'
         self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
         self.listen_after_greeting = False  # wake word woke us: listen after the greeting
+        self.weather = weather.Forecast()  # cached only: never blocks the loop
+        self.agenda = agenda_feed.Agenda()  # CALDAV_*; refreshed by a thread (main)
         self.memory = memory_core.MemoryCore()
         self.memory_present = self.memory.present()
         self.turn_transcript = None
@@ -758,6 +765,8 @@ class VoiceController:
                 uplink.cancel()
             return
         event('processing', path=str(capture))
+        if self.cue is not None and self.cue.play():
+            event('cue')
         self.turn_released_at = time.monotonic()
         self.turn_llm = None
         if uplink is not None:
@@ -811,6 +820,8 @@ class VoiceController:
                                opt_alarms='on' if self.alarms_enabled else 'off',
                                opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
+                               opt_cue='none' if self.cue is None else
+                               'on' if self.cue.enabled else 'off',
                                screen='on' if self.screen_on else 'off',
                                opt_bt='none' if self.bt is None else
                                'on' if self.bt.connected else 'off')
@@ -867,6 +878,9 @@ class VoiceController:
             if not self.alarms_enabled:
                 self.alarm_queue = []
             event('menu', item='alarms', value='on' if self.alarms_enabled else 'off')
+        elif item == 'cue' and self.cue is not None:
+            self.cue.enabled = not self.cue.enabled
+            event('menu', item='cue', value='on' if self.cue.enabled else 'off')
         elif item == 'led':
             self.led_enabled = not self.led_enabled
             event('menu', item='led', value='on' if self.led_enabled else 'off')
@@ -1321,6 +1335,7 @@ class VoiceController:
             play(path)
             return
         event('speech_started', source=source, clips=False)
+        self._settle_cue()
         self.speech.start(' '.join(texts))
 
     def set_wlan(self, on):
@@ -1417,6 +1432,7 @@ class VoiceController:
         try:
             event('status', text=text)
             event('speech_started', source='status')
+            self._settle_cue()
             self.speech.start(text)
             self.speech_started_at = time.monotonic()
         except (OSError, RuntimeError, ValueError) as exc:
@@ -1505,7 +1521,12 @@ class VoiceController:
             return
         if intent is not None:
             # Time, date, status ...: answered on the Pi, also without network.
-            reply = intents.answer(intent, datetime.datetime.now(), self.status_snapshot())
+            snapshot = self.status_snapshot()
+            if intent in ('weather', 'briefing'):
+                snapshot['weather'] = self.weather.cached()
+            if intent in ('calendar', 'briefing'):
+                snapshot['agenda'] = self.agenda.today()
+            reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'
             event('llm_response', text=reply, model='local/intent')
             print(f'SERVITOR: {reply}', flush=True)
@@ -1520,9 +1541,15 @@ class VoiceController:
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
 
+    def _settle_cue(self):
+        """The playback device is not shared: let the cue end before speech."""
+        if self.cue is not None:
+            self.cue.settle()
+
     def _start_speech(self, text, **fields):
         try:
             event('speech_started', **fields)
+            self._settle_cue()
             self.speech.start(text)
             self.speech_started_at = time.monotonic()
             self._turn_spoken()
@@ -1583,6 +1610,7 @@ class VoiceController:
             try:
                 event('speech_started', source='remote')
                 display_progress('tts', 'playback')
+                self._settle_cue()
                 self.speech.play(job.result['audio'])
                 self.speech_started_at = time.monotonic()
                 self._turn_spoken()
@@ -1885,7 +1913,10 @@ def main():
                 status = controller.status_snapshot() if controller else None
                 memory_copy = (memory_core.encode_header(controller.memory.context())
                                if controller else None)
-                return RemoteTurnUplink(remote_config, status=status, memory=memory_copy)
+                appointments = (agenda_feed.encode_header(controller.agenda.today())
+                                if controller else None)
+                return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
+                                        agenda=appointments)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
@@ -1983,10 +2014,18 @@ def main():
                               WAKE_LABELS.get(wake_word))
             event('wake_ready', word=wake_word, threshold=threshold, shadow=shadows,
                   active=active_words)
+    acknowledge = None
+    if not args.probe:
+        acknowledge = cue_sound.Cue(
+            Path(runtime_dir) / 'cue.wav',
+            os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'),
+            enabled=os.environ.get('PTT_CUE', '1') != '0')
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
                                  remote=uplink_factory is not None,
-                                 wake=wake, wake_word=wake_label)
+                                 wake=wake, wake_word=wake_label, cue=acknowledge)
     controller_ref.append(controller)
+    if not args.probe and controller.agenda.start().configured:
+        event('agenda_ready', calendars=len(controller.agenda.config.urls))
     wlan_setting = os.environ.get('PTT_WLAN', '').strip().lower()
     if wlan_setting in ('on', 'off') and not args.probe:
         if not controller.set_wlan(wlan_setting == 'on'):

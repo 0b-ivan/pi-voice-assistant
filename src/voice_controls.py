@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import wave
+from pronounce import spoken
 from runtime_metrics import display_progress, phase
 
 def _speech_event(name, **fields):
@@ -141,6 +142,7 @@ def _servitor_synthesis_config(voice):
 
 def _synthesize_voice(voice, text, audio, profile):
     """Write Piper audio, with restrained command cadence for Servitor fallback."""
+    text = spoken(text)
     if profile != "servitor":
         voice.synthesize_wav(text, audio)
         return
@@ -303,7 +305,7 @@ class ResidentSpeechOutput:
                 return
 
             syn_config, sentence_silence = _servitor_synthesis_config(self.voice)
-            chunks = iter(self.voice.synthesize(text, syn_config=syn_config))
+            chunks = iter(self.voice.synthesize(spoken(text), syn_config=syn_config))
             try:
                 chunk = next(chunks)
             except StopIteration as exc:

@@ -38,6 +38,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import intents  # noqa: E402
+import weather  # noqa: E402
+import agenda  # noqa: E402
 import enroll  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
@@ -229,6 +231,7 @@ class Service:
         self.embedder = speaker.Embedder()
         self.maintenance_dir = maintenance.DIR
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
+        self.weather = weather.Forecast()  # WEATHER_LAT/WEATHER_LON, else no weather
         self.ready = False
 
     def authorized(self, header):
@@ -279,13 +282,14 @@ class Service:
         return dict(memory_copy, speaker=name)
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
-                 transcribe_only=False):
+                 transcribe_only=False, appointments=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
         time, date or status are answered from it without the LLM.
         ``memory_copy``: the Pi's memory core (None: stick absent, NO_MEMORY:
-        Pi without memory support). Changes go back as ``memory`` events."""
+        Pi without memory support). Changes go back as ``memory`` events.
+        ``appointments``: today's calendar from the Pi (agenda.decode_header), or None."""
         timings = {}
         temporary = []
 
@@ -366,6 +370,16 @@ class Service:
                     state = getattr(self.pipeline, 'llm_state', None)
                     if state is not None:
                         snapshot['llm'] = state()
+                    if intent in ('weather', 'briefing'):
+                        snapshot['weather'] = timed('weather', self.weather.get)
+                    if intent in ('calendar', 'briefing'):
+                        if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
+                            snapshot['agenda'] = agenda.DENIED
+                        elif appointments is not None:
+                            snapshot['agenda'] = agenda.upcoming(appointments, self.now())
+                    if (isinstance(memory_copy, dict) and memory_copy.get('speaker')
+                            and not memory.unknown_speaker(memory_copy)):
+                        snapshot['operator'] = memory_copy['speaker']  # recognized voice
                     answer = timed('intent', intents.answer, intent, self.now(), snapshot)
                     model = 'local/intent'
                 else:
@@ -626,6 +640,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         memory_copy = (memory.decode_header(self.headers.get('X-Servitor-Memory', ''))
                        if state == 'on' else None if state == 'off' else NO_MEMORY)
 
+        appointments = agenda.decode_header(self.headers.get('X-Servitor-Agenda', ''),
+                                            self.service.now().tzinfo)
+
         if not self.service.turn_lock.acquire(timeout=max(0.0, self.service.config.busy_wait)):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
         try:
@@ -643,7 +660,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             try:
                 self.service.run_turn(body, emit, fmt, text=text, device=device,
-                                      memory_copy=memory_copy, transcribe_only=transcribe_only)
+                                      memory_copy=memory_copy, transcribe_only=transcribe_only,
+                                      appointments=appointments)
             except TurnError as exc:
                 emit(dict(event='error', stage=exc.stage, code=exc.code, message=exc.message))
             except (OSError, TimeoutError):

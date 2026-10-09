@@ -156,7 +156,7 @@ def read_status(path=None):
         if group:
             status['menu_group'] = group
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
-                         ('opt_wake', ('on', 'off', 'none')),
+                         ('opt_wake', ('on', 'off', 'none')), ('opt_cue', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
                          ('opt_persona', ('servitor', 'mensch')),
                          ('opt_voice', ('servitor', 'natural')),
@@ -790,8 +790,8 @@ def _menu_value(item, status):
         return 'AN' if human else 'AUS'
     if item == 'bt_speaker':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_bt'), '')
-    if item == 'wake':
-        return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_wake'), '')
+    if item in ('wake', 'cue'):
+        return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get(f'opt_{item}'), '')
     return ''
 
 

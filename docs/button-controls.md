@@ -6,7 +6,7 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 
 | Taste | Funktion |
 |---|---|
-| A | Halten: aufnehmen; Loslassen: STT |
+| A | Halten: aufnehmen; Loslassen: Quittungston, dann STT |
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
 | B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: eine Ebene zurück, oben schließen (erst danach bricht B ab) |
 | C / D | Digitalen `Playback`-Pegel um 2 dB senken/erhöhen, gehalten wiederholt |
@@ -32,6 +32,7 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | Sprache | Aktivierungswort AN/AUS | Mithören für „Proximus“/„Hey Jarvis“ ein/aus (nicht über Neustart gespeichert) |
 | | Sprachkern AUTO/FREI/LOKAL | AUTO: OpenRouter (Mistral Medium 3.5), bei Ausfall lokal; FREI: wenig eingeschränktes Modell; LOKAL: nur das lokale Modell auf CT 107 |
 | | Server nutzen AN/AUS | Zwischen CT 107 und rein lokalem Betrieb umschalten |
+| | Quittungston AN/AUS | Kurzer Servo-/Binärton beim Loslassen, wenn die Anfrage angenommen ist (Grundeinstellung `PTT_CUE`, [Architektur](architecture.md#sprachausgabe)) |
 | Persönlichkeit | Menschlich AN/AUS | Kurzwahl: Sprechstil BILLY und Stimmeffekt NATÜRLICH zusammen, AUS schaltet beides auf Servitor zurück; die Lore-Stufe bleibt |
 | | Sprechstil SERVITOR/BILLY | Die Maschine oder das Mensch-Modul: Sergeant Billy Blazkowicz vor dem Umbau ([Lore](concepts/lore-blazkowicz.md)); Grundeinstellung `PTT_PERSONA` |
 | | Stimmeffekt MASCHINE/NATÜRLICH | Servitor-Klangeffekt oder Billys Stimme (gleicher Sprecher, etwas tiefer, ohne Maschinenschichten); Grundeinstellung `PTT_VOICE_EFFECT` |
