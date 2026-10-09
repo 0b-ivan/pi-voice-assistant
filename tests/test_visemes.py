@@ -71,11 +71,28 @@ class FaceTests(unittest.TestCase):
         self.assertEqual((row, left, right), (23, 9, 14))
         look = sheet.frame((0, 'look'))
         top = sheet.size[1] - (clean.height + face.JAW) * 4
-        for shape in shapes:          # eyes and upper lip stay; the jaw moves below the lips
+        side = (sheet.size[0] - clean.width * 4) // 2
+        for shape in shapes:          # everything above the lips stays; it opens on them
             frame = sheet.frame((0, shape))
             changed = {(y - top) // 4 for y in range(sheet.size[1]) for x in range(sheet.size[0])
                        if frame.getpixel((x, y)) != look.getpixel((x, y))}
-            self.assertTrue(changed and min(changed) >= row, shape)
+            self.assertTrue(changed and min(changed) == row, shape)
+            inside = [frame.getpixel((side + x * 4 + 1, top + (row + 1) * 4 + 1))
+                      for x in range(left + 2, right - 1)]
+            self.assertTrue(all(sum(p) < 60 for p in inside), shape)   # dark, readable gap
+
+    def test_hurt_faces_open_on_their_own_lips(self):
+        from PIL import Image
+        path = Path(__file__).resolve().parents[1] / 'assets' / 'display' / 'doom-faces.png'
+        sprites = face.slice_sheet(Image.open(path))
+        clean = face._shrink(sprites[(0, 'look')], 4)
+        lips = face._lipline(clean)
+        rows = []
+        for row in range(face.ROWS):
+            look = face._shrink(sprites[(row, 'look')], 4)
+            dx, dy = face._lower_offset(look, clean) if row else (0, 0)
+            rows.append(face._seam(look, (lips[0] + dy, lips[1] + dx, lips[2] + dx)))
+        self.assertEqual(rows, [(23, 9, 14), (23, 10, 15), (24, 8, 13), (27, 8, 13), (27, 9, 14)])
 
 
 class EnvelopeTests(unittest.TestCase):
