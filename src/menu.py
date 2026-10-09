@@ -10,14 +10,17 @@ owns a Menu and publishes its state for display.py, which shares LABELS.
 GROUPS = {
     'voice': ('wake', 'llm', 'lore', 'server', 'back'),
     'people': ('people', 'enroll', 'refine', 'back'),
+    'audio': ('bt_speaker', 'bt_scan', 'bt_forget', 'back'),
     'device': ('wlan', 'alarms', 'led', 'screen', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
-TOP = ('voice', 'people', 'device', 'system', 'close')
+TOP = ('voice', 'people', 'audio', 'device', 'system', 'close')
 # Every selectable action (for publishing and tests).
 ITEMS = tuple(item for group in GROUPS.values() for item in group if item != 'back') + ('close',)
 LABELS = {
-    'voice': 'Sprache', 'people': 'Personen', 'device': 'Gerät', 'system': 'System',
+    'voice': 'Sprache', 'people': 'Personen', 'audio': 'Audio', 'device': 'Gerät',
+    'system': 'System', 'bt_speaker': 'BT-Lautsprecher', 'bt_scan': 'Lautsprecher suchen',
+    'bt_forget': 'Lautsprecher entfernen',
     'close': 'Schließen', 'back': 'Zurück',
     'wake': 'Aktivierungswort', 'llm': 'Sprachkern', 'lore': 'Lore-Stufe',
     'server': 'Server nutzen', 'enroll': 'Kennenlernen', 'refine': 'Stimme nachtrainieren',
@@ -27,7 +30,8 @@ LABELS = {
 # "people" is both a group and the person list inside it.
 LABELS_IN_GROUP = {'people': 'Bekannte Personen'}
 # Selecting these leaves the menu (another screen or an action takes over).
-CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'people')
+CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'people', 'bt_scan',
+           'bt_forget')
 TIMEOUT_SECONDS = 15.0
 
 

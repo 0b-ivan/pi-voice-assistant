@@ -81,7 +81,8 @@ def known_pieces():
     texts += phrases()
     import enroll
     import people
-    texts += enroll.phrases() + people.phrases()
+    import bluetooth
+    texts += enroll.phrases() + people.phrases() + bluetooth.phrases()
     pieces = {piece for text in texts for piece, _ in fragments(text)}
     return sorted(pieces | {str(n) for n in NUMBERS})
 
