@@ -238,6 +238,25 @@ class SpeechTextTests(unittest.TestCase):
         with patch.dict("os.environ", {"SERVITOR_LORE": "full"}):
             self.assertEqual(llm.lore_level(), "full")
 
+    def test_billy_persona_has_own_style_and_lore(self):
+        for level, word in (("off", "keine Begriffe"), ("light", "Imperialen Armee"),
+                            ("full", "Magos Vettius Kael")):
+            prompt = llm.system_prompt(level, persona="mensch")
+            self.assertTrue(prompt.startswith(llm.BILLY_SYSTEM_PROMPT))
+            self.assertIn(word, prompt)
+            self.assertNotIn("diese Einheit", prompt)
+            self.assertNotIn("Omnissiah", prompt)
+            self.assertTrue(prompt.rstrip().split("\n")[-1].startswith("Aktueller Zeitpunkt"))
+        self.assertIn("William Joseph Blazkowicz", llm.BILLY_SYSTEM_PROMPT)
+        self.assertNotIn("Daten unzureichend", llm.BILLY_SYSTEM_PROMPT)
+        self.assertIn("Fakten und Korrektheit haben Vorrang", llm.BILLY_SYSTEM_PROMPT)
+        self.assertNotIn("Doom", "".join(llm.BILLY_LORE_PROMPTS.values()))
+        self.assertEqual(llm.persona_name("unbekannt"), "servitor")
+        self.assertEqual(llm.persona_name(" MENSCH "), "mensch")
+        with patch.dict("os.environ", {"SERVITOR_PERSONA": "mensch"}):
+            self.assertEqual(llm.persona_name(), "mensch")
+            self.assertTrue(llm.system_prompt("off").startswith(llm.BILLY_SYSTEM_PROMPT))
+
     def test_time_context(self):
         import datetime
         now = datetime.datetime(2026, 10, 8, 9, 5)

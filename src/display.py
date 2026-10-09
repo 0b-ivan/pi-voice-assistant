@@ -158,6 +158,8 @@ def read_status(path=None):
     for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
                          ('opt_wake', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
+                         ('opt_persona', ('servitor', 'mensch')),
+                         ('opt_voice', ('servitor', 'natural')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
                          ('opt_llm', ('auto', 'free', 'local')),
                          ('alarm', tuple(ALARMS)),
@@ -777,6 +779,15 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
         return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
+    if item == 'persona':
+        return {'servitor': 'SERVITOR', 'mensch': 'BILLY'}.get(status.get('opt_persona'), '')
+    if item == 'voice_fx':
+        return {'servitor': 'MASCHINE', 'natural': 'NATÜRLICH'}.get(status.get('opt_voice'), '')
+    if item == 'human':
+        if 'opt_persona' not in status or 'opt_voice' not in status:
+            return ''
+        human = status['opt_persona'] == 'mensch' and status['opt_voice'] == 'natural'
+        return 'AN' if human else 'AUS'
     if item == 'bt_speaker':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_bt'), '')
     if item == 'wake':

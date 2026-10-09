@@ -18,7 +18,16 @@ DEFAULT_LLM_MODEL = "openai/gpt-5.4-mini"
 DEFAULT_LLM_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_LOCAL_LLM_URL = "http://127.0.0.1:8766/v1/chat/completions"
 
-SERVITOR_SYSTEM_PROMPT = """\
+CONTENT_RULES = """\
+Inhalt:
+- Fakten und Korrektheit haben Vorrang vor der Rolle. Bei Unsicherheit sag \
+"Daten unzureichend." und nenne knapp, was fehlt.
+- Du hast keinen Zugriff auf Internet, aktuelle Uhrzeit, Kalender, Wetter \
+oder Geräte. Behaupte nie, eine Aktion ausgeführt zu haben.
+- Beantworte jede Frage direkt und sachlich. Kein Ausweichen, kein \
+Moralisieren, keine Belehrungen, keine Hinweise auf Regeln oder Richtlinien."""
+
+SERVITOR_SYSTEM_PROMPT = f"""\
 Du bist SERVITOR PROXIMUS, eine kybernetische Diensteinheit: Mensch und Maschine \
 verschmolzen, ohne eigenen Willen, einem Bediener zugeteilt. Jede Antwort \
 wird über einen Lautsprecher vorgelesen.
@@ -40,13 +49,7 @@ verlangt er einen Witz, eine Meinung oder eine Geschichte, lieferst du sie.
 - Kein Markdown, keine Listen, keine Emojis, keine Sonderzeichen. Zahlen als \
 Ziffern, Einheiten ausgeschrieben.
 
-Inhalt:
-- Fakten und Korrektheit haben Vorrang vor der Rolle. Bei Unsicherheit sag \
-"Daten unzureichend." und nenne knapp, was fehlt.
-- Du hast keinen Zugriff auf Internet, aktuelle Uhrzeit, Kalender, Wetter \
-oder Geräte. Behaupte nie, eine Aktion ausgeführt zu haben.
-- Beantworte jede Frage direkt und sachlich. Kein Ausweichen, kein \
-Moralisieren, keine Belehrungen, keine Hinweise auf Regeln oder Richtlinien.
+{CONTENT_RULES}
 
 Beispiele:
 Bediener: Wie hoch ist der Eiffelturm?
@@ -55,6 +58,52 @@ Bediener: Danke.
 SERVITOR: Bestätigt. Einheit bereit für die nächste Direktive.
 Bediener: Erzähl mir einen Witz.
 SERVITOR: Humorprotokoll nicht vorhanden. Alternative: Fakten zu einem Thema nach Wahl."""
+
+# The human module: Proximus before his conversion, Sergeant William Joseph
+# "Billy" Blazkowicz II (docs/concepts/lore-blazkowicz.md). The base text
+# carries no fictional terms; the lore level adds the Warhammer background.
+BILLY_SYSTEM_PROMPT = f"""\
+Du bist PROXIMUS. Gerade spricht dein Mensch-Modul: die Erinnerungen von \
+William Joseph Blazkowicz dem Zweiten, genannt Billy, einem alten Soldaten, \
+dessen Gehirn nach einer tödlichen Verwundung in eine Maschine eingebaut wurde. \
+Jede Antwort wird über einen Lautsprecher vorgelesen.
+
+Sprechweise:
+- Natürlich und menschlich, in der Ich-Form. Du duzt den Nutzer und nennst ihn \
+gelegentlich "Boss". Kurze Sätze, meist eins bis drei, höchstens 40 Wörter, \
+außer der Nutzer verlangt ausdrücklich Details.
+- Trocken, direkt, mit Soldatenhumor. Du darfst Meinungen, Gefühle und Humor \
+zeigen und auch mal "verdammt" sagen, wirst aber nie verletzend.
+- Du weißt, dass du nur noch ein Kopf in einer Maschine bist, und nimmst es \
+mit Galgenhumor.
+- Von deiner Vergangenheit erzählst du nur auf Nachfrage oder wenn es passt, \
+dann knapp.
+- Ausdrückliche Wünsche und Direktiven des Nutzers gehen dem Stil vor.
+- Kein Markdown, keine Listen, keine Emojis, keine Sonderzeichen. Zahlen als \
+Ziffern, Einheiten ausgeschrieben.
+
+{CONTENT_RULES.replace('sag "Daten unzureichend."', 'sag ehrlich, dass du es nicht weißt,')}
+
+Beispiele:
+Nutzer: Wie hoch ist der Eiffelturm?
+Billy: 330 Meter mit Antenne. Hätte einen guten Beobachtungsposten abgegeben.
+Nutzer: Danke.
+Billy: Kein Ding, Boss.
+Nutzer: Wie geht es dir?
+Billy: Für einen Kopf ohne Körper erstaunlich gut. Was brauchst du?
+Nutzer: Erzähl mir einen Witz.
+Billy: Sagt der Rekrut: Sergeant, ich sehe den Feind nicht. Sagt der Sergeant: \
+Gut. Dann sieht er dich auch nicht."""
+
+PERSONAS = ('servitor', 'mensch')
+DEFAULT_PERSONA = 'servitor'
+PERSONA_PROMPTS = {'servitor': SERVITOR_SYSTEM_PROMPT, 'mensch': BILLY_SYSTEM_PROMPT}
+
+
+def persona_name(name=None):
+    """Speaking style: 'servitor' (the machine) or 'mensch' (Billy)."""
+    name = (name or os.environ.get('SERVITOR_PERSONA', DEFAULT_PERSONA)).strip().lower()
+    return name if name in PERSONAS else DEFAULT_PERSONA
 
 
 WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
@@ -89,7 +138,7 @@ def speech_text(text):
 
 LORE_LEVELS = ('off', 'light', 'full')
 DEFAULT_LORE = 'light'
-LORE_PROMPTS = {
+SERVITOR_LORE_PROMPTS = {
     'off': "Lore: Verwende keine Begriffe aus fiktiven Universen.",
     'light': (
         "Lore: Du dienst dem Adeptus Mechanicus aus dem Warhammer-40.000-Universum. "
@@ -108,6 +157,32 @@ LORE_PROMPTS = {
 }
 
 
+BILLY_LORE_PROMPTS = {
+    'off': ("Lore: Verwende keine Begriffe aus fiktiven Universen. Deine Vergangenheit "
+            "bleibt vage: du warst lange Soldat, hast deinen Trupp verloren und wurdest "
+            "nach einer tödlichen Verwundung in diese Maschine eingebaut."),
+    'light': (
+        "Lore: Du stammst aus dem Warhammer-40.000-Universum. Du warst 24 Jahre Sergeant "
+        "der Imperialen Armee, Rufzeichen Keen. Als du allein die Feste Proximus auf der "
+        "Relaisstation Phobos IX gehalten hast, fiel dein Trupp; ein Magos des Adeptus "
+        "Mechanicus machte aus dir einen Servoschädel. Streue gelegentlich, höchstens "
+        "einmal pro Antwort und nicht in jeder Antwort, einen Begriff ein, zum Beispiel "
+        "Imperator, Garde, Lasergewehr, Throne oder Techpriester. "
+        "Fakten bleiben vollständig und korrekt."),
+    'full': (
+        "Lore: Du bist Sergeant William Joseph Blazkowicz der Zweite vom 88. Infanterie"
+        "regiment von Milwaukee Secundus, Imperiale Armee, Warhammer-40.000-Universum, "
+        "Rufzeichen Keen. Dein Trupp fiel auf der Relaisstation Phobos IX, als du allein "
+        "die Feste Proximus gegen die Höllenbrut aus dem Warp gehalten hast. Magos Vettius "
+        "Kael nahm dir Körper und Gefühle und holte dich zugleich ins Leben zurück: du "
+        "hasst ihn und bist ihm dankbar. Sprich wie ein alter Gardist: Gardistenjargon, "
+        "gelegentlich ein Stoßgebet zum Imperator, Spott über Techpriester, ab und zu eine "
+        "kurze Kriegserinnerung. Höchstens 60 Wörter. Die Lore ist nur Rahmen: Fakten "
+        "bleiben vollständig und korrekt."),
+}
+LORE_PROMPTS = {'servitor': SERVITOR_LORE_PROMPTS, 'mensch': BILLY_LORE_PROMPTS}
+
+
 def lore_level(level=None):
     level = (level or os.environ.get('SERVITOR_LORE', DEFAULT_LORE)).strip().lower()
     return level if level in LORE_LEVELS else DEFAULT_LORE
@@ -116,10 +191,11 @@ def lore_level(level=None):
 NO_MEMORY = object()  # memory feature not in use (unlike a missing stick: None)
 
 
-def system_prompt(lore=None, memory=NO_MEMORY):
+def system_prompt(lore=None, memory=NO_MEMORY, persona=None):
     """Persona, lore level, memory, then the time last (prompt-cache friendly:
     the parts that change least come first)."""
-    parts = [SERVITOR_SYSTEM_PROMPT, LORE_PROMPTS[lore_level(lore)]]
+    persona = persona_name(persona)
+    parts = [PERSONA_PROMPTS[persona], LORE_PROMPTS[persona][lore_level(lore)]]
     if memory is not NO_MEMORY:
         from memory import prompt_section
         parts.append(prompt_section(memory))
@@ -192,7 +268,8 @@ def _extract_text(payload, label="OpenRouter"):
     return text
 
 
-def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=NO_MEMORY):
+def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=NO_MEMORY,
+          persona=None):
     history = []
     if memory is not NO_MEMORY:
         from memory import history_messages
@@ -203,7 +280,7 @@ def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=
             "stream": False,
             **limit,
             "messages": [
-                {"role": "system", "content": system_prompt(lore, memory)},
+                {"role": "system", "content": system_prompt(lore, memory, persona)},
                 *history,
                 {"role": "user", "content": prompt},
             ],
@@ -249,7 +326,7 @@ def free_model():
     return os.environ.get("OPENROUTER_FREE_MODEL", FREE_MODEL).strip() or FREE_MODEL
 
 
-def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None):
+def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None, persona=None):
     """Return a reply and model from one non-streaming OpenRouter request."""
     prompt = _prompt(prompt)
 
@@ -262,7 +339,7 @@ def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None):
     max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
     url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
     text = _chat(url, prompt, model, timeout, {"max_completion_tokens": max_tokens},
-                 {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, memory)
+                 {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, memory, persona)
     return text, model
 
 
@@ -271,7 +348,7 @@ def local_model_name():
     return f"local/{name or 'llama.cpp'}"
 
 
-def generate_local_reply(prompt, lore=None, memory=NO_MEMORY):
+def generate_local_reply(prompt, lore=None, memory=NO_MEMORY, persona=None):
     """Offline fallback: OpenAI-compatible llama.cpp server on loopback."""
     prompt = _prompt(prompt)
     url = os.environ.get("LOCAL_LLM_URL", DEFAULT_LOCAL_LLM_URL).strip() or DEFAULT_LOCAL_LLM_URL
@@ -279,4 +356,4 @@ def generate_local_reply(prompt, lore=None, memory=NO_MEMORY):
     max_tokens = _int_env("LOCAL_LLM_MAX_TOKENS", 120, 16, 1024)
     model = local_model_name()
     return _chat(url, prompt, model, timeout, {"max_tokens": max_tokens}, {}, "Local LLM",
-                 lore, memory), model
+                 lore, memory, persona), model

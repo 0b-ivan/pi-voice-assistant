@@ -71,6 +71,11 @@ class StatusTextTests(unittest.TestCase):
         self.assertEqual(ss.status_text({}, processing=True), "Direktive in Bearbeitung.")
         self.assertEqual(ss.status_text({}), "Status nominal. Befehl erwartet.")
 
+    def test_persona_and_voice_are_whitelisted(self):
+        self.assertEqual(ss.sanitize_snapshot({"persona": "mensch", "voice": "natural"}),
+                         {"persona": "mensch", "voice": "natural"})
+        self.assertEqual(ss.sanitize_snapshot({"persona": "chaos", "voice": 1}), {})
+
     def test_lore_levels(self):
         light = ss.status_text(dict(self.NOMINAL, lore="light"))
         self.assertTrue(light.endswith("Maschinengeist ruhig. Befehl erwartet."))

@@ -136,6 +136,16 @@ class DisplayStatusTests(unittest.TestCase):
 
 
 class DisplayVoiceEventTests(unittest.TestCase):
+    def test_personality_menu_values(self):
+        status = {'opt_persona': 'mensch', 'opt_voice': 'natural'}
+        self.assertEqual(display._menu_value('persona', status), 'BILLY')
+        self.assertEqual(display._menu_value('voice_fx', status), 'NATÜRLICH')
+        self.assertEqual(display._menu_value('human', status), 'AN')
+        status['opt_voice'] = 'servitor'
+        self.assertEqual(display._menu_value('voice_fx', status), 'MASCHINE')
+        self.assertEqual(display._menu_value('human', status), 'AUS')
+        self.assertEqual(display._menu_value('human', {}), '')
+
     def test_runtime_event_mapping(self):
         expected = {
             "waiting_for_release": "BEREIT",
