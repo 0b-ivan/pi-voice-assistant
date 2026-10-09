@@ -72,6 +72,24 @@ def _shrink(sprite, scale):
     return sprite.resize((sprite.width // scale, sprite.height // scale), Image.NEAREST)
 
 
+def _offset(base, other, reach=3):
+    """Where ``other``'s pixel (0, 0) lands on ``base`` when the two match best."""
+    from PIL import Image
+    pa = base.load()
+    best = None
+    for dx in range(-reach, reach + 1):
+        for dy in range(-reach, reach + 1):
+            at = ((base.width - other.width) // 2 + dx, base.height - other.height + dy)
+            canvas = Image.new('RGBA', base.size, (0, 0, 0, 0))
+            canvas.paste(other, at)
+            pb = canvas.load()
+            misses = sum(pa[x, y] != pb[x, y] for y in range(base.height)
+                         for x in range(base.width))
+            if best is None or misses < best[0]:
+                best = (misses, at)
+    return best[1]
+
+
 def _aligned(base, other, reach=2):
     """``other`` moved onto ``base``'s canvas where the two match best."""
     from PIL import Image
@@ -111,45 +129,86 @@ def _skinlike(pixel):
     return a and r - b > 50 and g > 40 and r > g      # warm skin, not grey eye or red blood
 
 
+def _grey(pixel):
+    r, g, b, a = pixel
+    return a and r >= 50 and abs(r - g) < 16 and abs(g - b) < 16      # eye white
+
+
+def _dark(pixel):
+    return pixel[3] and sum(pixel[:3]) < 200                            # pupil, outline
+
+
+def _bloodshot(pixel):
+    r, g, b, a = pixel
+    return a and r >= 100 and g < r * 0.7 and b < r * 0.7 and abs(g - b) < 16   # red white
+
+
+def _eyelike(pixel):
+    return _grey(pixel) or _dark(pixel) or _bloodshot(pixel)
+
+
 def eye_mask(look, glance):
-    """Eye pixels of the clean face: where the glance moves the pupils, widened
-    to every grey/dark pixel in those rows (eye whites, lids)."""
+    """The eyes of the clean face as (eye, lid): ``eye`` are the white and pupil
+    pixels (Doom eyes are one or two pixel rows), ``lid`` the dark outline just
+    above them. Found where the glance moves the pupils; the brows stay out."""
     pixels = look.load()
     moved = _diff(look, _aligned(look, glance), 0.35, 0.62)
-    if not moved:
-        return set()
-    top, bottom = min(y for _, y in moved), max(y for _, y in moved)
-    left, right = min(x for x, _ in moved) - 1, max(x for x, _ in moved) + 1
-    return moved | {(x, y) for y in range(top, bottom + 1)
-                    for x in range(max(0, left), min(look.width, right + 1))
-                    if pixels[x, y][3] and not _skinlike(pixels[x, y])}
+    rows = sorted({y for x, y in moved if _grey(pixels[x, y]) or _dark(pixels[x, y])})
+    rows = [y for y in rows if any(_grey(pixels[x, y]) for x in range(look.width))]
+    if not moved or not rows:
+        return set(), set()
+    left = min(x for x, _ in moved) - 1
+    right = max(x for x, _ in moved) + 1
+    # Dark pixels count only next to an eye white: the nose bridge between the
+    # eyes is dark too and must stay.
+    whites = {(x, y) for y in rows for x in range(look.width) if _grey(pixels[x, y])}
+    eye = {(x, y) for y in rows for x in range(max(0, left), min(look.width, right + 1))
+           if (x, y) in whites or (_dark(pixels[x, y])
+                                   and any((x + d, y) in whites for d in (-2, -1, 1, 2)))}
+    top = min(rows)
+    lid = {(x, top - 1) for x, y in eye if y == top and top > 0 and _dark(pixels[x, top - 1])}
+    return eye, lid
 
 
-def _lid(sprite, eyes, closed):
-    """Eyelids over the eyes: closed (blink) or half-closed (squint), in the
-    face's own skin tone, with a dark lash line."""
+def _lid(sprite, mask, closed):
+    """Closed (blink) or half-closed (squint) eyes in pixel-art style: the dark
+    upper outline becomes lid skin, the eye a dark lash line (closed) or a
+    dimmed eye (half). Only pixels that are still eye in this row are touched,
+    so hair hanging over the eyes stays."""
     from collections import Counter
+    eye, lid = mask
     out = sprite.copy()
     pixels = out.load()
     width, height = out.size
-    eyes = {(x, y) for x, y in eyes if x < width and y < height}
-    if not eyes:
+    cells = [(x, y) for x, y in eye | lid if x < width and y < height]
+    if not cells:
         return out
-    top, bottom = min(y for _, y in eyes), max(y for _, y in eyes)
-    left, right = min(x for x, _ in eyes), max(x for x, _ in eyes)
+    top, bottom = min(y for _, y in cells), max(y for _, y in cells)
+    left, right = min(x for x, _ in cells), max(x for x, _ in cells)
     tones = Counter(pixels[x, y] for y in range(max(0, top - 3), min(height, bottom + 4))
                     for x in range(left, right + 1) if _skinlike(pixels[x, y]))
     if not tones:
         return out
     skin = tones.most_common(1)[0][0]
-    lash_color = tuple(int(c * 0.4) for c in skin[:3]) + (255,)
-    for x, (first, last) in _columns(eyes).items():
-        lash = first + (last - first + 1) // (1 if closed else 2) - 1
-        for y in range(first, last + 1):
-            if y < lash:
-                pixels[x, y] = skin
-            elif y == lash:
-                pixels[x, y] = lash_color
+    shade = tuple(int(c * 0.75) for c in skin[:3]) + (255,)     # lid in the socket's shadow
+    lash = tuple(int(c * 0.35) for c in skin[:3]) + (255,)
+    # Eyes can sit a pixel off in a bloodier row: take neighbouring whites too.
+    near = {(x + dx, y + dy) for x, y in eye for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
+    eye = eye | {(x, y) for x, y in near if 0 <= x < width and 0 <= y < height
+                 and (_grey(pixels[x, y]) or _bloodshot(pixels[x, y]))}
+    for x, y in lid:
+        if x < width and y < height and _dark(pixels[x, y]):
+            pixels[x, y] = shade
+    for x, y in eye:
+        if x >= width or y >= height:
+            continue
+        pixel = pixels[x, y]
+        if not _eyelike(pixel):
+            continue
+        if closed:
+            pixels[x, y] = lash
+        elif not _dark(pixel):          # half-closed: the white mostly under the lid
+            pixels[x, y] = tuple((c + 3 * d) // 4 for c, d in zip(pixel[:3], lash[:3])) + (255,)
     return out
 
 
@@ -172,15 +231,25 @@ def derive(sprites, scale):
     # bloodier rows unreliable, so the clean face defines them.
     clean = _shrink(sprites[(0, 'look')], scale)
     glance = sprites.get((0, 'look_b')) or sprites.get((0, 'look_a'))
-    eyes = eye_mask(clean, _shrink(glance, scale)) if glance is not None else set()
+    eyes = eye_mask(clean, _shrink(glance, scale)) if glance is not None else (set(), set())
     for row in range(ROWS):
         if (row, 'look') not in sprites:
             continue
         look = _shrink(sprites[(row, 'look')], scale)
         made = {}
-        if eyes and look.size == clean.size:
-            made['blink'] = _lid(look, eyes, closed=True)
-            made['squint'] = _lid(look, eyes, closed=False)
+        own = sprites.get((row, 'look_b')) or sprites.get((row, 'look_a'))
+        mask = eye_mask(look, _shrink(own, scale)) if own is not None and row else eyes
+        if not (mask[0] and len(mask[0]) >= len(eyes[0]) * 0.6
+                and len({y for _, y in mask[0]}) <= 2):
+            # Not found here (bloodshot, hair): the clean face's eyes, moved to
+            # where this face sits (longer hair pushes it down).
+            dx, dy = _offset(look, clean)
+            mask = tuple({(x + dx, y + dy) for x, y in part
+                          if 0 <= x + dx < look.width and 0 <= y + dy < look.height}
+                         for part in eyes)
+        if mask[0]:
+            made['blink'] = _lid(look, mask, closed=True)
+            made['squint'] = _lid(look, mask, closed=False)
         for name, source, band in (('talk_half', 'teeth', (0.68, 1.0)),
                                    ('talk_open', 'ouch', (0.68, 1.0)),
                                    ('wide', 'ouch', (0.25, 0.62))):
