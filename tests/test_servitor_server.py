@@ -102,8 +102,13 @@ class ServerTest(unittest.TestCase):
         headers = {'Authorization': f'Bearer {token}'} if token else {}
         if chunked:
             headers['Transfer-Encoding'] = 'chunked'
-            conn.request(method, path, body=iter([body[:1001], body[1001:]]), headers=headers,
-                         encode_chunked=True)
+            try:
+                conn.request(method, path, body=iter([body[:1001], body[1001:]]),
+                             headers=headers, encode_chunked=True)
+            except (BrokenPipeError, ConnectionResetError):
+                # The server may answer and close (e.g. too_large) before the
+                # last chunk is out; its reply is already in the socket buffer.
+                pass
         else:
             conn.request(method, path, body=body, headers=headers)
         response = conn.getresponse()
