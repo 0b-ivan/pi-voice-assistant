@@ -155,6 +155,23 @@ Die Markierung `[stimmung:…]` wird auf dem Server und auf dem Pi entfernt und 
 
 **Display:** Billys Gesicht zeigt die Stimmung im Ruhezustand: Grinsen, Zähne, unruhiger Blick, abgewandter Kopf. Beim Servitor blitzt bei starker Stimmung (ab 0,5) alle 15 Sekunden für eine halbe Sekunde Billys Gesicht als Bildstörung durch den Schädel.
 
+### Gerätesteuerung per Sprache
+
+[`src/device_control.py`](../src/device_control.py) erkennt wenige feste Befehle, auf dem Server und im Offline-Fallback des Pi; ausgeführt wird immer auf dem Pi:
+
+| Befehl (Beispiele) | Wirkung |
+|---|---|
+| „WLAN aus“, „Schalte das WLAN aus“ | WLAN sofort per `rfkill` aus; danach läuft alles lokal („WLAN deaktiviert. Lokaler Betrieb.“) |
+| „WLAN an“, „WLAN einschalten“ | WLAN wieder an (wird offline auf dem Pi erkannt) |
+| „Starte dich neu“, „Neustart“ | Rückfrage, dann Neustart des Pi über den Wartungsdienst (sonst `systemctl reboot`) |
+| „Fahr dich herunter“, „Herunterfahren“, „Schalt dich aus“ | Rückfrage, dann `systemctl poweroff`; wieder an nur per Schalter |
+
+**Bestätigung:** Neustart und Herunterfahren fragen zurück („… Bestätigen: Bestätigt oder Taste E.“). Bestätigt wird innerhalb von 20 s mit „Bestätigt“, „Ja“ oder Taste E; die Antwort muss allein stehen (höchstens mit „bitte“), „Mach das Licht an“ bestätigt nie. „Nein“/„Abbrechen“ oder Taste B brechen ab („Abgebrochen.“), jede andere Frage verwirft die Rückfrage und wird normal beantwortet. Der Pi hält die offene Rückfrage und schickt sie im Status-Snapshot mit (`pending`), so erkennt auch der Server die Bestätigung. Ausgeführt wird erst, wenn die Ansage („Einheit fährt herunter.“) gesprochen ist.
+
+**WLAN bei Bedarf:** Ist das WLAN aus und eine Frage braucht das Sprachmodell, schaltet der Pi es selbst ein („Anfrage braucht Netz. WLAN wird aktiviert.“), wartet bis zu 25 s auf eine Adresse und beantwortet die Frage dann über OpenRouter; folgende Anfragen gehen wieder an CT 107. Im Sprachkern LOKAL (Modell auf CT 107) bittet er stattdessen, die Frage gleich zu wiederholen. Uhrzeit, Status, Termine und Gedächtnis brauchen kein Netz und schalten nichts ein.
+
+**Rechte:** Fremde Stimmen (Server erkennt sie nicht als Bediener) bekommen „Stimme nicht als Bediener erkannt. Befehl verweigert.“; offline gibt es wie beim Gedächtnis keine Stimmprüfung, Taste E setzt Zugang zum Gerät voraus. Im Wartungsmodus bleibt „Starte neu“ dessen eigene Aktion (Bestätigung mit E); den **Server** startet nur der Wartungsmodus neu. Herunterfahren und Neustart erlaubt die polkit-Regel [`deploy/50-pi-voice-poweroff.rules`](../deploy/50-pi-voice-poweroff.rules) dem Dienstbenutzer, `scripts/install-voice-service.sh` installiert sie. Sprechstil BILLY hat eigene Sätze („Ich mach dann mal aus.“).
+
 ### Stoppwörter
 
 „Stop“, „Abbruch“, „Sei still“, „Klappe halten“, „Halt den Mund“, „Hör auf“, „Das reicht“, „Ruhe“ und ähnliche Wörter beenden die Antwort in beiden Sprechstilen: Proximus sagt nichts, verwirft wartende Ansagen und kehrt in den Ruhezustand zurück (das Aktivierungswort hört wieder mit). Erkannt wird das nur, wenn die ganze Äußerung ein solches Wort ist, höchstens mit Füllwörtern wie „bitte“, „jetzt“ oder „Proximus“ (`intents.is_stop`); „Wie stoppt man eine Blutung?“ geht weiter an das Sprachmodell. Der Server antwortet dann mit dem Ereignis `stop` ohne Audio; der Pi prüft das Transkript zusätzlich selbst, auch gegenüber älteren Servern.

@@ -166,7 +166,10 @@ SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offli
                    'persona': ('servitor', 'mensch'), 'voice': ('servitor', 'natural'),
                    'mood': EMOTIONS, 'mood_refuse': ('on', 'off'),
                    'llm_mode': ('auto', 'free', 'local'), 'memory': ('on', 'off'),
-                   'dns': ('ok', 'fail'), 'maintenance': ('on', 'off')}
+                   'dns': ('ok', 'fail'), 'maintenance': ('on', 'off'),
+                   # device_control: the Pi knows spoken device commands, and the
+                   # reboot/shutdown question it is waiting to have confirmed.
+                   'devctl': ('on',), 'pending': ('reboot', 'shutdown')}
 
 
 def sanitize_snapshot(value):

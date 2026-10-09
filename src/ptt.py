@@ -21,6 +21,7 @@ import audio_output
 import bluetooth
 import boardled
 import cue as cue_sound
+import device_control
 import enroll
 import people
 import maintenance
@@ -612,6 +613,14 @@ class Recorder:
         self.ready.unlink(missing_ok=True)
 
 
+def _after_network(function, text, timeout=25.0, step=0.5):
+    """Run ``function(text)`` once an IPv4 address is up (WLAN just switched on)."""
+    deadline = time.monotonic() + timeout
+    while network_up() is False and time.monotonic() < deadline:
+        time.sleep(step)
+    return function(text)
+
+
 class VoiceController:
     """One capture/STT/LLM slot, with A and GPIO17 combined as hold-to-talk."""
     def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False,
@@ -685,6 +694,14 @@ class VoiceController:
         self.picker = None                 # dict(title, items=[(mac, name)], index, action)
         self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
+        # Spoken device commands (device_control): a reboot/shutdown waiting for
+        # "bestätigt" or E, the one taken over by the current turn, and the
+        # confirmed one that runs once its announcement has been spoken.
+        self.device_pending = None
+        self.device_pending_until = 0.0
+        self.turn_device_pending = None
+        self.device_after_speech = None
+        self.device_after_until = 0.0     # never act on a stale confirmation
         self.alarms.notice_store = maintenance.NoticeStore()
         self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
@@ -795,6 +812,10 @@ class VoiceController:
         return self._scale(color, REST_LED) if self.power == 'rest' and not bright else color
 
     def cancel(self, held, now):
+        if self.device_after_speech:   # B during "Einheit fährt herunter.": stays on
+            event('device', op=self.device_after_speech, result='cancelled')
+            self.device_after_speech = None
+        self.device_pending = None
         self.listen_after_greeting = False
         self.speech.stop()
         self.speech_started_at = None
@@ -832,6 +853,9 @@ class VoiceController:
                 uplink.cancel()
             return
         event('processing', path=str(capture))
+        # This turn may answer a pending reboot/shutdown question; either way
+        # the question is used up (anything else drops it).
+        self.turn_device_pending = self._device_take_pending()
         if self.cue is not None and self.cue.play():
             event('cue')
         self.turn_released_at = time.monotonic()
@@ -985,6 +1009,7 @@ class VoiceController:
                                     getattr(self.update_watch, 'result', None)),
                                     memory='on' if self.memory_present else 'off',
                                     maintenance='on' if self.maint.active else 'off',
+                                    devctl='on', pending=self._device_pending_now(),
                                     **self._mood_fields()))
 
     def check_alarms(self, now, network=None):
@@ -1044,6 +1069,119 @@ class VoiceController:
             self.speech_started_at = time.monotonic()
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
+
+    # --- Spoken device commands (device_control) ---------------------------------
+
+    def _device_pending_now(self):
+        if self.device_pending and time.monotonic() <= self.device_pending_until:
+            return self.device_pending
+        return None
+
+    def _device_take_pending(self):
+        """The pending reboot/shutdown question, used up; None if none or expired."""
+        op, self.device_pending = self.device_pending, None
+        if op is not None and time.monotonic() > self.device_pending_until:
+            event('device', op=op, result='expired')
+            return None
+        return op
+
+    def _device_turn(self, text, pending, commands=True):
+        """Local path: answer to a pending question or (``commands``) a device
+        command; the sentence to speak, or None when the text is something else."""
+        if pending is not None:
+            answer = device_control.answer(text)
+            if answer == 'confirm':
+                return self._device_confirmed(pending, speak=False)
+            if answer == 'cancel':
+                event('device', op=pending, result='cancelled')
+                return device_control.cancelled_text(self.style)
+            event('device', op=pending, result='dropped')
+        if not commands:
+            return None
+        op = device_control.command(text)
+        if op == 'reboot' and self.maint.active:
+            return None   # the maintenance mode handles "starte neu" (confirmed with E)
+        if op is None:
+            return None
+        return self._device_command(op)
+
+    def _device_command(self, op):
+        """A recognized command: ask (reboot/shutdown) or switch WLAN now."""
+        wlan = 'on' if self.wlan_on else 'off'
+        text = device_control.reply(op, wlan, self.style)
+        if op in device_control.CONFIRM_OPS:
+            self.device_pending = op
+            self.device_pending_until = time.monotonic() + device_control.CONFIRM_SECONDS
+            event('device', op=op, result='ask')
+        elif (op == 'wlan_on') != self.wlan_on:
+            ok = self.set_wlan(op == 'wlan_on')
+            event('device', op=op, result='done' if ok else 'failed')
+            if not ok:
+                return device_control.failed_text(self.style)
+        return text
+
+    def _device_confirmed(self, op, speak):
+        """Confirmed reboot/shutdown: announce it, then act once that is spoken."""
+        event('device', op=op, result='confirmed')
+        text = device_control.start_text(op, self.style)
+        self._device_arm(op)
+        if speak:
+            self._say(text)
+            if not self.speech.active:      # nothing to wait for
+                op, self.device_after_speech = self.device_after_speech, None
+                self._device_run(op)
+        return text
+
+    def _device_arm(self, op):
+        """Run ``op`` once the announcement has been spoken: within a minute,
+        and not if B cut it off (cancel)."""
+        self.device_after_speech = op
+        self.device_after_until = time.monotonic() + 60.0
+
+    def _device_event(self, item):
+        """Server path: the server recognized a command or the confirmation."""
+        op = item.get('op')
+        if op not in device_control.OPS:
+            return
+        if item.get('confirm'):
+            pending, self.turn_device_pending = self.turn_device_pending, None
+            if op == pending:   # only what this Pi asked, within the time limit
+                event('device', op=op, result='confirmed')
+                self._device_arm(op)            # the server's reply announces it
+            return
+        self.turn_device_pending = None
+        if op in device_control.CONFIRM_OPS:
+            if not (op == 'reboot' and self.maint.active):
+                self.device_pending = op
+                self.device_pending_until = time.monotonic() + device_control.CONFIRM_SECONDS
+                event('device', op=op, result='ask')
+        elif (op == 'wlan_on') != self.wlan_on:
+            if not self.set_wlan(op == 'wlan_on'):
+                event('device', op=op, result='failed')
+                self.alarm_queue.append(device_control.failed_text(self.style))
+
+    def _device_run(self, op):
+        if op == 'shutdown':
+            self.power_off('command')
+        elif op == 'reboot':
+            event('reboot', reason='command')
+            try:
+                if maintenance.installed():
+                    maintenance.request('reboot')   # root worker (deploy/maintenance)
+                else:
+                    subprocess.run(['/usr/bin/systemctl', 'reboot'], check=True, timeout=15,
+                                   stdin=subprocess.DEVNULL, capture_output=True)
+            except (OSError, subprocess.SubprocessError) as exc:
+                event('reboot_error', message=str(exc))
+                self.alarm_queue.append(device_control.failed_text(self.style))
+
+    def _wlan_on_demand(self):
+        """WLAN is off but a request needs the network: switch it on (not while
+        asleep with WLAN off by design, and not without the rfkill permission)."""
+        if self.wlan_on or not self.set_wlan(True):
+            return False
+        event('device', op='wlan_on', result='auto')
+        return True
 
     def _maintenance_op(self, op, speak=True):
         """Voice or menu: enter/exit or ask to confirm an action. Returns the sentence."""
@@ -1381,6 +1519,13 @@ class VoiceController:
                 time.sleep(0.1)
         except (OSError, RuntimeError, ValueError):
             pass
+        self.power_off('battery')
+
+    def power_off(self, reason):
+        """systemctl poweroff (polkit rule deploy/50-pi-voice-poweroff.rules)."""
+        self.shutting_down = True
+        if reason != 'battery':
+            event('shutdown', reason=reason)
         try:
             subprocess.run(['/usr/bin/systemctl', 'poweroff'], check=True, timeout=15,
                            stdin=subprocess.DEVNULL, capture_output=True)
@@ -1572,8 +1717,17 @@ class VoiceController:
     def _start_llm(self, text):
         self.turn_transcript = text
         self.mood.hear(text, time.time())
-        if intents.is_stop(text):
+        pending, self.turn_device_pending = self.turn_device_pending, None
+        # A pending question first: "abbrechen" is also a stop word.
+        reply = self._device_turn(intents.normalize(text), pending, commands=False)
+        if reply is None and intents.is_stop(text):
             self.stop_by_voice()
+            return
+        if reply is None:
+            reply = self._device_turn(intents.normalize(text), None)
+        if reply is not None:
+            event('llm_response', text=reply, model='local/device')
+            self._start_speech(reply, source='assistant', model='local/device')
             return
         if enroll.command(intents.normalize(text)):
             self.enroll_after_speech = enroll.command(intents.normalize(text))
@@ -1593,6 +1747,17 @@ class VoiceController:
             self._start_speech(reply, source='assistant', model='local/memory')
             return
         intent = intents.match(text, self.persona)
+        if intent is None and not self.wlan_on and self._wlan_on_demand():
+            if self.llm_mode == 'local':
+                # The local model runs on CT 107: only the next request can use it.
+                reply = device_control.auto_wlan_text(self.style, retry=True)
+                event('llm_response', text=reply, model='local/device')
+                self._start_speech(reply, source='assistant', model='local/device')
+                return
+            self._say(device_control.auto_wlan_text(self.style))
+            wait_network = True
+        else:
+            wait_network = False
         if intent is None and self.llm_mode == 'local':
             # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
             reply = ("Ohne Server kann ich gerade nicht nachdenken, Boss."
@@ -1616,10 +1781,13 @@ class VoiceController:
             return
         context = self.memory.context()
         model = free_model() if self.llm_mode == 'free' else None
-        self.job = TranscriptionJob(functools.partial(generate_reply, lore=self.lore,
-                                                      memory=context, model=model,
-                                                      persona=self.persona,
-                                                      mood=self._mood_state(text)), text)
+        reply_function = functools.partial(generate_reply, lore=self.lore,
+                                           memory=context, model=model,
+                                           persona=self.persona,
+                                           mood=self._mood_state(text))
+        if wait_network:
+            reply_function = functools.partial(_after_network, reply_function)
+        self.job = TranscriptionJob(reply_function, text)
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
@@ -1661,6 +1829,8 @@ class VoiceController:
         elif kind == 'enroll':
             # after the server's announcement
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
+        elif kind == 'device':
+            self._device_event(item)
         elif kind == 'maintenance':
             if item.get('op') in maintenance.ITEMS + ('enter',):
                 self._maintenance_op(item['op'], speak=False)  # the server's reply speaks
@@ -1768,6 +1938,15 @@ class VoiceController:
         if self.people.active and not self.menu.open and ('B' in commands or 'E' in commands):
             self._people_buttons('E' in commands, 'B' in commands, now)
             commands = [name for name in commands if name not in 'BE']
+        if (self.device_pending and not self.menu.open
+                and ('B' in commands or 'E' in commands)):
+            op = self._device_take_pending()
+            if op is not None and 'E' in commands and 'B' not in commands:
+                self._device_confirmed(op, speak=True)
+            elif op is not None:
+                event('device', op=op, result='cancelled')
+                self._say(device_control.cancelled_text(self.style))
+            commands = [name for name in commands if name not in 'BE']
         if self.maint.active and not self.menu.open and ('B' in commands or 'E' in commands):
             self._maintenance_buttons('E' in commands, 'B' in commands)
             commands = [name for name in commands if name not in 'BE']
@@ -1813,6 +1992,12 @@ class VoiceController:
             if self.enroll_after_speech:
                 mode, self.enroll_after_speech = self.enroll_after_speech, None
                 self._start_enroll(mode)
+            if self.device_after_speech:
+                op, self.device_after_speech = self.device_after_speech, None
+                if time.monotonic() <= self.device_after_until:
+                    self._device_run(op)
+                else:
+                    event('device', op=op, result='expired')
             if self.listen_after_greeting:
                 self.listen_after_greeting = False
                 if self._idle() and not self.menu.open:

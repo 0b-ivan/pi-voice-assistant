@@ -570,6 +570,53 @@ class IntentServerTest(ServerTest):
         self.assertIn('nicht als Bediener erkannt', text)
         self.assertNotIn('Zahnarzt', text)
 
+    def device_turn(self, transcript, status, memory_copy=None):
+        import memory
+        self.pipeline.transcript = transcript
+        self.pipeline.fail_llm = True
+        headers = {'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps(status)}
+        if memory_copy is not None:
+            headers['X-Servitor-Memory'] = memory.encode_header(memory_copy)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+        events = self.events(conn.getresponse().read())
+        conn.close()
+        reply = next((e for e in events if e['event'] == 'reply'), {})
+        return reply.get('text'), [e for e in events if e['event'] == 'device']
+
+    def test_device_commands_need_a_pi_that_knows_them(self):
+        text, device = self.device_turn('schalte das wlan aus', {'devctl': 'on', 'wlan': 'on'})
+        self.assertEqual(text, 'WLAN deaktiviert. Lokaler Betrieb.')
+        self.assertEqual(device, [{'event': 'device', 'op': 'wlan_off'}])
+        text, device = self.device_turn('schalte das wlan aus', {'wlan': 'on'})   # older Pi
+        self.assertEqual(device, [])
+
+    def test_device_confirmation_and_maintenance(self):
+        text, device = self.device_turn('fahr dich herunter', {'devctl': 'on'})
+        self.assertIn('Bestätigen', text)
+        self.assertEqual(device, [{'event': 'device', 'op': 'shutdown'}])
+        text, device = self.device_turn('bestätigt', {'devctl': 'on', 'pending': 'shutdown'})
+        self.assertEqual(text, 'Einheit fährt herunter.')
+        self.assertEqual(device, [{'event': 'device', 'op': 'shutdown', 'confirm': True}])
+        text, device = self.device_turn('nein', {'devctl': 'on', 'pending': 'shutdown'})
+        self.assertEqual((text, device), ('Abgebrochen.', []))
+        text, device = self.device_turn('bestätigt', {'devctl': 'on'})   # nothing pending
+        self.assertEqual(device, [])
+        text, device = self.device_turn('starte neu', {'devctl': 'on', 'maintenance': 'on',
+                                                       'memory': 'off'})
+        self.assertEqual(device, [])            # the maintenance mode's own reboot
+
+    def test_device_commands_refused_to_an_unknown_voice(self):
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, copy, emit:
+                                        dict(copy, speaker='unknown')):
+            text, device = self.device_turn(
+                'bestätigt', {'devctl': 'on', 'pending': 'shutdown', 'memory': 'on'},
+                dict(facts=[], directives=[], history=[],
+                     voiceprints=[dict(name='Ivan', print='AAAA')]))
+        self.assertIn('Befehl verweigert', text)
+        self.assertEqual(device, [])
+
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')
 
