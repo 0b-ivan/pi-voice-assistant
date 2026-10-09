@@ -2,33 +2,37 @@
 
 GPIO23 (upper PiTFT button) and GPIO24 (lower) open the menu and move the
 selection; SHIM E confirms; SHIM B goes one level up and closes at the top.
-The top level holds groups (Sprache, Personen, Gerät, System); each group
+The top level holds groups (Sprache, Persönlichkeit, Personen, Audio, Gerät, System); each group
 ends with "Zurück". No hardware or display code in here: VoiceController
 owns a Menu and publishes its state for display.py, which shares LABELS.
 """
 
 GROUPS = {
-    'voice': ('wake', 'llm', 'lore', 'server', 'back'),
+    'voice': ('wake', 'llm', 'server', 'back'),
+    'persona': ('human', 'persona', 'voice_fx', 'lore', 'back'),
     'people': ('people', 'enroll', 'refine', 'back'),
     'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
     'device': ('wlan', 'alarms', 'led', 'screen', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
-TOP = ('voice', 'people', 'audio', 'device', 'system', 'close')
+TOP = ('voice', 'persona', 'people', 'audio', 'device', 'system', 'close')
 # Every selectable action (for publishing and tests).
 ITEMS = tuple(item for group in GROUPS.values() for item in group if item != 'back') + ('close',)
 LABELS = {
-    'voice': 'Sprache', 'people': 'Personen', 'audio': 'Audio', 'device': 'Gerät',
+    'voice': 'Sprache', 'persona': 'Persönlichkeit', 'people': 'Personen', 'audio': 'Audio',
+    'device': 'Gerät',
     'system': 'System', 'bt_speaker': 'BT-Lautsprecher', 'bt_scan': 'Lautsprecher suchen',
     'bt_forget': 'Lautsprecher entfernen', 'bt_connect': 'Lautsprecher verbinden',
     'close': 'Schließen', 'back': 'Zurück',
     'wake': 'Aktivierungswort', 'llm': 'Sprachkern', 'lore': 'Lore-Stufe',
-    'server': 'Server nutzen', 'enroll': 'Kennenlernen', 'refine': 'Stimme nachtrainieren',
+    'server': 'Server nutzen', 'human': 'Menschlich', 'voice_fx': 'Stimmeffekt',
+    'enroll': 'Kennenlernen', 'refine': 'Stimme nachtrainieren',
     'wlan': 'WLAN', 'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
 }
-# "people" is both a group and the person list inside it.
-LABELS_IN_GROUP = {'people': 'Bekannte Personen'}
+# "people" is both a group and the person list inside it, "persona" both a
+# group and the speaking style switch inside it.
+LABELS_IN_GROUP = {'people': 'Bekannte Personen', 'persona': 'Sprechstil'}
 # Selecting these leaves the menu (another screen or an action takes over).
 CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'people', 'bt_scan',
            'bt_forget', 'bt_connect')

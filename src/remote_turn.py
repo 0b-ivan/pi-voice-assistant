@@ -463,6 +463,16 @@ class RemoteCapableSpeech:
     def synthesizing(self):
         return getattr(self.speech, 'synthesizing', False)
 
+    @property
+    def effect(self):
+        """Voice effect of the local speech output (server audio comes rendered)."""
+        return getattr(self.speech, 'effect', None)
+
+    @effect.setter
+    def effect(self, value):
+        if isinstance(getattr(self.speech, 'effect', None), str):
+            self.speech.effect = value
+
     def start(self, text):
         self._stop_player()
         self.speech.start(text)

@@ -45,8 +45,8 @@ class FakePipeline:
     def recognizer(self):
         return FakeRecognizer(self)
 
-    def reply(self, text, lore=None, mode=None, memory=None):
-        self.lore, self.mode, self.memory = lore, mode, memory
+    def reply(self, text, lore=None, mode=None, memory=None, persona=None):
+        self.lore, self.mode, self.memory, self.persona = lore, mode, memory, persona
         if self.fail_llm:
             raise RuntimeError('OpenRouter request failed: timeout')
         if self.block:
@@ -65,10 +65,12 @@ class FakePipeline:
         self.files.append(path)
         return path
 
-    def synthesize(self, text):
+    def synthesize(self, text, voice='servitor'):
+        self.voice = voice
         return self._wav('syn-', 22050)
 
-    def render(self, source):
+    def render(self, source, voice='servitor'):
+        self.render_voice = voice
         return self._wav('dsp-', 48000)
 
     def encode(self, source, fmt):
@@ -326,6 +328,18 @@ class ServerTest(unittest.TestCase):
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertIn('Omnissiah', reply['text'])
+
+    def test_persona_and_voice_from_device_reach_pipeline(self):
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}',
+            'X-Servitor-Status': json.dumps({'persona': 'mensch', 'voice': 'natural'})})
+        conn.getresponse().read()
+        conn.close()
+        self.assertEqual((self.pipeline.persona, self.pipeline.voice, self.pipeline.render_voice),
+                         ('mensch', 'natural', 'natural'))
+        self.request('/v1/turn', b'\1' * 16000)        # older Pi: no fields, the machine
+        self.assertEqual((self.pipeline.persona, self.pipeline.voice), (None, 'servitor'))
 
     def turn_with_memory(self, state, copy=None):
         import memory

@@ -89,6 +89,31 @@ SERVITOR_REFERENCE_FILTER_GRAPH = SERVITOR_FILTER_GRAPH.replace(
 )
 
 
+# Billy's voice (menu "Stimmeffekt: natürlich"): the same Piper speaker, only
+# a little lower and warmer, without the machine layers. Light enough for the Pi.
+NATURAL_FILTER_GRAPH = (
+    "[0:a]aresample=24000,"
+    "asetrate=sample_rate=22800,aresample=24000,atempo=1.052632,"
+    "equalizer=f=140:t=q:w=1:g=2.5,"
+    "equalizer=f=2800:t=q:w=1.4:g=1.5,"
+    "alimiter=level_in=1.2:level_out=1:limit=0.97:attack=5:release=60:level=0,"
+    "aresample=48000"
+    "[out]"
+)
+VOICE_EFFECTS = ("servitor", "natural")
+DEFAULT_VOICE_EFFECT = "servitor"
+
+
+def voice_effect(value=None):
+    """Menu voice effect: 'servitor' (machine DSP) or 'natural' (Billy)."""
+    value = str(value or DEFAULT_VOICE_EFFECT).strip().lower()
+    return value if value in VOICE_EFFECTS else DEFAULT_VOICE_EFFECT
+
+
+def filter_graph(effect=None):
+    return NATURAL_FILTER_GRAPH if voice_effect(effect) == "natural" else SERVITOR_FILTER_GRAPH
+
+
 def resolve_voice_profile(profile=None):
     value = (
         os.environ.get("TTS_VOICE_PROFILE", DEFAULT_VOICE_PROFILE)
@@ -103,10 +128,10 @@ def resolve_voice_profile(profile=None):
     return value
 
 
-def _ffmpeg_output_args(audio_device):
+def _ffmpeg_output_args(audio_device, effect=None):
     return [
         "-filter_complex",
-        SERVITOR_FILTER_GRAPH,
+        filter_graph(effect),
         "-map",
         "[out]",
         "-ac",
@@ -125,6 +150,7 @@ def build_playback_command(
     profile=None,
     ffmpeg_bin=None,
     aplay_bin=None,
+    effect=None,
 ):
     """Build file playback command for normal mode and the CLI fallback."""
     profile = resolve_voice_profile(profile)
@@ -147,7 +173,7 @@ def build_playback_command(
         "-nostdin",
         "-i",
         source,
-        *_ffmpeg_output_args(audio_device),
+        *_ffmpeg_output_args(audio_device, effect),
     ]
 
 
@@ -157,6 +183,7 @@ def build_stream_playback_command(
     audio_device,
     profile="servitor",
     ffmpeg_bin=None,
+    effect=None,
 ):
     """Build FFmpeg raw-PCM stdin -> live DSP -> ALSA command."""
     if resolve_voice_profile(profile) != "servitor":
@@ -186,16 +213,20 @@ def build_stream_playback_command(
         str(channels),
         "-i",
         "pipe:0",
-        *_ffmpeg_output_args(audio_device),
+        *_ffmpeg_output_args(audio_device, effect),
     ]
 
 
-def build_render_command(source, target, ffmpeg_bin=None):
-    """Finish Servitor DSP before ALSA playback; optionally restore PR #26 aura."""
+def build_render_command(source, target, ffmpeg_bin=None, effect=None):
+    """Finish Servitor DSP before ALSA playback; optionally restore PR #26 aura.
+    The natural effect has no aura variant."""
     aura = os.environ.get("TTS_SERVITOR_AURA", "pcm").strip().lower()
     if aura not in ("pcm", "reference"):
         raise ValueError("TTS_SERVITOR_AURA must be pcm or reference")
-    graph = SERVITOR_REFERENCE_FILTER_GRAPH if aura == "reference" else SERVITOR_FILTER_GRAPH
+    if voice_effect(effect) == "natural":
+        graph = NATURAL_FILTER_GRAPH
+    else:
+        graph = SERVITOR_REFERENCE_FILTER_GRAPH if aura == "reference" else SERVITOR_FILTER_GRAPH
     executable = ffmpeg_bin or os.environ.get("TTS_FFMPEG_BIN", DEFAULT_FFMPEG_BIN)
     return [executable, "-hide_banner", "-loglevel", "warning", "-nostdin",
             "-filter_complex_threads", "1", "-i", str(source),

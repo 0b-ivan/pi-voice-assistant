@@ -111,6 +111,17 @@ Die Einheit heißt **Servitor Proximus**. Wie viel Mechanicus-Vokabular einflie�
 
 Fakten bleiben in allen Stufen vollständig; gemessen mit OpenRouter blieb etwa „330 Meter einschließlich Antenne“ in allen drei Stufen gleich.
 
+### Sprechstil und Stimmeffekt
+
+Neben dem Servitor gibt es das **Mensch-Modul**: Proximus vor seinem Umbau, Sergeant William Joseph „Billy“ Blazkowicz II ([Lore](concepts/lore-blazkowicz.md)). Er spricht in der Ich-Form, duzt, hat Soldatenhumor und darf Meinungen zeigen; die Inhaltsregeln (Fakten vor Rolle, keine erfundenen Aktionen) teilen sich beide Stile. Die Lore-Stufe gilt für beide: Billy ohne Lore ist ein namenloser Veteran ohne Begriffe aus Warhammer, DEZENT nennt Imperiale Armee und Phobos IX, VOLL spricht als Gardist.
+
+| Schalter | Werte | Wirkung |
+|---|---|---|
+| Sprechstil | `servitor` / `mensch` | Systemprompt (`PERSONA_PROMPTS`, `LORE_PROMPTS[persona]` in `src/llm.py`) |
+| Stimmeffekt | `servitor` / `natural` | Servitor-DSP oder `NATURAL_FILTER_GRAPH` (etwas tiefer und wärmer) in `src/voice_effects.py`; Piper-Sprecher bleibt gleich |
+
+Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt danach Prompt und Effekt. Ältere Pis ohne die Felder bekommen den Servitor. Lokal auf dem Pi wirkt der Stimmeffekt nur mit `TTS_VOICE_PROFILE=servitor` (dort ist das `thorsten_emotional`-Modell geladen); vorgefertigte Ansagen (Alarme, Aufwachen) klingen vorerst weiter nach Servitor.
+
 ## Aktivierungswort
 
 Neben den Tasten startet **„Hey Jarvis“** eine Anfrage (vortrainiertes openWakeWord-Modell; ein eigenes „Hey Servitor“ ist geplant). Ist `PTT_WAKE_WORD` gesetzt, hört [`src/wake_listener.py`](../src/wake_listener.py) im Ruhezustand mit und gibt das Mikrofon frei, sobald eine Taste gedrückt wird, eine Anfrage läuft oder der Servitor spricht (plus 0,6 s gegen das eigene Echo). Nach dem Wort startet die normale Aufnahme; [`src/endpoint.py`](../src/endpoint.py) beendet sie nach 0,9 s Sprechpause oder verwirft sie still, wenn 5 s lang niemand spricht. Eine Taste während einer solchen Aufnahme übernimmt sie (Ende beim Loslassen). Das Menü schaltet das Mithören ab („Aktivierungswort AUS“); das Display zeigt dann wieder „Zum Sprechen halten“ statt „„Hey Jarvis“ oder Taste“. Audio verlässt den Pi erst nach dem Aktivierungswort.
