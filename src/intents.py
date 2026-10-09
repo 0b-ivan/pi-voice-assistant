@@ -38,6 +38,28 @@ _PATTERNS = (
                            r'sicherheitsupdates?)\b')),
     ('identity', re.compile(r'\b(wer bist du|wie heißt du|was bist du)\b')),
 )
+# "Wer bist du?" and "Wie geht es dir?" ask about the speaker himself: the
+# machine answers with fixed lines, Billy (persona "mensch") in his own words.
+_PERSONAL = re.compile(r"\b(wie geht es dir|wie gehts dir|wie geht's dir)\b")
+
+# "Stop", "Sei still", "Klappe halten" ...: end the current answer and wait.
+# Only when the whole utterance is such a phrase (plus fillers), so questions
+# like "wie stoppt man eine blutung" still reach the LLM.
+_STOP = re.compile(
+    r"(stop+|abbruch|abbrechen|brich ab|aufhören|hör auf|hör sofort auf|"
+    r"sei still|sei ruhig|ruhe|still|schweig|schweige|"
+    r"klappe|klappe halten|halt die klappe|halt den mund|mund halten|"
+    r"schnauze|halt die schnauze|genug|das reicht|es reicht|vergiss es|ende|aus)")
+_FILLER = {'bitte', 'jetzt', 'sofort', 'endlich', 'mal', 'doch', 'einfach', 'du', 'ok', 'okay',
+           'hey', 'proximus', 'servitor', 'billy', 'danke', 'nein', 'schon', 'ja'}
+
+
+def is_stop(text):
+    """True when the utterance only tells the assistant to stop or be quiet."""
+    words = [word for word in normalize(text).split() if word not in _FILLER]
+    return bool(words) and len(words) <= 4 and bool(_STOP.fullmatch(' '.join(words)))
+
+
 IDENTITY = {
     'off': ("Diese Einheit ist Servitor Proximus. Sprachgesteuerte Diensteinheit. "
             "Funktion: Anfragen des Bedieners beantworten."),
@@ -52,7 +74,7 @@ def normalize(text):
     return ' '.join(re.findall(r"[\wäöüß']+", str(text).lower()))
 
 
-def match(text):
+def match(text, persona=None):
     """Intent name or None. Conservative: anything unclear goes to the LLM."""
     text = normalize(text)
     if not text or len(text.split()) > 12:
@@ -60,6 +82,8 @@ def match(text):
     for name, pattern in _PATTERNS:
         if pattern.search(text):
             if name in ('time', 'date') and _ELSEWHERE.search(text):
+                return None
+            if persona == 'mensch' and (name == 'identity' or _PERSONAL.search(text)):
                 return None
             return name
     return None

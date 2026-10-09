@@ -745,6 +745,17 @@ class VoiceController:
         self.ptt.resync(held, now)
         event('cancelled')
 
+    def stop_by_voice(self):
+        """"Stop", "Sei still", "Klappe halten" ...: no answer, drop announcements
+        that were waiting, back to idle (the wake word listens again)."""
+        self.speech.stop()
+        self.speech_started_at = None
+        self.alarm_queue = []
+        self.enroll_after_speech = None
+        self.listen_after_greeting = False
+        self.turn_released_at = None
+        event('cancelled', source='voice')
+
     def submit(self, reason):
         try:
             capture = self.recorder.finish(reason)
@@ -1479,6 +1490,9 @@ class VoiceController:
 
     def _start_llm(self, text):
         self.turn_transcript = text
+        if intents.is_stop(text):
+            self.stop_by_voice()
+            return
         if enroll.command(intents.normalize(text)):
             self.enroll_after_speech = enroll.command(intents.normalize(text))
             reply = enroll.ANNOUNCE
@@ -1496,7 +1510,7 @@ class VoiceController:
             event('llm_response', text=reply, model='local/memory')
             self._start_speech(reply, source='assistant', model='local/memory')
             return
-        intent = intents.match(text)
+        intent = intents.match(text, self.persona)
         if intent is None and self.llm_mode == 'local':
             # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
             reply = "Daten unzureichend. Lokaler Sprachkern nicht erreichbar."
@@ -1558,7 +1572,7 @@ class VoiceController:
                 event('memory', op=item.get('op'), learned=bool(item.get('learned')))
         elif kind == 'reply':
             text = str(item.get('text', ''))
-            if self.turn_transcript:
+            if self.turn_transcript and not intents.is_stop(self.turn_transcript):
                 self.memory.remember_turn(self.turn_transcript, text)
             self.turn_llm = llm_kind(item.get('model'))
             event('llm_response', text=text, model=item.get('model'))
@@ -1576,6 +1590,12 @@ class VoiceController:
             self._remote_progress(item)
         if job.cancelled:
             event('transcript_discarded')
+            return
+        if job.transcript and intents.is_stop(job.transcript):
+            # Also with an older server that still sent a spoken reply.
+            if job.error is None:
+                self.remote_failed = False
+            self.stop_by_voice()
             return
         if job.error is None:
             self.remote_failed = False

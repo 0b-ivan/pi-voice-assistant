@@ -341,6 +341,28 @@ class ServerTest(unittest.TestCase):
         self.request('/v1/turn', b'\1' * 16000)        # older Pi: no fields, the machine
         self.assertEqual((self.pipeline.persona, self.pipeline.voice), (None, 'servitor'))
 
+    def test_stop_phrase_ends_the_turn_without_audio(self):
+        self.pipeline.transcript = 'sei still'
+        _, data = self.request('/v1/turn', b'\1' * 16000)
+        names = [e['event'] for e in self.events(data)]
+        self.assertIn('stop', names)
+        for name in ('reply', 'audio'):
+            self.assertNotIn(name, names)
+        self.assertEqual(names[-1], 'done')
+
+    def test_billy_identity_goes_to_the_llm(self):
+        self.pipeline.transcript = 'wer bist du'
+        for persona, expected in (('servitor', 'Servitor Proximus'), ('mensch', 'Antwort auf')):
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1],
+                                              timeout=10)
+            conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+                'Authorization': f'Bearer {TOKEN}',
+                'X-Servitor-Status': json.dumps({'persona': persona})})
+            data = conn.getresponse().read()
+            conn.close()
+            reply = next(e for e in self.events(data) if e['event'] == 'reply')
+            self.assertIn(expected, reply['text'])
+
     def turn_with_memory(self, state, copy=None):
         import memory
         headers = {'Authorization': f'Bearer {TOKEN}',

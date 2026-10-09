@@ -362,6 +362,7 @@ class RemoteTurnJob:
 
     def _run(self):
         audio = None
+        stopped = False
         timings = {}
         try:
             self.uplink.wait_uploaded(self.uplink.config.response_timeout)
@@ -386,7 +387,13 @@ class RemoteTurnJob:
                     item = {key: value for key, value in item.items() if key != 'data'}
                 elif kind == 'done':
                     timings = item.get('timings') or {}
+                elif kind == 'stop':
+                    stopped = True
                 self._events.put(item)
+            if audio is None and stopped:  # "Stop", "Sei still": nothing to play
+                self.result = dict(audio=None, stop=True, timings=timings,
+                                   host=self.uplink.host)
+                return
             if audio is None:
                 raise RemoteTurnError('stream', 'incomplete', 'reply ended without audio')
             self.result = dict(audio=audio, timings=timings, host=self.uplink.host)
