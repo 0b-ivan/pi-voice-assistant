@@ -47,6 +47,7 @@ install -m 0644 "${repo_root}/src/skull.py" /opt/pi-voice-assistant/src/skull.py
 install -m 0644 "${repo_root}/src/face.py" /opt/pi-voice-assistant/src/face.py
 install -m 0644 "${repo_root}/src/mood.py" /opt/pi-voice-assistant/src/mood.py
 install -m 0644 "${repo_root}/src/visemes.py" /opt/pi-voice-assistant/src/visemes.py
+install -m 0644 "${repo_root}/src/protocol.py" /opt/pi-voice-assistant/src/protocol.py
 install -D -m 0644 "${repo_root}/assets/display/doom-faces.png" \
   /opt/pi-voice-assistant/models/display/doom-faces.png
 install -m 0644 "${repo_root}/src/endpoint.py" /opt/pi-voice-assistant/src/endpoint.py

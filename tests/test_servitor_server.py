@@ -369,10 +369,12 @@ class ServerTest(unittest.TestCase):
             reply = next(e for e in self.events(data) if e['event'] == 'reply')
             self.assertIn(expected, reply['text'])
 
-    def turn_with_memory(self, state, copy=None, **status):
+    def turn_with_memory(self, state, copy=None, session=None, **status):
         import memory
         headers = {'Authorization': f'Bearer {TOKEN}',
                    'X-Servitor-Status': json.dumps(dict(status, memory=state))}
+        if session:
+            headers['X-Servitor-Session'] = session
         if copy is not None:
             headers['X-Servitor-Memory'] = memory.encode_header(copy)
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
@@ -380,6 +382,60 @@ class ServerTest(unittest.TestCase):
         data = conn.getresponse().read()
         conn.close()
         return self.events(data)
+
+    def envelope(self, path, kind, body=None, token=TOKEN):
+        import protocol
+        response, data = self.request(path, protocol.encode(protocol.message(kind, body)),
+                                      token=token)
+        return response, json.loads(data)
+
+    def test_hello_opens_a_session(self):
+        response, _ = self.envelope('/v1/hello', 'hello', dict(device='pi'), token='y' * 40)
+        self.assertEqual(response.status, 401)
+        response, welcome = self.envelope('/v1/hello', 'hello', dict(device='pi'))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(welcome['type'], 'welcome')
+        self.assertTrue(self.service.sessions.known(welcome['body']['session']))
+        self.assertIn('ping', welcome['body']['handles'])
+        response, error = self.envelope('/v1/hello', 'ping')
+        self.assertEqual((response.status, error['error']), (400, 'type'))
+        response, error = self.request('/v1/hello', b'{"v": 9}')
+        self.assertEqual((response.status, json.loads(error)['error']), (400, 'version'))
+
+    def test_message_is_acknowledged_and_handled_once(self):
+        import protocol
+        item = protocol.message('ping')
+        acks = []
+        for _ in range(2):
+            response, data = self.request('/v1/message', protocol.encode(item))
+            self.assertEqual(response.status, 200)
+            acks.append(json.loads(data)['body'])
+        self.assertEqual(acks, [dict(id=item['id'], duplicate=False),
+                                dict(id=item['id'], duplicate=True)])
+        response, data = self.envelope('/v1/message', 'welcome')
+        self.assertEqual((response.status, data['error']), (400, 'unsupported'))
+
+    def test_session_keeps_the_memory_core_between_turns(self):
+        import protocol
+        copy = dict(facts=['Bediener heißt Ivan'], directives=[], total_facts=1,
+                    history=[dict(q='hallo', a='Gruß.')])
+        _, welcome = self.envelope('/v1/hello', 'hello', dict(device='pi'))
+        session = welcome['body']['session']
+        events = self.turn_with_memory('on', copy, session=session)
+        core = protocol.digest(protocol.split_memory(copy)[0])
+        self.assertIn(dict(event='session', core=core), events)
+        slim = dict(core=core, history=[dict(q='und jetzt', a='Bereit.')])
+        events = self.turn_with_memory('on', slim, session=session)
+        self.assertNotIn('session', [e['event'] for e in events])
+        self.assertEqual(self.pipeline.memory['facts'], ['Bediener heißt Ivan'])
+        self.assertEqual(self.pipeline.memory['history'], [dict(q='und jetzt', a='Bereit')])
+        self.service.sessions = protocol.Sessions()              # server restarted
+        events = self.turn_with_memory('on', slim, session=session)
+        self.assertIn(dict(event='session', state='unknown'), events)
+        self.assertIs(self.pipeline.memory, ss.NO_MEMORY)        # never "the stick is empty"
+        events = self.turn_with_memory('on', copy)                # an older Pi: as before
+        self.assertNotIn('session', [e['event'] for e in events])
+        self.assertEqual(self.pipeline.memory['facts'], ['Bediener heißt Ivan'])
 
     def test_mood_reaches_llm_and_tag_is_not_spoken(self):
         self.pipeline.suffix = ' [stimmung:gereizt]'

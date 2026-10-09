@@ -11,6 +11,11 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 * ``POST /v1/turn?format=wav|opus`` with raw 16 kHz mono s16le PCM as body
   (Content-Length or chunked; chunks are recognized while they arrive).
 * ``POST /v1/speak?format=wav|opus`` with JSON ``{"text": "..."}``.
+* ``POST /v1/hello`` with an SPX/1 ``hello`` (src/protocol.py): opens a
+  session, answered with ``welcome``. A turn naming the session in
+  ``X-Servitor-Session`` may send only the digest of a memory core the
+  session already holds.
+* ``POST /v1/message`` with one SPX/1 envelope, answered with ``ack``.
 * ``GET /health`` without token: ``{"ok": true, "ready": bool}`` only.
 
 Responses of /v1 are NDJSON events: ``stage`` (recognize, think, synthesize,
@@ -44,12 +49,14 @@ import device_control  # noqa: E402
 import enroll  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
+import protocol  # noqa: E402
 import speaker  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from mood import emergency, split_tag  # noqa: E402
 from system_status import phrase_style, sanitize_snapshot  # noqa: E402
 
 PCM_RATE = 16000
+HANDLED = ('ping',)   # SPX/1 types /v1/message acts on; more come with later steps
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 
 
@@ -246,6 +253,8 @@ class Service:
         self.maintenance_dir = maintenance.DIR
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.weather = weather.Forecast()  # WEATHER_LAT/WEATHER_LON, else no weather
+        self.sessions = protocol.Sessions()
+        self.seen = protocol.Seen()
         self.ready = False
 
     def authorized(self, header):
@@ -628,8 +637,84 @@ class Handler(http.server.BaseHTTPRequestHandler):
         print(json.dumps(dict(event='maintenance_request', action=action)), flush=True)
         return self._json(202, dict(accepted=action))
 
+    def _envelope(self):
+        """One SPX/1 message from the body, or None after an error reply."""
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+        except ValueError:
+            self._json(411, dict(error='length required'))
+            return None
+        if not 0 < length <= protocol.MAX_MESSAGE:
+            self._json(413, dict(error='message too large'))
+            return None
+        try:
+            return protocol.decode(self.rfile.read(length))
+        except protocol.ProtocolError as exc:
+            self._json(400, dict(error=exc.code, message=str(exc)))
+            return None
+
+    def _hello(self):
+        """Open a session: SPX/1 hello in, welcome with the session id out."""
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        if not self.service.limiter.allow(self._client()):
+            return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
+        item = self._envelope()
+        if item is None:
+            return None
+        if item['type'] != 'hello':
+            return self._json(400, dict(error='type', message='expected hello'))
+        session = self.service.sessions.open(item['body'].get('device', ''))
+        welcome = protocol.message('welcome', dict(session=session,
+                                                   idle=self.service.sessions.idle,
+                                                   handles=sorted(HANDLED)))
+        return self._json(200, welcome)
+
+    def _message(self):
+        """One SPX/1 envelope; a resent one (same id) is acknowledged again,
+        but handled only once."""
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        item = self._envelope()
+        if item is None:
+            return None
+        if item['type'] not in HANDLED:
+            return self._json(400, dict(error='unsupported', message=item['type']))
+        first = self.service.seen.first(item['id'])
+        # ping needs no work; later message types are handled here when first.
+        return self._json(200, protocol.message('ack', dict(id=item['id'],
+                                                            duplicate=not first)))
+
+    def _memory(self, device):
+        """(memory copy for the turn, session event to send or None)."""
+        state = (device or {}).get('memory')
+        if state == 'off':
+            return None, None
+        if state != 'on':
+            return NO_MEMORY, None
+        raw = memory.parse_header(self.headers.get('X-Servitor-Memory', ''))
+        if raw is None:
+            return None, None
+        session = self.headers.get('X-Servitor-Session', '')[:64]
+        known = bool(session) and self.service.sessions.known(session)
+        if 'core' in raw:                           # only history + digest of the core
+            full = self.service.sessions.restore(session, raw) if known else None
+            if full is None:     # restarted server or another core: send it in full next time
+                return NO_MEMORY, dict(event='session', state='unknown')
+            return memory.sanitize(full), None
+        if known:
+            return memory.sanitize(raw), dict(event='session',
+                                              core=self.service.sessions.remember(session, raw))
+        return memory.sanitize(raw), None
+
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == '/v1/hello':
+            return self._hello()
+        if url.path == '/v1/message':
+            return self._message()
         if url.path == '/v1/maintenance':
             return self._maintenance()
         if url.path == '/v1/voiceprint':
@@ -693,9 +778,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 device = sanitize_snapshot(json.loads(header))
             except ValueError:
                 device = None
-        state = (device or {}).get('memory')
-        memory_copy = (memory.decode_header(self.headers.get('X-Servitor-Memory', ''))
-                       if state == 'on' else None if state == 'off' else NO_MEMORY)
+        memory_copy, session_event = self._memory(device)
 
         appointments = agenda.decode_header(self.headers.get('X-Servitor-Agenda', ''),
                                             self.service.now().tzinfo)
@@ -715,6 +798,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b'%x\r\n%s\r\n' % (len(data), data))
                 self.wfile.flush()
 
+            if session_event:
+                emit(session_event)
             try:
                 self.service.run_turn(body, emit, fmt, text=text, device=device,
                                       memory_copy=memory_copy, transcribe_only=transcribe_only,

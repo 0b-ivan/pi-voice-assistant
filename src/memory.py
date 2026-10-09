@@ -310,17 +310,25 @@ def encode_header(context):
     return value if len(value) <= HEADER_LIMIT else None
 
 
-def decode_header(value):
-    """Server side: validate the memory copy sent by the Pi."""
+def parse_header(value):
+    """Server side: the JSON object in the header, not yet checked, or None."""
     if not value or len(value) > HEADER_LIMIT:
         return None
     try:
         data = json.loads(base64.b64decode(value, validate=True).decode('utf-8'))
     except (ValueError, UnicodeError):
         return None
-    if not isinstance(data, dict):
-        return None
+    return data if isinstance(data, dict) else None
 
+
+def decode_header(value):
+    """Server side: validate the memory copy sent by the Pi."""
+    data = parse_header(value)
+    return None if data is None else sanitize(data)
+
+
+def sanitize(data):
+    """Only the known fields of a memory copy, cleaned and capped."""
     def texts(items, limit):
         return [clean_text(t) for t in items[:limit] if isinstance(t, str) and t.strip()] \
             if isinstance(items, list) else []
