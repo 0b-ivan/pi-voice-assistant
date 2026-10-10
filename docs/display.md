@@ -135,7 +135,7 @@ stt_error / tts_error / speech_error
 
 `stt_loading` und `tts_loading` halten während des Starts die Bootansicht aktiv. Ein Netzwerkausfall bleibt für den lokalen Vosk-Modus nur eine Information und blockiert `BEREIT` nicht.
 
-`DENKEN` wird noch nicht vorgetäuscht: Dieser Zustand kommt erst mit dem tatsächlichen LLM-Aufruf. `SPRECHEN` ist aktuell bei der vorhandenen gesprochenen Statusansage sichtbar; der spätere Antwortpfad soll denselben generischen Eventzustand verwenden.
+`DENKEN` wird beim tatsächlichen LLM-Aufruf gesetzt; `SPRECHEN` beziehungsweise `AUSGABE` zeigt die laufende Wiedergabe auch bei Antworten von CT 107 oder aus dem Pi-Fallback. Die Anzeige setzt die vom Sprachdienst veröffentlichten Zustände um; frühere Display-Prototypen ohne vollständigen Antwortpfad sind überholt.
 
 Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nicht angezeigt; ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
 
