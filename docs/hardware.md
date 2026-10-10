@@ -1,6 +1,6 @@
 # Hardwarebestand und Fotodokumentation 🔧
 
-Stand: 06.10.2026. Grundlage: Ivans Angaben und acht Projektfotos. Sichtbare Beschriftungen sind von noch nicht geprüften technischen Details getrennt.
+**Fotobestand: 05.–06.10.2026; technische Einzeltests bis 08.10.2026 ergänzt.** Grundlage: Angaben und Projektfotos. Sichtbare Beschriftungen, bestätigte Hardwaretests und noch offene Abnahmen sind getrennt.
 
 ## Erweiterter Aufbau — 05.10.2026 📸
 
@@ -37,7 +37,7 @@ Dies ist der frühere Aufbau für die Audio-Inbetriebnahme. Aufnahme und Wiederg
 | Zwei Lautsprecher | Laut Ivan angeschlossen; im aktuellen Übersichtsfoto separat links und rechts dargestellt | Sprachausgabe |
 | Integrierte Mikrofone | Zwei Mikrofone am HAT sichtbar; separates Mikrofon für MVP nicht nötig | Spracheingabe |
 | HAT-Taste | Aufdruck `BUTTON`; Herstellerbelegung GPIO17, physischer Pin 11 | Aufnahme auslösen |
-| Waveshare ETH/USB HUB HAT | Aufdruck auf neuem Foto; 1× RJ45 10/100 Mbit/s, 3× USB-A; Erkennung noch offen | Kabelnetzwerk und USB-Erweiterung |
+| Waveshare ETH/USB HUB HAT | Aufdruck auf neuem Foto; 1× RJ45 10/100 Mbit/s, 3× USB-A; **USB-Hub, RTL8152 und 100-Mbit-Link bestätigt**; LAN-SSH und drei Ports noch offen | Kabelnetzwerk und USB-Erweiterung |
 | Pimoroni Button SHIM | Aufdruck `BTN SHIM`, fünf Tasten A–E; I²C `0x3f`, RGB-LED | Zusätzliche Bedienung und Statusanzeige |
 | PiSugar 3 | Ursprünglich als PiSugar2 notiert; am 08.10.2026 per I²C als PiSugar 3 identifiziert (Akkucontroller `0x57`, Version `0x03`; RTC `0x68`) | Akkubetrieb, Ladestand auf dem PiTFT |
 | Li-Ion-Akku | Aufdruck `PiSugar`, Modell `803052`; Kapazitätszeile nicht zuverlässig lesbar | Energiespeicher |
