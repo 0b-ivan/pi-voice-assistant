@@ -1,6 +1,6 @@
 # Betrieb
 
-Die Unit heißt `pi-ptt.service`, auch mit STT, OpenRouter-LLM, lokaler TTS und Button SHIM. Der Assistent nutzt Vosk lokal; nur der Textschritt zum LLM benötigt OpenRouter.
+Die Unit auf dem Pi heißt `pi-ptt.service`. Im **Normalbetrieb** verarbeitet CT 107 Vosk, LLM und TTS; der Pi übernimmt Aufnahme, Tasten, Display und Wiedergabe. Ohne Server übernimmt der Pi Vosk und Piper selbst, freie Fragen erfordern dann OpenRouter und Internet. Siehe [Architektur](architecture.md#servitor-server-ct-107-mit-lokalem-fallback).
 
 ## Start, Stop und Logs
 
@@ -30,12 +30,7 @@ Die Logs enthalten Transkripte, LLM-Antworten und Statusmeldungen, auch wenn WAV
 | `/boot/firmware/config.txt` | Bestehendes WM8960-Overlay, I²C/I²S |
 | `/etc/modules-load.d/pi-voice-i2c.conf` | Bei aktiviertem SHIM `i2c-dev` beim Boot laden |
 
-**Servitor-Server (CT 107):** Die Werte aus [`config/client.env.example`](../config/client.env.example) werden an `/etc/pi-voice-assistant.env` angehängt. `ASSISTANT_TOKEN` ist derselbe Wert wie `SERVITOR_API_TOKEN` in `/etc/servitor-voice.env` auf CT 107; ihn direkt übertragen, ohne ihn anzuzeigen, etwa:
-
-```sh
-ssh root@172.22.2.11 "pct exec 107 -- sed -n 's/^SERVITOR_API_TOKEN=//p' /etc/servitor-voice.env" \
-  | ssh obivan@172.22.9.128 'read -r T; …'   # in eine Temp-Datei schreiben, dann per sudo tee übernehmen
-```
+**Servitor-Server (CT 107):** Die Werte aus [`config/client.env.example`](../config/client.env.example) gehören in `/etc/pi-voice-assistant.env` auf dem Pi. `ASSISTANT_TOKEN` muss mit `SERVITOR_API_TOKEN` in `/etc/servitor-voice.env` auf CT 107 übereinstimmen. Beide Dateien nur mit administrativen Rechten bearbeiten (z. B. `sudoedit`), das Token **nicht** in ein Shell-Kommando, die History oder ein Git-Commit kopieren. Nach Änderungen den Pi-Dienst neu starten. Es gibt hier bewusst kein nur teilweise ausführbares Token-Übertragungsskript.
 
 Leeres `ASSISTANT_BASE_URL` schaltet auf rein lokalen Betrieb zurück. Beim Start meldet das Journal `remote_ready` mit Host und Format; Fallbacks erscheinen als `remote_error`/`remote_fallback`. Siehe [Architektur](architecture.md#servitor-server-ct-107-mit-lokalem-fallback) und [ADR 0004](decisions/0004-servitor-server.md).
 
@@ -64,7 +59,7 @@ Der Quittungston lässt sich mit `PTT_CUE=0` in `/etc/pi-ptt.env` abschalten (au
 
 ## Dateien und Rechte
 
-- Dienstcode: `/opt/pi-voice-assistant/src`, gehört `obivan` (beide Dienste laufen als **obivan** mit `audio`, `gpio`, `i2c`); `src/DEPLOYED` nennt den eingespielten Commit. Kein dedizierter Dienstbenutzer implementiert.
+- Dienstcode: `/opt/pi-voice-assistant/src`; die Installation erfolgt über einen root-gesteuerten Installer, Eigentümer vorhandener Verzeichnisse können abweichen. **Die Pi-Dienste laufen als `obivan`** mit den benötigten Gruppen (`audio/gpio/i2c` beim Sprachdienst). `src/DEPLOYED` nennt den eingespielten Commit. Kein dedizierter Dienstbenutzer implementiert.
 - Aufnahme: ein Slot `/run/pi-ptt/capture.wav`, privat, flüchtig. Neue Aufnahme, Dienststop oder Reboot entfernt die vorherige Datei. Vor Ctrl-C/Stop abhören, falls die Testaufnahme benötigt wird.
 - Vosk: root-verwaltete `vendor/`- und `models/`-Verzeichnisse; Modell einmal bei Bedarf laden, im Dienst wiederverwenden.
 - Piper/Servitor, separat: `.venv/` und `tts/`; FFmpeg kommt über den Piper-Installer. Der residente Servitor-Pfad streamt Piper-PCM direkt über FFmpeg nach ALSA und benötigt keine TTS-WAV. Siehe [TTS-Setup](text-to-speech.md).
@@ -73,6 +68,8 @@ Der Quittungston lässt sich mit `PTT_CUE=0` in `/etc/pi-ptt.env` abschalten (au
 Bei anderem Loginbenutzer müssen Unit, Installer und Dateigruppen gemeinsam angepasst werden; nur `User=` zu ändern reicht nicht. Die Isolation eines dedizierten Dienstbenutzers bleibt eine offene Verbesserung.
 
 ## Aktualisieren
+
+**Bevorzugt für das bestehende Gerät:** gepushten Git-Commit mit dem [root-eigenen Deploy-Wrapper](#aus-einem-git-commit-einspielen-aktuelle-praxis) installieren. Die folgenden manuellen Installer-Schritte dienen einem lokalen Checkout oder einer Erstinstallation.
 
 Checkout auf sauberen Zustand und gewünschten Branch/Commit prüfen. Dienstinstaller aufrufen; vorhandene Konfigurationen bleiben erhalten, `speak.py` wird aus dem Checkout aktualisiert. Ein vorher laufender Dienst wird gewöhnlich wieder gestartet. Frisch angelegte STT-Konfiguration lässt ihn bis zur Prüfung gestoppt.
 
