@@ -587,6 +587,42 @@ class IntentServerTest(ServerTest):
         self.request('/v1/turn', b'\1' * 16000)
         self.service.weather.get.assert_called_once()   # only weather questions ask
 
+    def test_briefing_and_selftest_name_pi_and_server_log_findings(self):
+        import logwatch
+        self.pipeline.fail_llm = True
+        watch = logwatch.LogWatch(logwatch.SERVER_RULES, logwatch.SERVER_UNITS,
+                                  reader=lambda since, units: ([], False),
+                                  sleep=lambda s: None)
+        watch.check()
+        watch.result['findings'] = {'crash_llm': 1}
+        self.service.logwatch = watch
+
+        def reply(text, status):
+            self.pipeline.transcript = text
+            _, data = self.request_with_status(status)
+            return next(e for e in self.events(data) if e['event'] == 'reply')['text']
+
+        status = dict(log_findings={'undervoltage': 2, 'bogus': 1}, log_repairs=['display'])
+        text = reply('guten morgen', status)
+        self.assertIn('Selbsttest meldet: Meine Stromversorgung ist eingebrochen, zweimal. '
+                      'Mein lokaler Sprachkern ist abgestürzt.', text)
+        self.assertNotIn('bogus', text)
+        answer = reply('selbsttest', status)
+        self.assertIn('Meine Stromversorgung ist eingebrochen', answer)
+        self.assertIn('Meine Anzeige habe ich neu gestartet.', answer)
+        watch.result['findings'] = {}
+        self.assertNotIn('Selbsttest', reply('guten morgen', dict(log_findings={})))
+
+    def request_with_status(self, status):
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000,
+                     headers={'Authorization': f'Bearer {TOKEN}',
+                              'X-Servitor-Status': json.dumps(status)})
+        response = conn.getresponse()
+        data = response.read()
+        conn.close()
+        return response, data
+
     def test_calendar_comes_from_the_pi_and_only_for_a_recognized_voice(self):
         import agenda
         import datetime

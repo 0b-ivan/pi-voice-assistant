@@ -13,6 +13,8 @@ Den Server-Neustart stößt der Pi über `POST /v1/maintenance` an (nur `reboot`
 
 Der Proxmox-Host wird bewusst nicht über Proximus gewartet.
 
+**Reparaturen des Selbsttests** ([Logs und Selbsttest](logs.md)) laufen über denselben Worker, aber ohne Wartungsmodus und ohne `status.json`: `restart-display` (Pi) und `restart-llm` (CT 107) starten `pi-display` bzw. `servitor-llm` nur neu, wenn systemd die Unit aufgegeben hat (Zustand „failed“). Auslöser sind die Path-Units `proximus-repair-display.path` bzw. `proximus-repair-llm.path` mit der Vorlage `proximus-repair@.service`; `install.sh` richtet je nach Host die passende ein.
+
 ## Einrichtung
 
 Auf jedem Host einmal als root ([`deploy/maintenance/install.sh`](../deploy/maintenance/install.sh)); es installiert Skript, Units, `tmpfiles.d`-Eintrag (Anforderungsordner gehört der Gruppe des Dienstnutzers) und ein Drop-in, das dem Dienst trotz `ProtectSystem=strict` das Schreiben in den Anforderungsordner erlaubt:

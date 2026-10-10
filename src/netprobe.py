@@ -11,7 +11,14 @@ import time
 
 ENV_FILE = Path('/etc/pi-voice-assistant.env')
 SERVER_PROBE_INTERVAL_SECONDS = 10.0
-SERVER_PROBE_TIMEOUT_SECONDS = 0.5
+# The Pi's WLAN (power save on) answers a LAN ping in 2 ms, now and then only
+# after 150 ms, and /health in up to 0.85 s: 0.5 s took a slow answer for an
+# outage. The probe runs in its own thread, so waiting longer blocks nothing.
+SERVER_PROBE_TIMEOUT_SECONDS = 2.0
+# A reachable server counts as down only after this many failed probes in a
+# row, the next one SERVER_PROBE_RETRY_SECONDS after a miss.
+SERVER_DOWN_AFTER = 2
+SERVER_PROBE_RETRY_SECONDS = 2.0
 
 
 def load_env(path=ENV_FILE):
@@ -53,16 +60,27 @@ class ServerProbe:
         self.interval = interval
         self.probe = probe or server_state
         self.state = None
+        self.misses = 0         # failed probes in a row while the state is still 'ok'
         self._thread = threading.Thread(target=self._run, name='server-probe', daemon=True)
 
     def start(self):
         self._thread.start()
         return self
 
+    def step(self):
+        """One probe; returns the seconds until the next."""
+        state = self.probe()
+        if state == 'down' and self.state == 'ok':
+            self.misses += 1
+            if self.misses < SERVER_DOWN_AFTER:
+                return SERVER_PROBE_RETRY_SECONDS  # one late answer is no outage
+        self.misses = 0
+        self.state = state
+        return self.interval
+
     def _run(self):
         while True:
-            self.state = self.probe()
-            time.sleep(self.interval)
+            time.sleep(self.step())
 
 
 

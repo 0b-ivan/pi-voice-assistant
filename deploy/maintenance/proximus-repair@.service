@@ -1,0 +1,6 @@
+[Unit]
+Description=Proximus self-test repair: %i (requested by the voice service)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proximus-maintenance %i
