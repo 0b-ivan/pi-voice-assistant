@@ -24,6 +24,20 @@ if ! echo "$SPEAKER_SHA  $SPEAKER" | sha256sum -c --status 2>/dev/null; then
   echo "$SPEAKER_SHA  $SPEAKER.tmp" | sha256sum -c --status
   mv "$SPEAKER.tmp" "$SPEAKER"
 fi
+# Billy's own voice (persona "mensch"): Piper thorsten-high, spoken calmer.
+NATURAL="$B/tts/de_DE-thorsten-high.onnx"
+NATURAL_SHA=9df1c43c61149ef9b39e618e2b861fbe41e1fcea9390b2dac62e8761573ea4f1
+NATURAL_JSON_SHA=6de734444e4c3f9e33b7ebe2746dbc19b71e85f613e79c65acf623200b99a76a
+PIPER_VOICES=https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high
+for pair in "$NATURAL $NATURAL_SHA" "$NATURAL.json $NATURAL_JSON_SHA"; do
+  file=${pair% *}; sha=${pair#* }
+  if ! echo "$sha  $file" | sha256sum -c --status 2>/dev/null; then
+    curl -fsSL -o "$file.tmp" "$PIPER_VOICES/$(basename "$file")"
+    echo "$sha  $file.tmp" | sha256sum -c --status
+    mv "$file.tmp" "$file"
+    chmod 0644 "$file"
+  fi
+done
 if git -C "$SRC/.." rev-parse HEAD >/dev/null 2>&1; then
   git -C "$SRC/.." rev-parse HEAD > "$B/DEPLOYED"
 fi
@@ -72,6 +86,8 @@ ENV
   chown root:servitor /etc/servitor-voice.env
   chmod 0640 /etc/servitor-voice.env
 fi
+grep -q '^SERVITOR_NATURAL_PIPER_MODEL=' /etc/servitor-voice.env \
+  || echo "SERVITOR_NATURAL_PIPER_MODEL=$NATURAL" >> /etc/servitor-voice.env
 systemctl daemon-reload
 systemctl enable servitor-voice.service >/dev/null
 systemctl restart servitor-voice.service

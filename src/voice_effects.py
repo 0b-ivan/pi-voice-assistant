@@ -100,6 +100,15 @@ NATURAL_FILTER_GRAPH = (
     "aresample=48000"
     "[out]"
 )
+# Billy on CT 107 with his own Piper voice (thorsten-high, calm settings,
+# SERVITOR_NATURAL_PIPER_MODEL): the voice is already right, so only the limiter
+# and the playback rate remain. Not a menu value; the server picks it when that
+# model is loaded. The Pi's local fallback keeps NATURAL_FILTER_GRAPH.
+BILLY_FILTER_GRAPH = (
+    "[0:a]alimiter=level_in=1:level_out=1:limit=0.95:attack=5:release=60:level=0,"
+    "aresample=48000"
+    "[out]"
+)
 VOICE_EFFECTS = ("servitor", "natural")
 DEFAULT_VOICE_EFFECT = "servitor"
 
@@ -223,7 +232,9 @@ def build_render_command(source, target, ffmpeg_bin=None, effect=None):
     aura = os.environ.get("TTS_SERVITOR_AURA", "pcm").strip().lower()
     if aura not in ("pcm", "reference"):
         raise ValueError("TTS_SERVITOR_AURA must be pcm or reference")
-    if voice_effect(effect) == "natural":
+    if effect == "billy":
+        graph = BILLY_FILTER_GRAPH
+    elif voice_effect(effect) == "natural":
         graph = NATURAL_FILTER_GRAPH
     else:
         graph = SERVITOR_REFERENCE_FILTER_GRAPH if aura == "reference" else SERVITOR_FILTER_GRAPH

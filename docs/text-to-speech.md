@@ -68,6 +68,12 @@ resident Piper
 
 Der residente Servitor-Pfad schreibt Piper-PCM direkt auf FFmpeg-stdin und startet die Wiedergabe mit dem ersten verfügbaren Audio-Chunk. Die Aura wird nicht als frei laufende FFmpeg-Quelle erzeugt, sondern aus der Zeitbasis des eingehenden PCM-Stroms. Dadurch bleibt sie während der explizit eingespeisten Satzpausen hörbar, kann die Sprach-Pipe aber nicht durch vorauseilende Synthese zurückstauen. Eine vollständige Quell-WAV muss nicht mehr fertig synthetisiert werden. Der frühere Reverse-Fade wurde entfernt, weil er die komplette Ansage puffern und damit Streaming verhindern würde. Der kurze Echo-Tail sorgt weiterhin für ein kontrolliertes Ausklingen.
 
+## Billys Stimme
+
+Billy (Sprechstil `mensch`, Stimmeffekt `natural`) spricht auf CT 107 mit einer eigenen Piper-Stimme: `de_DE-thorsten-high`, ruhiger eingestellt als Pipers Standard (`SERVITOR_NATURAL_NOISE_SCALE=0.4`, `SERVITOR_NATURAL_NOISE_W_SCALE=0.4`, `SERVITOR_NATURAL_LENGTH_SCALE=1.05`), also weniger Schwankung in Tonfall und Tempo. Danach kommt nur noch ein Limiter (`BILLY_FILTER_GRAPH`), kein Stimmfilter. `server/install-ct.sh` lädt das Modell (sha256-geprüft) und setzt `SERVITOR_NATURAL_PIPER_MODEL`. Ohne diese Variable, und lokal auf dem Pi, bleibt Billy bei Thorsten emotional mit `NATURAL_FILTER_GRAPH`.
+
+Ausgewählt am 10.10.2026 nach Hörproben (thorsten-high, karlsson, pavoque, mls). Verworfen: RVC mit einem Blazkowicz-Modell (Echtzeitfaktor ~1,6 auf CT 107, Speicher über 3 GB bei 9 s Audio, PR #80) und `de_DE-mls-medium`, das kurze Sätze nur als Kauderwelsch spricht (trainiert auf langen Hörbuchpassagen).
+
 ## Dynamischer Status auf SHIM E
 
 Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Laufzeit-Zahlen werden als deutsche Zahlwörter normalisiert, damit Piper Zusammensetzungen wie `53` zuverlässig als „dreiundfünfzig“ spricht. Wenn verfügbar, werden angesagt:

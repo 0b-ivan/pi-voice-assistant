@@ -127,6 +127,7 @@ class RealPipeline:
     def __init__(self, workdir, clock=time.monotonic):
         self.workdir = workdir
         self.voice = None
+        self.natural = None   # Billy's own Piper voice, if SERVITOR_NATURAL_PIPER_MODEL
         self.clock = clock
         # After an OpenRouter failure, go straight to the local model for a
         # while instead of paying the full timeout on every turn of an outage.
@@ -138,8 +139,13 @@ class RealPipeline:
         model = os.environ['SERVITOR_PIPER_MODEL']
         from piper import PiperVoice
         self.voice = PiperVoice.load(model)
-        # Warm the ONNX session once so the first real turn pays no setup cost.
+        natural = os.environ.get('SERVITOR_NATURAL_PIPER_MODEL', '').strip()
+        if natural:
+            self.natural = PiperVoice.load(natural)
+        # Warm the ONNX sessions once so the first real turn pays no setup cost.
         self.synthesize('Bereit.').unlink()
+        if self.natural is not None:
+            self.synthesize('Bereit.', 'natural').unlink()
         if os.environ.get('SERVITOR_LOCAL_LLM') == '1':
             # Page the GGUF in and cache the system prompt; never fatal.
             from llm import LLMError, generate_local_reply
@@ -190,12 +196,19 @@ class RealPipeline:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
     def synthesize(self, text, voice='servitor'):
-        """Same speaker for both voice effects; only the rendering differs."""
-        from voice_controls import _synthesize_voice
+        """Billy ('natural') speaks with his own model when one is loaded;
+        otherwise both voice effects share the Servitor speaker and only the
+        rendering differs."""
+        from voice_controls import _synthesize_voice, natural_synthesis_config
+        from pronounce import spoken
         target = _temporary_wav('syn-', self.workdir)
         try:
             with wave.open(str(target), 'wb') as output:
-                _synthesize_voice(self.voice, text, output, 'servitor')
+                if voice == 'natural' and self.natural is not None:
+                    self.natural.synthesize_wav(spoken(text), output,
+                                                syn_config=natural_synthesis_config())
+                else:
+                    _synthesize_voice(self.voice, text, output, 'servitor')
         except BaseException:
             target.unlink(missing_ok=True)
             raise
@@ -204,8 +217,9 @@ class RealPipeline:
     def render(self, source, voice='servitor'):
         from voice_effects import build_render_command
         target = _temporary_wav('dsp-', self.workdir)
+        effect = 'billy' if voice == 'natural' and self.natural is not None else voice
         try:
-            subprocess.run(build_render_command(source, target, effect=voice), check=True,
+            subprocess.run(build_render_command(source, target, effect=effect), check=True,
                            timeout=60, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except BaseException:
