@@ -27,4 +27,4 @@ GPIOs (BCM): MOSI 10, SCLK 11, CE0 8, D/C 25, Backlight 22, Tasten 23/24. Das Di
 
 Nach `PTT_REST_SECONDS` (Standard 30 s) dunkelt das Display ab; nach `PTT_SLEEP_SECONDS` (600 s) geht die Hintergrundbeleuchtung aus. Ein Tastendruck weckt es, auch im Schlaf kann das Aktivierungswort lauschen. Mit `PTT_SLEEP_WLAN=off` ist SSH in diesem Zustand nicht erreichbar.
 
-**Offen:** abschließende Hardware-Abnahme der Tasten, LED, Wetteranimation und Lesbarkeit ([Roadmap](../roadmap.md)). Technische Messwerte zur Anzeige: [Display-Arbeitsschritte](../display-work-steps.md).
+**Offen:** abschließende Hardware-Abnahme der Tasten, LED, Wetteranimation und Lesbarkeit ([Roadmap](../roadmap.md)). Technische Messwerte zur Anzeige: [Display-Arbeitsschritte](../history/display-work-steps-2026-10-07.md).

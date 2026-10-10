@@ -28,4 +28,4 @@ OpenRouter verarbeitet kein Mikrofon-Audio. Die früheren STT-Modi `openrouter` 
 
 Der normale PTT-Pfad erfasst 16-kHz-Mono-PCM und speist Vosk bereits während gedrückter Taste. Das Modell wird beim Dienststart vorgewärmt. Ein validierter WAV-Slot bleibt als lokaler Vosk-Fallback bestehen.
 
-Die bisherige Hardware-/Qualitätsbewertung und Messwerte stehen unter [Speech-to-Text](../speech-to-text.md). Ein lokales LLM ist damit nicht beschlossen; nur STT und TTS bleiben lokal.
+Die bisherige Hardware-/Qualitätsbewertung und Messwerte stehen unter [Speech-to-Text](../features/speech.md). Ein lokales LLM ist damit nicht beschlossen; nur STT und TTS bleiben lokal.

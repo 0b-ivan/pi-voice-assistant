@@ -40,7 +40,7 @@ Die LED wird getrennt von der Tastenabfrage aktualisiert, damit I²C-Schreibzugr
 
 ## Aktivieren und testen
 
-Einmalig den [SHIM-Einzeltest](../hardware-bring-up.md) durchführen, dann `/etc/pi-ptt.env` konfigurieren:
+Einmalig den [SHIM-Einzeltest](../history/hardware-bring-up-2026-10-05.md) durchführen, dann `/etc/pi-ptt.env` konfigurieren:
 
 ```ini
 PTT_BUTTON_SHIM=1
@@ -52,4 +52,4 @@ sudo systemctl restart pi-ptt
 journalctl -u pi-ptt -n 40 --no-pager
 ```
 
-`shim_ready` muss Bus 1 und Adresse `0x3f` nennen. Vor manuellen GPIO-/Audio-Tests den Sprachdienst stoppen und danach wieder starten. **Die Abnahme der aktuellen Dienstversion ist noch offen** ([Roadmap](../roadmap.md)); ältere Messergebnisse stehen in [PTT-Abnahme 05.10.](../push-to-talk.md) und [Hardwaretests](../hardware-bring-up.md).
+`shim_ready` muss Bus 1 und Adresse `0x3f` nennen. Vor manuellen GPIO-/Audio-Tests den Sprachdienst stoppen und danach wieder starten. **Die Abnahme der aktuellen Dienstversion ist noch offen** ([Roadmap](../roadmap.md)); ältere Messergebnisse stehen in [PTT-Abnahme 05.10.](../history/push-to-talk-2026-10-05.md) und [Hardwaretests](../history/hardware-bring-up-2026-10-05.md).

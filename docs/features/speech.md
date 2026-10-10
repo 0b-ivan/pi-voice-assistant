@@ -38,4 +38,4 @@ sudo systemctl start pi-ptt
 
 Der Servitor-DSP nutzt FFmpeg für Pitch, Resonanzen, Chorus, Maschinen-Aura und Limiter. Aussprachekorrekturen stehen in [`src/pronounce.py`](../../src/pronounce.py). Nach Änderungen Alarm-Clips neu erzeugen ([Betrieb](../operation.md#aktualisieren)).
 
-**Historische Details statt doppelter Live-Anleitungen:** [Vosk-Messungen](../speech-to-text.md#hardware-messwerte), [Piper-Performance](../piper-resources.md), [alter TTS-DSP-Stand](../text-to-speech.md). Die echten Vosk/Whisper-Vergleichstests stehen noch aus ([Roadmap](../roadmap.md)).
+**Historische Details statt doppelter Live-Anleitungen:** [Vosk-Messungen](speech.md), [Piper-Performance](../history/piper-resources-2026-10-06.md), [alter TTS-DSP-Stand](speech.md). Die echten Vosk/Whisper-Vergleichstests stehen noch aus ([Roadmap](../roadmap.md)).
