@@ -139,6 +139,12 @@ stt_error / tts_error / speech_error
 
 Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nicht angezeigt; ein echter DRM-/Framebuffer-Weg wäre eine separate, invasivere Entscheidung.
 
+## Wetter
+
+![Wetteransicht: heute Regen, dann Mittwoch mit Gewitter gewählt](images/display-weather.gif)
+
+Beim Morgenbericht und bei Wetterfragen setzt `ptt.py` `weather_day` (0 = heute … 4) in `display-status.json`; `display.py` zeichnet dann mit 8 Bildern pro Sekunde `render_weather` aus `/run/pi-ptt/display-weather.json` (die vom Sprachdienst auf dem Gedächtnis-Stick gehaltene Fünf-Tage-Vorhersage). Oben „AUSPEX · WETTERDATEN“ (Sprechstil BILLY: „WETTER“) und der Abrufzeitpunkt, links das Piktogramm (24×24 Pixel, dreifach skaliert, mit Scanlines), rechts Tag, Temperatur, Spanne, Wetterlage und Regenwahrscheinlichkeit, unten der Fünf-Tage-Streifen. Die Vorschau ist mit dem Display-Code gerendert, kein Foto. [Architektur](architecture.md#morgenlitanei-und-wetter).
+
 ## Ruhe und Schlaf
 
 `ptt.py` kennt drei Stufen und schreibt sie als `power` in `display-status.json`:

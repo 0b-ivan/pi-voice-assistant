@@ -139,6 +139,7 @@ DISPLAY_STATUS_VALUES = {
     'maint_pi': set(maintenance.STATES),
     'maint_server': set(maintenance.STATES),
     'opt_wake': {'on', 'off', 'none'},
+    'weather_day': {'0', '1', '2', '3', '4'},
     'opt_cue': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
     'opt_persona': set(PERSONAS),
@@ -613,6 +614,9 @@ class Recorder:
         self.ready.unlink(missing_ok=True)
 
 
+WEATHER_HOLD_SECONDS = 6.0   # forecast stays on the display after the answer
+
+
 def _after_network(function, text, timeout=25.0, step=0.5):
     """Run ``function(text)`` once an IPv4 address is up (WLAN just switched on)."""
     deadline = time.monotonic() + timeout
@@ -673,7 +677,11 @@ class VoiceController:
         self.sleep_wlan_off = self.config.sleep_wlan_off
         self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
         self.listen_after_greeting = False  # wake word woke us: listen after the greeting
-        self.weather = weather.Forecast()  # cached only: never blocks the loop
+        # Five-day forecast kept on the memory stick, refreshed by a thread (main).
+        self.weather = weather.Keeper()
+        self.weather_shown = False         # the display shows the forecast
+        self.weather_hide_at = None        # ... until then (after the answer was said)
+        self.turn_weather_day = None       # server asked to show it with its answer
         self.agenda = agenda_feed.Agenda()  # CALDAV_*; refreshed by a thread (main)
         self.memory = memory_core.MemoryCore()
         self.memory_present = self.memory.present()
@@ -812,6 +820,7 @@ class VoiceController:
         return self._scale(color, REST_LED) if self.power == 'rest' and not bright else color
 
     def cancel(self, held, now):
+        self._hide_weather()
         if self.device_after_speech:   # B during "Einheit fährt herunter.": stays on
             event('device', op=self.device_after_speech, result='cancelled')
             self.device_after_speech = None
@@ -856,6 +865,7 @@ class VoiceController:
         # This turn may answer a pending reboot/shutdown question; either way
         # the question is used up (anything else drops it).
         self.turn_device_pending = self._device_take_pending()
+        self.turn_weather_day = None
         if self.cue is not None and self.cue.play():
             event('cue')
         self.turn_released_at = time.monotonic()
@@ -1071,6 +1081,18 @@ class VoiceController:
             event('speech_error', message=str(exc))
 
     # --- Spoken device commands (device_control) ---------------------------------
+
+    def _show_weather(self, day):
+        """Forecast on the display while the answer is said (and a moment after)."""
+        if self.weather.today() is None:
+            return              # nothing stored: keep the usual screen
+        self.weather_shown, self.weather_hide_at = True, None
+        publish_display_status(weather_day=str(day))
+
+    def _hide_weather(self):
+        if self.weather_shown:
+            self.weather_shown, self.weather_hide_at = False, None
+            publish_display_status(weather_day=None)
 
     def _device_pending_now(self):
         if self.device_pending and time.monotonic() <= self.device_pending_until:
@@ -1780,8 +1802,11 @@ class VoiceController:
         if intent is not None:
             # Time, date, status ...: answered on the Pi, also without network.
             snapshot = self.status_snapshot()
+            day = None
             if intent in ('weather', 'briefing'):
-                snapshot['weather'] = self.weather.cached()
+                snapshot['weather'] = self.weather.today()
+                day = intents.weather_day(text, datetime.date.today()) if intent == 'weather' else 0
+                snapshot['weather_day'] = day
             if intent in ('calendar', 'briefing'):
                 snapshot['agenda'] = self.agenda.today()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
@@ -1789,6 +1814,8 @@ class VoiceController:
             event('llm_response', text=reply, model='local/intent')
             print(f'SERVITOR: {reply}', flush=True)
             self._start_speech(reply, source='assistant', model='local/intent')
+            if day is not None:
+                self._show_weather(day)
             return
         context = self.memory.context()
         model = free_model() if self.llm_mode == 'free' else None
@@ -1842,6 +1869,11 @@ class VoiceController:
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
         elif kind == 'device':
             self._device_event(item)
+        elif kind == 'show':
+            # Shown when the answer starts playing (_finish_remote), not while thinking.
+            day = item.get('day')
+            if item.get('screen') == 'weather' and day in range(weather.DAYS):
+                self.turn_weather_day = day
         elif kind == 'maintenance':
             if item.get('op') in maintenance.ITEMS + ('enter',):
                 self._maintenance_op(item['op'], speak=False)  # the server's reply speaks
@@ -1887,6 +1919,9 @@ class VoiceController:
                 display_progress('tts', 'playback')
                 self._settle_cue()
                 self.speech.play(job.result['audio'], text=job.reply)
+                if self.turn_weather_day is not None:
+                    self._show_weather(self.turn_weather_day)
+                    self.turn_weather_day = None
                 self.speech_started_at = time.monotonic()
                 self._turn_spoken()
             except (OSError, RuntimeError, ValueError) as exc:
@@ -2003,6 +2038,8 @@ class VoiceController:
             if self.enroll_after_speech:
                 mode, self.enroll_after_speech = self.enroll_after_speech, None
                 self._start_enroll(mode)
+            if self.weather_shown:
+                self.weather_hide_at = time.monotonic() + WEATHER_HOLD_SECONDS
             if self.device_after_speech:
                 op, self.device_after_speech = self.device_after_speech, None
                 if time.monotonic() <= self.device_after_until:
@@ -2062,6 +2099,9 @@ class VoiceController:
             # Button pressed during a wake-word recording: it ends on release now.
             self.wake_recording = False
             action = None
+        if self.weather_shown and (action == 'start' or (
+                self.weather_hide_at is not None and time.monotonic() >= self.weather_hide_at)):
+            self._hide_weather()
         if action == 'start':
             if (self.job is not None or (self.config.hybrid
                     and getattr(self.speech, 'synthesizing', False))):
@@ -2297,6 +2337,8 @@ def main():
                                  wake=wake, wake_word=wake_label, cue=acknowledge,
                                  config=config)
     controller_ref.append(controller)
+    if not args.probe and controller.weather.start().configured:
+        event('weather_ready', days=weather.DAYS)
     if not args.probe and controller.agenda.start().configured:
         event('agenda_ready', calendars=len(controller.agenda.config.urls))
     wlan_setting = config.wlan

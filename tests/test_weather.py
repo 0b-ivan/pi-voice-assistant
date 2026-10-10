@@ -9,11 +9,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 import weather  # noqa: E402
 
+DATES = ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14']
 PAYLOAD = {
     'current': {'temperature_2m': 11.6, 'weather_code': 3},
-    'daily': {'temperature_2m_max': [14.2], 'temperature_2m_min': [6.4],
-              'precipitation_probability_max': [40]},
+    'daily': {'time': DATES, 'weather_code': [3, 61, 0, 71, 95],
+              'temperature_2m_max': [14.2, 9.0, 16.4, 2.0, 18.0],
+              'temperature_2m_min': [6.4, 4.0, 5.0, -3.4, 10.0],
+              'precipitation_probability_max': [40, 80, 0, 50, 90]},
 }
+DAYS = [dict(date='2026-10-10', code=3, high=14, low=6, rain=40),
+        dict(date='2026-10-11', code=61, high=9, low=4, rain=80),
+        dict(date='2026-10-12', code=0, high=16, low=5, rain=0),
+        dict(date='2026-10-13', code=71, high=2, low=-3, rain=50),
+        dict(date='2026-10-14', code=95, high=18, low=10, rain=90)]
 
 
 class Clock:
@@ -26,7 +34,8 @@ class Clock:
 
 class ParseTests(unittest.TestCase):
     def test_parse(self):
-        self.assertEqual(weather.parse(PAYLOAD), dict(now=12, code=3, high=14, low=6, rain=40))
+        self.assertEqual(weather.parse(PAYLOAD),
+                         dict(now=12, code=3, high=14, low=6, rain=40, days=DAYS))
         self.assertIsNone(weather.parse({}))
         self.assertIsNone(weather.parse({'current': {}, 'daily': {}}))
 
@@ -126,6 +135,82 @@ class SentenceTests(unittest.TestCase):
         self.assertIn("Feuchtigkeit", text)
         self.assertIn("Niederschlag möglich",
                       weather.sentence(dict(now=5, code=None, high=None, low=None, rain=40)))
+
+    def test_tomorrow_and_weekday(self):
+        data = dict(now=12, code=3, high=14, low=6, rain=40, days=DAYS)
+        self.assertEqual(weather.day_sentence(data, 1),
+                         "Morgen: 4 bis 9 Grad, Regen. Niederschlag wahrscheinlich, 80 Prozent.")
+        self.assertEqual(weather.day_sentence(data, 3),
+                         "Dienstag: minus 3 bis 2 Grad, Schnee. Niederschlag möglich, 50 Prozent.")
+        self.assertIsNone(weather.day_sentence(data, 7))
+        self.assertTrue(weather.day_sentence(data, 0).startswith("Außentemperatur 12 Grad"))
+
+
+class KeeperTests(unittest.TestCase):
+    """Pi: five days kept on the memory stick, read offline by date."""
+    TODAY = __import__('datetime').date(2026, 10, 10)
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.stick = Path(self.tmp.name) / 'stick'
+        self.stick.mkdir()
+        self.plugged = True
+        self.now = 1_000_000.0
+        self.result = weather.parse(PAYLOAD)
+        self.display = Path(self.tmp.name) / 'display-weather.json'
+
+    def keeper(self):
+        def fetcher(lat, lon):
+            if isinstance(self.result, Exception):
+                raise self.result
+            return self.result
+        return weather.Keeper((52.5, 13.4), fetcher=fetcher,
+                              stores=lambda: [self.stick / 'weather.json'] if self.plugged else [],
+                              clock=lambda: self.now, display=lambda: self.display)
+
+    def test_refresh_stores_on_the_stick_only(self):
+        keeper = self.keeper()
+        self.assertTrue(keeper.refresh())
+        stored = json.loads((self.stick / 'weather.json').read_text())
+        self.assertEqual((stored['updated'], len(stored['days'])), (self.now, 5))
+        self.assertEqual(json.loads(self.display.read_text())['days'], DAYS)
+        self.assertEqual(keeper.today(self.TODAY)['now'], 12)
+
+    def test_without_stick_only_in_memory(self):
+        self.plugged = False
+        keeper = self.keeper()
+        keeper.refresh()
+        self.assertFalse((self.stick / 'weather.json').exists())
+        self.assertEqual(keeper.today(self.TODAY)['high'], 14)
+
+    def test_offline_after_restart_matches_the_date(self):
+        self.keeper().refresh()
+        self.result = OSError('offline')
+        self.now += 2 * 86400                         # two days later, no network
+        keeper = self.keeper()
+        self.assertFalse(keeper.refresh())
+        keeper.load()
+        later = __import__('datetime').date(2026, 10, 12)
+        today = keeper.today(later)
+        self.assertEqual((today['now'], today['code'], today['high']), (None, 0, 16))
+        self.assertEqual([d['date'] for d in today['days']], DATES[2:])
+        self.assertTrue(weather.sentence(today).startswith("Heute 5 bis 16 Grad, klar."))
+        self.assertIsNone(keeper.today(__import__('datetime').date(2026, 10, 20)))  # too old
+
+    def test_current_temperature_only_while_fresh(self):
+        keeper = self.keeper()
+        keeper.refresh()
+        self.now += weather.CURRENT_FRESH_SECONDS + 1
+        self.assertIsNone(keeper.today(self.TODAY)['now'])
+
+    def test_not_configured_and_broken_files(self):
+        keeper = weather.Keeper(place=None, stores=lambda: [], display=lambda: self.display)
+        keeper.place = None
+        self.assertFalse(keeper.start().configured)
+        (self.stick / 'weather.json').write_text('{"days": "kaputt"}')
+        self.assertIsNone(self.keeper().load())
 
 
 if __name__ == '__main__':
