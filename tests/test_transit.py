@@ -244,5 +244,15 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(alias.find_stop('Rathaus')['id'], '3700315')
 
 
+
+class SpelledLetterTests(unittest.TestCase):
+    def test_vosk_spelled_abbreviations_are_joined(self):
+        self.assertEqual(transit.join_letters('d j k sportzentrum'), 'djk sportzentrum')
+        self.assertEqual(transit.join_letters('s bahn'), 's bahn')
+        params = transit.stopfinder_params(transit.Config(), 'd j k sportzentrum')
+        self.assertEqual(params['name_sf'], 'djk sportzentrum')
+        self.assertEqual(transit.normalize_place('D J K Sportzentrum'), 'djk sportzentrum')
+
+
 if __name__ == '__main__':
     unittest.main()

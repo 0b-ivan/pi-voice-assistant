@@ -319,6 +319,14 @@ class MemoryCoreControllerTests(ControllerAlarmTests):
         self.assertEqual(context['history'],
                          [dict(q='ich heiße ivan', a='Gegrüßt, Ivan', p=self.c.persona)])
 
+    def test_server_speaker_check_is_logged(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            self.c._remote_progress(dict(event='speaker', known=False, score=0.412))
+        logged = [json.loads(line) for line in out.getvalue().splitlines()
+                  if line.startswith('{')]
+        self.assertIn(dict(version=1, event='speaker', known=False, score=0.412), logged)
+
     def test_local_fallback_handles_memory_commands(self):
         self.device.touch()
         self.c._start_llm('installiere humor erweiterung')

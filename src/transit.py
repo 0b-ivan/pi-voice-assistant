@@ -103,7 +103,12 @@ class Config:
 
 def normalize_place(name):
     text = ' '.join(re.findall(r"[\wäöüß]+", str(name).lower()))
-    return re.sub(r'\bhbf\b', 'hauptbahnhof', text)
+    return re.sub(r'\bhbf\b', 'hauptbahnhof', join_letters(text))
+
+
+def join_letters(text):
+    """Vosk spells abbreviations: 'd j k sportzentrum' -> 'djk sportzentrum'."""
+    return re.sub(r'\b\w(?: \w\b)+', lambda m: m.group(0).replace(' ', ''), text)
 
 
 # --- requests --------------------------------------------------------------------
@@ -150,7 +155,7 @@ def departure_params(config, stop, now, limit=20):
 
 def stopfinder_params(config, name):
     params = _common(config)
-    params.update(type_sf='any', name_sf=name, locationServerActive='1',
+    params.update(type_sf='any', name_sf=join_letters(name), locationServerActive='1',
                   coordOutputFormat='WGS84[dd.ddddd]')
     return params
 
