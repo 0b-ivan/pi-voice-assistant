@@ -60,10 +60,10 @@ def average(vectors):
     return normalize([sum(v[i] for v in vectors) / len(vectors) for i in range(dim)])
 
 
-def trim_silence(pcm, rate=16000, frame_seconds=0.03, pad_seconds=0.2):
+def trim_silence(pcm, rate=16000, frame_seconds=0.03, pad_seconds=0.2, min_seconds=MIN_SECONDS):
     """16 kHz mono int16 PCM without the quiet start and end (beep echo, waiting
     for the speaker); silence dilutes the embedding of a short take. Returns
-    the input unchanged when too little speech (< MIN_SECONDS) would remain."""
+    the input unchanged when too little speech (< min_seconds) would remain."""
     from array import array
     samples = array('h', pcm[:len(pcm) - len(pcm) % 2])
     if sys.byteorder == 'big':
@@ -81,7 +81,7 @@ def trim_silence(pcm, rate=16000, frame_seconds=0.03, pad_seconds=0.2):
     pad = int(pad_seconds / frame_seconds)
     start = max(0, loud[0] - pad) * size
     end = min(len(samples), (loud[-1] + 1 + pad) * size)
-    if end - start < MIN_SECONDS * rate:
+    if end - start < min_seconds * rate:
         return pcm
     return pcm[start * 2:end * 2]
 

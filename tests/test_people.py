@@ -79,6 +79,11 @@ class MatchingTests(unittest.TestCase):
         silent = pcm((4.0, 0))
         self.assertEqual(speaker.trim_silence(silent), silent)
 
+    def test_trim_silence_short_takes_with_lower_minimum(self):
+        take = pcm((0.6, 0), (0.7, 8000), (0.7, 0))      # one 2 s "Proximus" take
+        trimmed = speaker.trim_silence(take, min_seconds=0.3)
+        self.assertAlmostEqual(len(trimmed) / 32000, 0.7 + 2 * 0.2, delta=0.1)
+
 
 class FlowTests(unittest.TestCase):
     def setUp(self):

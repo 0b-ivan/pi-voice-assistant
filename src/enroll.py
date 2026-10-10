@@ -225,11 +225,14 @@ class Session:
     def _refine(self, takes):
         """Five takes at a time (~10 s) give one embedding; their mean is merged
         into the profile it matches best."""
-        from speaker import average, decode, encode, identify
+        from speaker import average, decode, encode, identify, trim_silence
         self.io.publish(stage='process')
         prints = []
         for start in range(0, len(takes), 5):
-            pcm = b''.join(pcm_of(path) for path in takes[start:start + 5] if path.is_file())
+            # Each 2 s take holds ~0.7 s of "Proximus"; without its pauses the
+            # five words are speech only, like the server's trimmed turns.
+            pcm = b''.join(trim_silence(pcm_of(path), min_seconds=0.3)
+                           for path in takes[start:start + 5] if path.is_file())
             print_ = self.io.voiceprint(pcm) if pcm else None
             if print_:
                 prints.append(print_)

@@ -757,6 +757,37 @@ class IntentServerTest(ServerTest):
         self.assertNotIn('nicht erreichbar', reply['text'])
 
 
+
+class WhisperQuickPathTests(unittest.TestCase):
+    def test_fixed_requests_and_stop_keep_the_vosk_text(self):
+        self.assertTrue(ss.quick_text('wie spät ist es'))
+        self.assertTrue(ss.quick_text('sei still'))
+        self.assertFalse(ss.quick_text('wie hoch ist der eiffelturm'))
+
+    def test_transcribe_mode_keeps_vosk_for_passphrases(self):
+        seen = []
+
+        class Recognizer:
+            whisper = True
+
+            def accept_pcm(self, pcm):
+                pass
+
+            def finish(self):
+                seen.append(self.whisper)
+                return 'omnissiah segne diese maschine'
+
+        class Pipeline:
+            def recognizer(self):
+                return Recognizer()
+
+        config = ss.Config({'SERVITOR_API_TOKEN': 'x' * 40})
+        service = ss.Service(config, Pipeline())
+        events = []
+        service.run_turn([b'\1\0' * 8000], events.append, 'wav', transcribe_only=True)
+        self.assertEqual(seen, [False])
+        self.assertIn(dict(event='transcript', text='omnissiah segne diese maschine'), events)
+
 if __name__ == '__main__':
     unittest.main()
 

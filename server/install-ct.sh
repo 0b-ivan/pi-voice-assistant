@@ -59,6 +59,10 @@ SERVITOR_TRUSTED_PROXIES=127.0.0.1,::1,172.22.2.100
 SERVITOR_PIPER_MODEL=$B/tts/de_DE-thorsten_emotional-medium.onnx
 VOSK_MODEL_PATH=$B/models/vosk-model-small-de-0.15
 STT_PROVIDER=vosk
+# Whisper after release (server/install-whisper.sh), Vosk stays the speech
+# gate and answers fixed requests at once. Unset = Vosk only.
+# SERVITOR_STT=whisper
+# SERVITOR_WHISPER_MODEL=small
 TTS_VOICE_PROFILE=servitor
 TTS_SERVITOR_AURA=reference
 TTS_PIPER_SPEAKER_ID=4
