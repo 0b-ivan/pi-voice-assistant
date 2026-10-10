@@ -302,3 +302,9 @@ class LoreLevelTests(unittest.TestCase):
             # Two identical requests give the same prompt (cache friendly).
             self.assertEqual(prompt.split("Aktueller Zeitpunkt")[0],
                              llm.system_prompt("full", persona=persona).split("Aktueller Zeitpunkt")[0])
+
+
+class TimetableRuleTests(unittest.TestCase):
+    def test_the_model_never_gives_departure_times(self):
+        self.assertIn('Fahrpläne kennst du nicht', llm.CONTENT_RULES)
+        self.assertIn('Fahrpläne kennst du nicht', llm.SERVITOR_SYSTEM_PROMPT)

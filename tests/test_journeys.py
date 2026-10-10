@@ -21,6 +21,14 @@ def local(hour, minute, day=10):
 
 
 class ParseTests(unittest.TestCase):
+    def test_vosk_mishearings_still_reach_the_controller(self):
+        # Live 11.10.: "bahn in die stadt" heard as "bahnen die stadt" went to the
+        # LLM, which invented a departure time.
+        self.assertEqual(journeys.parse('wann wird die nächste bahnen die stadt', 'on'),
+                         dict(type='query', kind='trip', origin=None, destination='city',
+                              mode=None))
+        self.assertIsNone(journeys.parse('was kostet die stadt', 'on'))
+
     def test_examples_from_the_assignment(self):
         cases = [
             ('Wann fährt die nächste Straßenbahn in die Stadt?', 'on',
