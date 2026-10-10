@@ -1,5 +1,7 @@
 # Projektprüfung vom 05.10.2026
 
+> **Archiv · nicht der aktuelle Projektstand.** Diese Prüfung dokumentiert ausschließlich den Stand vom **05.10.2026** (Commit `55bf5df`, PRs #1–#16). Die damals offenen PRs, gemessenen Latenzen und Empfehlungen können heute überholt sein. Für gültige Funktionen siehe [README](../README.md), für offene Arbeit die [Roadmap](roadmap.md), für die aktuelle Serverarchitektur [ADR 0004](decisions/0004-servitor-server.md). Die historischen Befunde bleiben bewusst unverändert.
+
 Geprüft: GitHub `main` **55bf5df**, alle PRs **#1–#16** mit Diskussionen und Review-Threadzuständen; offene Heads #14 **ae3c927**, #16 **87ca1ba**; verfügbare Projekt-Chats und die PTT-Codex-Chats. Dies ist ein Dokumentations-/Codeabgleich, keine neue Hardware-Abnahme. Offene PRs werden durch diese Doku nicht gemergt oder verändert.
 
 ## Nachtrag: PR #16 und Pi-Messungen
