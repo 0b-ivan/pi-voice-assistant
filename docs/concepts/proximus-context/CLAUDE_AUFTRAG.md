@@ -1,8 +1,8 @@
 # Claude-Auftrag: Gesprächskontext auf dem Erinnerungskern
 
-Implementiere das überarbeitete `KONZEPT.md` in einem überprüfbaren Runtime-Diff des aktiven `pi-voice-assistant`-Repositories. Lies zuerst Konzept und `RECHERCHE_UND_ENTSCHEIDUNGEN.md`, dann gezielt die dort genannten aktuellen Aufrufstellen. Stand der Prüfung: main `aa6cba0`, 11.10.2026. Neuere bestätigte Projektentscheidungen haben Vorrang. Keine alten Quellkopien zurückkopieren; aktuelle Hardware-Intents aus PR #90 erhalten.
+Implementiere das überarbeitete `KONZEPT.md` in einem überprüfbaren Runtime-Diff des aktiven `pi-voice-assistant`-Repositories. Lies zuerst Konzept, `DIALOGFUNKTIONEN.md` und `RECHERCHE_UND_ENTSCHEIDUNGEN.md`, dann gezielt die dort genannten aktuellen Aufrufstellen. Stand der Prüfung: main `0e5bd33`, 11.10.2026. Neuere bestätigte Projektentscheidungen haben Vorrang. Keine alten Quellkopien zurückkopieren; aktuelle Hardware-/Kogitator-Korrekturen aus PR #90, #91 und #93 erhalten.
 
-`reference/conversation.py` und dessen Tests sind ausführbarer, eigenständig geschriebener Beispielcode. Sie sind nicht aktiviert und beweisen weder echte Sprecherberechtigung noch Modell-/Pi-Leistung. Nutze den deterministischen Kern, aber integriere die im Konzept ausdrücklich offen genannten Pfade, statt den Beispielcode ungeprüft zu kopieren.
+`reference/conversation.py`, `reference/dialogue_features.py` und ihre Tests sind ausführbarer, eigenständig geschriebener Beispielcode. Sie sind nicht aktiviert und beweisen weder echte Sprecherberechtigung noch Modell-/Pi-Leistung. Nutze den deterministischen Kern, aber integriere die im Konzept ausdrücklich offen genannten Pfade, statt den Beispielcode ungeprüft zu kopieren.
 
 ## Ergebnis und Leitentscheidungen
 
@@ -19,13 +19,26 @@ Der Pi hält freigegebene Originalrunden auf dem PROXIMUS-Stick, einen kleinen q
 9. **Transport gemeinsam ändern.** Capability `speaker_context_v2` für Identifizierung, `conversation_context_v2` für Kontext. Dynamischen Teil getrennt vom stabilen Corecache behandeln; Client/Server `split_memory`, Payload, remember/restore zusammen prüfen. Nach Profil scopen, Ticket kurzlebig und begrenzt, ohne Diskspool. Ältere Gegenstellen explizit mit vorhandener Legacy-Funktion bedienen; neuer persönlicher Kontext dort deaktiviert.
 10. **Robuster vorhandener Speicher.** Ein serialisierter Writer, vorhandene atomare Transaktion. Mount-Identität/dir-fd für sicheren Stickwechsel integrieren; eine Existenzprüfung alleine genügt nicht. Größenlimit vor Parse, Collections validieren, unbekanntes Schema nicht überschreiben. Legacy-History nur bei geklärtem Owner migrieren, keine Mehrfachkopie bei mehreren Profilen. Globale Fakten nicht als bereits getrennt behaupten. Enrollment-/Passphrasen-/Wartungstexte fernhalten, neue Logs nur Metadaten.
 
+## Sechs zusätzliche verbindliche Funktionen
+
+Implementiere die präzisen Regeln aus `DIALOGFUNKTIONEN.md`:
+
+- Offene fachliche Rückfragen mit Assistant-Quelle getrennt von Nutzerfakten halten; gezielt beantworten/überspringen, nicht durch Nebenfragen automatisch schließen. Audio-Status berücksichtigen.
+- Relative Zeit auf vertrauenswürdige Aufnahmezeit und IANA-Zeitzone beziehen; konkretes Datum/UTC/Präzision mit Quelle speichern, bei Neustart nicht neu interpretieren. Fehlende/mehrdeutige Zeit und Sommerzeitlücke klären. Keine automatischen Timer.
+- Dauerhafte Einzelfakten nach fachlichem Schlüssel pro Person korrigieren; alte aktuelle Werte ablösen, `fact_revision`/`write_epoch` prüfen und Legacy-Widersprüche sicher behandeln.
+- Owner-Schreibpause und privates aktuelles Gespräch per Sprache unterscheiden. Turn-, Summary-, Rückfrage-, Zeit-, Titel- und automatisches MERKE/DIREKTIVE-Lernen sowie vollständige private Logging-/Audio-Pfade blockieren. Pause/Resume darf keinen verspäteten privaten Inhalt speichern. Referenz sperrt nur ihre eigenen Methoden; globale bestehende Wege ausdrücklich mit integrieren.
+- Eigene Gespräche benennen, listen und eindeutig öffnen. Bekannte Titel für Kurzformen nutzen; bestehende Gerätebefehle und generisches „Merk dir“ nicht verdrängen. A → B → A schützt vor späten Ergebnissen. Vollständigen Controller-Resume-Lifecycle implementieren.
+- Quellenfragen aus tatsächlichen kurzen Belegen beantworten, fehlende Legacy-Herkunft ehrlich melden und keine versteckte Modellbegründung erfinden.
+
+Neue explizite Intents vor breiten Memory-Mustern routen; Privacy-Steuerung nicht als Inhaltsrunde speichern. Schema-/Export-/Tokenbudgets, Quoten, Berechtigung und Löschung müssen alle zusätzlichen Felder berücksichtigen. Die Ergänzung gehört zum Auftrag, nicht nur zur späteren Roadmap.
+
 ## Umsetzung und Abnahme
 
 Arbeite in den vier Etappen aus Abschnitt 13. Keine Subagents, sachfremden Refactorings, neue Stimme oder Lore-Umbauten. Repository-Anweisungen beachten; `sources/` bleibt read-only. Notwendige Schnittstellenänderungen für Identität, Commit, Transport und Budgets gehören ausdrücklich zum Auftrag.
 
 Führe Referenztests sowie relevante vorhandene Memory-, Protocol-, Controller-, Server-, Dialog-, Speaker- und LLM-Tests aus. Ergänze vor allem: 15 Nebenfragen und älteres Ziel; neues Ziel ersetzt altes; Pause/Neustart/Resume ohne Datenverlust; zwei Personen getrennt; zielgerichtetes Vergessen und abhängige Karten; neue Threads gegenüber Löschung; stale Reply nach Reset; Duplicate-ID; TTS-Fehler; echte Mount-Generation; volle/read-only Medien; Unicode plus vollständiges Modellbudget; Capability-/Ticket-/Session-Fallback. Keine Spiegeltests, die nur denselben Algorithmus wiederholen.
 
-Die Offline-Referenz lässt Ticketendpoints, Migration, archive-resume, ownerweite Löschtransaktion, echte Audio-Callbacks, Tokenizer und Kernel-Mountraces offen. Diese fehlen nicht versehentlich: Claude muss sie für eine fertige Runtime-Funktion implementieren und prüfen. Aus Referenztests keine fertige Integration ableiten.
+Die Offline-Referenz lässt Ticketendpoints, Migration, vollständigen Controller-Resume-Lifecycle, ownerweite Löschtransaktion, echte Audio-Callbacks, Tokenizer und Kernel-Mountraces offen. Zusätzlich offen sind echte semantische Fragezuordnung, breite natürliche Zeitinterpretation, vollständiges Logging-/Audio-/Legacy-Lernen im Privatmodus und Faktmigration. Diese fehlen nicht versehentlich: Claude muss sie für eine fertige Runtime-Funktion implementieren und prüfen. Aus Referenztests keine fertige Integration ableiten.
 
 Qualitative Modelltests und Pi-Messungen nur als verifiziert melden, wenn tatsächlich durchgeführt und freigegeben. Keine kostenpflichtigen API-Aufrufe, kein Deployment oder Merge ohne gesonderten Auftrag. `docs/memory.md` um Bedienung, Aufbewahrung, längeren Kontexttransport und persönliche Zugriffsvoraussetzungen ergänzen.
 

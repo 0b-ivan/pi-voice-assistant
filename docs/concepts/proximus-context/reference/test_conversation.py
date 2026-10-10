@@ -235,7 +235,7 @@ class StorageTests(unittest.TestCase):
 
     def append(self, owner=OWNER, now=1, **options):
         state = self.adapter.read(owner)
-        args = dict(expected=c.snapshot(state, owner, self.mount), turn_id=str(now),
+        args = dict(expected=dict(c.snapshot(state, owner, self.mount), write_epoch=self.core.load()['conversations']['owners'][owner].get('write_epoch', 0)), turn_id=str(now),
                     question='Hamburg', answer='Verstanden', persona='servitor')
         args.update(options)
         return self.adapter.append(owner, now, **args)

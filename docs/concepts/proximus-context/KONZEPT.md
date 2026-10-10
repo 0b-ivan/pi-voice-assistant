@@ -1,6 +1,6 @@
 # Proximus: dauerhafter Gesprächskontext auf dem Erinnerungskern
 
-Status: überarbeitetes Konzept und ausführbare Offline-Referenz für PR #92; keine aktive Runtime-Funktion. Überarbeitung 11.10.2026. Repository geprüft gegen `main` `aa6cba0`; neue Hardware-Intents aus PR #90 sind berücksichtigt. [Recherche und Entscheidungskritik](RECHERCHE_UND_ENTSCHEIDUNGEN.md) dokumentieren sechs vergleichbare Lösungen und begründen die Änderungen. [Claude-Auftrag](CLAUDE_AUFTRAG.md) ist die Implementierungsanweisung.
+Status: überarbeitetes Konzept und ausführbare Offline-Referenz für PR #92; keine aktive Runtime-Funktion. Überarbeitung 11.10.2026. Repository geprüft gegen `main` `0e5bd33`; Hardware- und Kogitator-Korrekturen aus PR #90, #91 und #93 sind berücksichtigt. [Recherche und Entscheidungskritik](RECHERCHE_UND_ENTSCHEIDUNGEN.md) dokumentieren sechs vergleichbare Lösungen und begründen die Änderungen. [Claude-Auftrag](CLAUDE_AUFTRAG.md) ist die Implementierungsanweisung. [Sechs zusätzliche Dialogfunktionen](DIALOGFUNKTIONEN.md) ergänzen dieses Konzept verbindlich.
 
 ## 1. Problem und Architekturentscheidung
 
@@ -99,6 +99,9 @@ Alle `start/end` beziehen sich auf den tatsächlich gespeicherten normalisierten
 | Conversation-JSON je Person | 128 KiB UTF-8 | älteste inaktive Threads, dann älteste aktive Runden entfernen |
 | gesamte Conversation-Ablage | ungefähr ≤640 KiB plus Index | 5 separate Quoten; Fakten/Voice-Dateien zusätzlich |
 | Duplikat-IDs je Thread | 128 | zusätzliche Hilfe, Snapshot ist Hauptschutz |
+| offene Rückfragen | maximal 3 | Assistant-Quelle und Status getrennt von Nutzerfakten |
+| Zeitreferenzen je Turn | maximal 4 | festes Datum/Zeit mit Äußerungsbezug und Zeitzone |
+| Gesprächstitel | bis 60 Zeichen | nur eigene Archive, keine Namensverwechslung |
 | jüngster Promptverlauf | höchstens 4 ganze Paare | keine verwaisten Rollen |
 | zusätzliches Belegmaterial | erste erhaltene Anfrage plus höchstens 2 Worttreffer | nur aktiver/ausdrücklich fortgesetzter Thread |
 | exportierte JSON-Kopie | 6000 Zeichen | inklusive Schlüssel und Metadaten |
@@ -111,7 +114,7 @@ JSON bleibt für diesen begrenzten ersten Ausbau der vorhandene Speicher. Bei je
 
 ## 5. Arbeitsstand: sinnvolle Zusammenfassung mit überprüfbaren Quellen
 
-Die frühere FIFO-Liste kurzer Zitate wird ersetzt. Arbeitsstand ist ein kleines Blatt, beispielsweise `goal`, `destination`, `date`, `arrival`, `constraints`, `decision`, `open_question`. Es übernimmt Nutzerangaben wörtlich aus konkreten Quellen. Eine neue belegte Angabe desselben Felds ersetzt dessen aktuellen Wert; ältere Runden bleiben ausdrücklich historisch. Das übernimmt die Idee zeitlicher Ablösung aus [Graphiti](https://github.com/getzep/graphiti/blob/main/README.md), ohne Graphdatenbank.
+Die frühere FIFO-Liste kurzer Zitate wird ersetzt. Arbeitsstand ist ein kleines Blatt, beispielsweise `goal`, `destination`, `date`, `arrival`, `constraints`, `decision`. Offene Rückfragen stehen in einer separaten, assistantbelegten `questions`-Liste gemäß `DIALOGFUNKTIONEN.md`. Es übernimmt Nutzerangaben wörtlich aus konkreten Quellen. Eine neue belegte Angabe desselben Felds ersetzt dessen aktuellen Wert; ältere Runden bleiben ausdrücklich historisch. Das übernimmt die Idee zeitlicher Ablösung aus [Graphiti](https://github.com/getzep/graphiti/blob/main/README.md), ohne Graphdatenbank.
 
 **Optionaler Update-Vertrag im selben normalen Antwortaufruf:** Ein Modell, das einen geprüften strukturierten Antwortmodus unterstützt, liefert gesprochene Antwort plus kleine Quellen-Selektoren. Beispiel:
 
@@ -159,7 +162,7 @@ Der Pi committed nach vollständig empfangenem, validiertem Antworttext mit pass
 
 „Was hast du gesagt?“ soll die zuletzt als `played` markierte Antwort wiederholen. Gibt es nur `pending/interrupted/failed`, ehrlich auf nicht bestätigte/abgebrochene Wiedergabe hinweisen und die vorhandene Antwort anbieten. Erneutes Vorlesen löst keine neue LLM-Anfrage aus. Story-Monologe bleiben in ihrer bestehenden gesonderten Queue; keine 20-Minuten-Texte in normalen Turnbestand packen.
 
-Turn-ID vor Anfrage erzeugen; Wiederübertragung derselben logischen Anfrage behält sie. Snapshot enthält Owner, Thread, Epoch, Inhaltsrevision und Mount-Generation. Änderungen an Inhalt, Wechsel, Vergessen oder Stick invalidieren alte Ergebnisse. Duplikat derselben ID im gleichen unveränderten Lösch-/Mountkontext ist No-op; neue ID mit veraltetem Snapshot wird verworfen. Nicht Modelldaten über Besitzer/Mount als wahr übernehmen.
+Turn-ID vor Anfrage erzeugen; Wiederübertragung derselben logischen Anfrage behält sie. Snapshot enthält Owner, Thread, Epoch, Inhaltsrevision, Owner-`write_epoch` und Mount-Generation. Änderungen an Speicherpause oder dauerhaften Owner-Fakten erhöhen `write_epoch`. Änderungen an Inhalt, Wechsel, Vergessen oder Stick invalidieren alte Ergebnisse. Duplikat derselben ID im gleichen unveränderten Lösch-/Mountkontext ist No-op; neue ID mit veraltetem Snapshot wird verworfen. Nicht Modelldaten über Besitzer/Mount als wahr übernehmen.
 
 ## 8. Löschen, Fortsetzen und Cachebarrieren
 
@@ -213,13 +216,13 @@ Das strukturierte `context_update` ist eine zweite optionale Capability des Mode
 | vorhandene Config-/Modulstruktur | Quoten/Idle/Feature-Schalter passend integrieren; erst wirklichen Modulnamen prüfen |
 | `docs/memory.md` + relevante Tests | neue Bedienung, Datenfluss, Aufbewahrung, Fehler und ehrliche Messresultate |
 
-Geprüfter Bestand ist gegenüber PR-Erstellung um Hardware-Intents ergänzt; diese müssen aktuelle Mess-/Bestandsdaten verwenden. Nicht versehentlich eine alte Kopie von `llm.py` oder `intents.py` zurückkopieren.
+Geprüfter Bestand ist gegenüber PR-Erstellung um Hardware-Intents, kurze Hardwarefragen und Kogitator-STT-Korrekturen ergänzt; diese müssen aktuelle Mess-/Bestandsdaten verwenden. Nicht versehentlich eine alte Kopie von `llm.py` oder `intents.py` zurückkopieren.
 
 ## 12. Referenz, tatsächliche Prüfungen und verbleibende Arbeit
 
-`reference/conversation.py` zeigt Originalspeicherung, Quellenfelder, Überschreiben aktueller Werte, Auswahl, getrennten Playback-Status, Snapshot-Prüfung, gezielte Abhängigkeitslöschung, drei Budgets via Callback und Ownerquoten in vorhandener JSON-Transaktion. Es wird von keiner Runtime importiert.
+`reference/conversation.py` und `reference/dialogue_features.py` zeigen Originalspeicherung, Quellenfelder, Überschreiben aktueller Werte, Auswahl, getrennten Playback-Status, Snapshot-Prüfung, gezielte Abhängigkeitslöschung, drei Budgets via Callback und Ownerquoten in vorhandener JSON-Transaktion. Die Referenz wird von keiner Runtime importiert. Zusätzliche getestete Offline-Funktionen: offene Rückfragen, feste relative Zeiten, Owner-Faktkorrektur, Schreibpause, benannte Archive und Herkunftsauskunft. Die vollständigen Integrationsgrenzen stehen in `DIALOGFUNKTIONEN.md`.
 
-Ausdrücklich **nicht fertig integriert**: echte Stimmerkennung/Auth, Ticketendpoints, Kernel-Mount-/dir-fd-Schreiben, reale Tokenizer/LLM-Envelope, Migration, Wiedereintritt in archivierten Thread, ownerweite Forget-Transaktion, Audio-Callbacks und SPX-Capability. Referenz ist dafür Basis, keine Behauptung fertiger Funktion. Keine Hardware-/Modellqualität aus Referenztests ableiten.
+Ausdrücklich **nicht fertig integriert**: echte Stimmerkennung/Auth, Ticketendpoints, Kernel-Mount-/dir-fd-Schreiben, reale Tokenizer/LLM-Envelope, Migration, vollständiger Controller-Resume-Lifecycle für ausgewählte Archive, ownerweite Forget-Transaktion, Audio-Callbacks und SPX-Capability. Referenz ist dafür Basis, keine Behauptung fertiger Funktion. Keine Hardware-/Modellqualität aus Referenztests ableiten.
 
 Offline ausführen:
 
