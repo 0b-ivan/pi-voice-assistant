@@ -46,7 +46,7 @@ STATES = ('on', 'offers', 'ask', 'origin', 'destination', 'calendar', 'choice')
 MODES = ('tram', 'train', 'regional', 'long')
 ACTIONS = ('remind', 'calendar')
 
-_VEHICLE = (r'(straßenbahn\w*|strassenbahn\w*|tram|trams|zug|züge|zuge|bahn|s bahn|'
+_VEHICLE = (r'(straßenbahn\w*|strassenbahn\w*|tram|trams|zug|züge|zuge|bahn|bahnen|s bahn|'
             r'regionalzug\w*|regionalbahn\w*|regionalexpress|regio|ice|intercity|fernzug\w*|'
             r'verbindung\w*|abfahrt\w*)')
 _ASKS = re.compile(r'\b(wann|nächste[nrs]?|wie komme ich|verbindung\w*|abfahrt\w*|fahrplan|'
@@ -54,7 +54,8 @@ _ASKS = re.compile(r'\b(wann|nächste[nrs]?|wie komme ich|verbindung\w*|abfahrt\
 _HOW = re.compile(r'\bwie (komme|kommen) (ich|wir)\b.*\b(nach|zum|zur|in die (innen)?stadt)\b')
 _HOME = re.compile(r'\b(von |ab )?(zu ?hause|daheim|der wohnung)\b')
 _HERE = re.compile(r'\b(von hier|ab hier|hier)\b')
-_CITY = re.compile(r'\b(in die (innen)?stadt|in die city|stadtmitte|ins zentrum)\b')
+# "in die stadt"; Vosk merges "bahn in die" into "bahnen die stadt".
+_CITY = re.compile(r'\b((in )?die (innen)?stadt|in die city|stadtmitte|ins zentrum)\b')
 _ORIGIN = re.compile(r'\b(?:ab|von|vom) (?:der |dem |den )?(?:haltestelle |bahnhof )?(.+?)'
                      r'(?= nach\b| in die\b| zum\b| zur\b| bis\b|$)')
 _DESTINATION = re.compile(r'\b(?:nach|zum|zur|bis) (?:der |dem |zum )?(.+?)(?= von\b| ab\b|$)')
