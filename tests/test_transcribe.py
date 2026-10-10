@@ -47,6 +47,23 @@ class ProviderTests(unittest.TestCase):
                     stt.transcribe_with_provider(self.audio)
 
 
+class TermTests(unittest.TestCase):
+    def test_kogitator_mishearings_are_fixed(self):
+        # Vosk outputs of 10.10.2026 (operator and system test).
+        for heard in ("was hat der cookie tat wir für eine hardware",
+                      "was hat der cookie tattoo für einen hardware",
+                      "verbindung zum cookie tatort verloren"):
+            with self.subTest(heard=heard):
+                self.assertIn("kogitator", stt.fix_terms(heard))
+        for text in ("ich esse einen cookie", "die tat war schlimm", "wie geht es dir"):
+            with self.subTest(text=text):
+                self.assertEqual(stt.fix_terms(text), text)
+
+    def test_vosk_results_pass_through_the_fix(self):
+        self.assertEqual(stt._result_text('{"text": "wie geht es dem cookie tatort"}', "final"),
+                         "wie geht es dem kogitator")
+
+
 class LiveVoskTests(unittest.TestCase):
     def test_incremental_recognizer_collects_segments_and_final_text(self):
         class FakeRecognizer:

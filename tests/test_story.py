@@ -53,6 +53,10 @@ class DetectionTests(unittest.TestCase):
             'Erzähl die alte Höllenläufer-Sage zehn Minuten lang': 10.0,
             'erzähl mir 12 minuten eine geschichte': 12.0,
             'erzähl eine halbe stunde lang': 30.0,
+            'etc mir immer zehn minuten lang über deine drop': 10.0,   # real STT output
+            'erzähl mir eine fünfminütige geschichte aus deiner vergangenheit': 5.0,
+            'erzähl mir eine zehnminütige geschichte': 10.0,
+            'erzähl eine 15 minütige geschichte': 15.0,
         }
         for text, minutes in cases.items():
             self.assertEqual(story.request(text)['minutes'], minutes, text)
@@ -60,7 +64,8 @@ class DetectionTests(unittest.TestCase):
     def test_ordinary_requests_stay_short(self):
         for text in ('Erzähl eine Geschichte', 'Erzähl mir einen Witz',
                      'Erklär das ausführlich', 'erkläre ausführlich die geschichte des internets',
-                     'Wie lange dauert das?', 'Was hast du gesagt?', 'erzähl weiter'):
+                     'Wie lange dauert das?', 'Was hast du gesagt?', 'erzähl weiter',
+                     'stell einen timer auf zehn minuten', 'wie spät ist es in zehn minuten'):
             self.assertIsNone(story.request(text), text)
 
     def test_default_and_maximum_are_configurable(self):
@@ -150,6 +155,15 @@ class PlanTests(unittest.TestCase):
         self.assertLessEqual(state['seg'], state['max_seg'])
         self.assertTrue(state['short'])
         self.assertTrue(story.sanitize(state)['short'])
+
+    def test_free_story_is_not_told_as_own_memory(self):
+        free = story.messages(story.start(dict(minutes=10, topic='irgendwas'), 'mensch',
+                                          'light', []))
+        self.assertIn('nicht als deine eigene Erinnerung', free[0]['content'])
+        self.assertNotIn('Du erzählst als Billy in der Ich-Form', free[0]['content'])
+        own = story.messages(story.start(dict(minutes=10, topic='Trupp'), 'mensch', 'light',
+                                         ['E12']))
+        self.assertIn('Du erzählst als Billy in der Ich-Form', own[0]['content'])
 
     def test_sanitize(self):
         state = story.start(dict(minutes=10, topic='x'), 'mensch', 'light', ['E01'])
