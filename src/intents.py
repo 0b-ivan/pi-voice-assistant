@@ -37,10 +37,14 @@ _PATTERNS = (
     ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|tages ?bericht|lage ?bericht|'
                             r'briefing|guten morgen)\b')),
     # Before "status": "selbsttest" / "prüfe deine logs" read the log findings.
-    ('selftest', re.compile(r'\b(selbsttest|selbst test|selbstdiagnose|eigendiagnose|'
-                            r'systemdiagnose|logauswertung|log auswertung|fehlerbericht|'
+    # Vosk small hears "Selbsttest" as "selbst", "selbst theft", "selbst test"
+    # and "Führe Selbsttest durch" as "führer selbst das durch".
+    ('selftest', re.compile(r'\b(selbst ?(test|tests|tester|theft|text|fest|tess|tast)\w*|'
+                            r'selbstdiagnose|eigendiagnose|systemdiagnose|system ?check|'
+                            r'systemprüfung|logauswertung|log auswertung|fehlerbericht|'
+                            r'(führ|mach|start)\w* (\w+ )?(diagnose|systemcheck)|(führ|mach)\w* (\w+ )?selbst (\w+ )?durch|'
                             r'(prüf|check|analysier)\w* (deine |die )?(logs?|protokolle?)|'
-                            r'(logs?|protokolle?) (prüfen|auswerten|checken))\b')),
+                            r'(logs?|protokolle?) (prüfen|auswerten|checken))\b|^selbst$')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
@@ -216,7 +220,7 @@ def briefing_text(now, snapshot, lore='off'):
     updates = updates_sentence(snapshot, short=True)
     if updates:
         parts.append(updates)
-    logs = logwatch.briefing_sentence(snapshot, lore)  # None when nothing is notable
+    logs = logwatch.briefing_sentence(snapshot, lore, now)  # None when nothing is notable
     if logs:
         parts.append(logs)
     parts.append(BRIEFING_END.get(lore, BRIEFING_END['off']))
@@ -248,7 +252,7 @@ def answer(intent, now, snapshot=None, lore=None):
     if intent == 'calendar':
         return calendar_text(snapshot, lore)
     if intent == 'selftest':
-        return logwatch.selftest_text(snapshot, lore)
+        return logwatch.selftest_text(snapshot, lore, now)
     if intent == 'identity':
         return IDENTITY.get(lore, IDENTITY['off'])
     raise ValueError(f'unknown intent {intent!r}')

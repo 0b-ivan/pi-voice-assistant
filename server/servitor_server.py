@@ -446,6 +446,8 @@ class Service:
                             emit(dict(event='show', screen='weather', day=day))
                     if intent in ('briefing', 'selftest') and self.logwatch is not None:
                         snapshot.update(self.logwatch.snapshot_fields('server_log'))
+                        if intent == 'selftest':
+                            self.logwatch.refresh(force=True)  # repair now, not in 30 min
                     if intent in ('calendar', 'briefing'):
                         if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
                             snapshot['agenda'] = agenda.DENIED

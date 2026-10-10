@@ -38,15 +38,17 @@ Auf dem Stick lesen: `zcat /mnt/proximus-memory/logs/2026-10-09.log.gz | grep pi
 - Pi: Stick steckt, aber die Log-Kopie läuft nicht (Timer steht oder Kopie fehlgeschlagen) → `logsync`.
 - CT 107: `servitor-llm` aufgegeben → `restart-llm`.
 
-Der Worker startet nur eine Unit im Zustand „failed“ neu, eine Anforderung kann also nie einen laufenden Dienst durchstarten. Je Reparatur höchstens alle 30 Minuten und dreimal am Tag; 20 Sekunden danach wird geprüft. Hat es geholfen, steht „Anzeige neu gestartet“ im nächsten Bericht, sonst „Anzeige ausgefallen, Neustart erfolglos“. Abstürze von pi-ptt selbst fängt systemd (`Restart=on-failure`) ab, der Selbsttest meldet sie.
+Der Worker startet nur eine Unit im Zustand „failed“ neu, eine Anforderung kann also nie einen laufenden Dienst durchstarten. Je Reparatur höchstens alle 30 Minuten und dreimal am Tag; 20 Sekunden danach wird geprüft. Hat es geholfen, steht „Meine Anzeige habe ich neu gestartet“ im nächsten Bericht, sonst „Meine Anzeige ist ausgefallen, und mein Neustart hat nicht geholfen“. Auf „Selbsttest“ prüfen Pi und Server sofort neu und reparieren ohne die 30-Minuten-Pause (die drei Versuche am Tag bleiben). Abstürze von pi-ptt selbst fängt systemd (`Restart=on-failure`) ab, der Selbsttest meldet sie.
 
 ## Im Morgenbericht und auf Nachfrage
 
-Der Morgenbericht nennt nach den Updates höchstens drei Befunde, die schwersten zuerst, Pi und Server gemeinsam; der Rest wird nur gezählt. Ohne Befund kommt kein Satz. Beispiel: „Selbsttest: Pi: Unterspannung, zweimal. Pi: Spracherkennung gestört, 4 mal. Server: Lokaler Sprachkern abgestürzt, einmal. Und 1 weiterer Punkt.“ (Lore VOLL: „Auspex der Protokolle: …“, Billy: „In den Logs: …“).
+Proximus spricht von sich selbst: der Pi ist er („meine Anzeige“, „bei mir“), CT 107 sein Server (Lore VOLL: „mein Kogitator“). Ein Befund, der in der letzten Stunde noch auftrat, gilt als **aktuell**; ältere nennt er mit Uhrzeit und „Seitdem ist Ruhe“. Jeder Code hat in `ADVICE` (Lore VOLL: `ADVICE_LORE`) eine Beschreibung in eigenen Worten und einen Lösungsvorschlag.
 
-„Selbsttest“, „Systemdiagnose“, „Prüfe deine Logs“ oder „Logs auswerten“ liest bis zu fünf Punkte vor, oder „Selbsttest abgeschlossen. Keine Auffälligkeiten in den letzten 24 Stunden.“
+Der Morgenbericht nennt nach den Updates höchstens drei **aktuelle** Befunde ohne Vorschlag, die schwersten zuerst; vergangene erwähnt er nicht. Beispiel: „Selbsttest meldet: Meine Stromversorgung ist eingebrochen, zweimal, zuletzt um 11 Uhr 20. Einzelheiten mit Selbsttest.“
 
-Die Befunde des Pi reisen als Codes mit Anzahl im Status-Snapshot (`log_findings`, `log_repairs`); der Server lässt nur bekannte Codes durch und ergänzt seine eigenen. Fehlt die Leseberechtigung für das Journal, meldet der Selbsttest „Systemprotokoll nicht lesbar“ statt eines sauberen Systems.
+„Selbsttest“, „Systemdiagnose“, „Systemcheck“, „Prüfe deine Logs“ oder „Logs auswerten“ (auch so, wie Vosk small sie hört: „selbst“, „selbst test“, „führer selbst das durch“) gibt erst ein Urteil, dann bis zu fünf Befunde, aktuelle zuerst, jeweils mit Vorschlag; was er selbst reparieren kann (Log-Ablage, Anzeige, lokaler Sprachkern), versucht er sofort. Beispiel: „Selbsttest abgeschlossen. Ich habe derzeit ein Problem. In den letzten 24 Stunden gab es eine Störung, die vorbei ist. Ich kann meine Protokolle nicht auf den Gedächtniskern schreiben, zuletzt um 11 Uhr 29. Ich versuche das jetzt selbst zu beheben. Hilft das nicht: Den Gedächtniskern einmal ab- und wieder anstecken. Mein Weckwort-Lauscher ist wiederholt ausgefallen, 8 mal, zuletzt um 8 Uhr 50. Seitdem ist Ruhe.“ Lore VOLL: „Auspex der Protokolle abgeschlossen. Ein Maschinengeist zürnt. … Empfohlener Ritus: …“; Billy: „Hab meine Logs durchgesehen, Boss. Gerade hakt's an einer Stelle. …“
+
+Die Befunde des Pi reisen als Codes mit Anzahl im Status-Snapshot (`log_findings`, `log_repairs`, `log_last` mit dem Zeitpunkt des letzten Auftretens); der Server lässt nur bekannte Codes durch und ergänzt seine eigenen. Fehlt die Leseberechtigung für das Journal, meldet der Selbsttest „Systemprotokoll nicht lesbar“ statt eines sauberen Systems.
 
 Abschalten: `PTT_LOGWATCH=0` in `/etc/pi-ptt.env` bzw. `SERVITOR_LOGWATCH=0` in `/etc/servitor-voice.env`.
 

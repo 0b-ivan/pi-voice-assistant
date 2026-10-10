@@ -1,3 +1,4 @@
+import datetime
 import json
 import subprocess
 import sys
@@ -157,10 +158,11 @@ class WatchTests(unittest.TestCase):
 
     def test_clean_run_and_change_reports(self):
         watch = self.make()
-        self.assertEqual(watch.check(), dict(at=100000.0, findings={}, repairs=[]))
+        self.assertEqual(watch.check(), dict(at=100000.0, findings={}, repairs=[], last={}))
         watch.check()
         self.assertEqual(len(self.reports), 1)  # unchanged results are not logged again
-        self.assertEqual(watch.snapshot_fields(), dict(log_findings={}, log_repairs=[]))
+        self.assertEqual(watch.snapshot_fields(),
+                         dict(log_findings={}, log_repairs=[], log_last={}))
 
     def test_successful_repair_is_reported(self):
         watch = self.make(broken=True)
@@ -183,6 +185,24 @@ class WatchTests(unittest.TestCase):
             self.now[0] += logwatch.REPAIR_COOLDOWN
             watch.check()
         self.assertEqual(len(self.requested), logwatch.REPAIRS_PER_DAY)
+
+    def test_asked_for_repair_skips_the_cooldown_not_the_daily_limit(self):
+        watch = self.make(broken=True)
+        watch.check()
+        watch.check(force=True)       # "Selbsttest" right after: tried again at once
+        self.assertEqual(len(self.requested), 2)
+        for _ in range(3):
+            watch.check(force=True)
+        self.assertEqual(len(self.requested), logwatch.REPAIRS_PER_DAY)
+
+    def test_findings_carry_when_they_were_last_seen(self):
+        entries = [logwatch.parse_entry(line(json.dumps(dict(version=1, event='wake_error')),
+                                             systemd_unit='pi-ptt.service', at=99000.0 + i))
+                   for i in range(3)]
+        watch = self.make(entries=entries, broken=True)
+        result = watch.check()
+        self.assertEqual(result['last'], {'wake': 99002.0, 'display_down': 100000.0})
+        self.assertEqual(watch.snapshot_fields()['log_last'], result['last'])
 
     def test_missing_worker_is_a_finding(self):
         watch = self.make(broken=True, requester=lambda action: False)
@@ -233,37 +253,100 @@ class SentenceTests(unittest.TestCase):
         self.assertIsNone(logwatch.briefing_sentence({}))
         self.assertIsNone(logwatch.briefing_sentence(dict(log_findings={}, log_repairs=[])))
 
-    def test_most_severe_first_at_most_three(self):
-        snapshot = dict(log_findings={'stt': 4, 'undervoltage': 2, 'buttons': 3, 'errors': 7},
+    NOW = datetime.datetime(2026, 10, 10, 11, 30)
+
+    def test_briefing_names_only_current_problems(self):
+        t = self.NOW.timestamp()
+        snapshot = dict(log_findings={'stt': 4, 'undervoltage': 2, 'buttons': 3, 'errors': 7,
+                                      'wake': 8},
+                        log_last={'stt': t - 60, 'undervoltage': t - 600, 'buttons': t - 60,
+                                  'errors': t - 60, 'wake': t - 3 * 3600},
                         log_repairs=['display'], server_log_findings={'crash_llm': 1})
-        text = logwatch.briefing_sentence(snapshot)
-        self.assertEqual(text, "Selbsttest: Pi: Unterspannung, zweimal. Pi: Spracherkennung "
-                               "gestört, 4 mal. Server: Lokaler Sprachkern abgestürzt, einmal. "
-                               "Und 3 weitere Punkte.")
-        self.assertTrue(logwatch.briefing_sentence(snapshot, 'billy').startswith('In den Logs:'))
+        text = logwatch.briefing_sentence(snapshot, now=self.NOW)
+        self.assertEqual(text, "Selbsttest meldet: Meine Stromversorgung ist eingebrochen, "
+                               "zweimal, zuletzt um 11 Uhr 20. Meine Spracherkennung ist "
+                               "wiederholt ausgefallen, 4 mal, zuletzt um 11 Uhr 29. Mein "
+                               "lokaler Sprachkern ist abgestürzt. Dazu zwei weitere Punkte. "
+                               "Einzelheiten mit Selbsttest.")
+        self.assertNotIn('Weckwort', text)          # over for hours: only on "Selbsttest"
+        self.assertNotIn('Pi', text)
+        past = dict(log_findings={'wake': 8}, log_last={'wake': t - 3 * 3600})
+        self.assertIsNone(logwatch.briefing_sentence(past, now=self.NOW))
+
+    def test_selftest_analyses_current_and_past(self):
+        t = self.NOW.timestamp()
+        snapshot = dict(log_findings={'wake': 8, 'logsync': 1}, log_repairs=['logsync'],
+                        log_last={'wake': t - 9600, 'logsync': t - 60},
+                        server_log_findings={'openrouter': 4},
+                        server_log_last={'openrouter': t - 300})
+        text = logwatch.selftest_text(snapshot, now=self.NOW)
+        self.assertTrue(text.startswith("Selbsttest abgeschlossen. Ich habe derzeit zwei "
+                                        "Probleme. In den letzten 24 Stunden gab es eine "
+                                        "Störung, die vorbei ist."), text)
+        self.assertIn("Ich kann meine Protokolle nicht auf den Gedächtniskern schreiben, "
+                      "zuletzt um 11 Uhr 29. Ich versuche das jetzt selbst zu beheben. "
+                      "Hilft das nicht: Den Gedächtniskern einmal ab- und wieder anstecken.",
+                      text)
+        self.assertIn("ausgewichen, 4 mal, zuletzt um 11 Uhr 25. Nichts zu tun, solange es "
+                      "nicht anhält.", text)
+        self.assertIn("Mein Weckwort-Lauscher ist wiederholt ausgefallen, 8 mal, zuletzt um "
+                      "8 Uhr 50. Seitdem ist Ruhe.", text)
+        self.assertTrue(text.endswith("Die Ablage meiner Protokolle habe ich neu angestoßen."))
+        self.assertNotIn('Pi', text.replace('Pipeline', ''))
+        # Current problems come first, the past one last.
+        self.assertLess(text.index('Gedächtniskern'), text.index('Weckwort'))
+
+    def test_selftest_lore(self):
+        t = self.NOW.timestamp()
+        snapshot = dict(log_findings={'wake': 3}, log_last={'wake': t - 60},
+                        server_log_findings={'oom': 1}, server_log_last={'oom': t - 7200})
+        full = logwatch.selftest_text(snapshot, 'full', self.NOW)
+        self.assertTrue(full.startswith("Auspex der Protokolle abgeschlossen. Ein "
+                                        "Maschinengeist zürnt."), full)
+        self.assertIn("Empfohlener Ritus: Den Ritus des Neustarts vollziehen.", full)
+        self.assertIn("In meinem Kogitator ist der Speicher der Kogitation erschöpft, "
+                      "zuletzt um 9 Uhr 30. Seitdem herrscht Ruhe.", full)
+        billy = logwatch.selftest_text(snapshot, 'billy', self.NOW)
+        self.assertTrue(billy.startswith("Hab meine Logs durchgesehen, Boss. Gerade hakt's "
+                                         "an einer Stelle."), billy)
+        self.assertIn("Vorschlag: Mich neu starten.", billy)
+        self.assertIn("Auf meinem Server ist der Arbeitsspeicher ausgegangen", billy)
 
     def test_selftest_answer(self):
-        self.assertIn('läuft', logwatch.selftest_text({}))
-        self.assertIn('Keine Auffälligkeiten',
-                      logwatch.selftest_text(dict(log_findings={}, log_repairs=[])))
-        self.assertIn('Anzeige neu gestartet',
+        self.assertIn('noch', logwatch.selftest_text({}))
+        clean = logwatch.selftest_text(dict(log_findings={}, log_repairs=[]))
+        self.assertIn('keine Störungen', clean)
+        self.assertIn('Maschinengeist ist zufrieden',
+                      logwatch.selftest_text(dict(log_findings={}), 'full'))
+        self.assertIn('Meine Anzeige habe ich neu gestartet',
                       logwatch.selftest_text(dict(log_findings={}, log_repairs=['display'])))
+        yesterday = datetime.datetime(2026, 10, 9, 19, 20).timestamp()
+        self.assertIn('zuletzt gestern um 19 Uhr 20', logwatch.selftest_text(
+            dict(log_findings={'usb': 2}, log_last={'usb': yesterday}), now=self.NOW))
 
     def test_snapshot_keeps_only_known_codes(self):
         clean = sanitize_snapshot(dict(log_findings={'stt': 3, 'rm -rf': 1, 'oom': True,
                                                      'usb': -1},
-                                       log_repairs=['display', 'evil']))
+                                       log_repairs=['display', 'evil'],
+                                       log_last={'stt': 1791616556.5, 'evil': 1791616556,
+                                                 'usb': 'x', 'oom': 5}))
         self.assertEqual(clean['log_findings'], {'stt': 3})
         self.assertEqual(clean['log_repairs'], ['display'])
+        self.assertEqual(clean['log_last'], {'stt': 1791616556.5})
         self.assertNotIn('log_findings', sanitize_snapshot(dict(log_findings='x')))
 
 
 class IntentTests(unittest.TestCase):
     def test_selftest_phrases(self):
         for text in ('selbsttest', 'mach einen selbsttest', 'prüfe deine logs',
-                     'logs prüfen', 'systemdiagnose bitte', 'analysiere die protokolle'):
+                     'logs prüfen', 'systemdiagnose bitte', 'analysiere die protokolle',
+                     # as Vosk small hears "Selbsttest" / "Führe Selbsttest durch"
+                     'selbst', 'selbst theft', 'selbst test', 'führer selbst das durch',
+                     'starte die diagnose', 'systemcheck'):
             self.assertEqual(intents.match(text), 'selftest', text)
-        for text in ('was ist die diagnose bei grippe', 'wie ist dein status'):
+        for text in ('was ist die diagnose bei grippe', 'wie ist dein status',
+                     'mach das selbst', 'das kannst du selbst', 'selbstverständlich',
+                     'selbst schuld'):
             self.assertNotEqual(intents.match(text), 'selftest', text)
 
     def test_briefing_names_findings_only_when_notable(self):
@@ -272,7 +355,8 @@ class IntentTests(unittest.TestCase):
         quiet = intents.answer('briefing', now, dict(log_findings={}, log_repairs=[]))
         self.assertNotIn('Selbsttest', quiet)
         loud = intents.answer('briefing', now, dict(log_findings={'undervoltage': 3}))
-        self.assertIn('Selbsttest: Pi: Unterspannung, dreimal.', loud)
+        self.assertIn('Selbsttest meldet: Meine Stromversorgung ist eingebrochen, dreimal.',
+                      loud)
         self.assertTrue(loud.endswith('Bericht Ende.'))
 
 

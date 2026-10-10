@@ -1026,6 +1026,12 @@ class VoiceController:
                                     **(self.logwatch.snapshot_fields()
                                        if self.logwatch is not None else {})))
 
+    def _selftest_requested(self, text):
+        """"Selbsttest": check again now and repair what can be repaired (the
+        answer, from the last check, says what is being tried)."""
+        if self.logwatch is not None and intents.match(text, self.persona) == 'selftest':
+            self.logwatch.refresh(force=True)
+
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
         # WLAN off, or just switched back on and still connecting: links unknown.
@@ -1807,6 +1813,7 @@ class VoiceController:
             return
         if intent is not None:
             # Time, date, status ...: answered on the Pi, also without network.
+            self._selftest_requested(text)
             snapshot = self.status_snapshot()
             day = None
             if intent in ('weather', 'briefing'):
@@ -1870,6 +1877,7 @@ class VoiceController:
             self.mood.hear(text, time.time())
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
+            self._selftest_requested(text)
         elif kind == 'enroll':
             # after the server's announcement
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'

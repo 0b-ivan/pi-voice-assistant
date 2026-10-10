@@ -604,10 +604,12 @@ class IntentServerTest(ServerTest):
 
         status = dict(log_findings={'undervoltage': 2, 'bogus': 1}, log_repairs=['display'])
         text = reply('guten morgen', status)
-        self.assertIn('Selbsttest: Pi: Unterspannung, zweimal. Server: Lokaler Sprachkern '
-                      'abgestürzt, einmal. Pi: Anzeige neu gestartet.', text)
+        self.assertIn('Selbsttest meldet: Meine Stromversorgung ist eingebrochen, zweimal. '
+                      'Mein lokaler Sprachkern ist abgestürzt.', text)
         self.assertNotIn('bogus', text)
-        self.assertIn('Unterspannung', reply('selbsttest', status))
+        answer = reply('selbsttest', status)
+        self.assertIn('Meine Stromversorgung ist eingebrochen', answer)
+        self.assertIn('Meine Anzeige habe ich neu gestartet.', answer)
         watch.result['findings'] = {}
         self.assertNotIn('Selbsttest', reply('guten morgen', dict(log_findings={})))
 
