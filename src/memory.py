@@ -20,6 +20,7 @@ import json
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 ROOT = Path(os.environ.get('PTT_MEMORY_DIR', '/mnt/proximus-memory/proximus'))
@@ -30,6 +31,8 @@ MAX_DIRECTIVES = 20
 MAX_HISTORY = 6
 MAX_TEXT = 200
 PERSONAS = ('servitor', 'mensch')
+MAX_FILE_BYTES = 1024 * 1024  # memory.json incl. conversations (~640 KiB) is checked
+                              # before parsing; a larger file is left untouched
 CONTEXT_BUDGET = 6000      # characters of memory sent with one turn
 HEADER_LIMIT = 12000       # base64 header size the server accepts
 
@@ -76,6 +79,11 @@ class MemoryCore:
         except OSError:
             return None
         if self._data is None or mtime != self._mtime:
+            try:
+                if self.path.stat().st_size > MAX_FILE_BYTES:
+                    return None     # never parse or overwrite an oversized file
+            except OSError:
+                return None
             try:
                 data = json.loads(self.path.read_text(encoding='utf-8'))
                 if not isinstance(data, dict):
@@ -230,6 +238,20 @@ class MemoryCore:
                 found[name] = dict(data, name=name, path=str(path))
         return found
 
+    def profile_ids(self):
+        """{name: stable id} of every voice profile. A profile without an id
+        gets a random one once; renaming and refining keep it. Conversation
+        threads belong to this id, never to the name."""
+        ids = {}
+        for name, data in self._profiles().items():
+            pid = data.get('id')
+            if not (isinstance(pid, str) and re.fullmatch(r'[0-9a-f]{32}', pid)):
+                pid = uuid.uuid4().hex
+                if not self.update_profile(name, id=pid):
+                    continue
+            ids[name] = pid
+        return ids
+
     def voiceprints(self):
         """[{'name', 'print'}] of every known person (base64 int8), or []."""
         return [dict(name=name, print=data['print']) for name, data in self._profiles().items()]
@@ -279,7 +301,7 @@ class MemoryCore:
         slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'bediener'
         path = folder / f'{slug}.json'
         temporary = path.with_suffix('.tmp')
-        keep = {k: old[k] for k in ('passphrase', 'last_score') if old and k in old}
+        keep = {k: old[k] for k in ('passphrase', 'last_score', 'id') if old and k in old}
         temporary.write_text(json.dumps(dict(keep, name=name, print=print_, count=total,
                                              at=int(self.clock()))), encoding='utf-8')
         temporary.replace(path)

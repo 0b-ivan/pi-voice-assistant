@@ -6,8 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# src/ first, this folder in front: src/conversation.py is the runtime module.
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'src'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import conversation as c
 import dialogue_features as f
 from memory import MemoryCore

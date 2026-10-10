@@ -39,6 +39,17 @@ ssh -t obivan@172.22.9.128 'sudo mkfs.ext4 -F -L PROXIMUS /dev/sda1 \
 
 [`deploy/pi-ptt-memory.conf`](../deploy/pi-ptt-memory.conf) gibt dem abgeschotteten Dienst (`ProtectSystem=strict`) Schreibrecht auf `/mnt/proximus-memory`. Ein anderer Stick wird zum Gedächtniskern, sobald er so formatiert ist und den Ordner `proximus` (Besitzer `obivan`) hat.
 
+## Gesprächsverlauf pro Person (in Arbeit, noch nicht aktiv)
+
+Etappe 1 von [`concepts/proximus-context`](concepts/proximus-context/KONZEPT.md): `src/conversation.py` legt im selben `memory.json` (Feld `conversations`, Version 2) pro Person bis zu drei Gespräche mit je 48 Originalrunden ab. Ein kleiner Arbeitsstand (z. B. Reiseziel) zitiert dabei nur Worte der Person. **Der Sprachweg nutzt das noch nicht:** Persönlicher Verlauf setzt voraus, dass die Stimme vor der Kontextauswahl sicher erkannt ist (Etappe 2). Bis dahin gilt weiter der bisherige Verlauf mit sechs Paaren.
+
+- **Besitzer:** die stabile Profil-ID im Stimmprofil (`id`, wird einmal vergeben und bleibt beim Nachtrainieren erhalten). Ohne eingelernte Stimme gilt `device-operator`. Namen, Persona und Sitzung sind nie Besitzer.
+- **Grenzen:** 5 Personen, 3 Gespräche je Person, 48 Runden je Gespräch, Frage/Antwort je 2048 Zeichen (Längeres wird abgelehnt, nicht gekürzt), 128 KiB je Person. Bei Platzmangel fallen zuerst archivierte Gespräche, dann die ältesten Runden weg, sichtbar als `discarded`. Eine Person verdrängt nie eine andere. `memory.json` über 1 MiB wird weder gelesen noch überschrieben.
+- **Pause:** Nach 12 Stunden ohne Runde wird alter Verlauf nicht mehr automatisch mitgeschickt. Gelöscht wird dabei nichts, „Setze unser Gespräch fort“ holt ihn zurück.
+- **Befehle** (werden erst mit Etappe 2 geroutet): „Neues Gespräch“ archiviert, „Vergiss dieses Gespräch“ löscht, „Vergiss alle unsere Gespräche“ löscht alle eigenen Gespräche (Fakten bleiben), „Setze unser Gespräch fort“, „Was war unser Thema?“, „Nenne dieses Gespräch …“, „Welche Gespräche hast du gespeichert?“, „Öffne das Gespräch …“. Gezieltes Vergessen („Vergiss Hamburg“) entfernt passende Runden samt den Runden, die darauf aufgebaut haben. Es sucht nach Wörtern, nicht nach jeder Umschreibung.
+- **Schutz vor späten Antworten:** Jede Runde wird gegen einen Stand (Gespräch, Löschzähler, Stick-Generation, Wechselzähler) vorbereitet. Nach Löschen, Gesprächswechsel oder Stickwechsel wird eine verspätete Antwort nicht mehr gespeichert. Die Wiedergabe (`pending/played/interrupted/failed`) wird getrennt vom Inhalt vermerkt.
+- **Alter Verlauf:** wird einmal in das erste Gespräch übernommen, aber nur, wenn der Besitzer eindeutig ist (keine oder genau eine eingelernte Stimme). Bei mehreren Stimmen bleibt er, wo er ist.
+
 ## Kennenlernen und Stimmerkennung
 
 Menü „Kennenlernen“ oder „Lerne mich kennen“ startet eine Sitzung ([`src/enroll.py`](../src/enroll.py)); B bricht jederzeit ab. Voraussetzung: Stick steckt, Server erreichbar.
