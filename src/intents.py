@@ -141,6 +141,17 @@ _HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|kön
 # Questions about the unit itself (not about hardware in general).
 _SELF = re.compile(r'\b(du|dein\w*|dich|dir|hast|einheit|proximus|billy|servitor)\b')
 
+# The unit's own readings, the possessive right before them ("deine cpu
+# temperatur"), not "die temperatur in deinem heimatland".
+_OWN_MEASUREMENT = re.compile(r'\bdein(?:e|en|er)? (?:\w+ )?(?:temperatur|auslastung|betriebszeit|'
+                              r'messwerte)\b')
+# Long sentences: only an actual request for the calendar, not every
+# mention of an appointment ("ich habe morgen einen termin beim zahnarzt").
+_CALENDAR_ASK = re.compile(r'\b(was steht (?:(?:heute|morgen) )?(?:noch )?an|'
+                           r'steht (?:heute|morgen) (?:noch )?(?:was|etwas) an|'
+                           r'habe? ich (?:heute|morgen) (?:noch )?(?:was|etwas) vor|'
+                           r'welche termine habe? ich|meine termine|(?:in|im) meinem kalender)\b')
+
 # "Wie viel Arbeitsspeicher?" alone asks about the unit; "was ist ein Prozessor" does not.
 _DEFINE = re.compile(r'^(was (ist|sind|bedeutet|heißt)|erklär\w*|wofür)\b')
 
@@ -193,12 +204,10 @@ def match(text, persona=None):
         return None
     # Personal measurements and calendar requests stay out of the model even
     # when politeness, corrections or follow-up clauses make the sentence long.
-    if re.search(r'\bdein\w*\b', text) and re.search(r'\b(temperatur|auslastung|betriebszeit|messwerte)\b', text):
+    if _OWN_MEASUREMENT.search(text):
         return 'status'
     if len(text.split()) > 12:
-        calendar = dict(_PATTERNS)['calendar']
-        if calendar.search(text) and (re.search(r'\b(ich|mein\w*)\b', text)
-                                     or re.search(r'\bwas steht\b', text)):
+        if _CALENDAR_ASK.search(text):
             return 'calendar'
         if _SELF.search(text):
             for name, pattern in _PATTERNS:

@@ -26,6 +26,15 @@ class MatchTests(unittest.TestCase):
                 with self.subTest(persona=persona, text=text):
                     self.assertEqual(intents.match(text, persona), expected)
 
+    def test_long_sentences_mentioning_appointments_or_temperature_go_to_the_model(self):
+        for text in (
+            'ich habe morgen einen termin beim zahnarzt und bin nervös was kann ich tun damit ich ruhiger werde',
+            'erzähl mir eine geschichte über einen kalender der sprechen kann und was steht in diesem kalender alles drin',
+            'was hältst du von der temperatur in deinem heimatland und wie warm ist es dort im sommer',
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(intents.match(text))
+
     def test_recognized_questions(self):
         cases = {
             "wie spät ist es": "time",
