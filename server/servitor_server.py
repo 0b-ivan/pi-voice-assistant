@@ -26,6 +26,10 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 Responses of /v1 are NDJSON events: ``stage`` (recognize, think, synthesize,
 render), ``transcript``, ``reply``, ``audio`` (base64), ``done`` (timings) or
 ``error``. Only one turn runs at a time; a second one gets HTTP 503.
+A journey turn (src/journeys.py, only for Pis that send ``trip`` in their
+status) ends with ``journey`` (the structured request, the recognized voice
+and the proposal ID) and ``done``, without ``audio``: the Pi queries the
+timetable and speaks the answer itself.
 """
 import base64
 import collections
@@ -52,6 +56,7 @@ import weather  # noqa: E402
 import agenda  # noqa: E402
 import device_control  # noqa: E402
 import enroll  # noqa: E402
+import journeys  # noqa: E402
 import logwatch  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
@@ -505,6 +510,21 @@ class Service:
                     raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
                 if transcribe_only:  # enrollment answers: the Pi stores them itself
+                    emit(dict(event='done', timings=timings))
+                    return
+                trip_state = (device or {}).get('trip')
+                trip = journeys.parse(text, trip_state) if trip_state else None
+                if trip is not None:
+                    # Trams/trains, reminder, calendar: the Pi queries and acts itself
+                    # (home and calendar stay there). Structured, no LLM, no audio.
+                    if keep:
+                        memory_copy = timed('speaker', self._identify, audio, memory_copy,
+                                            emit)
+                    guest = isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy)
+                    name = memory_copy.get('speaker') if isinstance(memory_copy, dict) else None
+                    emit(dict(event='journey', request=trip,
+                              speaker=None if guest or not isinstance(name, str) else name,
+                              guest=guest, proposal=(device or {}).get('trip_id')))
                     emit(dict(event='done', timings=timings))
                     return
                 if intents.is_stop(text):
