@@ -28,8 +28,9 @@ state() { # stick ok
 # Check the device first: an absent stick must not block on the automount.
 if [ ! -e "$DEV" ]; then state false false; exit 0; fi
 ls "$MNT" >/dev/null 2>&1          # wakes the automount
-# The automount point itself is an autofs mount: only ext4 means the stick.
-if [ "$(findmnt -n -o FSTYPE -T "$MNT")" != ext4 ]; then state true false; exit 1; fi
+# The automount point itself is an autofs mount with the stick's ext4 on top
+# (findmnt lists both): only an ext4 mount there means the stick.
+if ! findmnt -rn -t ext4 -M "$MNT" >/dev/null; then state true false; exit 1; fi
 if ! mkdir -p "$DIR" || ! chmod 0750 "$DIR"; then state true false; exit 1; fi
 
 boot="$(cat /proc/sys/kernel/random/boot_id)"

@@ -13,8 +13,9 @@ import logwatch  # noqa: E402
 from system_status import sanitize_snapshot  # noqa: E402
 
 
-def line(message, unit=None, priority=6, kernel=False, systemd_unit=None):
-    data = dict(MESSAGE=message, PRIORITY=str(priority), __REALTIME_TIMESTAMP='1760000000000000')
+def line(message, unit=None, priority=6, kernel=False, systemd_unit=None, at=1760000000.0):
+    data = dict(MESSAGE=message, PRIORITY=str(priority),
+                __REALTIME_TIMESTAMP=str(int(at * 1e6)))
     if unit:
         data['UNIT'] = unit
     if systemd_unit:
@@ -85,6 +86,12 @@ class AnalyseTests(unittest.TestCase):
                                           priority=3, kernel=True))
         other = logwatch.parse_entry(line('foo.service: something broke', priority=3))
         self.assertEqual(pi([noise] * 20), {})
+        boot = [logwatch.parse_entry(line(text, priority=3)) for text in (
+            'nl80211: kernel reports: Registration to specific type not supported',
+            'bgscan simple: Failed to enable signal strength monitoring',
+            '/usr/lib/udev/rules.d/90-alsa-restore.rules:18 GOTO="alsa_restore_std" '
+            'has no matching label, ignoring.')]
+        self.assertEqual(pi(boot * 5), {})
         self.assertEqual(pi([other] * 4), {})
         self.assertEqual(pi([other] * 5), {'errors': 5})
         ignore = logwatch.compile_ignore('something broke')
@@ -95,6 +102,38 @@ class AnalyseTests(unittest.TestCase):
         entry = logwatch.parse_entry(line('usb 1-1.2: USB disconnect, device number 4',
                                           priority=4, kernel=True))
         self.assertEqual(pi([entry] * 5), {})
+
+
+    def test_restart_for_new_code_is_no_crash(self):
+        def systemd(message):
+            return logwatch.parse_entry(line(message, priority=4, unit='pi-display.service',
+                                             systemd_unit='init.scope'))
+        restart = [systemd('pi-display.service: Main process exited, code=exited, '
+                           'status=75/TEMPFAIL'),
+                   systemd("pi-display.service: Failed with result 'exit-code'.")]
+        self.assertEqual(pi(restart), {})
+        crash = [systemd('pi-display.service: Main process exited, code=exited, '
+                         'status=1/FAILURE'),
+                 systemd("pi-display.service: Failed with result 'exit-code'.")]
+        self.assertEqual(pi(restart + crash), {'crash_display': 1})
+
+    def test_pulled_stick_writes_are_no_disk_fault(self):
+        def kernel(message, at, priority=3):
+            return logwatch.parse_entry(line(message, priority=priority, kernel=True, at=at))
+        t = 1760000000.0
+        pulled = [kernel('device offline error, dev sda, sector 2056 op 0x1:(WRITE)', t),
+                  kernel('Buffer I/O error on dev sda1, logical block 1, lost async page write',
+                         t + 0.1),
+                  kernel('EXT4-fs (sda1): shut down requested (2)', t + 0.2, priority=1),
+                  kernel('Aborting journal on device sda1-8.', t + 0.2),
+                  kernel('JBD2: I/O error when updating journal superblock for sda1-8.', t + 0.3)]
+        self.assertEqual(pi(pulled * 3), {})
+        # The same errors later, or without "device offline", are a failing medium.
+        later = kernel('Buffer I/O error on dev sda1, logical block 9, lost async page write',
+                       t + 60)
+        self.assertEqual(pi(pulled + [later]), {'disk_io': 1})
+        sd_card = kernel('Buffer I/O error on dev mmcblk0p2, logical block 9', t + 0.1)
+        self.assertEqual(pi(pulled + [sd_card]), {'disk_io': 1})
 
 
 class WatchTests(unittest.TestCase):

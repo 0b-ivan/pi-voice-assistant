@@ -122,9 +122,19 @@ IGNORE = (
     r'Bluetooth: hci0', r'vc4-drm', r'dbus-daemon.*Activation via systemd failed',
     r'systemd-journald', r'sudo: .*pam_unix',
     r'USB disconnect',   # pulling the memory stick
+    # wpa_supplicant with the brcmfmac driver, Debian's ALSA udev rule at boot
+    r'nl80211: kernel reports', r'bgscan simple', r'alsa-restore\.rules',
 )
 # systemd results that mean a crash; 'timeout' only follows a slow stop.
 _FAILED = re.compile(r"Failed with result '(exit-code|signal|core-dump|oom-kill|watchdog)'")
+# Exit 75 (EX_TEMPFAIL): the display restarts itself on new code (display.py).
+_RESTART = re.compile(r'Main process exited, code=exited, status=75/')
+# A pulled USB stick: the kernel reports "device offline" for it, then lost
+# writes and an aborted ext4 journal. Its lines within this window are no fault;
+# a failing medium reports read/write errors without "device offline".
+_OFFLINE = re.compile(r'device offline error, dev (sd[a-z])\b')
+_USB_DISK = re.compile(r'\b(sd[a-z])\d*\b')
+UNPLUG_WINDOW = 5.0
 BENIGN_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
 _BENIGN = re.compile(r'no transcript|no speech|too short', re.IGNORECASE)
 _LIMITED = re.compile(r'insufficient permissions|not seeing messages from other users',
@@ -204,11 +214,32 @@ def classify(entry, rules, units, ignore):
     return None
 
 
+def _unplugged(entry, offline):
+    """True for a kernel line about a USB disk shortly after it went offline."""
+    match = entry['kernel'] and _USB_DISK.search(entry['text'])
+    return bool(match) and any(0 <= entry['at'] - at <= UNPLUG_WINDOW
+                               for at in offline.get(match.group(1), ()))
+
+
 def analyse(entries, rules, units, ignore=None):
     """Counts of the findings that reach their threshold: {code: count}."""
     ignore = compile_ignore() if ignore is None else ignore
-    counts = {}
+    offline = {}
     for entry in entries:
+        match = entry['kernel'] and _OFFLINE.search(entry['text'])
+        if match:
+            offline.setdefault(match.group(1), []).append(entry['at'])
+    counts = {}
+    restarting = set()
+    for entry in entries:
+        if entry['unit'] in units and _RESTART.search(entry['text']):
+            restarting.add(entry['unit'])
+            continue
+        if entry['unit'] in restarting and _FAILED.search(entry['text']):
+            restarting.discard(entry['unit'])
+            continue
+        if _unplugged(entry, offline):
+            continue
         code = classify(entry, rules, units, ignore)
         if code:
             counts[code] = counts.get(code, 0) + 1
