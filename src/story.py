@@ -19,7 +19,9 @@ from pathlib import Path
 import re
 import time
 
-WORDS_PER_MINUTE = 130     # planning assumption until real audio durations are known
+# Planning assumption until real audio durations are known. Measured on the
+# Pi with thorsten-high on 10.10.2026: 276 words in 90 s, about 185 a minute.
+WORDS_PER_MINUTE = 180
 FIRST_WORDS = 140          # short first section: the story starts speaking soon
 SECTION_WORDS = 330        # following sections (about 2.5 minutes each)
 TAIL_CHARS = 600           # end of the last section, for a seamless continuation
@@ -74,7 +76,10 @@ def request(text):
     "Erzähl eine Geschichte" alone stays a normal, shorter answer; "erklär
     das ausführlich" is a factual request, not a story."""
     words = normalize(text)
-    if not _STORY.search(words):
+    # "... zehn Minuten lang über deinen Trupp" is a story wish even when the
+    # recognizer lost "erzähl" (heard as "etc" on 10.10.2026).
+    talk = bool(_MINUTES.search(words) and re.search(r'\b(lang|über|von)\b', words))
+    if not _STORY.search(words) and not talk:
         return None
     if _EXPLAIN.search(words) and not re.search(r'\berzähl', words):
         return None
@@ -258,8 +263,10 @@ neuer Einstieg wie „Natürlich“ oder „Hier ist“.
 Entscheidungen, Folgen und ein ruhiger Schluss. Länge entsteht aus Szenen, Gesprächen und \
 Entwicklung, nie aus Wiederholung oder Zusammenfassungen.
 - Bereits Erzähltes nicht noch einmal erzählen und nicht als neue Enthüllung darstellen.
-- Archiv-Engramme sind feste Anker. Beschreibende Kleinigkeiten darfst du ergänzen, aber \
-keine neuen Lebensdaten, Schicksale, Geheimnisse oder Fähigkeiten.
+- Archiv-Engramme sind feste Anker. Beschreibende Kleinigkeiten wie Geräusche, Gerüche oder \
+Handgriffe darfst du ergänzen, aber keine neuen Lebensdaten, Schicksale, Geheimnisse oder \
+Fähigkeiten und keine neue Lage, Datierung oder Zugehörigkeit von Orten und Einheiten \
+(etwa in welchem Orbit oder Segmentum etwas liegt).
 - Ist kein Archiv-Engramm angegeben, erzählst du frei zum gewünschten Thema; eine erfundene \
 Geschichte ändert nichts an deiner eigenen Vergangenheit.
 - Kein Markdown, keine Listen, keine Emojis."""
@@ -288,14 +295,20 @@ def _section_ids(state):
     return ids[start:end]
 
 
+FREE = ("Diese Geschichte stammt nicht aus deinem Archiv: Erzähle sie als erfundene Geschichte "
+        "mit eigenen Figuren, nicht als deine eigene Erinnerung und nicht als Ich-Erzählung über "
+        "dein Leben. Sie verändert nichts an deiner Vergangenheit.")
+
+
 def messages(state):
     """[system, user] for the next section; stable parts first."""
     import llm
     import lore
     persona, level = state['persona'], state['lore']
     minutes = f"{state['minutes']:g}".replace('.', ',')
+    voice = VOICE[persona] if state['ids'] else FREE
     parts = [llm.PERSONA_PROMPTS[persona], llm.LORE_PROMPTS[persona][level],
-             RULES.format(minutes=minutes), VOICE[persona]]
+             RULES.format(minutes=minutes), voice]
     known = lore.by_id()
     current = [known[i] for i in _section_ids(state)
                if i in known and lore.visible(known[i], persona, level)]
