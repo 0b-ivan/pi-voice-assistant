@@ -1,44 +1,75 @@
-# Nächste Aufgaben
+# Roadmap: offene Aufgaben
 
-Stand 09.10.2026. Der Funktionsstand steht in der [README](../README.md); hier steht nur verbleibende Arbeit.
+**Stand: 10.10.2026 · Arbeitsvorschlag zur Priorisierung.** Diese Datei listet **nur offene** Arbeiten. Implementierte Funktionen und ihre Grenzen stehen in der [README](../README.md) und [Architektur](architecture.md); frühere Änderungen in [Git-Historie](architecture.md#entscheidungen-und-historie). Ein grüner Unittest bedeutet **nicht** automatisch, dass die Funktion am echten Pi abgenommen wurde.
 
-## Als Nächstes
+## P0 · Stabilität und Geräte-Abnahme
 
-- **Abnahme der Neuerungen vom 09.10.2026 am Gerät** ([Protokoll](history/session-2026-10-09.md)):
-  - Gerätesteuerung: erkennt Vosk „WLAN aus/an“, „Geh schlafen“, „Starte dich neu“, „Fahr dich herunter“ und „Bestätigt“ mit echter Stimme? Greifen `rfkill`, Neustart über den Wartungsdienst und Herunterfahren (polkit)? Herunterfahren zuletzt testen.
-  - Stimmerkennung bei kurzen Befehlen: `speaker`-Werte im Journal von CT 107 prüfen; liegen sie beim Bediener meist unter 0,5, Stimme nachtrainieren oder `SERVITOR_SPEAKER_THRESHOLD` senken.
-  - Quittungston und die Aussprache „Omnissiah“ anhören; Morgenbericht mit Wetter und Terminen aus der echten Nextcloud.
-  - Wetteransicht auf dem PiTFT (Bildrate, Lesbarkeit), `weather.json` auf dem Stick nach einem Abruf, Wetterfrage ohne Netz.
-- **Spracherkennung mit echter Stimme bewerten:** etwa 10 Sätze über das WM8960-Mikrofon aufnehmen, Vosk small gegen Whisper small auf CT 107 vergleichen (Branch `feat/servitor-whisper-stt`; mit synthetischer Sprache war Vosk small genauso gut und 50-mal schneller nach dem Loslassen). Aufnahmen danach löschen.
-- **Aktivierungswort mit echter Stimme abnehmen** (Trefferquote, Fehlauslösungen über einen Tag, Pausenerkennung), danach eigenes „Hey Servitor“ trainieren (openWakeWord-Trainingspipeline mit Piper-Stimmen, auf CT 107).
-- **Hardware-Abnahme der Bedienung:** PiTFT-Menü, „Display aus“, Status-LED-Farben, C/D mit Wiederholung, E im und außerhalb des Menüs.
-- **Weitere Funktionen ohne LLM:** z. B. Lautstärke per Sprache, Timer/Wecker, „Wiederhole“. Aktionen auf dem Pi brauchen dafür eine Rückmeldung vom Server an den Pi.
-- **Charakter verfeinern** anhand echter Gespräche ([`server/sample-persona.py`](../server/sample-persona.py)).
+- **Neuerungen vom 09.–10.10. am Pi testen**:
+  - Sprachbefehle „WLAN aus/an“, „Geh schlafen“, „Starte dich neu“, „Fahr dich herunter“ und „Bestätigt“ mit echter Stimme; `rfkill`, polkit und Wartungsworker. **Herunterfahren zuletzt testen.**
+  - Stimmerkennung bei kurzen Befehlen: `speaker`-Werte auf CT 107 prüfen, Schwelle nur auf Basis echter Messwerte anpassen.
+  - Quittungston und Aussprache von „Omnissiah“ anhören; Morgenbericht mit **echter** Nextcloud-Verbindung.
+  - Wetterfrage offline, `weather.json` auf dem Gedächtnis-Stick, animierte Fünf-Tage-Ansicht auf dem PiTFT (Lesbarkeit/Bildrate).
+  - PiTFT-Menü, „Display aus“, Status-LED, C/D-Wiederholung und E im/außerhalb des Menüs prüfen.
+- **Wake Word „Hey Jarvis“ abnehmen** (nach [#77](https://github.com/0b-ivan/pi-voice-assistant/pull/77)): echte Sprache, Trefferquote, Fehlaktivierungen über einen Tag, Pausenerkennung und Rückkehr nach Wiedergabe/Abbruch. Das Wake Word ist **implementiert**, nicht „später“.
+- **Fehlerwege reproduzierbar prüfen:** CT 107 nicht erreichbar; Internet weg bei erreichbarem CT 107; beide weg; Wiederverbindung; OpenRouter-Timeout/fehlende Credits. Regelbasierte Pi-Antworten müssen ohne Netz weitergehen; ein freies Offline-LLM existiert **nicht** auf dem Pi.
+- **PTT-Grenzfälle und Betrieb:** Entprellung, Aufnahme <100 ms, Boot mit gedrückter Taste, Abbruch während STT/Wiedergabe, Reboot mit SHIM/Display. PiSugar-3-Kapazität, Laufzeit und kontrollierte Abschaltung messen.
+- **Selbsttest/Logs** ([PR #79](https://github.com/0b-ivan/pi-voice-assistant/pull/79)): zum Stand dieser Roadmap **offener PR**, nicht Teil von `main`. Nach Review und Merge den Logsync auf dem Stick, journal-RAM-Konfiguration, Reparaturgrenzen und echten Pi-/CT-Betrieb abnehmen.
 
-## Ideen
+## P1 · Wartbarkeit und Qualität
 
-Gesammelt am 09.10.2026. Erledigtes bleibt zur Übersicht stehen.
+- **STT-Vergleich mit echter Stimme:** ungefähr zehn WM8960-Aufnahmen für Vosk small vs. Whisper small auf CT 107; Experimente auf `feat/servitor-whisper-stt`; Audiodateien danach löschen. Messungen mit synthetischer Sprache sind kein Ersatz.
+- **Zielgerichtetes Refactoring:** `src/ptt.py` weiter aufteilen (Konfiguration bereits `src/ptt_config.py`), ohne die getesteten Zustandsübergänge zu verändern. Tests für Geräte- und Server-Fallback ergänzen.
+- **Dienstrechte:** dedizierten Pi-Dienstbenutzer statt `obivan` prüfen; Installer, Secret-Gruppen, systemd-Units und Schreibpfade gemeinsam migrieren.
+- **CI und Doku:** Links/Anker, Konfigurationsbeispiele, Installer-Syntax und dokumentierte Defaults automatisiert prüfen; zeitabhängigen Testflaky-Fall reproduzieren.
+- **Kommunikation SPX/1:** Sitzung und `ping/ack` sind vorhanden ([PR #74](https://github.com/0b-ivan/pi-voice-assistant/pull/74)); Outbox, Dead-Letter, Zustellgarantien und Server→Pi-Kanal stehen noch aus ([Architektur](architecture.md#spx1-netzwerk-und-sicherheit)).
+- **Netz und Hardware:** LAN-SSH, Router-Zugriff und alle drei USB-Ports des Hubs einzeln prüfen; anschließend Gehäuse/Montage.
 
-1. **Nachrichten für bestimmte Personen** („Proximus, sag Anna, dass das Essen im Kühlschrank steht“): im Gedächtnis als Postfach je Person ablegen; erkennt der Server die Person an der Stimme, kommt zuerst „Eingehende Vox-Übertragung von …“. Baut auf Stimmprofilen, Gedächtnis und der Regel „Fremden keine persönlichen Daten“ auf; braucht ein neues Kommando und einen Postfach-Eintrag im Gedächtnis.
-2. ~~**Morgenlitanei**~~: erledigt 09.10.2026 („Morgenbericht“, „Guten Morgen“; Antwort ohne Gruß im Servitor-Ton; Datum, Uhrzeit, Wetter über Open-Meteo, Akku/Server/Updates nur bei Bedarf), dazu Wetterfragen. [Architektur](architecture.md#morgenlitanei-und-wetter). Termine aus Nextcloud per CalDAV seit 09.10.2026, abgefragt vom Pi (gegen Radicale getestet; Cloudflare-User-Agent und DAV-Root-Suche seit #64). Seit 10.10.2026 Wetter für fünf Tage auf dem Gedächtnis-Stick (offline), mit animiertem Piktogramm auf dem Display. Offen: wahlweise automatisch beim ersten Tastendruck des Tages.
-3. **Homelab-Wächter:** Proxmox-API abfragen („Wie geht es dem Maschinengeist von CT 107?“: CPU, RAM, Backups, ausgefallene Container) und selbst melden („Warnung: Backup-Ritus fehlgeschlagen.“) über die vorhandenen Alarme. Braucht einen API-Token nur mit Leserechten auf dem Server.
-4. **Durchsagen vom Server:** Endpoint `POST /v1/announce` auf CT 107, über den Home Assistant, Uptime Kuma oder Skripte Proximus etwas sagen lassen. Der Rückkanal Server → Pi ist dieselbe Voraussetzung wie für Timer/Wecker.
-5. **Smart-Home-Steuerung** über Home Assistant („Aktiviere die Leuchtglobe im Wohnzimmer“), falls vorhanden.
-6. ~~**Atmosphäre**~~: erledigt. Servo-Schädel mit leuchtendem Auge und Litanei-Regen auf dem Display gab es schon ([Display](display.md)); seit 09.10.2026 dazu der Quittungston beim Loslassen ([Architektur](architecture.md#sprachausgabe)). Offen: Ton am Gerät abhören, ggf. Lautstärke/Länge anpassen.
-7. **Kamera** (siehe Hardware): „Was siehst du?“ schickt ein Foto an ein Vision-Modell über OpenRouter, Antwort als Sensorbericht.
-8. ~~**Gerätesteuerung per Sprache**~~: erledigt 09.10.2026. WLAN aus/an, Ruhemodus, Neustart und Herunterfahren (mit Rückfrage), WLAN geht bei Bedarf selbst an. [Architektur](architecture.md#gerätesteuerung-per-sprache).
+## P2 · Nützliche Funktionen (noch nicht umgesetzt)
 
-## Server und Netz
+- **Timer, Wecker und Erinnerungen:** Timer/Wecker lokal auf dem Pi, Erinnerungen auf dem Stick; bei Ausfall von Server/Internet verfügbar. Benötigt Priorisierung von Ansagen und Geräte-Kommandos.
+- **Wiederhole und Lautstärke per Sprache** ohne LLM; für vom Server erkannte Kommandos einen bestätigten Rückkanal auf den Pi vorsehen.
+- **Nachrichten je Person:** Postfach auf dem Stick; ausgeben nur an erkannte Person. Mit Stimmprofilen, Datenschutz und Prioritäten abstimmen.
+- **Durchsagen vom Server:** etwa für Home Assistant/Uptime Kuma; erst nach sicherem Rückkanal. `POST /v1/announce` ist ein Vorschlag, kein vorhandener Endpoint.
+- **Morgenbericht automatisch beim ersten Tastendruck** als abschaltbare Option.
+- **Agonie-Taste / adaptives Feedback:** B-Langdruck bewertet eine tatsächlich erzeugte LLM-Antwort negativ, während B-Kurzdruck weiterhin sofort stoppt/zurückgeht. Eine konkrete Korrektur kann als widerrufbare Präferenz gespeichert werden; simulierte Agonie/Stimmung ist ein Darstellungseffekt. **Nur Konzept, keine Implementierung** (siehe [Konzeptskizze](#agonie-taste-und-adaptives-feedback-konzeptskizze)).
+- **Charakter und Gedächtnis:** echtes Gesprächsfeedback für Servitor/Billy; verbleibende Konzeptschritte (Lore-Archiv, Logbuch/„Was habe ich verpasst?“, Gesprächserkennung, Inbox, Unterbewusstsein) separat planen.
 
-- ~~Zugang über Cloudflare als zweite URL~~: erledigt 08.10.2026, `https://proximus.obivan.org` (nur Bearer-Token). Ein Access-Service-Token bleibt optional möglich (`ASSISTANT_CF_ACCESS_*`).
-- Opus für den Internetweg erst mit schnellerer Dekodierung auf dem Pi (ffmpeg kostet dort ca. 5 s).
-- LLM-Streaming mit satzweiser Synthese prüfen, um die Zeit bis zum ersten Ton weiter zu senken.
+## P3 · Optionale Erweiterungen (Entscheidung ausstehend)
 
-## Betrieb und Hardware
+- **Home Assistant** anbinden und **Proxmox-Monitoring** über einen Token mit reinen Leserechten evaluieren; Sicherheits- und Bestätigungsmodell festlegen.
+- **Eigenes „Hey Servitor“** trainieren und gegen „Hey Jarvis“ vergleichen, erst nach Wake-Word-Abnahme.
+- **Android als mobiles Offline-LLM-Backend ohne Termux** evaluieren: native App, lokaler API-Endpunkt, Hotspot/WLAN, Modellleistung und Energieverbrauch prüfen. **Nicht implementiert, noch keine Architekturentscheidung.**
+- **Kamera/Vision:** Sensor identifizieren, Bildqualität und Datenschutz prüfen; dann erst API/Modellwahl.
+- **Optimierungen:** Opus erst bei schnellerer Dekodierung auf dem Pi; satzweises LLM-/TTS-Streaming nur nach Latenzmessungen. WebSocket nur bei nachgewiesenem Mehrwert gegenüber HTTP/SPX/1.
 
-- PiSugar 3: Akkukapazität, Laufzeit und kontrolliertes Abschalten.
-- Dedizierter Dienstbenutzer statt `obivan`.
-- SSH/Router über LAN und die drei USB-Ports des Hubs abnehmen.
-- PTT-Grenztests: Prellimpulse, Aufnahme unter 100 ms, Boot mit gehaltener Taste.
-- Endgültige Montage/Gehäuse; Kamera identifizieren. Wake Word später.
-- Möglicherweise zeitkritischer Test in der Suite (ein Hänger, ein einmaliger Fehler, nicht reproduzierbar).
+## Agonie-Taste und adaptives Feedback (Konzeptskizze)
+
+**Status: Idee aus [PR #82](https://github.com/0b-ivan/pi-voice-assistant/pull/82), nicht implementiert.** Erst die vorhandene B-Abbruchfunktion am SHIM abnehmen. Ein Tastendruck ändert **keine LLM-Modellgewichte**; hier geht es um gespeicherte Präferenzen, nicht um Fine-Tuning. „Agonie“ ist ein **simulierter Persona-/Displayeffekt**, kein tatsächliches Schmerzempfinden.
+
+### Vorgeschlagenes B-Verhalten
+
+| Situation | B kurz | B ≥ 0,8 s |
+|---|---|---|
+| LLM-Antwort wird vorgelesen | Ausgabe **sofort** stoppen | Sofort stoppen **und** diese Antwort einmal negativ bewerten |
+| Ruhe, letzte LLM-Antwort höchstens 60 s alt | bisheriges Verhalten | Letzte LLM-Antwort einmal negativ bewerten |
+| Aufnahme, STT oder LLM arbeitet noch ohne Antwort | abbrechen | abbrechen, **kein** Feedback |
+| Menü, Registrierung, Wartung, Sicherheits-/Gerätebestätigung | zurück/abbrechen | **kein** Feedback |
+| Alarm, Status, direkte Regelantwort | wie bisher stoppen | **kein** LLM-Feedback |
+
+Die Abbruchaktion erfolgt **bereits beim Drücken**, nicht erst beim Loslassen. Turn-ID und zugehörige Frage/Antwort müssen zuvor eindeutig feststehen. Entprellung, `monotonic()`, gedrückt gestartete Taste und gleichzeitige Tastendrücke dürfen niemals Doppelbewertungen erzeugen. A/C/D/E bleiben unverändert.
+
+### Geplanter MVP
+
+1. **Feedback erfassen:** Nur wirklich generierte LLM-Antworten erhalten ein Ereignis mit Turn-ID, Zeitpunkt, Provider/Modus und gekürztem Frage-/Antwortkontext; **keine Audioaufnahme**. Negatives Feedback allein erzeugt **keine erfundene allgemeine Regel**.
+2. **Grund erfragen und bestätigen:** Optional bei der nächsten passenden Interaktion „Was soll ich ändern?“. Erst eine konkret bestätigte Korrektur (z. B. „Antworte kürzer“) wird zur aktiven, überprüfbaren Präferenz. Wiederholte Fehler dürfen höchstens Vorschläge erzeugen.
+3. **Gedächtnis:** Der **Pi** verwaltet eine versionierte, atomar geschriebene `proximus/feedback.json` auf dem Stick `PROXIMUS` (Vorschlag: maximal 100 Ereignisse/20 Regeln); ohne Stick nur flüchtig, **keine dauerhafte Änderung**. An CT 107 nur relevante, validierte Regeln über die bestehende Gedächtnis-/Sitzungsschnittstelle übertragen, den Kern-Hash bei Änderungen aktualisieren.
+4. **Anwenden und widerrufen:** Relevante Regeln in OpenRouter-/Qwen-Kontexte einbinden, **nicht** in Notfallansagen, feste Geräteaktionen oder höherrangige Sicherheitsvorgaben. „Was hast du gelernt?“ und „Vergiss die letzte Korrektur“ müssen funktionieren; ein Widerruf muss auch den Serverkontext aktualisieren.
+5. **Darstellung:** Kurz „AGONIE / KORREKTUR REGISTRIERT“ auf Display/LED, optional Glitch-Ton; flüchtiger `agony_level` (0–1), vorübergehende `besorgt`-Stimmung, dann Abklingen. **Keine** Rache, Hilfsverweigerung oder dauerhafte Stimmungsstrafe.
+6. **Berechtigungen und Datenschutz:** Fremde oder nicht sicher erkannte Stimmen dürfen keine globalen Regeln bestätigen. Beim reinen Pi-Offline-Fallback ohne gesicherte Identität keine automatische Regeländerung. Keine Secrets speichern; private Inhalte nicht ohne Einwilligung an externe LLMs senden.
+
+**Abnahme vor Umsetzung:** Short-/Long-Press und Grenzzeit, B während LLM-TTS und bis 60 s danach, kein Feedback in allen anderen Zuständen, genau ein Event, Reboot/fehlender Stick, Rücknahme und Sitzungs-Invalidierung, Offline-/Serverausfall und reale SHIM-Bedienung. Erst danach können positive Verstärkung, Vorschläge je Person und ein optionaler Export der Feedback-Daten für separates **LoRA/DPO/Fine-Tuning auf geeigneter Hardware** evaluiert werden.
+
+**Noch zu entscheiden:** Glitch-Ton oder nur Display/LED? Bei nächster Interaktion nach Fehlergrund fragen? Geltungsbereich pro Stimmprofil oder zunächst geräteweit? Im Offline-Fall nur Ereignis speichern und Bestätigung später nachholen (Vorschlag).
+
+**Prioritäten und Produktentscheidungen sind Vorschläge zur Abstimmung im Dokumentations-PR.** Nach Bestätigung die Phasen festlegen. Keine abgeschlossenen Funktionen mit ~~Durchstreichung~~ wieder in diese Roadmap aufnehmen.
+
