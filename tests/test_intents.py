@@ -51,6 +51,29 @@ class MatchTests(unittest.TestCase):
         self.assertEqual(intents.match("steht heute noch was an"), 'calendar')
         self.assertIsNone(intents.match("wie lange halten lithium akkus"))
 
+    def test_hardware_questions_are_answered_locally(self):
+        # Operator questions of 10.10. 23:37 (the LLM invented 8/16 GB and Teraflops).
+        for text in ("wie ist deine speicherplatz arbeitsspeicher aus",
+                     "wie viel arbeitsspeicher hast du auf dem kleinen",
+                     "wie viel arbeitsspeicher hast",
+                     "du willst also behaupten dass du ach gigabyte arbeitsspeicher hast "
+                     "kannst du es gerne mal nach",
+                     "nie was hast du denn für eine cpu und wie viel liefert sie"):
+            with self.subTest(text=text):
+                self.assertEqual(intents.match(text), 'hardware')
+        for text in ("wie viel ram braucht ein laptop", "was ist ein prozessor"):
+            with self.subTest(text=text):
+                self.assertIsNone(intents.match(text))
+
+    def test_hardware_answer_has_the_real_numbers(self):
+        for lore in ('off', 'light', 'full', 'billy', 'billy_full'):
+            with self.subTest(lore=lore):
+                text = intents.answer('hardware', datetime.datetime(2026, 10, 10, 23, 37),
+                                      {'mem_free_pct': 46}, lore=lore)
+                self.assertIn('Zero 2 W', text)
+                self.assertIn('512 Megabyte', text)
+                self.assertIn('46 Prozent frei', text)
+
     def test_missing_functions_get_an_honest_local_answer(self):
         # Vosk forms from the 2026-10-10 system test included ("still" for "stell").
         for text in ("stell einen wecker auf sieben uhr", "still einen wecker auf sieben uhr",

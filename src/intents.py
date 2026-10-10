@@ -60,6 +60,10 @@ _PATTERNS = (
         r'spiel\w* (\w+ ){0,3}(musik|lied|song|radio|playlist)|spielmusik|'
         r'(schalt|mach|dimm)\w* (\w+ ){0,3}(licht|lampe|lampen|heizung)\w*( an| aus| ein)?|'
         r'(licht|lampe|heizung) (\w+ ){0,2}(an|aus|ein))\b')),
+    # The LLM invented "8/16 Gigabyte" and "12,8 Teraflops" (operator, 10.10. 23:37).
+    ('hardware', re.compile(r'\b(arbeitsspeicher|ram|speicherplatz|festplatte\w*|'
+                            r'speicherkarte|prozessor\w*|cpu|hardware|rechenleistung|'
+                            r'rechenkern\w*|kerne|taktfrequenz|gigahertz)\b')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
@@ -128,6 +132,31 @@ IDENTITY = {
 # "Wie stelle ich am Handy einen Wecker?" asks for knowledge: that stays with the LLM.
 _HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|können)\b')
 
+# Questions about the unit itself (not about hardware in general).
+_SELF = re.compile(r'\b(du|dein\w*|dich|dir|hast|einheit|proximus|billy|servitor)\b')
+
+# Raspberry Pi Zero 2 W of this unit; current free values from the snapshot.
+HARDWARE = {
+    'off': "Hardware: Raspberry Pi Zero 2 W. Prozessor: 4 Kerne ARM Cortex-A53, 1 Gigahertz. "
+           "Arbeitsspeicher: 512 Megabyte{mem}. Speicher: 32 Gigabyte Speicherkarte{disk}, "
+           "dazu 8 Gigabyte Gedächtnisstick. Sprachkern auf dem Server.",
+    'full': "Trägersystem: Raspberry Pi Zero 2 W. Rechenkern: 4 Kerne ARM Cortex-A53, "
+            "1 Gigahertz. Arbeitsspeicher: 512 Megabyte{mem}. Datenspeicher: 32 Gigabyte"
+            "{disk}, dazu 8 Gigabyte Gedächtniskern. Das Denken übernimmt der Kogitator.",
+    'billy': "Ich steck in einem Raspberry Pi Zero 2 W: vier kleine Kerne mit 1 Gigahertz, "
+             "512 Megabyte Arbeitsspeicher{mem} und 32 Gigabyte Speicherkarte{disk}, dazu "
+             "ein 8-Gigabyte-Stick. Das Denken macht der Server.",
+}
+
+
+def hardware_text(snapshot, lore='off'):
+    mem, disk = snapshot.get('mem_free_pct'), snapshot.get('disk_free_pct')
+    key = 'billy' if is_billy(lore) else ('full' if lore == 'full' else 'off')
+    return HARDWARE[key].format(
+        mem=f", {mem} Prozent frei" if isinstance(mem, int) else '',
+        disk=f", {disk} Prozent frei" if isinstance(disk, int) else '')
+
+
 UNSUPPORTED = {
     'off': ("Funktion nicht vorhanden. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
             "Haussteuerung besitzt diese Einheit nicht.",
@@ -151,8 +180,14 @@ def normalize(text):
 def match(text, persona=None):
     """Intent name or None. Conservative: anything unclear goes to the LLM."""
     text = normalize(text)
-    if not text or len(text.split()) > 12:
+    if not text:
         return None
+    if len(text.split()) > 12:
+        # Long sentences go to the LLM; only a question about the unit's own
+        # hardware is answered here, so it never gets invented numbers.
+        hardware = dict(_PATTERNS)['hardware']
+        return 'hardware' if len(text.split()) <= 20 and hardware.search(text) \
+            and _SELF.search(text) else None
     for name, pattern in _PATTERNS:
         if pattern.search(text):
             if name in ('time', 'date', 'weather') and _ELSEWHERE.search(text):
@@ -161,6 +196,8 @@ def match(text, persona=None):
                 return None
             if name == 'unsupported' and _HOWTO.search(text):
                 return None
+            if name == 'hardware' and not _SELF.search(text):
+                return None   # "wie viel RAM braucht ein Laptop": general knowledge
             return name
     return None
 
@@ -310,6 +347,8 @@ def answer(intent, now, snapshot=None, lore=None):
         return calendar_text(snapshot, lore)
     if intent == 'selftest':
         return logwatch.selftest_text(snapshot, lore, now)
+    if intent == 'hardware':
+        return hardware_text(snapshot, lore)
     if intent == 'unsupported':
         key = 'billy' if is_billy(lore) else lore
         return variants.pick(f'unsupported.{key}', UNSUPPORTED.get(key, UNSUPPORTED['off']))
