@@ -170,7 +170,9 @@ SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offli
                    'dns': ('ok', 'fail'), 'maintenance': ('on', 'off'),
                    # device_control: the Pi knows spoken device commands, and the
                    # reboot/shutdown question it is waiting to have confirmed.
-                   'devctl': ('on',), 'pending': ('reboot', 'shutdown')}
+                   'devctl': ('on',), 'pending': ('reboot', 'shutdown'),
+                   # The Pi plays multi-part long stories (story.py, /v1/story).
+                   'story': ('on',)}
 
 
 def sanitize_snapshot(value):

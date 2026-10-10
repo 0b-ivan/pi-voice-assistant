@@ -575,7 +575,7 @@ class LocalIntentTests(RemoteControllerTests):
             self.finish(job)
         worker.assert_not_called()  # no LLM job
         spoken = self.speech.start.call_args.args[0]
-        self.assertTrue(spoken.startswith('Zeitindex:'))
+        self.assertRegex(spoken, r'^(Zeitindex:|Es ist) \d+ Uhr')
         response = next(e for e in self.events() if e['event'] == 'llm_response')
         self.assertEqual(response['model'], 'local/intent')
 

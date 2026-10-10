@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+import alarms  # noqa: E402
 from alarms import AlarmMonitor  # noqa: E402
 import ptt  # noqa: E402
 from ptt import VoiceController  # noqa: E402
@@ -269,7 +270,7 @@ class WakeGreetingTests(PowerStageTests):
         said = (self.speech.start.call_args or self.speech.play.call_args)
         self.assertIsNotNone(said)
         if self.speech.start.called:
-            self.assertIn('vorgewärmt', self.speech.start.call_args.args[0])
+            self.assertIn(self.speech.start.call_args.args[0], alarms.WAKE_PHRASES['full'])
 
     def test_wake_word_while_asleep_greets_then_listens(self):
         self.c.wake = Mock(error=None, running=False, detector=None)
@@ -314,7 +315,9 @@ class MemoryCoreControllerTests(ControllerAlarmTests):
         self.c._remote_progress(dict(event='reply', text='Gegrüßt, Ivan.', model='test/m'))
         context = self.c.memory.context()
         self.assertEqual(context['facts'], ['Bediener heißt Ivan'])
-        self.assertEqual(context['history'], [dict(q='ich heiße ivan', a='Gegrüßt, Ivan')])
+        # Tagged with the persona that answered (a later style switch keeps only facts).
+        self.assertEqual(context['history'],
+                         [dict(q='ich heiße ivan', a='Gegrüßt, Ivan', p=self.c.persona)])
 
     def test_local_fallback_handles_memory_commands(self):
         self.device.touch()

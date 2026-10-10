@@ -129,3 +129,17 @@ Auf **CT 107** ist `/opt/servitor-voice/repo` ein Git-Checkout: `git fetch` und 
 ## Abnahme nach Änderungen
 
 Den vollständigen Ablauf prüfen: `recording → processing → transcript → llm_start → llm_response → speech_started → speech_finished`. Dazwischen müssen `latency`-Events für STT, LLM und TTS erscheinen. Mit SHIM zusätzlich A, B während Aufnahme/STT/LLM/Ansage, C/D-Pegel und E-Ansage prüfen. Nach einem Reboot I²C, Audio und Dienst prüfen. Einzelne frühere Tests ersetzen keine Abnahme einer neu installierten Version. Aktuelle offene Tests stehen in [Roadmap](roadmap.md) und [Button-Abnahme](button-controls.md).
+
+### Persona, Lore und lange Geschichten
+
+Offline (ohne Modellaufrufe) zeigt `python3 server/sample-persona.py dialog dry light` für die Abnahme-Dialogfolge ([Lore, Abschnitte 12, 15.4, 16.5, 17.5](concepts/proximus-billy-lore/LORE_PROXIMUS_BILLY.md#12-abnahme)), welche Engramme und Gesprächshinweise jede Frage bekommt. Die echte Stichprobe läuft auf CT 107 mit der Dienstumgebung, je einmal vor und nach einem Update, und kostet OpenRouter-Aufrufe (etwa 90 kurze Antworten):
+
+```sh
+set -a; . /etc/servitor-voice.env; set +a
+/opt/servitor-voice/.venv/bin/python server/sample-persona.py dialog openrouter light
+/opt/servitor-voice/.venv/bin/python server/sample-persona.py dialog local light
+```
+
+Bewerten: Aufgabe gelöst, beim einmaligen Hören verständlich, Charakter, Lore-Konsistenz (A01 nie als eigene Erinnerung, keine Kameradennamen beim Servitor, Phobos IX nicht der Marsmond), keine gleichen Einstiege, kein „Boss“ in jeder Antwort, keine Pointe über den fehlenden Körper.
+
+Lange Geschichten am Gerät prüfen: „Erzähl mir zehn Minuten über deinen Trupp“, „… fünfzehn Minuten von Phobos“, „Erzähl die alte Höllenläufer-Sage zwanzig Minuten lang“. Im Journal erscheinen `story_start`, `story_part`, `story_fetch`, `story_section` und am Ende `story_finished` mit `played_ms`; Taste B oder die Sprechtaste ergibt `story_stopped`. Zu messen: Zeit bis zum ersten Ton, Lücken zwischen den Abschnitten, tatsächliche Dauer gegenüber dem Ziel (`STORY_WORDS_PER_MINUTE` danach anpassen), Speicher in `/run/pi-ptt` während der Wiedergabe.
