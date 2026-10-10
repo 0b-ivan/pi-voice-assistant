@@ -149,6 +149,20 @@ def speech_text(text):
     return re.sub(r'\s+([.,!?;:])', r'\1', text)
 
 
+def guest_address(text, context):
+    """Remove operator vocatives for a guest, retaining discussion of those roles."""
+    from memory import unknown_speaker
+    if not isinstance(context, dict) or not unknown_speaker(context):
+        return text
+    titles = r'(?:kommandant|boss|bediener|rekrut)'
+    text = re.sub(rf'(^|[.!?]\s+)({titles})\s*[,!.:]\s*', r'\1', text,
+                  flags=re.IGNORECASE)
+    text = re.sub(rf',\s*{titles}(?=[.!?]|$)', '', text, flags=re.IGNORECASE)
+    text = re.sub(rf'\b(guten (?:morgen|tag|abend)|hallo|danke),?\s+{titles}\b', r'\1',
+                  text, flags=re.IGNORECASE)
+    return text.strip()
+
+
 LORE_LEVELS = ('off', 'light', 'full')
 DEFAULT_LORE = 'light'
 # Fixed facts of the last battle (E16), so a personal story without a
@@ -413,7 +427,7 @@ def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise LLMError(f"{label} returned invalid JSON") from exc
 
-    return _extract_text(payload, label)
+    return guest_address(_extract_text(payload, label), memory)
 
 
 def _prompt(prompt):

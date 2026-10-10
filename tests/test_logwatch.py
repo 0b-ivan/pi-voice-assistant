@@ -138,6 +138,42 @@ class AnalyseTests(unittest.TestCase):
 
 
 class WatchTests(unittest.TestCase):
+    def test_local_model_success_resolves_old_timeout_but_not_a_new_failure(self):
+        now = 1791702000.0
+        def entry(event, at):
+            return logwatch.parse_entry(line(json.dumps(dict(event=event)),
+                                            systemd_unit='servitor-voice.service', at=at))
+        entries = [entry('local_llm_warmup_failed', now - 300), entry('local_llm_ready', now - 60)]
+        watch = logwatch.LogWatch(logwatch.SERVER_RULES, logwatch.SERVER_UNITS,
+                                 reader=lambda since, units: (entries, False), clock=lambda: now)
+        result = watch.check()
+        self.assertEqual(result['resolved'], {'local_llm': now - 60})
+        snapshot = watch.snapshot_fields('server_log')
+        moment = datetime.datetime.fromtimestamp(now)
+        text = logwatch.selftest_text(snapshot, now=moment)
+        self.assertIn('Derzeit läuft alles.', text)
+        self.assertIn('Danach wieder erfolgreich ausgeführt.', text)
+        self.assertNotIn('Vorschlag:', text)
+        self.assertIsNone(logwatch.briefing_sentence(snapshot, now=moment))
+        entries.append(entry('local_llm_warmup_failed', now - 10))
+        watch.check()
+        self.assertNotIn('resolved', watch.result)
+        self.assertIn('derzeit ein Problem', logwatch.selftest_text(watch.snapshot_fields('server_log'), now=moment))
+
+    def test_voice_ready_does_not_claim_that_failed_local_model_recovered(self):
+        now = 1791702000.0
+        entries = [logwatch.parse_entry(line(json.dumps(dict(event=name)),
+                    systemd_unit='servitor-voice.service', at=now - offset))
+                   for name, offset in (('local_llm_warmup_failed', 300), ('ready', 60))]
+        watch = logwatch.LogWatch(logwatch.SERVER_RULES, logwatch.SERVER_UNITS,
+                                 reader=lambda since, units: (entries, False), clock=lambda: now)
+        self.assertNotIn('resolved', watch.check())
+
+    def test_resolved_fields_survive_client_snapshot_validation(self):
+        snapshot = dict(log_findings={'stt': 3}, log_last={'stt': 1791701900},
+                        log_resolved={'stt': 1791701950, 'evil': 1791701960})
+        self.assertEqual(sanitize_snapshot(snapshot)['log_resolved'], {'stt': 1791701950.0})
+
     def make(self, entries=(), broken=None, requester=None, limited=False):
         self.now = [100000.0]
         self.reports = []

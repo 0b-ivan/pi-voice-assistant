@@ -24,6 +24,7 @@ import time
 import uuid
 
 VERSION = 1
+MIN_TURN_SECONDS = 0.2  # shared by the Pi capture and server upload validation
 # Type -> largest body in bytes (compact JSON). Later steps add their types here.
 TYPES = {
     'hello': 2048,

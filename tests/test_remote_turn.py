@@ -185,11 +185,11 @@ class RemoteTurnTests(LiveServerCase):
         self.assertEqual(job.error_code, 'no_speech')
         self.assertFalse(job.fallback_allowed)
 
-    def test_upload_limits_still_fall_back_locally(self):
+    def test_short_upload_is_final_but_oversized_audio_still_falls_back(self):
         for code in ('too_short', 'too_large'):
             job = RemoteTurnJob.__new__(RemoteTurnJob)
             job.error, job.error_code = 'limit', code
-            self.assertTrue(job.fallback_allowed)
+            self.assertEqual(job.fallback_allowed, code == 'too_large')
 
     def test_stalled_connect_is_cancelled_on_timeout(self):
         release = threading.Event()
@@ -329,8 +329,10 @@ class RecorderUplinkTests(unittest.TestCase):
                 uplink_factory = None if uplink is None else (lambda: uplink)
                 recorder = Recorder(tmp, 'dev', 1, live_vosk_factory=factory,
                                     uplink_factory=uplink_factory)
-                with patch('ptt.subprocess.Popen'), patch.object(Recorder, '_pump_live_audio'):
+                with patch('ptt.subprocess.Popen') as popen:
+                    popen.return_value.stdout.read.side_effect = [b'a' * 3200, b'b' * 3200, b'']
                     recorder.start()
+                    recorder._pump_thread.join(1)
                 self.assertEqual(factory.call_count, expected_calls)
 
 
@@ -621,12 +623,13 @@ class LocalIntentTests(RemoteControllerTests):
 
         config = load_remote_config({'ASSISTANT_BASE_URL': 'http://h:1', 'ASSISTANT_TOKEN': 'x' * 40})
         uplink = RemoteTurnUplink(config, connect=lambda u, _t: Recording(u),
-                                  status={'battery_pct': 83}, agenda='W10=')
+                                  status={'battery_pct': 83}, agenda='W10=', agenda_tomorrow='W10=')
         uplink.cancel()
         uplink.thread.join(5)
         uplink._request('http://h:1')
         self.assertEqual(json.loads(sent['X-Servitor-Status']), {'battery_pct': 83})
         self.assertEqual(sent['X-Servitor-Agenda'], 'W10=')   # Pi's appointments go along
+        self.assertEqual(sent['X-Servitor-Agenda-Tomorrow'], 'W10=')
 
 
 if __name__ == '__main__':

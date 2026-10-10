@@ -33,6 +33,7 @@ timetable and speaks the answer itself.
 """
 import base64
 import collections
+import datetime
 import hmac
 import http.server
 import json
@@ -179,6 +180,8 @@ class RealPipeline:
             except LLMError as exc:
                 print(json.dumps(dict(event='local_llm_warmup_failed', error=str(exc))),
                       flush=True)
+            else:
+                print(json.dumps(dict(event='local_llm_ready')), flush=True)
 
     def recognizer(self):
         import whisper_stt
@@ -199,19 +202,24 @@ class RealPipeline:
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1.
         ``story``: a long story's state; the reply is its next section."""
         from llm import LLMError, free_model, generate_local_reply, generate_reply
+        def successful(result):
+            event = 'local_llm_ready' if result[1].startswith('local/') else 'openrouter_ready'
+            print(json.dumps(dict(event=event)), flush=True)
+            return result
+
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
         # "FREI": the low-restriction model; otherwise the configured one.
         chosen = free_model() if mode == 'free' else None
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
-            return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
-                                        mood=mood, story=story)
+            return successful(generate_local_reply(text, lore=lore, memory=memory, persona=persona,
+                                                   mood=mood, story=story))
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
-                return generate_reply(text, lore=lore, memory=memory, model=chosen,
-                                      persona=persona, mood=mood, story=story)
+                return successful(generate_reply(text, lore=lore, memory=memory, model=chosen,
+                                                 persona=persona, mood=mood, story=story))
             except LLMError as exc:
                 if not local:
                     raise
@@ -220,8 +228,8 @@ class RealPipeline:
                 self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
-            return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
-                                        mood=mood, story=story)
+            return successful(generate_local_reply(text, lore=lore, memory=memory, persona=persona,
+                                                   mood=mood, story=story))
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
@@ -451,7 +459,7 @@ class Service:
         emit(dict(event='story', state=state))
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
-                 transcribe_only=False, appointments=None):
+                 transcribe_only=False, appointments=None, appointments_tomorrow=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
@@ -497,7 +505,7 @@ class Service:
                             raise TurnError('recognize', 'stt', str(exc)) from exc
                         pending = pending[usable:]
                 upload_end = time.monotonic()
-                if received < PCM_RATE * 2 // 5:
+                if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
                     raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
                 emit(dict(event='stage', stage='recognize'))
                 try:
@@ -572,8 +580,8 @@ class Service:
                         snapshot['llm'] = state()
                     if intent in ('weather', 'briefing'):
                         snapshot['weather'] = timed('weather', self.weather.get)
-                        day = (intents.weather_day(text, self.now().date())
-                               if intent == 'weather' else 0)
+                        day = (intents.weather_day(text, self.now().date()) if intent == 'weather'
+                               else intents.briefing_day(self.now()))
                         snapshot['weather_day'] = day
                         if day is not None:
                             # The Pi shows its stored forecast with the answer.
@@ -583,9 +591,15 @@ class Service:
                         if intent == 'selftest':
                             self.logwatch.refresh(force=True)  # repair now, not in 30 min
                     if intent in ('calendar', 'briefing'):
+                        day = intents.calendar_day(text, self.now().date()) if intent == 'calendar' else 0
+                        snapshot['agenda_day'] = day
                         if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
                             snapshot['agenda'] = agenda.DENIED
-                        elif appointments is not None:
+                        elif day == 1 and appointments_tomorrow is not None:
+                            start, _ = agenda.day_bounds(self.now())
+                            snapshot['agenda'] = agenda.upcoming(
+                                appointments_tomorrow, start + datetime.timedelta(days=1))
+                        elif day == 0 and appointments is not None:
                             snapshot['agenda'] = agenda.upcoming(appointments, self.now())
                     if (isinstance(memory_copy, dict) and memory_copy.get('speaker')
                             and not memory.unknown_speaker(memory_copy)):
@@ -950,6 +964,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         appointments = agenda.decode_header(self.headers.get('X-Servitor-Agenda', ''),
                                             self.service.now().tzinfo)
+        appointments_tomorrow = agenda.decode_header(
+            self.headers.get('X-Servitor-Agenda-Tomorrow', ''), self.service.now().tzinfo)
 
         if not self.service.turn_lock.acquire(timeout=max(0.0, self.service.config.busy_wait)):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
@@ -975,7 +991,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.service.run_turn(body, emit, fmt, text=text, device=device,
                                           memory_copy=memory_copy,
                                           transcribe_only=transcribe_only,
-                                          appointments=appointments)
+                                          appointments=appointments,
+                                          appointments_tomorrow=appointments_tomorrow)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.

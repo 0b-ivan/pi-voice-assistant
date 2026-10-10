@@ -31,9 +31,8 @@ from voice_controls import _terminate_process_group
 FORMATS = ('wav', 'opus')
 MAX_RESPONSE_LINE = 16 * 1024 * 1024
 MAX_AUDIO_BYTES = 8 * 1024 * 1024
-# Only "heard nothing" is final. Upload limits (too_short/too_large) differ
-# between Pi and server, so the saved capture still goes to local Vosk.
-NO_FALLBACK_CODES = {'no_speech'}
+# A short tap cannot benefit from loading the Pi's fallback model.
+NO_FALLBACK_CODES = {'no_speech', 'too_short'}
 
 _END = object()
 _CANCEL = object()
@@ -131,7 +130,7 @@ class RemoteTurnUplink:
     """
 
     def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None,
-                 session=None):
+                 session=None, agenda_tomorrow=None):
         self.config = config
         # protocol.ClientSession shared by all turns: opened with /v1/hello on
         # first use, then the memory core only travels when it changed.
@@ -142,6 +141,7 @@ class RemoteTurnUplink:
         self.memory = memory
         # Base64 list of today's remaining appointments (agenda.encode_header).
         self.agenda = agenda
+        self.agenda_tomorrow = agenda_tomorrow
         self._connect = connect
         self._queue = queue.SimpleQueue()
         self._lock = threading.Lock()
@@ -242,6 +242,8 @@ class RemoteTurnUplink:
                 connection.putheader('X-Servitor-Memory', self.memory)
             if self.agenda:
                 connection.putheader('X-Servitor-Agenda', self.agenda)
+            if self.agenda_tomorrow:
+                connection.putheader('X-Servitor-Agenda-Tomorrow', self.agenda_tomorrow)
             connection.endheaders()
         except BaseException:
             connection.close()
