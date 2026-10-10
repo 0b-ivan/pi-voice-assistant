@@ -680,6 +680,29 @@ class IntentServerTest(ServerTest):
                                                          'memory': 'on'}, guest)
             self.assertEqual(device, [{'event': 'device', 'op': 'wlan_off'}])  # harmless
 
+    def test_weather_answer_asks_the_pi_to_show_the_day(self):
+        import datetime
+        today = datetime.date(2026, 10, 10)
+        days = [dict(date=(today + datetime.timedelta(days=i)).isoformat(), code=61,
+                     high=9 + i, low=4, rain=80) for i in range(5)]
+        self.service.weather = unittest.mock.Mock()
+        self.service.weather.get.return_value = dict(now=7, code=61, high=9, low=4, rain=80,
+                                                     days=days)
+        fixed = datetime.datetime(2026, 10, 10, 7, 5)
+        self.pipeline.fail_llm = True
+        for transcript, day in (('wie wird das wetter morgen', 1), ('morgenbericht', 0),
+                                ('wetter am freitag', None)):
+            self.pipeline.transcript = transcript
+            with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+                _, data = self.request('/v1/turn', b'\1' * 16000)
+            events = self.events(data)
+            shows = [e for e in events if e['event'] == 'show']
+            reply = next(e for e in events if e['event'] == 'reply')['text']
+            with self.subTest(transcript=transcript):
+                self.assertEqual(shows, [] if day is None
+                                 else [dict(event='show', screen='weather', day=day)])
+        self.assertIn('fünf Tage', reply)
+
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')
 

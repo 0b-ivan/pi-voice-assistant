@@ -159,7 +159,8 @@ def read_status(path=None):
         status['menu_page'] = value['menu_page']
         if group:
             status['menu_group'] = group
-    for key, allowed in (('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
+    for key, allowed in (('weather_day', ('0', '1', '2', '3', '4')),
+                         ('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
                          ('opt_wake', ('on', 'off', 'none')), ('opt_cue', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
                          ('opt_persona', ('servitor', 'mensch')),
@@ -728,6 +729,88 @@ def _state_line(draw, state, info, details, light):
         text, color = 'AUSGABE', VOICE_COLORS['AUSGABE']
     width = draw.textlength(text, font=font(11))
     draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=color)
+
+
+WEATHER_FILE = Path(os.environ.get('PI_DISPLAY_WEATHER_FILE', '/run/pi-ptt/display-weather.json'))
+WEATHER_FPS = 8
+WEATHER_ACCENT = (255, 176, 0)     # amber, like the sun and the local status light
+WEATHER_WATER = (80, 170, 255)
+WEATHER_GREY = (145, 155, 165)
+WEEKDAY_SHORT = ('MO', 'DI', 'MI', 'DO', 'FR', 'SA', 'SO')
+
+
+def read_weather(path=None, today=None):
+    """Today's view of the forecast the voice service keeps (weather.view), or None."""
+    import weather
+    try:
+        data = json.loads((WEATHER_FILE if path is None else Path(path)).read_text())
+    except (OSError, ValueError):
+        return None
+    view = weather.view(data, today)
+    if view is not None:
+        view['updated'] = data.get('updated')
+    return view
+
+
+def _degrees(value):
+    return '–' if value is None else f'{value}°'
+
+
+def render_weather(display, view, day=0, frame=0, network=True, info=None, persona='servitor'):
+    """Morning report or weather question: the day's animated pictogram, its
+    temperatures and the five-day strip (the chosen day framed in amber)."""
+    from PIL import Image, ImageDraw
+    import weather
+    import weather_icons
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    days = view['days']
+    day = max(0, min(day, len(days) - 1))
+    chosen = days[day]
+    title = 'WETTER' if persona == 'mensch' else 'AUSPEX · WETTERDATEN'
+    draw.text((12, 44), title, font=font(10), fill=WEATHER_ACCENT)
+    updated = view.get('updated')
+    if isinstance(updated, (int, float)):
+        age = time.time() - updated
+        stamp = (time.strftime('%H:%M', time.localtime(updated)) if age < 86400
+                 else time.strftime('%d.%m.', time.localtime(updated)))
+        _right(draw, 228, 44, ('ARCHIV ' if age > 3 * 3600 else '') + stamp, 10, WEATHER_GREY)
+    code = view['code'] if day == 0 else chosen.get('code')
+    name = weather_icons.kind(code)
+    image.paste(weather_icons.icon(name, frame, scale=3), (14, 57))
+    if day == 0 and view.get('now') is not None:
+        big, small = _degrees(view['now']), f"{_degrees(chosen.get('low'))} / {_degrees(chosen.get('high'))}"
+    else:
+        big, small = _degrees(chosen.get('high')), f"min {_degrees(chosen.get('low'))}"
+    label = 'HEUTE' if day == 0 else weather.day_label(day, chosen['date']).upper()
+    draw.text((100, 56), label, font=font(11), fill=WEATHER_GREY)
+    draw.text((100, 68), big, font=font(30), fill='white')
+    draw.text((100, 104), small, font=font(12), fill=WEATHER_GREY)
+    draw.text((100, 118), weather_icons.LABELS[name], font=font(12), fill=WEATHER_ACCENT)
+    rain = chosen.get('rain')
+    if rain is not None and rain >= 30:
+        draw.text((172, 118), f'{rain}%', font=font(12), fill=WEATHER_WATER)
+    draw.line((12, 133, 228, 133), fill=(65, 65, 65))
+    width = 216 / 5
+    for i, entry in enumerate(days[:5]):
+        x = 12 + i * width
+        if i == day:
+            draw.rectangle((x + 1, 136, x + width - 2, 194), outline=WEATHER_ACCENT)
+        weekday = 'HEUTE' if i == 0 else WEEKDAY_SHORT[
+            __import__('datetime').date.fromisoformat(entry['date']).weekday()]
+        text_w = draw.textlength(weekday, font=font(9))
+        draw.text((x + (width - text_w) / 2, 139), weekday, font=font(9),
+                  fill=WEATHER_ACCENT if i == day else WEATHER_GREY)
+        small_icon = weather_icons.icon(weather_icons.kind(entry.get('code')),
+                                        frame if i == day else 0, scale=1)
+        image.paste(small_icon, (int(x + (width - 24) / 2), 151))
+        temps = f"{entry.get('high', '–')}/{entry.get('low', '–')}"
+        text_w = draw.textlength(temps, font=font(9))
+        draw.text((x + (width - text_w) / 2, 179), temps, font=font(9), fill='white')
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
 
 
 FACE_PANEL = ((52, 52, 52), (92, 92, 92), (24, 24, 24))  # fill, light edge, dark edge
@@ -1460,7 +1543,19 @@ def main():
                     and skull is not None and face is not None):
                 glitch_until = now + 0.9
             persona_shown = persona
-            if now < glitch_until and info.get('volume') is None:
+            weather_view = (read_weather() if status.get('weather_day') is not None
+                            and info.get('volume') is None else None)
+            if weather_view is not None:
+                # Morning report or a weather question: the forecast while it is said.
+                frame = int(now * WEATHER_FPS)
+                day = int(status['weather_day'])
+                screen = ('weather', day, frame, states['network'],
+                          tuple(sorted(shown_info.items())))
+                if screen != previous_screen:
+                    render_weather(display, weather_view, day, frame, states['network'], info,
+                                   persona)
+                    previous_screen = screen
+            elif now < glitch_until and info.get('volume') is None:
                 # Shown when the menu closes after the switch, in both directions.
                 frame = int(now * 12)
                 picture = glitch_picture(skull.frame(0.8),
