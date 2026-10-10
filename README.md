@@ -42,7 +42,7 @@ Für eine Neuinstallation: [Setup](docs/setup.md). Für den Betrieb und Deployme
 | Sprache | [Vosk, LLM und Piper](docs/features/speech.md) |
 | Persönliches | [Gedächtnis & Stimmprofile](docs/features/memory.md) · [Servitor & Billy](docs/features/personality.md) |
 | Betrieb | [Wartung](docs/features/maintenance.md) · [Roadmap](docs/roadmap.md) |
-| Hintergrund | [ADRs](docs/decisions/) · [Historische Prüfungen](docs/history/) · [Konzepte](docs/concepts/) |
+| Hintergrund | [ADRs](docs/decisions) · [Historische Prüfungen](docs/history) · [Konzepte](docs/concepts) |
 
 Konfiguration: `/etc/pi-ptt.env` (Tasten/Modi), `/etc/pi-voice-assistant.env` (Pi/Server-Zugangsdaten), `/etc/servitor-voice.env` (CT 107). **Keine Tokens oder App-Passwörter ins Repository.** Der LAN-Zugriff ist HTTP mit Bearer-Token (im LAN unverschlüsselt), der Cloudflare-Zugriff erfolgt über HTTPS ([ADR 0004](docs/decisions/0004-servitor-server.md)).
 

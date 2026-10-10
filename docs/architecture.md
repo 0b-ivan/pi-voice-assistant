@@ -72,4 +72,4 @@ CT 107 rendert Piper Thorsten Emotional mit Servitor-DSP; der Pi kann Piper im F
 
 ## Betrieb und Grenzen
 
-`pi-ptt` und `pi-display` laufen als `obivan` mit systemd-Einschränkungen. Ein dedizierter Dienstbenutzer ist noch offen. **Kamera-Vision und Echounterdrückung sind nicht implementiert.** [Setup](setup.md) · [Betrieb](operation.md) · [Troubleshooting](troubleshooting.md). Frühere Benchmarks und Abnahmen liegen unter [history/](history/).
+`pi-ptt` und `pi-display` laufen als `obivan` mit systemd-Einschränkungen. Ein dedizierter Dienstbenutzer ist noch offen. **Kamera-Vision und Echounterdrückung sind nicht implementiert.** [Setup](setup.md) · [Betrieb](operation.md) · [Troubleshooting](troubleshooting.md). Frühere Benchmarks und Abnahmen liegen unter [history/](history).

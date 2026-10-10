@@ -125,7 +125,7 @@ TTS_VOICE_PROFILE=servitor
 
 Dieses Beispiel konfiguriert den **Pi-Fallback** (Modell `openai/gpt-5.4-mini`). Auf CT 107 verwendet der Server gemäß [`server/install-ct.sh`](../server/install-ct.sh) standardmäßig `mistralai/mistral-medium-3-5` und bei Ausfall Qwen3-4B. Für den Serverpfad müssen auf dem Pi zusätzlich `ASSISTANT_BASE_URL` und `ASSISTANT_TOKEN` gemäß [Betrieb](operation.md#konfiguration) gesetzt sein. Vosk selbst benötigt keinen API-Key. Der Key wird ausschließlich für den anschließenden OpenRouter-LLM-Schritt gebraucht und gehört nur in diese lokale Environment-Datei. Die Vorlage setzt `STT_PROVIDER=vosk` und enthält keinen echten Key. `/etc/pi-voice-assistant.env` hat `root:obivan`, Modus 0640; nicht öffentlich lesbar machen.
 
-In `/etc/pi-ptt.env`: GPIO17 aktiv Low, `PTT_RUNTIME_DIR=/run/pi-ptt`. Unter der mitgelieferten Unit den Runtime-Pfad beibehalten. `PTT_BUTTON_SHIM=0` ist die Voreinstellung; SHIM erst nach [Einzeltest](hardware-bring-up.md) auf 1 setzen. Details zu Dienstrechten: [Betrieb](operation.md).
+In `/etc/pi-ptt.env`: GPIO17 aktiv Low, `PTT_RUNTIME_DIR=/run/pi-ptt`. Unter der mitgelieferten Unit den Runtime-Pfad beibehalten. `PTT_BUTTON_SHIM=0` ist die Voreinstellung; SHIM erst nach [Einzeltest](history/hardware-bring-up-2026-10-05.md) auf 1 setzen. Details zu Dienstrechten: [Betrieb](operation.md).
 
 ## 5. Taste prüfen und starten
 
@@ -149,4 +149,4 @@ journalctl -u pi-ptt.service -f
 
 Taste halten, eine Frage sprechen, loslassen. **Ohne Serverkonfiguration** verläuft der lokale Test über Aufnahme → Vosk → (direkter Intent oder OpenRouter) → Piper → Wiedergabe. **Mit `ASSISTANT_BASE_URL`** erfolgt der normale Durchlauf auf CT 107, und die Pi-Logs zeigen zusätzlich Remote-/Fallback-Events; feste Intents brauchen kein LLM. Für die Abnahme auf `recording`, Transkript/Antwort, `speech_started`, `speech_finished` und den passenden Remote- oder lokalen Verarbeitungsweg achten. Fehler und Latenzen im Journal prüfen; Ctrl-C beendet nur die Loganzeige.
 
-Für den **lokalen TTS-Fallback** [Piper-Paket und Stimme installieren](text-to-speech.md). [Button SHIM A–E](button-controls.md) und [PiTFT](display.md) sind bereits integriert; eine vollständige Abnahme der aktuellen Dienstversion ist weiterhin offen. PiSugar-Abschaltung/Laufzeit und Kamera bleiben offen ([Roadmap](roadmap.md)).
+Für den **lokalen TTS-Fallback** [Piper-Paket und Stimme installieren](features/speech.md). [Button SHIM A–E](features/controls.md) und [PiTFT](features/display.md) sind bereits integriert; eine vollständige Abnahme der aktuellen Dienstversion ist weiterhin offen. PiSugar-Abschaltung/Laufzeit und Kamera bleiben offen ([Roadmap](roadmap.md)).

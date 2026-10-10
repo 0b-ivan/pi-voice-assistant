@@ -1,6 +1,6 @@
 # Roadmap: offene Aufgaben
 
-**Stand: 10.10.2026 · Arbeitsvorschlag zur Priorisierung.** Diese Datei listet **nur offene** Arbeiten. Implementierte Funktionen und ihre Grenzen stehen in der [README](../README.md) und [Architektur](architecture.md); frühere Änderungen in [history/](history/). Ein grüner Unittest bedeutet **nicht** automatisch, dass die Funktion am echten Pi abgenommen wurde.
+**Stand: 10.10.2026 · Arbeitsvorschlag zur Priorisierung.** Diese Datei listet **nur offene** Arbeiten. Implementierte Funktionen und ihre Grenzen stehen in der [README](../README.md) und [Architektur](architecture.md); frühere Änderungen in [history/](history). Ein grüner Unittest bedeutet **nicht** automatisch, dass die Funktion am echten Pi abgenommen wurde.
 
 ## P0 · Stabilität und Geräte-Abnahme
 

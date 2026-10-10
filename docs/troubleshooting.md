@@ -52,16 +52,16 @@ Nach I²C-Ausfall bleibt GPIO17 verfügbar; SHIM wird erst beim Dienstneustart e
 
 ## Sprachausgabe
 
-**`speak.py` fehlt:** aktuellen Dienstinstaller ausführen; er deployt den Wrapper nach `/opt/pi-voice-assistant/src/`. [TTS-Setup](text-to-speech.md) beschreibt die separate Paket-/Modellinstallation.
+**`speak.py` fehlt:** aktuellen Dienstinstaller ausführen; er deployt den Wrapper nach `/opt/pi-voice-assistant/src/`. [TTS-Setup](features/speech.md) beschreibt die separate Paket-/Modellinstallation.
 
 **`No module named piper`:** Piper liegt in `/opt/pi-voice-assistant/.venv`. Der mitgelieferte Wrapper startet diesen Interpreter. Ein älteres lokales `speak.py` verwendete fälschlich `/usr/bin/python3 -m piper`. GitHub-Version installieren und `PIPER_PYTHON` prüfen; keine globale Piper-Installation als Umweg.
 
 **`speech_error`:** Exitcode allein erklärt den Fehler nicht; unmittelbar vorangehende stderr-Zeilen ansehen. Pfade, Modell plus `.onnx.json`, Dienstrechte und `TTS_AUDIO_DEVICE` prüfen.
 
-**Langsame Ansage:** der Wrapper startet Piper pro Satz und erzeugt das gesamte WAV vor `aplay`. Die [Pi-Messungen](piper-resources.md) zeigen deutlich schnellere Synthese mit geladenem Modell, aber Speicherdruck neben Vosk. Vorerst keinen dauerhaften Modellprozess aktivieren; der Status-WAV-Cache ist noch nicht implementiert. [Performance-Stand](local-speech.md#performance).
+**Langsame Ansage:** der Wrapper startet Piper pro Satz und erzeugt das gesamte WAV vor `aplay`. Die [Pi-Messungen](history/piper-resources-2026-10-06.md) zeigen deutlich schnellere Synthese mit geladenem Modell, aber Speicherdruck neben Vosk. Vorerst keinen dauerhaften Modellprozess aktivieren; der Status-WAV-Cache ist noch nicht implementiert. [Performance-Stand](history/local-speech-2026-10-06.md#performance).
 
 **Piper-Warnungen:** fehlendes Phonem und ONNX-Telemetrie-Meldung traten bei einem Aufruf mit Exitcode 0 auf. Sie waren dort nicht blockierend; das ist keine allgemeine Garantie für jede Stimme oder jeden Text.
 
 ## Dienst oder Installation
 
-`PTT_RUNTIME_DIR` unter der Standardunit auf `/run/pi-ptt` belassen. Nach fehlgeschlagenem Installer prüfen, ob der Dienst gestoppt blieb. `python3-smbus` und `i2c-tools` vorher installieren; der aktuelle Installer prüft `i2cdetect` noch nicht selbst. Weitere offene Codepunkte: [Projektprüfung](project-review.md).
+`PTT_RUNTIME_DIR` unter der Standardunit auf `/run/pi-ptt` belassen. Nach fehlgeschlagenem Installer prüfen, ob der Dienst gestoppt blieb. `python3-smbus` und `i2c-tools` vorher installieren; der aktuelle Installer prüft `i2cdetect` noch nicht selbst. Weitere offene Codepunkte: [Projektprüfung](history/project-review-2026-10-05.md).

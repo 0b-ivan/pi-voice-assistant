@@ -4,7 +4,7 @@
 
 ## Erweiterter Aufbau — 05.10.2026 📸
 
-Neu ergänzt: **Waveshare ETH/USB HUB HAT** und **Pimoroni Button SHIM**. Beide sind auf den neuen Fotos im Stapel montiert. USB-/LAN-Erkennung, 100-Mbit/s-Link und SHIM-Einzeltests sind bestätigt; Einzeltests stehen unter [Hardware-Erweiterungen](hardware-bring-up.md), die noch offene [Dienstabnahme unter Button-Steuerung](button-controls.md).
+Neu ergänzt: **Waveshare ETH/USB HUB HAT** und **Pimoroni Button SHIM**. Beide sind auf den neuen Fotos im Stapel montiert. USB-/LAN-Erkennung, 100-Mbit/s-Link und SHIM-Einzeltests sind bestätigt; Einzeltests stehen unter [Hardware-Erweiterungen](history/hardware-bring-up-2026-10-05.md), die noch offene [Dienstabnahme unter Button-Steuerung](features/controls.md).
 
 ![Ethernet- und USB-HAT mit Button SHIM A–E](images/eth-usb-button-shim-2026-10-05.jpg)
 
@@ -69,7 +69,7 @@ Die früheren Fotos zeigen die Kamera über ein Flexkabel angeschlossen; im aktu
 
 ![Adafruit mini PiTFT 1,3 Zoll 240x240 mit zwei Tastern](images/adafruit-mini-pitft.jpg)
 
-Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240**. Die früheren Chat-Einordnungen als Waveshare Pico-LCD bzw. Waveshare LCD HAT samt behaupteten GPIO19/20/21-Konflikten waren für dieses Display falsch. Es ist ein Raspberry-Pi-Zusatzdisplay und benötigt für seinen vorgesehenen Einsatz keinen Raspberry Pi Pico. Am 06.10.2026 wurde SPI0 neben der bestehenden WM8960-Konfiguration aktiviert. `/dev/spidev0.0` und `/dev/spidev0.1` sind nach dem Neustart vorhanden; der ST7789-Farbtest wurde bestätigt. Ein zusätzlicher Kernel-/Framebuffer-Treiber ist dafür nicht nötig. Details und reproduzierbarer Test stehen unter [PiTFT-Display](display.md). Laut Adafruit erlaubt die 1,3″-Variante kein einfaches Durchstecken eines Stacking-Headers durch die Platine; das Display gehört deshalb an das Ende des GPIO-Stacks.
+Das Foto identifiziert das Display als **Adafruit mini PiTFT 1,3″, 240 × 240**. Die früheren Chat-Einordnungen als Waveshare Pico-LCD bzw. Waveshare LCD HAT samt behaupteten GPIO19/20/21-Konflikten waren für dieses Display falsch. Es ist ein Raspberry-Pi-Zusatzdisplay und benötigt für seinen vorgesehenen Einsatz keinen Raspberry Pi Pico. Am 06.10.2026 wurde SPI0 neben der bestehenden WM8960-Konfiguration aktiviert. `/dev/spidev0.0` und `/dev/spidev0.1` sind nach dem Neustart vorhanden; der ST7789-Farbtest wurde bestätigt. Ein zusätzlicher Kernel-/Framebuffer-Treiber ist dafür nicht nötig. Details und reproduzierbarer Test stehen unter [PiTFT-Display](features/display.md). Laut Adafruit erlaubt die 1,3″-Variante kein einfaches Durchstecken eines Stacking-Headers durch die Platine; das Display gehört deshalb an das Ende des GPIO-Stacks.
 
 ## Schnittstellen und Planung
 
@@ -91,12 +91,12 @@ Audio und Display nutzen nach dieser Belegung unterschiedliche Signalpins. SPI0 
 
 ## Erste Abnahme der Erweiterungen — 05.10.2026 ✅
 
-Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethernet-Adapter (0bda:8152, Realtek RTL8152). eth0 ist in der Folgeausgabe UP und hat **172.22.9.108/24**; WLAN war unter **172.22.9.128/24** erreichbar. Beide IPs sind damalige Beobachtungen, keine festen Zugangsdaten. 100 Mb/s Full Duplex mit r8152 v1.12.13 sind später bestätigt. SSH über LAN und die drei externen USB-Ports bleiben offen; SHIM-Einzeltests sind bestanden, Dienstabnahme teilweise offen. Einzelne Prüfergebnisse stehen im [Abnahmeprotokoll](hardware-bring-up.md).
+Ivans Ausgabe bestätigt den USB-Hub (1a40:0101, Terminus Technology) und Ethernet-Adapter (0bda:8152, Realtek RTL8152). eth0 ist in der Folgeausgabe UP und hat **172.22.9.108/24**; WLAN war unter **172.22.9.128/24** erreichbar. Beide IPs sind damalige Beobachtungen, keine festen Zugangsdaten. 100 Mb/s Full Duplex mit r8152 v1.12.13 sind später bestätigt. SSH über LAN und die drei externen USB-Ports bleiben offen; SHIM-Einzeltests sind bestanden, Dienstabnahme teilweise offen. Einzelne Prüfergebnisse stehen im [Abnahmeprotokoll](history/hardware-bring-up-2026-10-05.md).
 
 ## Noch offen
 
 - Ethernet-/USB-HAT: Herkunft der IP, Router-/SSH-Test über LAN und drei USB-Anschlüsse. Erkennung, LAN-IP und 100-Mbit/s-Link sind bestätigt.
-- Button SHIM: A–E und Hersteller-LED-Test bestätigt; aktuelle Dienstfarben, aktive Abbruchfälle und Reboot der neuen Dienstversion noch abnehmen. Siehe [Button-Steuerung](button-controls.md).
+- Button SHIM: A–E und Hersteller-LED-Test bestätigt; aktuelle Dienstfarben, aktive Abbruchfälle und Reboot der neuen Dienstversion noch abnehmen. Siehe [Button-Steuerung](features/controls.md).
 - Akkukapazität, Laufzeit und sauberes Abschaltverhalten der PiSugar 3.
 - Kamerasensor und Testbild.
 - Lautsprecherimpedanz und Nennleistung; Aufnahme/Wiedergabe bereits bestätigt.

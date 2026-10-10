@@ -169,7 +169,7 @@ Ein gemeinsames Modul `src/protocol.py` gilt für Pi und Server. **Das folgende 
 - Beim Verbinden schickt der Pi `hello`: Version, Gerät, Einstellungen, Stimmung, **Hash des Gedächtnisses**. Der Server antwortet mit `welcome` und seinen Fähigkeiten.
 - Danach gehen nur Änderungen über die Leitung: `settings.changed`, `mood.update`, `memory.delta`.
 - Bei einer Anfrage reicht der Hash. Das spart bis zu 12 KB pro Anfrage.
-- **Umgesetzt (Schritt 3):** `hello` trägt Gerät und Client-Version. Den Gedächtniskern (Fakten, Direktiven, Stimmabdrücke) schickt der Pi einmal mit dem ersten Turn der Sitzung, danach nur dessen Prüfsumme und die letzten Runden (Details in [memory.md](../memory.md)). Einstellungen und Stimmung bleiben vorerst im kleinen Statusheader (höchstens 1 KB); `settings.changed` und `mood.update` kommen mit der Outbox (Schritt 9).
+- **Umgesetzt (Schritt 3):** `hello` trägt Gerät und Client-Version. Den Gedächtniskern (Fakten, Direktiven, Stimmabdrücke) schickt der Pi einmal mit dem ersten Turn der Sitzung, danach nur dessen Prüfsumme und die letzten Runden (Details in [memory.md](../features/memory.md)). Einstellungen und Stimmung bleiben vorerst im kleinen Statusheader (höchstens 1 KB); `settings.changed` und `mood.update` kommen mit der Outbox (Schritt 9).
 
 ### 6.3 Verbindung
 1. Zuerst **HTTP mit Sitzung** (`POST /v1/hello`, danach `/v1/turn` mit Sitzungs-ID).
