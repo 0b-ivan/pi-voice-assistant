@@ -11,6 +11,11 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 * ``POST /v1/turn?format=wav|opus`` with raw 16 kHz mono s16le PCM as body
   (Content-Length or chunked; chunks are recognized while they arrive).
 * ``POST /v1/speak?format=wav|opus`` with JSON ``{"text": "..."}``.
+* ``POST /v1/story?format=wav|opus`` with JSON ``{"story": state}``: the next
+  section of an explicitly long story (src/story.py). Like a turn that asks
+  for a long story, it answers with ``reply``, several ``audio`` events with
+  a ``part`` number (each at most SERVITOR_MAX_TEXT_CHARS of text, so nothing
+  is cut) and a ``story`` event carrying the state for the next request.
 * ``POST /v1/hello`` with an SPX/1 ``hello`` (src/protocol.py): opens a
   session, answered with ``welcome``. A turn naming the session in
   ``X-Servitor-Session`` may send only the digest of a memory core the
@@ -52,6 +57,7 @@ import maintenance  # noqa: E402
 import memory  # noqa: E402
 import protocol  # noqa: E402
 import speaker  # noqa: E402
+import story as stories  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from mood import emergency, split_tag  # noqa: E402
 from system_status import phrase_style, sanitize_snapshot  # noqa: E402
@@ -182,9 +188,11 @@ class RealPipeline:
             return 'offline'
         return 'openrouter'
 
-    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None, mood=None):
+    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None, mood=None,
+              story=None):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
-        the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
+        the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1.
+        ``story``: a long story's state; the reply is its next section."""
         from llm import LLMError, free_model, generate_local_reply, generate_reply
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
         # "FREI": the low-restriction model; otherwise the configured one.
@@ -192,13 +200,13 @@ class RealPipeline:
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
             return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
-                                        mood=mood)
+                                        mood=mood, story=story)
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
                 return generate_reply(text, lore=lore, memory=memory, model=chosen,
-                                      persona=persona, mood=mood)
+                                      persona=persona, mood=mood, story=story)
             except LLMError as exc:
                 if not local:
                     raise
@@ -208,7 +216,7 @@ class RealPipeline:
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
             return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
-                                        mood=mood)
+                                        mood=mood, story=story)
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
@@ -371,6 +379,72 @@ class Service:
             return memory.guest_view(memory_copy)
         return dict(memory_copy, speaker=name)
 
+    def _story_start(self, text, emit, fmt, device, timings):
+        """An explicitly long story: plan it and tell its first, short section."""
+        import lore
+        from llm import lore_level, persona_name
+        persona, level = persona_name(device.get('persona')), lore_level(device.get('lore'))
+        request = stories.request(text)
+        state = stories.start(request, persona, level, lore.packet(text, persona, level))
+        print(json.dumps(dict(event='story_start', minutes=state['minutes'],
+                              persona=persona, ids=state['ids'])), flush=True)
+        self._story_section(state, emit, fmt, device, timings)
+
+    def run_story(self, state, emit, fmt, device=None):
+        """POST /v1/story: the next section of a running story."""
+        timings = {}
+        if state.get('done'):
+            raise TurnError('think', 'bad_request', 'story already finished')
+        self._story_section(state, emit, fmt, device or {}, timings)
+        emit(dict(event='done', timings=timings))
+
+    def _story_section(self, state, emit, fmt, device, timings):
+        """One section: a single LLM call with the compact story state, then
+        audio in small parts at sentence boundaries, each sent as soon as it
+        is ready. The new state goes back last, as a ``story`` event."""
+        started = time.monotonic()
+        emit(dict(event='stage', stage='think'))
+        try:
+            raw, model = self.pipeline.reply(state['topic'], state['lore'],
+                                             device.get('llm_mode'), NO_MEMORY,
+                                             state['persona'], None, story=state)
+        except Exception as exc:
+            raise TurnError('think', 'llm', str(exc)) from exc
+        timings['llm'] = round(time.monotonic() - started, 3)
+        text, note = stories.split_note(split_tag(raw)[0])
+        text = stories.trim_incomplete(memory.split_learned(text)[0])
+        if not text:
+            raise TurnError('think', 'llm', 'empty story section')
+        state = stories.advance(state, text, note)
+        emit(dict(event='reply', text=text, model=model, story=True))
+        voice = device.get('voice', 'servitor')
+        parts = stories.split_parts(text, self.config.max_text)
+        for index, part in enumerate(parts):
+            temporary = []
+            try:
+                emit(dict(event='stage', stage='synthesize'))
+                try:
+                    raw_audio = self.pipeline.synthesize(part, voice)
+                    temporary.append(raw_audio)
+                except Exception as exc:
+                    raise TurnError('synthesize', 'tts', str(exc)) from exc
+                try:
+                    rendered = self.pipeline.render(raw_audio, voice)
+                    temporary.append(rendered)
+                    data = self.pipeline.encode(rendered, fmt)
+                    duration = wav_duration_ms(rendered)
+                except Exception as exc:
+                    raise TurnError('render', 'dsp', str(exc)) from exc
+            finally:
+                for path in temporary:
+                    Path(path).unlink(missing_ok=True)
+            state['ms'] += duration
+            emit(dict(event='audio', format=fmt, mime=FORMATS[fmt], duration_ms=duration,
+                      bytes=len(data), part=index, parts=len(parts), text=part,
+                      data=base64.b64encode(data).decode('ascii')))
+        timings['story_section'] = round(time.monotonic() - started, 3)
+        emit(dict(event='story', state=state))
+
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
@@ -494,6 +568,17 @@ class Service:
                         snapshot['operator'] = memory_copy['speaker']  # recognized voice
                     answer = timed('intent', intents.answer, intent, self.now(), snapshot)
                     model = 'local/intent'
+                elif stories.request(text) is not None:
+                    if (device or {}).get('story') != 'on':
+                        # An older Pi would play only the last part: say so instead of
+                        # handing out a story whose end is silently missing.
+                        persona = 'mensch' if (device or {}).get('persona') == 'mensch' \
+                            else 'servitor'
+                        answer, model = stories.OLD_DEVICE[persona], 'local/story'
+                    else:
+                        self._story_start(text, emit, fmt, device or {}, timings)
+                        emit(dict(event='done', timings=timings))
+                        return
                 else:
                     emit(dict(event='stage', stage='think'))
                     try:
@@ -769,7 +854,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._maintenance()
         if url.path == '/v1/voiceprint':
             return self._voiceprint()
-        if url.path not in ('/v1/turn', '/v1/speak'):
+        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
         self.close_connection = True  # never reuse a connection with an unread body
@@ -800,7 +885,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(413, dict(error='body too large'))
 
         text = None
-        if url.path == '/v1/speak':
+        story_state = None
+        if url.path in ('/v1/speak', '/v1/story'):
             if chunked:
                 return self._json(411, dict(error='length required'))
             try:
@@ -809,15 +895,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             if len(raw) != length:
                 return self._json(400, dict(error='truncated body'))
-            try:
-                text = json.loads(raw)['text']
-            except (ValueError, KeyError, TypeError):
-                text = None
-            if not isinstance(text, str):
-                return self._json(400, dict(error='expected JSON {"text": "..."}'))
-            text = text.strip()
-            if not text:
-                return self._json(400, dict(error='text must not be empty'))
+            if url.path == '/v1/story':
+                try:
+                    story_state = stories.sanitize(json.loads(raw)['story'])
+                except (ValueError, KeyError, TypeError):
+                    story_state = None
+                if story_state is None:
+                    return self._json(400, dict(error='expected JSON {"story": state}'))
+            else:
+                try:
+                    text = json.loads(raw)['text']
+                except (ValueError, KeyError, TypeError):
+                    text = None
+                if not isinstance(text, str):
+                    return self._json(400, dict(error='expected JSON {"text": "..."}'))
+                text = text.strip()
+                if not text:
+                    return self._json(400, dict(error='text must not be empty'))
             body = iter(())
         else:
             body = read_chunked(self.rfile, limit) if chunked else read_length(self.rfile, length)
@@ -851,9 +945,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if session_event:
                 emit(session_event)
             try:
-                self.service.run_turn(body, emit, fmt, text=text, device=device,
-                                      memory_copy=memory_copy, transcribe_only=transcribe_only,
-                                      appointments=appointments)
+                if story_state is not None:
+                    self.service.run_story(story_state, emit, fmt, device=device)
+                else:
+                    self.service.run_turn(body, emit, fmt, text=text, device=device,
+                                          memory_copy=memory_copy,
+                                          transcribe_only=transcribe_only,
+                                          appointments=appointments)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.

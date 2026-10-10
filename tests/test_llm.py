@@ -268,16 +268,15 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class LoreHintTests(unittest.TestCase):
-    def test_light_is_mostly_plain_and_full_varies_without_constant_binary(self):
-        import random
-        rng = random.Random(3)
-        light = [llm.lore_hint("servitor", "light", rng) for _ in range(300)]
-        plain = sum("keine Begriffe" in h for h in light)
-        self.assertTrue(150 < plain < 250, plain)            # about two thirds plain
-        full = [llm.lore_hint("servitor", "full", rng) for _ in range(300)]
-        binary = sum("binärer Lobgesang" in h for h in full)
-        self.assertTrue(20 < binary < 90, binary)             # about one in six
-        self.assertGreater(len(set(full)), 250)               # hardly ever the same prompt
-        self.assertEqual(llm.lore_hint("mensch", "off", rng), "")
-        self.assertNotIn("Null Eins", llm.system_prompt("full", persona="servitor"))
+class LoreLevelTests(unittest.TestCase):
+    def test_no_random_word_pools_or_forced_invocations(self):
+        self.assertFalse(hasattr(llm, "lore_hint"))
+        self.assertFalse(hasattr(llm, "LORE_POOLS"))
+        for persona in ("servitor", "mensch"):
+            prompt = llm.system_prompt("full", persona=persona)
+            self.assertNotIn("Null Eins", prompt)
+            self.assertNotIn("Humorprotokoll", prompt)
+            self.assertNotIn("zwei bis drei", prompt)
+            # Two identical requests give the same prompt (cache friendly).
+            self.assertEqual(prompt.split("Aktueller Zeitpunkt")[0],
+                             llm.system_prompt("full", persona=persona).split("Aktueller Zeitpunkt")[0])

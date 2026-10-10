@@ -44,8 +44,14 @@ class MoodTests(unittest.TestCase):
         mood = Mood()
         mood.hear('warum ist der himmel blau', 0)
         self.assertEqual(mood.current(0)[0], 'neugierig')
-        mood.hear('warum ist der himmel blau', 30)        # same question again
-        self.assertEqual(mood.current(30)[0], 'gereizt')
+        mood.hear('warum ist der himmel blau', 30)        # asked once more: not understood
+        self.assertNotEqual(mood.current(30)[0], 'gereizt')
+        mood.hear('warum ist der himmel blau', 40)        # again and again: that annoys
+        self.assertEqual(mood.current(40)[0], 'gereizt')
+        mood = Mood()
+        for second, text in enumerate(('nochmal', 'nochmal', 'nochmal bitte', 'wie bitte')):
+            mood.hear(text, second)                       # asking to hear it again never does
+        self.assertNotEqual(mood.current(5)[0], 'gereizt')
         mood = Mood()
         mood.hear('du nutzloser schrotthaufen', 0)
         self.assertEqual((mood.current(0)[0], mood.cause), ('gereizt', 'user'))
@@ -110,9 +116,12 @@ class PromptTests(unittest.TestCase):
         self.assertIn('sehr gereizt', billy)
         self.assertIn('ablehnen', billy)
         servitor = prompt_section('servitor', dict(emotion='freudig', level=50, refuse=False))
-        self.assertIn('Fehler.', servitor)
-        self.assertIn('Korrektur.', servitor)
+        self.assertIn('kein Engramm-Durchbruch', servitor)   # only when lore grants one
         self.assertNotIn('ablehnen', servitor)
+        granted = prompt_section('servitor', dict(emotion='besorgt', level=50, refuse=False),
+                                 dict(fragment='Dace hätte darüber gelacht.'))
+        self.assertIn('Dace hätte darüber gelacht.', granted)
+        self.assertIn('Rückkehr zur mechanischen Ausgabe', granted)
         prompt = llm.system_prompt('off', persona='mensch',
                                    mood=dict(emotion='müde', level=30, refuse=False))
         self.assertIn('leicht müde', prompt)

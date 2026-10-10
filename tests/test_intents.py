@@ -58,12 +58,24 @@ class AnswerTests(unittest.TestCase):
     NOW = datetime.datetime(2026, 10, 8, 14, 32)
 
     def test_time_and_date(self):
-        self.assertEqual(intents.answer("time", self.NOW), "Zeitindex: 14 Uhr 32.")
-        self.assertEqual(intents.answer("time", self.NOW.replace(minute=0)), "Zeitindex: 14 Uhr.")
-        self.assertEqual(intents.answer("date", self.NOW),
-                         "Datum: Donnerstag, der achte Oktober 2026.")
-        self.assertEqual(intents.answer("date", datetime.datetime(2026, 12, 31)),
-                         "Datum: Donnerstag, der einunddreißigste Dezember 2026.")
+        self.assertIn(intents.answer("time", self.NOW),
+                      ("Zeitindex: 14 Uhr 32.", "Es ist 14 Uhr 32."))
+        self.assertTrue(intents.answer("time", self.NOW.replace(minute=0)).endswith(" 14 Uhr."))
+        self.assertIn(intents.answer("date", self.NOW),
+                      ("Datum: Donnerstag, der achte Oktober 2026.",
+                       "Heute ist Donnerstag, der achte Oktober 2026."))
+        self.assertTrue(intents.answer("date", datetime.datetime(2026, 12, 31)).endswith(
+                        "Donnerstag, der einunddreißigste Dezember 2026."))
+
+    def test_variants_keep_facts_and_do_not_repeat_at_once(self):
+        import variants
+        variants.reset()
+        times = [intents.answer("time", self.NOW) for _ in range(8)]
+        self.assertTrue(all(t.endswith("14 Uhr 32.") for t in times))
+        self.assertTrue(all(a != b for a, b in zip(times, times[1:])))
+        names = [intents.answer("identity", self.NOW, {"lore": lore})
+                 for lore in ("off", "light", "full") for _ in range(3)]
+        self.assertTrue(all("Servitor Proximus" in n for n in names))
 
     def test_status_battery_identity(self):
         snapshot = dict(battery_pct=83, battery_charging=True, temp_c=45, server="ok")
@@ -94,15 +106,14 @@ class AnswerTests(unittest.TestCase):
     def test_lore_levels_change_wording_not_facts(self):
         off = intents.answer("time", self.NOW, {"lore": "off"})
         full = intents.answer("time", self.NOW, {"lore": "full"})
-        self.assertEqual(off, "Zeitindex: 14 Uhr 32.")
+        self.assertTrue(off.endswith("14 Uhr 32."))
         self.assertIn("14 Uhr 32.", full)
-        self.assertIn("Omnissiah", full)
         self.assertIn("Donnerstag, der achte Oktober 2026.",
                       intents.answer("date", self.NOW, {"lore": "full"}))
         self.assertIn("Adeptus Mechanicus", intents.answer("identity", self.NOW, {"lore": "full"}))
         self.assertNotIn("Omnissiah", intents.answer("identity", self.NOW, {"lore": "off"}))
-        self.assertIn("Heilige Ölung", intents.answer("battery", self.NOW,
-                                                      {"lore": "full", "battery_pct": 50}))
+        self.assertIn("50 Prozent", intents.answer("battery", self.NOW,
+                                                   {"lore": "full", "battery_pct": 50}))
 
     WEATHER = dict(now=-2, code=61, high=8, low=-3, rain=70)
 

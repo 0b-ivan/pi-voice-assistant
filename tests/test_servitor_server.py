@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'server'))
 import servitor_server as ss  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from transcribe import NoSpeechError  # noqa: E402
+import memory  # noqa: E402
 
 TOKEN = 'x' * 40
 
@@ -333,7 +334,7 @@ class ServerTest(unittest.TestCase):
         data = conn.getresponse().read()
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
-        self.assertIn('Omnissiah', reply['text'])
+        self.assertIn('Adeptus Mechanicus', reply['text'])
 
     def test_persona_and_voice_from_device_reach_pipeline(self):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
@@ -453,11 +454,12 @@ class ServerTest(unittest.TestCase):
     def test_billy_words_for_memory_commands_and_intents(self):
         self.pipeline.transcript = 'merk dir dass ich kaffee mag'
         events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
-        self.assertEqual(next(e for e in events if e['event'] == 'reply')['text'], 'Gemerkt.')
+        self.assertIn(next(e for e in events if e['event'] == 'reply')['text'],
+                      memory.BILLY_REPLIES['add_fact'])
         self.pipeline.transcript = 'wie spät ist es'
         events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
-        self.assertTrue(next(e for e in events if e['event'] == 'reply')['text']
-                        .startswith('Es ist '))
+        self.assertRegex(next(e for e in events if e['event'] == 'reply')['text'],
+                         r'^(Es ist |Gerade ist es )?\d+ Uhr')
 
     def test_memory_copy_reaches_llm_and_learned_lines_are_not_spoken(self):
         copy = dict(facts=['Bediener heißt Ivan'], directives=['Städte heißen Makropolen'],
@@ -569,7 +571,8 @@ class IntentServerTest(ServerTest):
             _, data = self.request('/v1/turn', b'\1' * 16000)
         events = self.events(data)
         reply = next(e for e in events if e['event'] == 'reply')
-        self.assertEqual((reply['text'], reply['model']), ('Zeitindex: 4 Uhr 7.', 'local/intent'))
+        self.assertIn(reply['text'], ('Zeitindex: 4 Uhr 7.', 'Es ist 4 Uhr 7.'))
+        self.assertEqual(reply['model'], 'local/intent')
         self.assertNotIn('think', [e.get('stage') for e in events])
         self.assertEqual(events[-1]['event'], 'done')
 

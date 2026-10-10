@@ -87,7 +87,8 @@ class CommandTests(unittest.TestCase):
         self.assertIn("fehlt", memory.reply("add_fact", "x", None, "light"))
         self.assertIn("Ivan", memory.reply("recall", "", context))
         self.assertIn("1 Direktiven aktiv", memory.reply("list_directives", "", context))
-        self.assertEqual(memory.reply("forget", "humor", context), "1 Eintrag gelöscht.")
+        for _ in range(3):   # varied wording, same count
+            self.assertIn("1 Eintrag", memory.reply("forget", "humor", context))
         self.assertIn("Kein passender", memory.reply("forget", "pizza", context))
 
 

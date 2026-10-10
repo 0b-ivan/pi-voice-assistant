@@ -29,6 +29,7 @@ MAX_FACTS = 200
 MAX_DIRECTIVES = 20
 MAX_HISTORY = 6
 MAX_TEXT = 200
+PERSONAS = ('servitor', 'mensch')
 CONTEXT_BUDGET = 6000      # characters of memory sent with one turn
 HEADER_LIMIT = 12000       # base64 header size the server accepts
 
@@ -156,14 +157,17 @@ class MemoryCore:
         self._change(update)
         return len(removed)
 
-    def remember_turn(self, question, answer, mood=None):
-        """``mood``: 'gereizt:0.62', the feeling of this answer (restart baseline)."""
+    def remember_turn(self, question, answer, mood=None, persona=None):
+        """``mood``: 'gereizt:0.62', the feeling of this answer (restart baseline).
+        ``persona``: who answered, so a later style switch keeps facts, not style."""
         question, answer = clean_text(question), clean_text(answer)
         if not question or not answer:
             return False
         entry = dict(q=question, a=answer, at=int(self.clock()))
         if isinstance(mood, str) and len(mood) <= 24:
             entry['mood'] = mood
+        if persona in PERSONAS:
+            entry['p'] = persona
 
         def update(data):
             data['history'] = (data['history'] + [entry])[-MAX_HISTORY:]
@@ -188,7 +192,8 @@ class MemoryCore:
         budget = CONTEXT_BUDGET
         directives = [d['text'] for d in data['directives']][-MAX_DIRECTIVES:]
         budget -= sum(len(d) for d in directives)
-        history = [dict(q=h['q'], a=h['a']) for h in data['history'][-4:]]
+        history = [dict(q=h['q'], a=h['a'], **({'p': h['p']} if h.get('p') in PERSONAS else {}))
+                   for h in data['history'][-4:]]
         budget -= sum(len(h['q']) + len(h['a']) for h in history)
         facts = []
         for item in reversed(data['facts']):
@@ -335,7 +340,10 @@ def sanitize(data):
     history = []
     for item in data.get('history', [])[:MAX_HISTORY] if isinstance(data.get('history'), list) else []:
         if isinstance(item, dict) and isinstance(item.get('q'), str) and isinstance(item.get('a'), str):
-            history.append(dict(q=clean_text(item['q']), a=clean_text(item['a'])))
+            entry = dict(q=clean_text(item['q']), a=clean_text(item['a']))
+            if item.get('p') in PERSONAS:
+                entry['p'] = item['p']
+            history.append(entry)
     total = data.get('total_facts')
     prints = []
     for item in data.get('voiceprints', [])[:5] if isinstance(data.get('voiceprints'), list) else []:
@@ -420,14 +428,23 @@ ABSENT = {
     'full': "Gedächtniskern fehlt. Die Einheit kann nichts bewahren. Das Fleisch vergisst, "
             "die Maschine ohne Kern ebenso.",
     'billy': "Kein Gedächtnis-Stick drin. Ich kann mir gerade nichts merken.",
-    'billy_full': "Kein Gedächtnis-Stick drin. Ohne den vergesse ich alles, Boss.",
+    'billy_full': "Kein Gedächtnis-Stick drin. Ohne den vergesse ich alles.",
 }
-# Billy (persona "mensch"): (plain, full lore) per memory command.
+# Billy (persona "mensch"): variants per memory command; every variant says
+# the same thing (saved / applies from now on / how many were forgotten).
 BILLY_REPLIES = {
-    'add_fact': ("Gemerkt.", "Gemerkt. Steht jetzt in meinem Kopf."),
-    'add_directive': ("Verstanden. Mach ich ab jetzt so.",
-                      "Verstanden. Befehl ist Befehl, ab jetzt so."),
-    'forget': ("{count} {noun} vergessen.", "{count} {noun} vergessen. Sauber weg."),
+    'add_fact': ("Gemerkt.", "Ist notiert.", "Gut, das merk ich mir."),
+    'add_directive': ("Verstanden. Mach ich ab jetzt so.", "Alles klar, gilt ab jetzt.",
+                      "In Ordnung, ab jetzt halte ich mich daran."),
+    'forget': ("{count} {noun} vergessen.", "Erledigt, {count} {noun} gelöscht.",
+               "{count} {noun} sind weg."),
+}
+SERVITOR_REPLIES = {
+    'add_fact': ("Gespeichert im Gedächtniskern.", "Im Gedächtniskern abgelegt.",
+                 "Eintrag gespeichert."),
+    'add_directive': ("Direktive gespeichert. Gilt ab sofort.",
+                      "Direktive im Kern abgelegt. Sie gilt ab sofort."),
+    'forget': ("{count} {noun} gelöscht.", "{count} {noun} aus dem Kern entfernt."),
 }
 
 
@@ -445,14 +462,16 @@ def reply(op, argument, context, lore='off'):
         return ABSENT.get(lore, ABSENT['light'])
     if unknown_speaker(context):
         return GUEST_TEXT
+    import variants
     if billy and op in ('add_fact', 'add_directive'):
-        return BILLY_REPLIES[op][lore == 'billy_full']
+        return variants.pick(f'memory.billy.{op}', BILLY_REPLIES[op])
     if op == 'add_fact':
         return ("Heilige Daten im Gedächtniskern versiegelt." if full
-                else "Gespeichert im Gedächtniskern.")
+                else variants.pick('memory.add_fact', SERVITOR_REPLIES['add_fact']))
     if op == 'add_directive':
-        return ("Direktive empfangen und in den Kern geschrieben. Der Maschinengeist gehorcht."
-                if full else "Direktive gespeichert. Gilt ab sofort.")
+        return ("Direktive empfangen und in den Kern geschrieben. Sie gilt ab sofort."
+                if full else variants.pick('memory.add_directive',
+                                           SERVITOR_REPLIES['add_directive']))
     if op == 'forget':
         known = (context.get('facts') or []) + (context.get('directives') or [])
         count = sum(matches(argument, text) for text in known)
@@ -461,9 +480,11 @@ def reply(op, argument, context, lore='off'):
                     else "Kein passender Eintrag im Gedächtniskern gefunden.")
         noun = 'Eintrag' if count == 1 else 'Einträge'
         if billy:
-            return BILLY_REPLIES['forget'][lore == 'billy_full'].format(count=count, noun=noun)
+            return variants.pick('memory.billy.forget', BILLY_REPLIES['forget'],
+                                 count=count, noun=noun)
         return (f"{count} {noun} aus dem Kern getilgt. Das Vergessen ist vollzogen." if full
-                else f"{count} {noun} gelöscht.")
+                else variants.pick('memory.forget', SERVITOR_REPLIES['forget'],
+                                   count=count, noun=noun))
     if op == 'recall':
         facts = context.get('facts') or []
         if not facts:
@@ -514,7 +535,7 @@ def prompt_section(context):
     parts = [LEARN_INSTRUCTION]
     if context.get('speaker'):
         parts.append(f"Sprecher: an der Stimme erkannt als {context['speaker']}, der Bediener. "
-                     "Sprich ihn bei Gelegenheit mit Namen an.")
+                     "Den Namen nur gelegentlich verwenden, nicht in jeder Antwort.")
     if context.get('directives'):
         parts.append("Direktiven des Bedieners, immer befolgen, solange Fakten korrekt bleiben "
                      "(eine installierte Erweiterung heißt: zeige diese Eigenschaft in jeder "

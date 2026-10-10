@@ -13,6 +13,7 @@ from system_status import (battery_sentence, is_billy, network_text, phrase_styl
                            updates_sentence, updates_text)
 import agenda
 import logwatch
+import variants
 import weather
 
 WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
@@ -87,17 +88,27 @@ def is_stop(text):
     return bool(words) and len(words) <= 4 and bool(_STOP.fullmatch(' '.join(words)))
 
 
+# Variants per style; each one names the unit and its function (see variants.py).
 IDENTITY = {
-    'off': ("Diese Einheit ist Servitor Proximus. Sprachgesteuerte Diensteinheit. "
-            "Funktion: Anfragen des Bedieners beantworten."),
-    'light': ("Diese Einheit ist Servitor Proximus, gebunden an den Kogitator. "
-              "Funktion: Anfragen des Bedieners beantworten."),
-    'full': ("Diese Einheit ist Servitor Proximus, Diener des Adeptus Mechanicus, gebunden "
-             "an den Kogitator des Magos. Funktion: Dienst am Bediener. Lob dem Omnissiah."),
+    'off': ("Servitor Proximus, eine sprachgesteuerte Diensteinheit. Funktion: Anfragen "
+            "beantworten und verfügbare Funktionen bereitstellen.",
+            "Diese Einheit ist Servitor Proximus. Sie beantwortet Anfragen und stellt "
+            "verfügbare Funktionen bereit."),
+    'light': ("Servitor Proximus, eine Diensteinheit mit menschlichem Ursprung. Funktion: "
+              "Anfragen des Bedieners beantworten.",
+              "Diese Einheit ist Servitor Proximus. Sie unterstützt den Bediener bei "
+              "Informationen und verfügbaren Funktionen."),
+    'full': ("Servitor Proximus, Diensteinheit des Adeptus Mechanicus, gebaut von Magos "
+             "Vettius Kael. Funktion: Dienst am Bediener.",
+             "Diese Einheit ist Servitor Proximus, eine Konstruktion des Adeptus Mechanicus. "
+             "Sie dient dem Bediener mit Informationen und verfügbaren Funktionen."),
     # Billy normally answers this himself through the LLM; these are fallbacks.
-    'billy': "Billy. Ein alter Soldat in einer Maschine. Was brauchst du?",
-    'billy_full': ("Sergeant William Joseph Blazkowicz der Zweite, Imperiale Armee. "
-                   "Jedenfalls das, was das Mechanicus von mir übrig gelassen hat."),
+    'billy': ("Billy. Früher Soldat, heute der menschliche Teil dieser Maschine. Frag ruhig.",
+              "Ich bin Billy, ein alter Soldat, der jetzt in dieser Maschine steckt."),
+    'billy_full': ("Billy. Sergeant William Joseph Blazkowicz der Zweite, früher Imperiale "
+                   "Armee. Frag ruhig.",
+                   "William Joseph Blazkowicz der Zweite, Rufzeichen Keen. Früher Sergeant, "
+                   "heute der menschliche Teil von Proximus."),
 }
 
 
@@ -120,25 +131,29 @@ def match(text, persona=None):
     return None
 
 
+TIME_TEXTS = {
+    'billy': ("Es ist {clock}", "{clock}", "Gerade ist es {clock}"),
+    'billy_full': ("Es ist {clock}", "{clock}", "Gerade ist es {clock}"),
+    'full': ("Der Chronometer meldet: {clock}", "Zeitindex: {clock}"),
+    'light': ("Zeitindex: {clock}", "Es ist {clock}"),
+    'off': ("Zeitindex: {clock}", "Es ist {clock}"),
+}
+
+
 def time_text(now, lore='off'):
     clock = f"{now.hour} Uhr." if now.minute == 0 else f"{now.hour} Uhr {now.minute}."
-    if lore == 'billy':
-        return f"Es ist {clock}"
-    if lore == 'billy_full':
-        return f"Es ist {clock} Wachablösung ist noch nicht."
-    if lore == 'full':
-        return f"Der heilige Chronometer meldet: {clock} Lob dem Omnissiah."
-    return f"Zeitindex: {clock}"
+    return variants.pick(f'time.{lore}', TIME_TEXTS.get(lore, TIME_TEXTS['off']), clock=clock)
 
 
 def date_text(now, lore='off'):
     date = (f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
             f"{MONTHS[now.month - 1]} {now.year}.")
     if is_billy(lore):
-        return f"Heute ist {date}"
+        return variants.pick('date.billy', ("Heute ist {date}", "Wir haben {date}"), date=date)
     if lore == 'full':
-        return f"Datum nach terranischer Zählung: {date} Der Maschinengeist bestätigt."
-    return f"Datum: {date}"
+        return variants.pick('date.full', ("Datum nach terranischer Zählung: {date}",
+                                           "Datum: {date}"), date=date)
+    return variants.pick('date.servitor', ("Datum: {date}", "Heute ist {date}"), date=date)
 
 
 _DAY_NAMES = ('montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag')
@@ -162,11 +177,12 @@ def weather_day(text, today):
 def weather_text(snapshot, lore='off'):
     day = snapshot.get('weather_day', 0)
     if day is None:
-        return ("So weit reicht meine Vorhersage nicht, Boss." if is_billy(lore)
+        return ("So weit reicht meine Vorhersage nicht." if is_billy(lore)
                 else "Vorhersage reicht nur fünf Tage.")
     text = weather.day_sentence(snapshot.get('weather'), day, lore)
     if text is None:
-        return "Keine Wetterdaten, Boss." if is_billy(lore) else "Wetterdaten nicht verfügbar."
+        return ("Ich habe gerade keine Wetterdaten." if is_billy(lore)
+                else "Wetterdaten nicht verfügbar.")
     if lore == 'billy_full':
         return f"Lage draußen: {text}"
     return f"Auspex meldet: {text}" if lore == 'full' else text
@@ -179,10 +195,13 @@ def calendar_text(snapshot, lore='off'):
 def _opening(now, lore, name=None):
     """No human greeting: a servitor identifies the operator and starts the report."""
     part = 'Morgen' if now.hour < 11 else 'Tages' if now.hour < 18 else 'Abend'
-    if lore == 'billy':
-        return f"Morgen, {name or 'Boss'}." if part == 'Morgen' else f"Hallo {name or 'Boss'}."
-    if lore == 'billy_full':
-        return f"{part}appell, {name or 'Gardist'}. Stillgestanden, war ein Witz."
+    if is_billy(lore):
+        hello = 'Morgen' if part == 'Morgen' else 'Hallo'
+        if name:   # the recognized operator is always named
+            return variants.pick('briefing.open.billy.name',
+                                 (f"{hello}, {name}.", f"{hello}, {name}. Kurz zur Lage."))
+        return variants.pick('briefing.open.billy',
+                             (f"{hello}.", "Hier ist der Überblick.", f"{hello}. Kurz zur Lage."))
     identified = f"Bediener {name} identifiziert. " if name else ""
     if lore == 'full':
         return f"{identified}Die {part}litanei beginnt. Ave Omnissiah."
@@ -193,8 +212,8 @@ BRIEFING_END = {
     'off': "Bericht Ende.",
     'light': "Bericht Ende. Diensteinheit bereit.",
     'full': "Lob dem Omnissiah. Das Tagwerk möge beginnen.",
-    'billy': "Das war's. Los geht's.",
-    'billy_full': "Das war's. Wegtreten.",
+    'billy': "Das war's.",
+    'billy_full': "Das war's.",
 }
 
 
@@ -242,8 +261,9 @@ def answer(intent, now, snapshot=None, lore=None):
     if intent == 'battery':
         sentence = battery_sentence(snapshot, lore)
         if sentence is None:
-            return "Keine Akkudaten, Boss." if is_billy(lore) else "Energiedaten nicht verfügbar."
-        return f"{sentence} Heilige Ölung empfohlen." if lore == 'full' else sentence
+            return ("Zum Akku habe ich gerade keine Daten." if is_billy(lore)
+                    else "Energiedaten nicht verfügbar.")
+        return sentence
     if intent == 'network':
         return network_text(snapshot, lore=lore)
     if intent == 'updates':
@@ -257,5 +277,5 @@ def answer(intent, now, snapshot=None, lore=None):
     if intent == 'selftest':
         return logwatch.selftest_text(snapshot, lore, now)
     if intent == 'identity':
-        return IDENTITY.get(lore, IDENTITY['off'])
+        return variants.pick(f'identity.{lore}', IDENTITY.get(lore, IDENTITY['off']))
     raise ValueError(f'unknown intent {intent!r}')

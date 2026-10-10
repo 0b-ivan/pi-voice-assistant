@@ -27,8 +27,10 @@ import people
 import logwatch
 import maintenance
 import memory as memory_core
+import story as stories
 import sysmon
-from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor,
+import variants
+from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, AlarmMonitor, wake_phrase,
                     shutdown_text,
                     memory_phrase)
 from endpoint import Endpointer
@@ -36,7 +38,8 @@ from netprobe import InternetProbe, network_up
 import weather
 import wlan as wlan_radio
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
-from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
+from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, RemoteTurnUplink,
+                         load_remote_config, story_timeout)
 from protocol import ClientSession
 import datetime
 import intents
@@ -692,6 +695,10 @@ class VoiceController:
         except (OSError, ValueError, AttributeError):
             pass
         self.turn_transcript = None
+        # A running long story (story.StoryRun, RAM only) and, with a server,
+        # how to ask it for the next section (set by main()).
+        self.story = None
+        self.story_uplink_factory = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.logwatch = None  # logwatch.LogWatch (self-test), started by main()
         self.maint = maintenance.Mode()
@@ -828,6 +835,7 @@ class VoiceController:
             self.device_after_speech = None
         self.device_pending = None
         self.listen_after_greeting = False
+        self._drop_story('button')
         self.speech.stop()
         self.speech_started_at = None
         self.recorder.finish('cancel', publish=False)
@@ -843,6 +851,7 @@ class VoiceController:
     def stop_by_voice(self):
         """"Stop", "Sei still", "Klappe halten" ...: no answer, drop announcements
         that were waiting, back to idle (the wake word listens again)."""
+        self._drop_story('voice')
         self.speech.stop()
         self.speech_started_at = None
         self.alarm_queue = []
@@ -1022,6 +1031,7 @@ class VoiceController:
                                     memory='on' if self.memory_present else 'off',
                                     maintenance='on' if self.maint.active else 'off',
                                     devctl='on', pending=self._device_pending_now(),
+                                    story='on',
                                     **self._mood_fields(),
                                     **(self.logwatch.snapshot_fields()
                                        if self.logwatch is not None else {})))
@@ -1676,6 +1686,7 @@ class VoiceController:
             self.wake.stop()
 
     def _start_wake_recording(self):
+        self._drop_story('new_turn')   # a new request replaces the story
         self._release_microphone()
         self.speech_started_at = None
         self.recorder.start(auto_stop=True)
@@ -1684,7 +1695,7 @@ class VoiceController:
     def _greet(self):
         """Short prerecorded line when waking from sleep."""
         try:
-            self._say_alarm([WAKE_PHRASES.get(self.style, WAKE_PHRASES['light'])], source='wake')
+            self._say_alarm([wake_phrase(self.style)], source='wake')
             self.speech_started_at = time.monotonic()
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
@@ -1805,9 +1816,13 @@ class VoiceController:
             wait_network = False
         if intent is None and self.llm_mode == 'local':
             # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
-            reply = ("Ohne Server kann ich gerade nicht nachdenken, Boss."
-                     if self.persona == 'mensch'
-                     else "Daten unzureichend. Lokaler Sprachkern nicht erreichbar.")
+            reply = variants.pick('local_none.' + self.persona, (
+                ("Ohne Server kann ich gerade nicht nachdenken.",
+                 "Der Server fehlt, und ohne ihn komme ich hier nicht weiter.")
+                if self.persona == 'mensch' else
+                ("Lokaler Sprachkern nicht erreichbar. Ohne Server ist keine Antwort möglich.",
+                 "Keine Antwort möglich. Lokaler Sprachkern nicht erreichbar, der Server "
+                 "fehlt.")))
             event('llm_response', text=reply, model='local/none')
             self._start_speech(reply, source='assistant', model='local/none')
             return
@@ -1829,6 +1844,14 @@ class VoiceController:
             self._start_speech(reply, source='assistant', model='local/intent')
             if day is not None:
                 self._show_weather(day)
+            return
+        story_request = stories.request(text)
+        if story_request is not None:
+            import lore as archive
+            state = stories.start(story_request, self.persona, self.lore,
+                                  archive.packet(text, self.persona, self.lore))
+            self._story_state(state, remote=False)
+            event('story_start', minutes=state['minutes'], ids=state['ids'], route='pi')
             return
         context = self.memory.context()
         model = free_model() if self.llm_mode == 'free' else None
@@ -1901,16 +1924,156 @@ class VoiceController:
             text = str(item.get('text', ''))
             if self.turn_transcript and not intents.is_stop(self.turn_transcript):
                 self.memory.remember_turn(self.turn_transcript, text,
-                                          mood=self.mood.label(time.time()))
+                                          mood=self.mood.label(time.time()),
+                                          persona=self.persona)
             self.turn_llm = llm_kind(item.get('model'))
             event('llm_response', text=text, model=item.get('model'))
             print(f'SERVITOR: {text}', flush=True)
+        elif kind == 'audio' and item.get('path'):
+            self._story_part(item)
+        elif kind == 'story':
+            self._story_state(item.get('state'))
         elif kind == 'audio':
             event('remote_audio', format=item.get('format'),
                   duration_ms=item.get('duration_ms'), bytes=item.get('bytes'))
         elif kind == 'done':
             event('latency', stage='remote', metric='server',
                   timings=item.get('timings') or {})
+
+    # --- long stories (story.py) ---------------------------------------------------
+
+    def _story_state(self, state, remote=True):
+        """A new or updated story state from the server or the local start."""
+        if not isinstance(state, dict):
+            return
+        if self.story is None:
+            self.story = stories.StoryRun(state, remote=remote)
+        else:
+            self.story.state = state
+
+    def _story_part(self, item):
+        """An audio part of a story from the server: queued, played in order."""
+        if self.story is None:
+            self.story = stories.StoryRun(None, remote=True)  # state follows at the end
+        self.story.add(path=item['path'], text=item.get('text'), ms=item.get('duration_ms'))
+        event('story_part', part=item.get('part'), parts=item.get('parts'),
+              duration_ms=item.get('duration_ms'))
+
+    def _drop_story(self, reason):
+        run, self.story = self.story, None
+        if run is not None:
+            run.cancel()
+            event('story_stopped', reason=reason, played_ms=run.played_ms,
+                  parts=run.parts_played)
+
+    def _story_fetch(self, run):
+        """Ask for the next section: the server, or the Pi's own LLM path."""
+        if run.remote:
+            if self.story_uplink_factory is None:
+                run.failed = 'no server for the story'
+                return
+            uplink = self.story_uplink_factory(run.state)
+            run.job = RemoteTurnJob(uplink, self.config.runtime_dir, idle_timeout=story_timeout())
+        else:
+            model = free_model() if self.llm_mode == 'free' else None
+            run.job = TranscriptionJob(functools.partial(
+                generate_reply, lore=run.state['lore'], persona=run.state['persona'],
+                model=model, story=run.state), run.state['topic'])
+        event('story_fetch', section=run.state.get('seg'))
+
+    def _story_job_done(self, run):
+        job, run.job = run.job, None
+        if job.cancelled:
+            return
+        if isinstance(job, RemoteTurnJob):
+            for item in job.drain():
+                self._story_progress(item)
+            if job.error is not None:
+                run.failed = job.error
+                event('story_error', stage=job.error_stage, code=job.error_code)
+            elif isinstance(job.story, dict):
+                run.state = job.story
+            else:
+                run.failed = 'no story state'
+            return
+        if job.error is not None:
+            run.failed = job.error
+            event('story_error', stage='llm', code='llm')
+            return
+        raw, _model = job.result
+        text, note = stories.split_note(split_tag(raw)[0])
+        text = stories.trim_incomplete(memory_core.split_learned(text)[0])
+        if not text:
+            run.failed = 'empty section'
+            return
+        run.state = stories.advance(run.state, text, note)
+        for part in stories.split_parts(text):
+            run.add(text=part)
+
+    def _story_progress(self, item):
+        kind = item.get('event')
+        if kind == 'audio' and item.get('path'):
+            if self.story is not None:
+                self._story_part(item)
+            else:
+                Path(item['path']).unlink(missing_ok=True)
+        elif kind == 'reply':
+            event('story_section', words=len(str(item.get('text', '')).split()),
+                  model=item.get('model'))
+
+    def _story_tick(self):
+        """Play the next part, fetch the next section in time, end cleanly."""
+        run = self.story
+        if run is None or self.recorder.process is not None:
+            return
+        if run.job is not None:
+            if isinstance(run.job, RemoteTurnJob):
+                for item in run.job.drain():
+                    self._story_progress(item)
+            if run.job.done.is_set():
+                self._story_job_done(run)
+        if self.story is not run:
+            return
+        if self.job is None and run.state is not None and run.needs_more():
+            self._story_fetch(run)
+        if self.speech.active or getattr(self.speech, 'synthesizing', False):
+            return
+        if run.playing is not None:
+            if run.current_path:
+                Path(run.current_path).unlink(missing_ok=True)
+            run.part_finished()
+        if self.alarm_queue:
+            return                     # spoken by _speak_alarms on the next tick
+        item = run.next_part()
+        if item is not None:
+            run.current_path = item.get('path')
+            try:
+                self._settle_cue()
+                if item.get('path'):
+                    self.speech.play(item['path'], text=item.get('text'))
+                else:
+                    self.speech.start(item['text'])
+                self.speech_started_at = time.monotonic()
+                self._turn_spoken()
+            except (OSError, RuntimeError, ValueError) as exc:
+                event('speech_error', message=str(exc))
+                run.failed = str(exc)
+            return
+        if self.job is not None or not run.finished:
+            return
+        short = (run.state or {}).get('short')
+        if (run.failed is not None or short) and not run.notice_given:
+            # Say that the story is incomplete instead of ending silently.
+            run.notice_given = True
+            persona = (run.state or {}).get('persona', self.persona)
+            notices = stories.ABORTED if run.failed is not None else stories.SHORTER
+            self._start_speech(notices.get(persona, notices['servitor']), source='story')
+            run.playing = (time.monotonic(), 0)
+            run.current_path = None
+            return
+        self.story = None
+        event('story_finished', played_ms=run.played_ms, parts=run.parts_played,
+              failed=run.failed is not None)
 
     def _finish_remote(self, job):
         capture, self.remote_capture = self.remote_capture, None
@@ -1924,6 +2087,16 @@ class VoiceController:
             if job.error is None:
                 self.remote_failed = False
             self.stop_by_voice()
+            return
+        if job.error is None and (job.result or {}).get('story'):
+            self.remote_failed = False
+            event('remote_done', host=job.result.get('host'), story=True)
+            return                     # the parts play from the story queue
+        if job.error is not None and (getattr(job, 'parts', 0) or self.story is not None):
+            # A story that already started is never told again from the start.
+            event('remote_error', stage=job.error_stage, code=job.error_code, message=job.error)
+            if self.story is not None:
+                self.story.failed = job.error
             return
         if job.error is None:
             self.remote_failed = False
@@ -2096,7 +2269,8 @@ class VoiceController:
                 self._publish_mood()
                 reply = self._learn(reply)
                 self.memory.remember_turn(self.turn_transcript or '', reply,
-                                          mood=self.mood.label(time.time()))
+                                          mood=self.mood.label(time.time()),
+                                          persona=self.persona)
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
@@ -2121,6 +2295,7 @@ class VoiceController:
                     and getattr(self.speech, 'synthesizing', False))):
                 event('busy', reason='processing')
             else:
+                self._drop_story('new_turn')   # PTT stops the story at once
                 self.speech.stop()
                 self.speech_started_at = None
                 self._release_microphone()
@@ -2134,7 +2309,8 @@ class VoiceController:
         if self.wake is not None and not self.probe:
             self._wake_tick(now)
         if not self.probe:
-            self._speak_alarms()
+            self._speak_alarms()       # alarms go first, between two story parts
+            self._story_tick()
             pressed = action is not None or commands or any(pitft_pressed)
             self._update_power(now, pressed)
 
@@ -2153,7 +2329,7 @@ class VoiceController:
         return (self.recorder.process is not None or self.job is not None
                 or self.speech.active or getattr(self.speech, 'synthesizing', False)
                 or self.menu.open or bool(self.alarm_queue) or self.maint.active
-                or self.people.active)
+                or self.people.active or self.story is not None)
 
     def _wake_up(self, now):
         self.last_activity = now
@@ -2351,6 +2527,10 @@ def main():
                                  wake=wake, wake_word=wake_label, cue=acknowledge,
                                  config=config)
     controller_ref.append(controller)
+    if uplink_factory is not None:
+        def story_uplink_factory(state):
+            return RemoteStoryUplink(remote_config, state, status=controller.turn_snapshot())
+        controller.story_uplink_factory = story_uplink_factory
     if not args.probe and controller.weather.start().configured:
         event('weather_ready', days=weather.DAYS)
     if not args.probe and controller.agenda.start().configured:

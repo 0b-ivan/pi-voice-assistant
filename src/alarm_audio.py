@@ -75,7 +75,7 @@ def known_pieces(voice='servitor'):
     for lore in VOICE_STYLES[voice]:
         texts += [shutdown_text(text, lore)
                   for text in (SHUTDOWN_NOW, SHUTDOWN_CANCELLED, SHUTDOWN_FAILED)]
-        texts.append(WAKE_PHRASES[lore])
+        texts += list(WAKE_PHRASES[lore])   # every variant gets its clips
         texts += [_phrase(key, snapshot, lore) for key in ALARMS]
         texts += [_phrase(key, snapshot, lore, recovered=True)
                   for key in ('internet', 'network', 'server')]
