@@ -95,6 +95,15 @@ class VoiceEffectsTests(unittest.TestCase):
         default = build_render_command("in.wav", "out.wav")
         self.assertIn("flanger", default[default.index("-filter_complex") + 1])
 
+    def test_billy_server_voice_keeps_only_the_limiter(self):
+        from voice_effects import BILLY_FILTER_GRAPH, build_render_command
+        render = build_render_command("in.wav", "out.wav", effect="billy")
+        graph = render[render.index("-filter_complex") + 1]
+        self.assertEqual(graph, BILLY_FILTER_GRAPH)
+        for layer in ("asetrate", "equalizer", "flanger", "chorus"):
+            self.assertNotIn(layer, graph)
+        self.assertTrue(graph.endswith("aresample=48000[out]"))
+
     def test_servitor_ffmpeg_path_can_be_overridden(self):
         with patch.dict(os.environ, {"TTS_FFMPEG_BIN": "/custom/ffmpeg"}, clear=True):
             command = build_playback_command(

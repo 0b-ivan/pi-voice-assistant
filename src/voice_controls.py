@@ -113,6 +113,17 @@ def _env_float(name, default):
     return value
 
 
+def high_synthesis_config():
+    """thorsten-high on CT 107 (both voices): less variation in pitch and
+    timing than Piper's defaults (sounds less put on), a little slower."""
+    from piper.config import SynthesisConfig
+    return SynthesisConfig(
+        length_scale=_env_float("SERVITOR_HIGH_LENGTH_SCALE", 1.05),
+        noise_scale=_env_float("SERVITOR_HIGH_NOISE_SCALE", 0.4),
+        noise_w_scale=_env_float("SERVITOR_HIGH_NOISE_W_SCALE", 0.4),
+    )
+
+
 def _servitor_synthesis_config(voice):
     try:
         from piper.config import SynthesisConfig

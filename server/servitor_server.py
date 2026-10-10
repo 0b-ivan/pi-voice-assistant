@@ -127,6 +127,7 @@ class RealPipeline:
     def __init__(self, workdir, clock=time.monotonic):
         self.workdir = workdir
         self.voice = None
+        self.high = None      # Piper thorsten-high for both voices, if SERVITOR_HIGH_PIPER_MODEL
         self.clock = clock
         # After an OpenRouter failure, go straight to the local model for a
         # while instead of paying the full timeout on every turn of an outage.
@@ -138,6 +139,9 @@ class RealPipeline:
         model = os.environ['SERVITOR_PIPER_MODEL']
         from piper import PiperVoice
         self.voice = PiperVoice.load(model)
+        high = os.environ.get('SERVITOR_HIGH_PIPER_MODEL', '').strip()
+        if high:
+            self.high = PiperVoice.load(high)
         # Warm the ONNX session once so the first real turn pays no setup cost.
         self.synthesize('Bereit.').unlink()
         if os.environ.get('SERVITOR_LOCAL_LLM') == '1':
@@ -190,12 +194,18 @@ class RealPipeline:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
     def synthesize(self, text, voice='servitor'):
-        """Same speaker for both voice effects; only the rendering differs."""
-        from voice_controls import _synthesize_voice
+        """Both voices speak with thorsten-high (calm) when it is loaded, else
+        with the Servitor speaker; the rendering makes Proximus or Billy."""
+        from voice_controls import _synthesize_voice, high_synthesis_config
+        from pronounce import spoken
         target = _temporary_wav('syn-', self.workdir)
         try:
             with wave.open(str(target), 'wb') as output:
-                _synthesize_voice(self.voice, text, output, 'servitor')
+                if self.high is not None:
+                    self.high.synthesize_wav(spoken(text), output,
+                                             syn_config=high_synthesis_config())
+                else:
+                    _synthesize_voice(self.voice, text, output, 'servitor')
         except BaseException:
             target.unlink(missing_ok=True)
             raise
@@ -204,8 +214,11 @@ class RealPipeline:
     def render(self, source, voice='servitor'):
         from voice_effects import build_render_command
         target = _temporary_wav('dsp-', self.workdir)
+        effect = voice
+        if self.high is not None:
+            effect = 'billy' if voice == 'natural' else 'servitor-high'
         try:
-            subprocess.run(build_render_command(source, target, effect=voice), check=True,
+            subprocess.run(build_render_command(source, target, effect=effect), check=True,
                            timeout=60, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except BaseException:
