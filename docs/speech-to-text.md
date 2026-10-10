@@ -1,3 +1,3 @@
-# Dokument verschoben
+# Historisches Dokument verschoben
 
-Die aktuelle Dokumentation steht unter [speech](features/speech.md). Diese Datei ist nur ein Kompatibilitätsverweis; historische Messungen sind unter [history/](history/) eingeordnet.
+Die ursprünglichen Inhalte stehen unter [speech-to-text-2026-10-05.md](history/speech-to-text-2026-10-05.md). Aktuelle Anleitungen: [README](../README.md) und [Roadmap](roadmap.md).
