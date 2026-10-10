@@ -130,7 +130,7 @@ class RemoteTurnUplink:
     """
 
     def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None,
-                 session=None, agenda_tomorrow=None):
+                 session=None, agenda_tomorrow=None, nightwatch=None):
         self.config = config
         # protocol.ClientSession shared by all turns: opened with /v1/hello on
         # first use, then the memory core only travels when it changed.
@@ -142,6 +142,7 @@ class RemoteTurnUplink:
         # Base64 list of today's remaining appointments (agenda.encode_header).
         self.agenda = agenda
         self.agenda_tomorrow = agenda_tomorrow
+        self.nightwatch = nightwatch
         self._connect = connect
         self._queue = queue.SimpleQueue()
         self._lock = threading.Lock()
@@ -244,6 +245,8 @@ class RemoteTurnUplink:
                 connection.putheader('X-Servitor-Agenda', self.agenda)
             if self.agenda_tomorrow:
                 connection.putheader('X-Servitor-Agenda-Tomorrow', self.agenda_tomorrow)
+            if self.nightwatch:
+                connection.putheader('X-Servitor-Nightwatch', self.nightwatch)
             connection.endheaders()
         except BaseException:
             connection.close()

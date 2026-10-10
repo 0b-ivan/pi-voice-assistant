@@ -190,6 +190,12 @@ class RealPipeline:
         from transcribe import LiveVoskRecognizer
         return LiveVoskRecognizer()
 
+    def night_recognizer(self):
+        # Short Vosk probe; never invoke an optional long Whisper pass while
+        # foreground work is waiting. Full ASR comparisons remain offline jobs.
+        from transcribe import LiveVoskRecognizer
+        return LiveVoskRecognizer()
+
     def llm_state(self):
         """'offline' while OpenRouter is being skipped after a failure."""
         if os.environ.get('SERVITOR_LOCAL_LLM') == '1' and self.clock() < self.openrouter_retry_at:
@@ -313,6 +319,8 @@ class Service:
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
         self.ready = False
+        import nightwatch_server
+        self.nightwatch = nightwatch_server.Manager(self)
 
     def authorized(self, header):
         expected = f'Bearer {self.config.token}'.encode()
@@ -459,7 +467,8 @@ class Service:
         emit(dict(event='story', state=state))
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
-                 transcribe_only=False, appointments=None, appointments_tomorrow=None):
+                 transcribe_only=False, appointments=None, appointments_tomorrow=None,
+                 nightwatch_copy=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
@@ -575,6 +584,10 @@ class Service:
                     model = 'local/memory'
                 elif intent is not None:
                     snapshot = dict(device or {}, server='ok')
+                    if intent.startswith('night_') or intent == 'briefing':
+                        snapshot['nightwatch'] = (dict(denied=True)
+                            if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy)
+                            else nightwatch_copy)
                     state = getattr(self.pipeline, 'llm_state', None)
                     if state is not None:
                         snapshot['llm'] = state()
@@ -744,6 +757,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split('?', 1)[0]
+        if path == '/v1/nightwatch':
+            return self._nightwatch()
         if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
         elif path == '/v1/status':
@@ -757,6 +772,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self._json(404, dict(error='not found'))
 
+    def _nightwatch(self):
+        """Authenticated LAN-only job control; no arbitrary commands or paths."""
+        import ipaddress
+        import nightwatch
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        if os.environ.get('SERVITOR_NIGHTWATCH', '1') == '0':
+            return self._json(503, dict(error='nightwatch disabled'))
+        peer = self.client_address[0]
+        if peer in self.service.config.trusted_proxies or not ipaddress.ip_address(peer).is_private:
+            return self._json(403, dict(error='nightwatch only on the LAN'))
+        manager = self.service.nightwatch
+        if self.command == 'GET':
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                return self._json(200, manager.status(query.get('id', [None])[0]))
+            except ValueError:
+                return self._json(404, dict(error='unknown run'))
+        self.connection.settimeout(5)
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+            if not 0 < length <= nightwatch.MAX_REPORT:
+                return self._json(413, dict(error='request too large'))
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError('truncated body')
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError('expected object')
+            action = data.get('action')
+            if action == 'start':
+                return self._json(202, dict(id=manager.start(data)))
+            if action not in ('cancel', 'ack') or data.get('id') != manager.ident:
+                raise ValueError('invalid action or run')
+            if action == 'cancel':
+                if manager.guard:
+                    manager.guard.cancel()
+            else:
+                manager.ack(data['id'])
+            return self._json(200, dict(ok=True))
+        except RuntimeError:
+            return self._json(409, dict(error='nightwatch busy or awaiting acknowledgement'))
+        except (ValueError, TypeError, OSError):
+            return self._json(400, dict(error='invalid nightwatch request'))
+
     def _voiceprint(self):
         """Enrollment: raw 16 kHz mono PCM -> int8 voice embedding."""
         self.close_connection = True
@@ -766,6 +827,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
         if not self.service.embedder.available:
             return self._json(503, dict(error='speaker model not installed'))
+        self.service.nightwatch.foreground()
         try:
             length = int(self.headers.get('Content-Length', ''))
         except ValueError:
@@ -892,6 +954,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._maintenance()
         if url.path == '/v1/voiceprint':
             return self._voiceprint()
+        if url.path == '/v1/nightwatch':
+            return self._nightwatch()
         if url.path not in ('/v1/turn', '/v1/speak', '/v1/story'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
@@ -899,6 +963,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.connection.settimeout(self.service.config.idle_timeout)
         if not self.service.authorized(self.headers.get('Authorization')):
             return self._json(401, dict(error='unauthorized'))
+        self.service.nightwatch.foreground()
         if not self.service.limiter.allow(self._client()):
             return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
         deadline = time.monotonic() + self.service.config.loading_wait
@@ -961,6 +1026,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 device = None
         memory_copy, session_event = self._memory(device)
+        import nightwatch
+        nightwatch_copy = nightwatch.decode_view(self.headers.get('X-Servitor-Nightwatch', ''))
 
         appointments = agenda.decode_header(self.headers.get('X-Servitor-Agenda', ''),
                                             self.service.now().tzinfo)
@@ -992,7 +1059,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           memory_copy=memory_copy,
                                           transcribe_only=transcribe_only,
                                           appointments=appointments,
-                                          appointments_tomorrow=appointments_tomorrow)
+                                          appointments_tomorrow=appointments_tomorrow,
+                                          nightwatch_copy=nightwatch_copy)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.
