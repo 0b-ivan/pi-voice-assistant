@@ -102,7 +102,7 @@ Der Nutzen käme erst mit dem 2,1 GB großen `rescore`-Sprachmodell, für das de
 | Whisper small | 8,9 % | 1,93 s | ~1 GB |
 | Whisper large-v3-turbo | 5,6 % | 9,70 s | 2,5 GB |
 
-Whisper erkennt erst nach dem Loslassen; nur large-v3-turbo ist genauer, aber zu langsam. Die Fehlerarten unterscheiden sich: Whisper verschreibt eher harmlos („Eifelturm“, „Tokyo“), Vosk liegt eher inhaltlich daneben („stell einen Timer“ → „still einen keine“). Saubere Synthese begünstigt Vosk; die Entscheidung braucht Aufnahmen echter Stimme über das WM8960-Mikrofon. Whisper small bleibt dafür auf CT 107 installiert (getrennte Venv, vom Dienst nicht genutzt).
+Whisper erkennt erst nach dem Loslassen; nur large-v3-turbo ist genauer, aber zu langsam. Die Fehlerarten unterscheiden sich: Whisper verschreibt eher harmlos („Eifelturm“, „Tokyo“), Vosk liegt eher inhaltlich daneben („stell einen Timer“ → „still einen keine“). Saubere Synthese begünstigt Vosk; die Entscheidung braucht Aufnahmen echter Stimme über das WM8960-Mikrofon. Seit 10.10.2026 lässt sich Whisper im Dienst einschalten (`SERVITOR_STT=whisper`, Vosk bleibt Sprachschranke und Schnellweg für feste Anfragen); echte Aufnahmen vergleicht `bench-stt.py --clips` ([STT](speech-to-text.md#whisper-auf-ct-107-optional)).
 
 ## Antworten ohne LLM, Status und Charakter
 

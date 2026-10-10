@@ -118,6 +118,12 @@ class Config:
         return PCM_RATE * 2 * self.max_seconds
 
 
+def quick_text(text):
+    """Vosk's text is good enough as it is: a stop word or a fixed request
+    answered without the LLM (Whisper would only add a second)."""
+    return intents.is_stop(text) or intents.match(text) is not None
+
+
 class RealPipeline:
     """Resident models; every method is called under the service turn lock."""
 
@@ -132,6 +138,16 @@ class RealPipeline:
     def load(self):
         import transcribe
         transcribe._load_vosk_model()
+        import whisper_stt
+        if whisper_stt.enabled():
+            # Optional and never fatal: without it the turn stays on Vosk.
+            try:
+                whisper_stt.load()
+                print(json.dumps(dict(event='whisper_ready', model=whisper_stt.MODEL)),
+                      flush=True)
+            except Exception as exc:
+                print(json.dumps(dict(event='whisper_unavailable', error=str(exc))),
+                      flush=True)
         model = os.environ['SERVITOR_PIPER_MODEL']
         from piper import PiperVoice
         self.voice = PiperVoice.load(model)
@@ -147,6 +163,9 @@ class RealPipeline:
                       flush=True)
 
     def recognizer(self):
+        import whisper_stt
+        if whisper_stt.loaded():
+            return whisper_stt.HybridRecognizer(quick=quick_text)
         from transcribe import LiveVoskRecognizer
         return LiveVoskRecognizer()
 
@@ -360,6 +379,8 @@ class Service:
                     recognizer = self.pipeline.recognizer()
                 except Exception as exc:
                     raise TurnError('recognize', 'stt', str(exc)) from exc
+                if transcribe_only and hasattr(recognizer, 'whisper'):
+                    recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
                 pending = b''
                 received = 0
                 # Keep the audio only when a voice must be recognized.

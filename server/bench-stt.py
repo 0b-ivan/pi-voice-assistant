@@ -10,14 +10,18 @@ recognizer given:
   whisper:NAME        faster-whisper, CPU int8, runs after "release" on the
                       whole clip; needs --whisper-python (its own venv)
 
+With --clips DIR the clips are real recordings instead (scripts/mic-check.py
+record on the Pi: NN.wav plus references.json); that is the comparison that
+decides, synthetic speech favours Vosk.
+
 Prints the word error rate (case and punctuation ignored, digits spelled
 out), latency after release (mean/max), load time and peak RSS, plus every
 miss. Synthetic speech is cleaner than a real microphone; use it to compare
 recognizers, not as an absolute accuracy figure.
 
   /opt/servitor-voice/.venv/bin/python server/bench-stt.py \\
-      --whisper-python /opt/servitor-voice/.venv-whisper/bin/python \\
       vosk:/opt/servitor-voice/models/vosk-model-small-de-0.15 whisper:small
+  ... --clips /root/stt-clips vosk:... whisper:small whisper:medium
 """
 import argparse
 import json
@@ -84,6 +88,18 @@ def synthesize(directory):
     return clips
 
 
+def load_clips(directory):
+    """Real recordings: references.json [{file, text}], WAVs resampled to 16 kHz mono."""
+    clips = []
+    for item in json.load(open(os.path.join(directory, 'references.json'), encoding='utf-8')):
+        path = os.path.join(directory, item['file'])
+        pcm = subprocess.run(['ffmpeg', '-loglevel', 'error', '-i', path, '-ar', '16000',
+                              '-ac', '1', '-f', 's16le', '-'],
+                             check=True, capture_output=True).stdout
+        clips.append((item['text'], pcm))
+    return clips
+
+
 def run_vosk(model_dir, clips):
     from vosk import KaldiRecognizer, Model, SetLogLevel
     SetLogLevel(-1)
@@ -102,19 +118,18 @@ def run_vosk(model_dir, clips):
 
 
 def run_whisper(name, clips):
-    import numpy
+    # Same settings as the service (prompt, filters): src/whisper_stt.py.
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
     from faster_whisper import WhisperModel
+    from whisper_stt import transcribe_pcm
     started = time.monotonic()
     model = WhisperModel(name, device='cpu', compute_type='int8',
                          cpu_threads=os.cpu_count() or 4, download_root=WHISPER_DIR)
     load = time.monotonic() - started
     results = []
     for _sentence, pcm in clips:
-        audio = numpy.frombuffer(pcm, dtype=numpy.int16).astype(numpy.float32) / 32768
         started = time.monotonic()
-        segments, _info = model.transcribe(audio, language='de', beam_size=1,
-                                           condition_on_previous_text=False)
-        text = ' '.join(segment.text for segment in segments)
+        text = transcribe_pcm(pcm, model)
         results.append((text, time.monotonic() - started))
     return load, results
 
@@ -130,7 +145,9 @@ def child(spec, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--whisper-python', default='/opt/servitor-voice/.venv-whisper/bin/python')
+    parser.add_argument('--whisper-python', default=sys.executable,
+                        help='Python with faster-whisper (default: this one, the service venv)')
+    parser.add_argument('--clips', metavar='DIR', help='real recordings instead of Piper')
     parser.add_argument('--child', nargs=2, metavar=('SPEC', 'DATA'), help=argparse.SUPPRESS)
     parser.add_argument('recognizers', nargs='*', metavar='vosk:DIR|whisper:NAME')
     args = parser.parse_args()
@@ -139,7 +156,7 @@ def main():
         return
 
     with tempfile.TemporaryDirectory() as directory:
-        clips = synthesize(directory)
+        clips = load_clips(args.clips) if args.clips else synthesize(directory)
         data = os.path.join(directory, 'clips.json')
         json.dump([(sentence, pcm.hex()) for sentence, pcm in clips], open(data, 'w'))
         for spec in args.recognizers:

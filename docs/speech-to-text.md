@@ -83,3 +83,52 @@ stdout enthält den Text, stderr `STT_PROVIDER_USED=vosk`. Fehler erscheinen als
 Im PTT-Journal erscheinen beim Start `stt_loading`/`stt_ready`, während Aufnahme `recording` mit `stt=vosk-live`, danach `capture_ready`, `processing`, `transcript` und ein `latency`-Event mit `stage=stt`. Erst danach beginnt `llm_start`.
 
 Audiodaten sind flüchtig; Transkripte werden protokolliert. Siehe [Troubleshooting](troubleshooting.md#stt) und [Betrieb](operation.md).
+
+## Mikrofonpegel prüfen
+
+[`scripts/mic-check.py`](../scripts/mic-check.py) nimmt genau wie PTT auf (16 kHz Mono, `PTT_AUDIO_DEVICE`) und misst Rauschen, Sprachpegel, Spitze, Übersteuerung und Rauschabstand in dBFS. Das Mikrofon muss frei sein (das Aktivierungswort belegt es):
+
+```bash
+sudo systemctl stop pi-ptt
+python3 /opt/pi-voice-assistant/scripts/mic-check.py level
+sudo systemctl start pi-ptt
+```
+
+Ziel: Sprache −32 … −10 dBFS, keine Übersteuerung, Rauschabstand ≥ 25 dB. Das Skript sagt, ob `Capture` (1 Schritt = 0,75 dB) hoch oder runter soll, und zeigt die aktuellen Mixerwerte. Nach einer Änderung erneut messen, erst dann `sudo alsactl store wm8960soundcard`. Ein knapper Rauschabstand lässt sich mit mehr Verstärkung nicht beheben: näher sprechen oder Störquelle suchen.
+
+## Whisper auf CT 107 (optional)
+
+Mit `SERVITOR_STT=whisper` in `/etc/servitor-voice.env` transkribiert CT 107 nach dem Loslassen zusätzlich mit faster-whisper ([`src/whisper_stt.py`](../src/whisper_stt.py)):
+
+- Vosk streamt weiter mit und entscheidet, ob überhaupt gesprochen wurde (Whisper erfindet aus Stille Sätze wie „Untertitel im Auftrag des ZDF“).
+- Passt der Vosk-Text schon zu einer festen Anfrage oder einem Stoppwort („wie spät ist es“, „sei still“), wird Whisper übersprungen: diese Antworten bleiben so schnell wie bisher.
+- Sonst ersetzt der Whisper-Text den von Vosk; scheitert Whisper oder liefert nur Erfundenes, bleibt Vosk. Passphrasen (`mode=transcribe`) bleiben bei Vosk, weil sie mit Vosk-Schreibweise gespeichert sind.
+- Jede Whisper-Runde schreibt beide Texte ins Journal: `journalctl -u servitor-voice | grep stt_compare`.
+
+Kosten: Whisper small braucht ~1 GB RAM und auf CT 107 etwa 1–2 s nach dem Loslassen ([Messung](architecture.md#whisper-als-erkenner-auf-synthetischer-sprache-kein-gewinn)). Ohne die Einstellung oder wenn das Modell nicht lädt (`whisper_unavailable` im Journal), läuft alles wie bisher mit Vosk.
+
+```bash
+# auf CT 107
+sh /opt/servitor-voice/repo/server/install-whisper.sh small
+echo SERVITOR_STT=whisper >> /etc/servitor-voice.env
+systemctl restart servitor-voice
+```
+
+### Entscheidung mit echter Stimme
+
+Synthetische Sprache begünstigt Vosk. Deshalb vorher echte Aufnahmen vergleichen: 20 Alltagsanfragen auf dem Pi aufnehmen und auf CT 107 durch beide Erkenner schicken.
+
+```bash
+# Pi
+sudo systemctl stop pi-ptt
+python3 /opt/pi-voice-assistant/scripts/mic-check.py record ~/stt-clips
+sudo systemctl start pi-ptt
+scp -r ~/stt-clips root@<ct107>:/root/stt-clips
+# CT 107
+/opt/servitor-voice/.venv/bin/python /opt/servitor-voice/repo/server/bench-stt.py \
+    --clips /root/stt-clips \
+    vosk:/opt/servitor-voice/models/vosk-model-small-de-0.15 whisper:small
+```
+
+Ausgabe: Wortfehlerrate, Wartezeit nach dem Loslassen und jeder Fehler pro Erkenner.
+
