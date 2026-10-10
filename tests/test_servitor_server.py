@@ -761,8 +761,9 @@ if __name__ == '__main__':
     unittest.main()
 
 
-class BillyVoiceTest(unittest.TestCase):
-    """RealPipeline: Billy speaks with his own Piper model when one is loaded."""
+class HighVoiceTest(unittest.TestCase):
+    """RealPipeline: with thorsten-high loaded both voices speak with it, calm;
+    the rendering makes Proximus (base chain + machine DSP) or Billy (limiter)."""
 
     def setUp(self):
         import types
@@ -781,48 +782,47 @@ class BillyVoiceTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def voice(self):
-        voice = unittest.mock.Mock()
+    @staticmethod
+    def write(output):
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(22050)
+        output.writeframes(bytes(100))
 
-        def synthesize_wav(text, output, syn_config=None):
-            output.setnchannels(1)
-            output.setsampwidth(2)
-            output.setframerate(22050)
-            output.writeframes(bytes(100))
-        voice.synthesize_wav.side_effect = synthesize_wav
-        return voice
-
-    def test_natural_uses_the_own_model_calm_and_unfiltered(self):
-        pipeline = ss.RealPipeline(self.tmp.name)
-        pipeline.voice, pipeline.natural = unittest.mock.Mock(), self.voice()
-        with unittest.mock.patch.dict(os.environ, {'SERVITOR_NATURAL_NOISE_SCALE': '0.3'}):
-            pipeline.synthesize('Lob dem Omnissiah.', 'natural').unlink()
-        text, _ = pipeline.natural.synthesize_wav.call_args[0]
-        from pronounce import spoken
-        config = pipeline.natural.synthesize_wav.call_args[1]['syn_config']
-        self.assertEqual(text, spoken('Lob dem Omnissiah.'))  # pronounced like every answer
-        self.assertEqual((config.noise_scale, config.noise_w_scale, config.length_scale),
-                         (0.3, 0.4, 1.05))
-        pipeline.voice.synthesize.assert_not_called()   # the Servitor model stays idle
+    def renders(self, pipeline):
         with unittest.mock.patch.object(ss.subprocess, 'run') as run:
-            pipeline.render(Path(self.tmp.name) / 'x.wav', 'natural').unlink(missing_ok=True)
-            pipeline.render(Path(self.tmp.name) / 'x.wav', 'servitor').unlink(missing_ok=True)
-        from voice_effects import BILLY_FILTER_GRAPH
-        billy, servitor = (call[0][0] for call in run.call_args_list)
-        self.assertIn(BILLY_FILTER_GRAPH, billy)
-        self.assertNotIn(BILLY_FILTER_GRAPH, servitor)
+            for voice in ('natural', 'servitor'):
+                pipeline.render(Path(self.tmp.name) / 'x.wav', voice).unlink(missing_ok=True)
+        return [call[0][0] for call in run.call_args_list]
 
-    def test_without_own_model_billy_keeps_the_servitor_speaker_and_filter(self):
+    def test_both_voices_use_thorsten_high_calm(self):
         pipeline = ss.RealPipeline(self.tmp.name)
-        def servitor(voice, text, output, profile):
-            output.setnchannels(1)
-            output.setsampwidth(2)
-            output.setframerate(22050)
-            output.writeframes(bytes(100))
-        with unittest.mock.patch('voice_controls._synthesize_voice', side_effect=servitor) as synth:
+        pipeline.voice, pipeline.high = unittest.mock.Mock(), unittest.mock.Mock()
+        pipeline.high.synthesize_wav.side_effect = lambda text, out, syn_config: self.write(out)
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_HIGH_NOISE_SCALE': '0.3'}):
+            for voice in ('natural', 'servitor'):
+                pipeline.synthesize('Lob dem Omnissiah.', voice).unlink()
+        from pronounce import spoken
+        for call in pipeline.high.synthesize_wav.call_args_list:
+            config = call[1]['syn_config']
+            self.assertEqual(call[0][0], spoken('Lob dem Omnissiah.'))
+            self.assertEqual((config.noise_scale, config.noise_w_scale, config.length_scale),
+                             (0.3, 0.4, 1.05))
+        pipeline.voice.synthesize.assert_not_called()
+        from voice_effects import BILLY_FILTER_GRAPH, SERVITOR_HIGH_BASE_CHAIN
+        billy, proximus = self.renders(pipeline)
+        self.assertIn(BILLY_FILTER_GRAPH, billy)
+        graph = proximus[proximus.index('-filter_complex') + 1]
+        self.assertTrue(graph.startswith('[0:a]' + SERVITOR_HIGH_BASE_CHAIN + 'aresample=24000'))
+        self.assertIn('flanger', graph)                 # the machine DSP stays on top
+
+    def test_without_thorsten_high_everything_stays_as_before(self):
+        pipeline = ss.RealPipeline(self.tmp.name)
+        with unittest.mock.patch('voice_controls._synthesize_voice',
+                                 side_effect=lambda v, t, out, p: self.write(out)) as synth:
             pipeline.synthesize('Gemerkt.', 'natural').unlink(missing_ok=True)
         self.assertEqual(synth.call_args[0][3], 'servitor')
-        with unittest.mock.patch.object(ss.subprocess, 'run') as run:
-            pipeline.render(Path(self.tmp.name) / 'x.wav', 'natural').unlink(missing_ok=True)
-        from voice_effects import NATURAL_FILTER_GRAPH
-        self.assertIn(NATURAL_FILTER_GRAPH, run.call_args[0][0])
+        from voice_effects import NATURAL_FILTER_GRAPH, SERVITOR_HIGH_BASE_CHAIN
+        billy, proximus = self.renders(pipeline)
+        self.assertIn(NATURAL_FILTER_GRAPH, billy)
+        self.assertNotIn(SERVITOR_HIGH_BASE_CHAIN, ' '.join(proximus))

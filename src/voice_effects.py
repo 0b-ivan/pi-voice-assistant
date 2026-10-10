@@ -100,15 +100,28 @@ NATURAL_FILTER_GRAPH = (
     "aresample=48000"
     "[out]"
 )
-# Billy on CT 107 with his own Piper voice (thorsten-high, calm settings,
-# SERVITOR_NATURAL_PIPER_MODEL): the voice is already right, so only the limiter
-# and the playback rate remain. Not a menu value; the server picks it when that
-# model is loaded. The Pi's local fallback keeps NATURAL_FILTER_GRAPH.
+# CT 107 with Piper thorsten-high (SERVITOR_HIGH_PIPER_MODEL, calm settings) for
+# both voices; chosen by ear on 10.10.2026. Not menu values: the server picks
+# them when that model is loaded, the Pi's local fallback keeps the graphs above.
+# Billy: the voice is already right, only the limiter and the playback rate remain.
 BILLY_FILTER_GRAPH = (
     "[0:a]alimiter=level_in=1:level_out=1:limit=0.95:attack=5:release=60:level=0,"
     "aresample=48000"
     "[out]"
 )
+# Proximus: thorsten-high 3 semitones lower with the formants (a bigger chest),
+# warmer, lightly saturated, then the machine DSP on top as before.
+SERVITOR_HIGH_BASE_CHAIN = (
+    "asetrate=sample_rate=19670,aresample=22050,atempo=1.121,"
+    "equalizer=f=130:t=q:w=1:g=3,equalizer=f=2500:t=q:w=1.2:g=2,"
+    "asoftclip=type=tanh:threshold=0.6,lowpass=f=7000,alimiter=limit=0.95,"
+)
+
+
+def _with_base_chain(graph):
+    return graph.replace("[0:a]", "[0:a]" + SERVITOR_HIGH_BASE_CHAIN, 1)
+
+
 VOICE_EFFECTS = ("servitor", "natural")
 DEFAULT_VOICE_EFFECT = "servitor"
 
@@ -238,6 +251,8 @@ def build_render_command(source, target, ffmpeg_bin=None, effect=None):
         graph = NATURAL_FILTER_GRAPH
     else:
         graph = SERVITOR_REFERENCE_FILTER_GRAPH if aura == "reference" else SERVITOR_FILTER_GRAPH
+        if effect == "servitor-high":
+            graph = _with_base_chain(graph)
     executable = ffmpeg_bin or os.environ.get("TTS_FFMPEG_BIN", DEFAULT_FFMPEG_BIN)
     return [executable, "-hide_banner", "-loglevel", "warning", "-nostdin",
             "-filter_complex_threads", "1", "-i", str(source),

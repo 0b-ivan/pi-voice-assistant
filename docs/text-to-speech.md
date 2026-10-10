@@ -68,11 +68,16 @@ resident Piper
 
 Der residente Servitor-Pfad schreibt Piper-PCM direkt auf FFmpeg-stdin und startet die Wiedergabe mit dem ersten verfügbaren Audio-Chunk. Die Aura wird nicht als frei laufende FFmpeg-Quelle erzeugt, sondern aus der Zeitbasis des eingehenden PCM-Stroms. Dadurch bleibt sie während der explizit eingespeisten Satzpausen hörbar, kann die Sprach-Pipe aber nicht durch vorauseilende Synthese zurückstauen. Eine vollständige Quell-WAV muss nicht mehr fertig synthetisiert werden. Der frühere Reverse-Fade wurde entfernt, weil er die komplette Ansage puffern und damit Streaming verhindern würde. Der kurze Echo-Tail sorgt weiterhin für ein kontrolliertes Ausklingen.
 
-## Billys Stimme
+## Stimmen auf CT 107 (thorsten-high)
 
-Billy (Sprechstil `mensch`, Stimmeffekt `natural`) spricht auf CT 107 mit einer eigenen Piper-Stimme: `de_DE-thorsten-high`, ruhiger eingestellt als Pipers Standard (`SERVITOR_NATURAL_NOISE_SCALE=0.4`, `SERVITOR_NATURAL_NOISE_W_SCALE=0.4`, `SERVITOR_NATURAL_LENGTH_SCALE=1.05`), also weniger Schwankung in Tonfall und Tempo. Danach kommt nur noch ein Limiter (`BILLY_FILTER_GRAPH`), kein Stimmfilter. `server/install-ct.sh` lädt das Modell (sha256-geprüft) und setzt `SERVITOR_NATURAL_PIPER_MODEL`. Ohne diese Variable, und lokal auf dem Pi, bleibt Billy bei Thorsten emotional mit `NATURAL_FILTER_GRAPH`.
+Auf dem Server sprechen beide Stimmen mit Piper `de_DE-thorsten-high`, ruhiger eingestellt als Pipers Standard (`SERVITOR_HIGH_NOISE_SCALE=0.4`, `SERVITOR_HIGH_NOISE_W_SCALE=0.4`, `SERVITOR_HIGH_LENGTH_SCALE=1.05`), also weniger Schwankung in Tonfall und Tempo. Das Rendern macht daraus die beiden Figuren:
 
-Ausgewählt am 10.10.2026 nach Hörproben (thorsten-high, karlsson, pavoque, mls). Verworfen: RVC mit einem Blazkowicz-Modell (Echtzeitfaktor ~1,6 auf CT 107, Speicher über 3 GB bei 9 s Audio, PR #80) und `de_DE-mls-medium`, das kurze Sätze nur als Kauderwelsch spricht (trainiert auf langen Hörbuchpassagen).
+- **Proximus (Servitor):** `SERVITOR_HIGH_BASE_CHAIN` senkt um 3 Halbtöne samt Formanten (größerer Brustkorb), gibt Wärme bei 130 Hz, Präsenz bei 2,5 kHz und leichte Sättigung (`asoftclip`); darüber liegt die Servitor-DSP wie bisher, die selbst noch etwa 1,4 Halbtöne absenkt.
+- **Billy (natürlich):** nur ein Limiter (`BILLY_FILTER_GRAPH`), kein Stimmfilter.
+
+`server/install-ct.sh` lädt das Modell (sha256-geprüft) und setzt `SERVITOR_HIGH_PIPER_MODEL` (früher `SERVITOR_NATURAL_PIPER_MODEL`, wird umbenannt). Ohne diese Variable und lokal auf dem Pi bleibt es bei Thorsten emotional mit `SERVITOR_FILTER_GRAPH` bzw. `NATURAL_FILTER_GRAPH`. Nach einem Wechsel die Alarm-Clips neu bauen (`alarm_audio.py build --force --prune`, ~40 min).
+
+Ausgewählt am 10.10.2026 nach Hörproben (Proximus: Variante „f + Filter“, Billy: „ruhig“). Verworfen: RVC mit einem Blazkowicz-Modell (Echtzeitfaktor ~1,6 auf CT 107, Speicher über 3 GB bei 9 s Audio, PR #80), `de_DE-mls-medium` (spricht kurze Sätze als Kauderwelsch, trainiert auf langen Hörbuchpassagen), karlsson und pavoque.
 
 ## Dynamischer Status auf SHIM E
 
