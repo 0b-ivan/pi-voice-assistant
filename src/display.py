@@ -37,6 +37,7 @@ VOICE_EVENT_STATES = {
     "waiting_for_release": "BEREIT",
     "recording": "ZUHÖREN",
     "capture_ready": "VERSTEHEN",
+    "capture_discarded": "BEREIT",
     "processing": "VERSTEHEN",
     "stt_live_error": "VERSTEHEN",
     "busy": "VERSTEHEN",

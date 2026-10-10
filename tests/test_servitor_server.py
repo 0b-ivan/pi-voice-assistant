@@ -80,6 +80,70 @@ class FakePipeline:
 
 
 class ServerTest(unittest.TestCase):
+    def test_local_mode_uses_real_measurements_and_fixed_model_identity(self):
+        cases = ('wie voll ist dein akku',
+                 'kannst du bitte einmal nachsehen wie hoch dein akku gerade wirklich ist und ob du lädst',
+                 'sag mir bitte einmal deine messwerte und deinen aktuellen status ohne etwas zu raten',
+                 'welches sprachmodell bist du')
+        self.pipeline.fail_llm = True  # any model invocation would fail this test
+        for persona in ('servitor', 'mensch'):
+            for question in cases:
+                self.pipeline.transcript = question
+                events = []
+                self.service.run_turn([b'\1' * 16000], events.append, 'wav', device=dict(
+                    llm_mode='local', persona=persona, battery_pct=80, battery_charging=True))
+                reply = next(e for e in events if e['event'] == 'reply')
+                self.assertEqual(reply['model'], 'local/intent')
+                if 'sprachmodell' in question:
+                    self.assertIn('Billy' if persona == 'mensch' else 'Proximus', reply['text'])
+                else:
+                    self.assertIn('80 Prozent', reply['text'])
+                    self.assertNotIn('48 Prozent', reply['text'])
+        self.pipeline.transcript = 'wie voll ist dein akku'
+        events = []
+        self.service.run_turn([b'\1' * 16000], events.append, 'wav', device=dict(llm_mode='local'))
+        self.assertEqual(next(e['text'] for e in events if e['event'] == 'reply'),
+                         'Energiedaten nicht verfügbar.')
+
+    def test_tomorrow_calendar_header_is_used_and_legacy_client_gets_no_guesses(self):
+        import agenda
+        import datetime
+        import zoneinfo
+        now = datetime.datetime(2026, 10, 10, 23, 0, tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        early = dict(summary='Frühtermin', start=(now + datetime.timedelta(days=1)).replace(hour=6),
+                     end=None, all_day=False)
+        today = dict(early, summary='Termin heute', start=now)
+        self.pipeline.transcript = 'was steht morgen an'
+        self.pipeline.fail_llm = True
+
+        def turn(tomorrow=None, guest=False):
+            headers = {'Authorization': f'Bearer {TOKEN}',
+                       'X-Servitor-Agenda': agenda.encode_header([today])}
+            if tomorrow is not None:
+                headers['X-Servitor-Agenda-Tomorrow'] = tomorrow
+            if guest:
+                import speaker
+                copy = dict(facts=[], directives=[], history=[], voiceprints=[dict(
+                    name='Ivan', print=speaker.encode([1.0, 0.0]))])
+                headers['X-Servitor-Status'] = json.dumps(dict(memory='on'))
+                headers['X-Servitor-Memory'] = memory.encode_header(copy)
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+            try:
+                conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+                events = self.events(conn.getresponse().read())
+                return next(e['text'] for e in events if e['event'] == 'reply')
+            finally:
+                conn.close()
+
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=now):
+            self.assertEqual(turn(agenda.encode_header([early])), 'Termine morgen. 6 Uhr: Frühtermin.')
+            self.assertEqual(turn(), 'Kalenderdaten für morgen nicht verfügbar.')
+            self.assertEqual(turn(agenda.encode_header([])), 'Keine weiteren Termine morgen.')
+            self.assertEqual(turn('invalid header'), 'Kalenderdaten für morgen nicht verfügbar.')
+            with unittest.mock.patch.object(ss.Service, '_identify',
+                                             lambda self, audio, copy, emit: memory.guest_view(copy)):
+                self.assertIn('nicht als Bediener erkannt', turn(agenda.encode_header([early]), guest=True))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         config = ss.Config({'SERVITOR_API_TOKEN': TOKEN, 'SERVITOR_BIND': '127.0.0.1',

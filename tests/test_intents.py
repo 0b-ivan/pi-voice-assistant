@@ -9,6 +9,23 @@ import intents  # noqa: E402
 
 
 class MatchTests(unittest.TestCase):
+    def test_personal_measurements_never_go_to_the_model_for_long_questions(self):
+        cases = {
+            'kannst du bitte einmal nachsehen wie hoch dein akku gerade wirklich ist und ob du lädst': 'battery',
+            'wie viel prozent hast du noch': 'battery',
+            'wie hoch ist deine cpu temperatur': 'status',
+            'sag mir bitte einmal deine messwerte und deinen aktuellen status ohne etwas zu raten': 'status',
+            'welches sprachmodell bist du': 'model',
+            'was für ein sprach modell nutzt du': 'model',
+            'was steht morgen an': 'calendar',
+            'kannst du mir bitte sagen was steht morgen an und welche termine habe ich noch': 'calendar',
+            'abendbericht': 'briefing',
+        }
+        for persona in ('servitor', 'mensch'):
+            for text, expected in cases.items():
+                with self.subTest(persona=persona, text=text):
+                    self.assertEqual(intents.match(text, persona), expected)
+
     def test_recognized_questions(self):
         cases = {
             "wie spät ist es": "time",
@@ -166,6 +183,42 @@ class AnswerTests(unittest.TestCase):
                                                    {"lore": "full", "battery_pct": 50}))
 
     WEATHER = dict(now=-2, code=61, high=8, low=-3, rain=70)
+
+    def test_model_question_keeps_both_personas_and_describes_local_mode(self):
+        for persona, name in (('servitor', 'Proximus'), ('mensch', 'Billy')):
+            text = intents.answer('model', self.NOW, dict(persona=persona, llm_mode='local'))
+            self.assertIn(name, text)
+            self.assertIn('lokale Sprachkern', text)
+            self.assertNotIn('Mistral', text)
+
+    def test_calendar_tomorrow_never_uses_today_or_guesses(self):
+        for question in ('was steht morgen an', 'welche termine habe ich morgen'):
+            self.assertEqual(intents.calendar_day(question, self.NOW.date()), 1)
+        for question in ('was steht übermorgen an', 'welche termine nächste woche',
+                         'termine am 15 oktober'):
+            day = intents.calendar_day(question, self.NOW.date())
+            self.assertNotIn(day, (0, 1))
+            self.assertIn('nur für heute und morgen',
+                          intents.answer('calendar', self.NOW, dict(agenda_day=day, agenda=[])))
+        self.assertEqual(intents.answer('calendar', self.NOW, dict(agenda_day=1)),
+                         'Kalenderdaten für morgen nicht verfügbar.')
+        self.assertEqual(intents.answer('calendar', self.NOW, dict(agenda_day=1, agenda=[])),
+                         'Keine weiteren Termine morgen.')
+
+    def test_evening_report_and_rain_refer_to_tomorrow(self):
+        data = dict(self.WEATHER, days=[{}, dict(date='2026-10-09', code=3, high=14, low=6, rain=40)])
+        evening = self.NOW.replace(hour=18)
+        text = intents.answer('briefing', evening, dict(weather=data))
+        self.assertIn('Morgen: 6 bis 14 Grad', text)
+        self.assertIn('40 Prozent', text)
+        self.assertNotIn('70 Prozent', text)
+        self.assertNotIn('Außentemperatur', text)
+        morning = intents.answer('briefing', self.NOW.replace(hour=7), dict(weather=data))
+        self.assertIn('70 Prozent', morning)
+        self.assertNotIn('40 Prozent', morning)
+        missing = intents.answer('briefing', evening, dict(weather=self.WEATHER))
+        self.assertIn('Wetterdaten für morgen nicht verfügbar.', missing)
+        self.assertNotIn('70 Prozent', missing)
 
     def test_unsupported_names_what_is_missing(self):
         for lore in ('off', 'light', 'full', 'billy', 'billy_full'):

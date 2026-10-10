@@ -41,7 +41,7 @@ import wlan as wlan_radio
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, RemoteTurnUplink,
                          load_remote_config, story_timeout)
-from protocol import ClientSession
+from protocol import ClientSession, MIN_TURN_SECONDS
 import datetime
 import intents
 from power import Battery, throttled_flags
@@ -60,7 +60,7 @@ from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob,
 DISPLAY_EVENTS = {
     'stt_loading', 'stt_ready', 'stt_live_error', 'stt_error',
     'tts_loading', 'tts_ready', 'tts_error',
-    'waiting_for_release', 'recording', 'capture_ready', 'processing',
+    'waiting_for_release', 'recording', 'capture_ready', 'capture_discarded', 'processing',
     'transcript', 'transcript_discarded', 'cancelled', 'busy',
     'llm_start', 'llm_response', 'llm_discarded', 'llm_error',
     'status', 'speech_started', 'speech_finished', 'speech_error',
@@ -409,11 +409,13 @@ class Recorder:
         self._capture_rate = 48000
         self._capture_channels = 2
         self._live_recognizer = None
+        self._discard_capture = False
         self._endpoint = None  # set for wake-word recordings without a button
         self.endpoint_result = None
 
-    def _pump_live_audio(self, proc, recognizer, uplink=None):
+    def _pump_live_audio(self, proc, recognizer, uplink=None, factory=None):
         recognizer_ok = recognizer is not None
+        buffered = bytearray()
         try:
             with self.raw.open('wb') as sink:
                 while True:
@@ -425,6 +427,22 @@ class Recorder:
                         self.endpoint_result = self._endpoint.feed(chunk)
                     if uplink is not None:
                         uplink.accept_pcm(chunk)
+                    if factory is not None and not self._discard_capture:
+                        buffered.extend(chunk)
+                        if len(buffered) < int(16000 * 2 * MIN_TURN_SECONDS):
+                            continue
+                        try:
+                            recognizer = self._live_recognizer = factory()
+                            recognizer_ok = True
+                            if self._discard_capture:
+                                if hasattr(recognizer, 'cancel'):
+                                    recognizer.cancel()
+                                recognizer_ok = False
+                        except (OSError, TranscriptionError) as exc:
+                            self._live_error = str(exc)
+                        factory = None
+                        chunk = bytes(buffered)
+                        buffered.clear()
                     if recognizer_ok:
                         try:
                             recognizer.accept_pcm(chunk)
@@ -461,6 +479,7 @@ class Recorder:
         self.partial.unlink(missing_ok=True)
         self._live_result = None
         self._live_error = None
+        self._discard_capture = False
         self._pump_thread = None
         self.drop_uplink()
         self._endpoint = Endpointer() if auto_stop else None
@@ -477,13 +496,10 @@ class Recorder:
         # The server recognizes the stream; shadowing it with local Vosk costs
         # the Pi CPU, swap and ~1 s finalize. The fallback transcribes the WAV.
         recognizer = None
-        if self.live_vosk_factory is not None and uplink is None:
-            try:
-                recognizer = self.live_vosk_factory()
-            except (OSError, TranscriptionError) as exc:
-                self._live_error = str(exc)
-
-        if recognizer is not None or uplink is not None or auto_stop:
+        factory = self.live_vosk_factory if uplink is None else None
+        # Start capturing immediately, but load Vosk only after enough audio
+        # exists to form a turn. The initial PCM is retained and fed in full.
+        if factory is not None or uplink is not None or auto_stop:
             self._live_recognizer = recognizer
             self._capture_rate = 16000
             self._capture_channels = 1
@@ -494,15 +510,15 @@ class Recorder:
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
             self._pump_thread = threading.Thread(
                 target=self._pump_live_audio,
-                args=(self.process, recognizer, uplink),
-                name='vosk-live' if recognizer is not None else 'capture-pump',
+                args=(self.process, recognizer, uplink, factory),
+                name='vosk-live' if factory is not None else 'capture-pump',
                 daemon=True,
             )
             self._pump_thread.start()
             fields = dict(remote=True) if uplink is not None else {}
             if auto_stop:
                 fields['trigger'] = 'wake'
-            stt = 'vosk-live' if recognizer is not None else 'remote' if uplink is not None else 'file'
+            stt = 'vosk-live' if factory is not None else 'remote' if uplink is not None else 'file'
             event('recording', stt=stt, sample_rate=16000, channels=1, **fields)
             return
 
@@ -519,6 +535,7 @@ class Recorder:
         proc, self.process = self.process, None
         if proc is None:
             return None
+        self._discard_capture = not publish
         try:
             interrupted = proc.poll() is None
             if interrupted:
@@ -549,9 +566,13 @@ class Recorder:
             rate = self._capture_rate
             channels = self._capture_channels
             frame_bytes = channels * 2
-            min_frames = rate // 10
+            min_frames = int(rate * MIN_TURN_SECONDS)
             max_frames = (math.ceil(self.limit) + 1) * rate
             size = self.raw.stat().st_size
+            if 0 < size < min_frames * frame_bytes and not size % frame_bytes:
+                self.drop_uplink()
+                event('capture_discarded', reason='too_short')
+                return None
             if (
                 size % frame_bytes
                 or not min_frames * frame_bytes <= size <= max_frames * frame_bytes
@@ -1854,10 +1875,13 @@ class VoiceController:
             day = None
             if intent in ('weather', 'briefing'):
                 snapshot['weather'] = self.weather.today()
-                day = intents.weather_day(text, datetime.date.today()) if intent == 'weather' else 0
+                day = (intents.weather_day(text, datetime.date.today()) if intent == 'weather'
+                       else intents.briefing_day(datetime.datetime.now()))
                 snapshot['weather_day'] = day
             if intent in ('calendar', 'briefing'):
-                snapshot['agenda'] = self.agenda.today()
+                calendar_day = intents.calendar_day(text, datetime.date.today()) if intent == 'calendar' else 0
+                snapshot['agenda_day'] = calendar_day
+                snapshot['agenda'] = self.agenda.tomorrow() if calendar_day == 1 else self.agenda.today()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'
             event('llm_response', text=reply, model='local/intent')
@@ -2181,7 +2205,10 @@ class VoiceController:
         if job.error_stage in ('upload', 'stream'):
             self.remote_failed = True
         if not job.fallback_allowed:
-            event('stt_error', message=job.error)
+            if job.error_code == 'too_short':
+                event('capture_discarded', reason='too_short')
+            else:
+                event('stt_error', message=job.error)
             self.turn_released_at = None
             return
         self._set_route('pi')
@@ -2521,8 +2548,11 @@ def main():
                     session.memory_payload(controller.memory.context())) if controller else None)
                 appointments = (agenda_feed.encode_header(controller.agenda.today())
                                 if controller else None)
+                tomorrow = (agenda_feed.encode_header(controller.agenda.tomorrow())
+                            if controller else None)
                 return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
-                                        agenda=appointments, session=session)
+                                        agenda=appointments, session=session,
+                                        agenda_tomorrow=tomorrow)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,

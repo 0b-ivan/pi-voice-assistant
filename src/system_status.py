@@ -208,6 +208,8 @@ def sanitize_snapshot(value):
         clean['log_findings'] = findings
         clean['log_repairs'] = logwatch.clean_repairs(value.get('log_repairs')) or []
         clean['log_last'] = logwatch.clean_last(value.get('log_last'))
+        if value.get('log_resolved'):
+            clean['log_resolved'] = logwatch.clean_last(value.get('log_resolved'))
     return clean
 
 

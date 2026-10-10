@@ -1,9 +1,9 @@
-"""Today's appointments from CalDAV (Nextcloud) for the morning litany.
+"""Today's and tomorrow's appointments from CalDAV (Nextcloud).
 
 Runs on the Pi: the credentials (a Nextcloud app password) stay in
 /etc/pi-voice-assistant.env. A background thread refreshes the day every few
-minutes; the Pi sends today's remaining appointments with every turn
-(X-Servitor-Agenda), so the server needs no credentials and the Pi still
+minutes; the Pi sends today's remaining appointments and tomorrow's with every turn
+(X-Servitor-Agenda and X-Servitor-Agenda-Tomorrow), so the server needs no credentials and the Pi still
 knows them offline. Configuration:
 
     CALDAV_URLS=https://cloud.example.org/remote.php/dav/calendars/USER/personal/
@@ -343,7 +343,7 @@ def upcoming(events, now):
 
 
 class Agenda:
-    """Pi side: today's calendar, refreshed in a background thread; reads
+    """Pi side: today and tomorrow, refreshed in a background thread; reads
     never block the button loop."""
 
     def __init__(self, config=None, fetcher=fetch, clock=time.monotonic,
@@ -363,6 +363,7 @@ class Agenda:
         """One round of requests; True when the calendar answered."""
         now = self.now()
         start, end = day_bounds(now)
+        end += datetime.timedelta(days=1)  # tomorrow, in the same background request
         try:
             events = self.fetcher(self.config, start, end)
         except (OSError, ValueError, ET.ParseError) as exc:
@@ -397,6 +398,15 @@ class Agenda:
             if self.cache is None or self.day != now.date():
                 return None
             return upcoming(self.cache, now)
+
+    def tomorrow(self, now=None):
+        """Tomorrow's events; no synchronous request in the button loop."""
+        now = now or self.now()
+        with self.lock:
+            if self.cache is None or self.day != now.date():
+                return None
+            start, _ = day_bounds(now)
+            return upcoming(self.cache, start + datetime.timedelta(days=1))
 
 
 def _iso(moment):
@@ -451,7 +461,7 @@ def _clock(moment):
     return f"{moment.hour} Uhr" if moment.minute == 0 else f"{moment.hour} Uhr {moment.minute}"
 
 
-def sentence(events, lore='off'):
+def sentence(events, lore='off', day=0):
     """Spoken appointments; None without calendar data."""
     if events is None:
         return None
@@ -459,10 +469,12 @@ def sentence(events, lore='off'):
         from memory import GUEST_TEXT
         return GUEST_TEXT
     full = lore == 'full'
+    label = 'morgen' if day == 1 else 'heute'
     if not events:
-        return "Keine weiteren Direktiven für heute." if full else "Keine weiteren Termine heute."
+        return f"Keine weiteren Direktiven für {label}." if full else f"Keine weiteren Termine {label}."
     # One sentence per appointment: titles may contain commas themselves.
-    parts = ["Direktiven des Tages." if full else "Termine heute."]
+    parts = [("Direktiven für morgen." if day else "Direktiven des Tages.") if full
+             else f"Termine {label}."]
     for event in events[:MAX_SPOKEN]:
         title = event['summary'].rstrip('.!?')
         when = "Ganztägig" if event['all_day'] else _clock(event['start'])

@@ -118,6 +118,20 @@ class UpcomingTests(unittest.TestCase):
 
 
 class AgendaTests(unittest.TestCase):
+    def test_tomorrow_is_fetched_in_background_and_keeps_early_events(self):
+        tomorrow = NOW + datetime.timedelta(days=1)
+        early = event('Frühtermin', tomorrow.replace(hour=6, minute=0))
+        self.fetcher.return_value += [early]
+        self.assertIsNone(self.agenda.tomorrow())
+        self.agenda.refresh()
+        start, end = self.fetcher.call_args.args[1:]
+        self.assertEqual((end.date() - start.date()).days, 2)
+        self.assertEqual(self.agenda.tomorrow(NOW.replace(hour=23)), [early])
+        self.assertEqual(agenda.sentence(self.agenda.tomorrow(), day=1),
+                         'Termine morgen. 6 Uhr: Frühtermin.')
+        self.now += datetime.timedelta(days=1)
+        self.assertIsNone(self.agenda.tomorrow())  # no old cache as the new tomorrow
+
     def setUp(self):
         self.now = NOW
         self.fetcher = Mock(return_value=[event('Zahnarzt', NOW.replace(hour=9, minute=30))])
