@@ -1,10 +1,12 @@
 # Lokale Sprachausgabe und Performance
 
-## Stand: Pi und Repository unterscheiden
+> **Historische Messungen vom 05.–06.10.2026.** Die hier beschriebenen Prozessstarts, Speichermessungen und PR-Stände gehören zur frühen Pi-only-Phase. **Aktueller Normalbetrieb:** CT 107 rendert Piper/TTS mit Servitor-DSP, der Pi spielt die Antwort ab; lokales Piper ist weiterhin Fallback. [Architektur](architecture.md#sprachausgabe) und [TTS-Einrichtung](text-to-speech.md) sind für die aktuelle Konfiguration maßgeblich.
+
+## Früher Pi-Teststand
 
 Auf `pi-assistent` ist Piper **1.8.0** mit **`de_DE-thorsten-low`** erfolgreich getestet. Ausgabe: S16_LE, 16 kHz, Mono über `plughw:CARD=wm8960soundcard,DEV=0`; Speaker zuletzt beide Kanäle **80 % / −19 dB**, gespeichert.
 
-Wrapper `src/speak.py` und Installer `scripts/install-piper.sh` liegen im Repo. Der Dienstinstaller deployt den Wrapper; Piper und die Stimme werden separat installiert. SHIM E meldet auf dem Pi erfolgreichen Prozessabschluss; automatische LLM-Antworten fehlen weiterhin.
+Wrapper `src/speak.py` und Installer `scripts/install-piper.sh` liegen im Repo. Der Dienstinstaller deployt den Wrapper; Piper und die Stimme werden separat installiert. SHIM E meldete beim damaligen Pi-Test einen erfolgreichen Prozessabschluss. Automatische LLM-Antworten wurden **danach** implementiert und gehören inzwischen zum Normalbetrieb.
 
 Installation, Modellpfade und Konfiguration: [Piper-TTS einrichten](text-to-speech.md).
 
@@ -12,8 +14,8 @@ Installation, Modellpfade und Konfiguration: [Piper-TTS einrichten](text-to-spee
 
 Das Journal zeigt am 05.10.2026 CEST `status` 21:43:32 und den nächsten Piper-Prozess um 21:43:34; für den vorherigen Statusaufruf 21:43:05 → `speech_finished` 21:43:29 etwa 24 s Gesamtdauer. Dies umfasst Prozessstart, Modell-Laden, Synthese **und Wiedergabe**; eine isolierte Synthesezeit oder RSS-Messung ist daraus nicht ableitbar.
 
-Der Wrapper startet pro Satz einen neuen Piper-Prozess und wartet auf das gesamte
-WAV. Die [Pi-Messungen](piper-resources.md) mit Version `d056897` bestätigen den
+Im **damals gemessenen** Wrapper-Pfad startete jeder Satz einen neuen Piper-Prozess und wartete auf das gesamte
+WAV. Der aktuelle residente TTS-/Serverpfad ist davon zu unterscheiden. Die [Pi-Messungen](piper-resources.md) mit Version `d056897` bestätigen den
 Ladeaufwand: neben Vosk 18,01 s zum Modellladen, 20,10–27,92 s für neue Prozesse,
 aber nur 1,26–1,67 s für Erzeugungen mit geladenem Modell.
 
