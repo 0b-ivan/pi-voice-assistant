@@ -31,8 +31,9 @@ _ELSEWHERE = re.compile(r'\bin\s+(?!der\b|dem\b|den\b)\w+')
 _PATTERNS = (
     # First: "guten morgen, wie spät ist es" gets the whole briefing (with the time).
     # The operator may greet; the reply never does (see _opening).
-    ('briefing', re.compile(r'\b(morgenbericht|morgenlitanei|tagesbericht|lagebericht|'
-                            r'briefing|guten morgen|morgen litanei)\b')),
+    # STT often splits compounds: "morgen bericht", "tages bericht".
+    ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|tages ?bericht|lage ?bericht|'
+                            r'briefing|guten morgen)\b')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
