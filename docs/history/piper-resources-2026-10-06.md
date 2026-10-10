@@ -1,4 +1,4 @@
-> **Historisches Protokoll.** Dieser Text dokumentiert die damaligen Messungen oder Entscheidungen; für den aktuellen Betrieb siehe [README](../../README.md), [Architektur](../../architecture.md) und [Roadmap](../../roadmap.md).
+> **Historisches Protokoll.** Dieser Text dokumentiert die damaligen Messungen oder Entscheidungen; für den aktuellen Betrieb siehe [README](../../README.md), [Architektur](../architecture.md) und [Roadmap](../roadmap.md).
 
 # Piper auf dem Pi Zero 2 W messen
 
