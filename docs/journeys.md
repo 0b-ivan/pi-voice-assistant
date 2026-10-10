@@ -2,7 +2,7 @@
 
 Proximus beantwortet Fahrplanfragen für WVV-Straßenbahnen und DB-Züge mit gerouteter Gehzeit und bietet danach optional eine Erinnerung am Gerät und/oder einen Kalendereintrag an. **Eine Fahrplanfrage schreibt nie etwas.** Geschrieben wird erst nach einem konkreten Vorschlag und dessen Bestätigung.
 
-Code: [`src/transit.py`](../src/transit.py) (MoBY/EFA-Adapter), [`src/journeys.py`](../src/journeys.py) (Erkennung und Controller auf dem Pi), CalDAV-Schreiben in [`src/agenda.py`](../src/agenda.py). Tests: `tests/test_transit.py`, `tests/test_journeys.py`, `tests/test_journey_paths.py`.
+Code: [`src/transit.py`](../src/transit.py) (MoBY/EFA-Adapter), [`src/journeys.py`](../src/journeys.py) (Erkennung und Controller auf dem Pi), CalDAV-Schreiben in [`src/agenda.py`](../src/agenda.py), Anzeige in [`src/display.py`](../src/display.py) (`render_journeys`). Tests: `tests/test_transit.py`, `tests/test_journeys.py`, `tests/test_journey_paths.py`, `tests/test_journey_display.py`.
 
 ## Bedienung
 
@@ -20,6 +20,20 @@ Code: [`src/transit.py`](../src/transit.py) (MoBY/EFA-Adapter), [`src/journeys.p
 Jede Verbindung nennt Linie bzw. Zugnummer, Richtung, Abfahrt, Ankunft, Gehzeit und Losgehzeit, Bahnreisen zusätzlich Umstiege und Gleise. Ohne Echtzeitdaten sagt Proximus „Laut Fahrplan“, bei Verspätung „… Minuten später als geplant“. Keine Ticketpreise, keine Buchung, keine Überwachung gespeicherter Fahrten.
 
 „Von zu Hause“ nutzt `TRANSIT_HOME`. „Hier“ bedeutet nie automatisch zu Hause: der Pi hat keine Ortung und fragt nach. „In die Stadt“ braucht `TRANSIT_CITY_STOP`; ohne diesen Wert fragt Proximus nach einer Haltestelle. Andere Namen sucht der Stop-Finder, die gewählte Haltestelle wird in der Antwort genannt.
+
+## Anzeige
+
+![Fahrten auf dem PiTFT: Straßenbahn, Bahnreise mit offener Bestätigung, Abfahrtstafel](images/display-journeys.png)
+
+Mit jeder Fahrtantwort zeigt das Display bis zu drei Verbindungen, solange sie gesagt werden, und danach 20 Sekunden lang; die Sprechtaste, B oder eine Wetterantwort blenden sie früher aus. Jede Zeile hat:
+
+- ein Pixel-Piktogramm des Hauptfahrzeugs ([`src/transit_icons.py`](../src/transit_icons.py)): Straßenbahn amber, Bus blau, Regionalzug rot, S-Bahn grün, ICE weiß mit rotem Streifen;
+- ein Abzeichen mit Linie oder Zug (bei Bahnreisen der Hauptzug, etwa ICE 623) und die Richtung;
+- die Abfahrt groß (rot bei Verspätung) und die Ankunft, „+1“ für den nächsten Tag;
+- rechts LIVE (Echtzeit) oder PLAN (laut Fahrplan) sowie „LOS 14:20“ mit dem Fußgänger und der gerouteten Gehzeit. An einer Abfahrtstafel steht dort das Gleis;
+- Verspätung, Gleis und Umstiege in einer kleinen Zusatzzeile, soweit Platz ist.
+
+Die gewählte Verbindung ist amber umrahmt; wartet ein Vorschlag auf Zustimmung, steht oben „JA / TASTE E“. Der Pi schreibt die Daten nach `/run/pi-ptt/display-journeys.json` (RAM, ohne Startadresse); `pi-display` liest nur kurze Texte und kleine Zahlen daraus.
 
 ## Ablauf und Zustimmung
 

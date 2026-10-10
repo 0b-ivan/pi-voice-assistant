@@ -145,6 +145,7 @@ DISPLAY_STATUS_VALUES = {
     'maint_server': set(maintenance.STATES),
     'opt_wake': {'on', 'off', 'none'},
     'weather_day': {'0', '1', '2', '3', '4'},
+    'journeys': {'on'},              # display-journeys.json is to be shown
     'opt_cue': {'on', 'off', 'none'},
     'opt_lore': set(LORE_LEVELS),
     'opt_persona': set(PERSONAS),
@@ -620,6 +621,7 @@ class Recorder:
 
 
 WEATHER_HOLD_SECONDS = 6.0   # forecast stays on the display after the answer
+JOURNEY_HOLD_SECONDS = 20.0  # connections stay a while longer: they are read, not heard
 
 
 def _after_network(function, text, timeout=25.0, step=0.5):
@@ -692,6 +694,8 @@ class VoiceController:
         # None when TRANSIT_ENABLED=off. One controller for both speech paths.
         self.journeys = journey_feed.Journeys.from_env(self.agenda, log=event)
         self.turn_trip = None              # journey proposal taken by the current turn
+        self.journey_shown = False         # the display shows the connections
+        self.journey_hide_at = None        # ... until then (after the answer was said)
         self.journey_step = None           # journeys.Step of a running background job
         self.memory = memory_core.MemoryCore()
         self.memory_present = self.memory.present()
@@ -836,6 +840,7 @@ class VoiceController:
 
     def cancel(self, held, now):
         self._hide_weather()
+        self._hide_journeys()
         if self.device_after_speech:   # B during "Einheit fährt herunter.": stays on
             event('device', op=self.device_after_speech, result='cancelled')
             self.device_after_speech = None
@@ -860,6 +865,7 @@ class VoiceController:
         """"Stop", "Sei still", "Klappe halten" ...: no answer, drop announcements
         that were waiting, back to idle (the wake word listens again)."""
         self._drop_story('voice')
+        self._hide_journeys()
         if self.journeys is not None:
             self.journeys.cancel()
         self.speech.stop()
@@ -1120,8 +1126,35 @@ class VoiceController:
         """Forecast on the display while the answer is said (and a moment after)."""
         if self.weather.today() is None:
             return              # nothing stored: keep the usual screen
+        self._hide_journeys()
         self.weather_shown, self.weather_hide_at = True, None
         publish_display_status(weather_day=str(day))
+
+    def _show_journeys(self):
+        """The up to three connections on the display while the answer is said."""
+        view = self.journeys.view() if self.journeys is not None else None
+        if view is None:
+            self._hide_journeys()
+            return
+        path = self.config.runtime_dir / 'display-journeys.json'
+        tmp = path.with_name(f'.{path.name}.tmp')
+        try:
+            tmp.write_text(json.dumps(view, ensure_ascii=False), encoding='utf-8')
+            os.replace(tmp, path)
+        except OSError:
+            return
+        self._hide_weather()
+        self.journey_shown, self.journey_hide_at = True, None
+        publish_display_status(journeys='on')
+
+    def _hide_journeys(self):
+        if self.journey_shown:
+            self.journey_shown, self.journey_hide_at = False, None
+            publish_display_status(journeys=None)
+            try:
+                (self.config.runtime_dir / 'display-journeys.json').unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _hide_weather(self):
         if self.weather_shown:
@@ -1908,6 +1941,7 @@ class VoiceController:
         event('llm_response', text=text, model='local/journey')
         print(f'SERVITOR: {text}', flush=True)
         self._start_speech(text, source='assistant', model='local/journey')
+        self._show_journeys()
 
     def _settle_cue(self):
         """The playback device is not shared: let the cue end before speech."""
@@ -2243,6 +2277,8 @@ class VoiceController:
             elif taken is not None:
                 event('journey', result='cancelled', id=taken['id'], source='button')
                 self._say("Abgebrochen. Nichts eingetragen.")
+                if self.journey_shown:
+                    self._show_journeys()     # without the "confirm" hint
             commands = [name for name in commands if name not in 'BE']
         if (self.device_pending and not self.menu.open
                 and ('B' in commands or 'E' in commands)):
@@ -2302,6 +2338,8 @@ class VoiceController:
                 self._start_enroll(mode)
             if self.weather_shown:
                 self.weather_hide_at = time.monotonic() + WEATHER_HOLD_SECONDS
+            if self.journey_shown:
+                self.journey_hide_at = time.monotonic() + JOURNEY_HOLD_SECONDS
             if self.device_after_speech:
                 op, self.device_after_speech = self.device_after_speech, None
                 if time.monotonic() <= self.device_after_until:
@@ -2371,6 +2409,9 @@ class VoiceController:
             # Button pressed during a wake-word recording: it ends on release now.
             self.wake_recording = False
             action = None
+        if self.journey_shown and (action == 'start' or (
+                self.journey_hide_at is not None and time.monotonic() >= self.journey_hide_at)):
+            self._hide_journeys()
         if self.weather_shown and (action == 'start' or (
                 self.weather_hide_at is not None and time.monotonic() >= self.weather_hide_at)):
             self._hide_weather()

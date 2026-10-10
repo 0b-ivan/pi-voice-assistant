@@ -360,6 +360,50 @@ def offers_text(options, query, now):
     return ' '.join(lines)
 
 
+def _hhmm(moment, now):
+    """'14:32'; another day with its date ('morgen' does not fit a row)."""
+    if moment is None:
+        return None
+    text = moment.strftime('%H:%M')
+    days = (moment.date() - now.date()).days
+    return text if days == 0 else f'{text} +{days}' if 0 < days < 7 else text
+
+
+def screen_view(options, query, selected, asking, now):
+    """What the display shows (display.render_journeys): short strings and
+    numbers only, the same facts as the spoken answer."""
+    if query.get('kind') == 'departures':
+        title = f"ABFAHRTEN · {query.get('origin_name') or ''}"
+    else:
+        title = f"FAHRTEN → {query.get('destination_name') or ''}"
+    rows = []
+    for option in options[:transit.MAX_OPTIONS]:
+        first = option['vehicles'][0]
+        delay = 0
+        if first.get('realtime') and first.get('dep_planned') and first.get('dep'):
+            delay = max(0, round((first['dep'] - first['dep_planned']).total_seconds() / 60))
+        # The row shows the main vehicle (the ICE, not the tram to the station);
+        # times stay those of the whole journey.
+        kinds = [leg['kind'] for leg in option['vehicles']]
+        main_kind = 'long' if 'long' in kinds else next(
+            (kind for kind in ('regional', 'sbahn', 'train') if kind in kinds), kinds[0])
+        main = next(leg for leg in option['vehicles'] if leg['kind'] == main_kind)
+        label = main['label']
+        if main_kind == 'tram':
+            label = label.replace('Straßenbahn ', '')
+        elif main_kind == 'bus':
+            label = label.replace('Bus ', '')
+        rows.append(dict(
+            icon=main_kind, label=label,
+            direction=main.get('direction') or '', dep=_hhmm(option['dep'], now),
+            arr=_hhmm(option.get('arr'), now), leave=_hhmm(option.get('leave'), now),
+            walk=option.get('walk_minutes'), delay=delay, live=bool(option['realtime']),
+            platform=main.get('platform_dep'), transfers=option.get('transfers', 0)))
+    return dict(title=title[:40], rows=rows,
+                selected=selected if selected is not None and selected < len(rows) else None,
+                ask=bool(asking))
+
+
 NO_OPTIONS = {
     'trip': "Keine erreichbare Verbindung gefunden.",
     'departures': "Keine passende Abfahrt gefunden.",
@@ -428,6 +472,13 @@ class Journeys:
         if self._offers_live():
             return 'offers'
         return 'on'
+
+    def view(self):
+        """Display data for the current options, or None (nothing to show)."""
+        if not self._offers_live() or self.query is None:
+            return None
+        return screen_view(self.options, self.query, self.selected,
+                           self.proposal is not None, self.now())
 
     def snapshot(self):
         """Fields for the turn snapshot (the server routes follow-ups by them)."""
@@ -598,6 +649,7 @@ class Journeys:
 
         def apply(result, error):
             if error is not None:
+                self.options, self.selected = [], None   # never show the last answer as this one
                 if isinstance(error, LookupError):
                     return f"Haltestelle {error.args[0]} nicht gefunden."
                 if isinstance(error, transit.TransitError) and error.kind == 'no_result':

@@ -77,6 +77,7 @@ install -m 0644 "${repo_root}/src/variants.py" /opt/pi-voice-assistant/src/varia
 # Trams/trains, reminders and calendar entries (TRANSIT_*, CALDAV_*).
 install -m 0644 "${repo_root}/src/journeys.py" /opt/pi-voice-assistant/src/journeys.py
 install -m 0644 "${repo_root}/src/transit.py" /opt/pi-voice-assistant/src/transit.py
+install -m 0644 "${repo_root}/src/transit_icons.py" /opt/pi-voice-assistant/src/transit_icons.py
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service

@@ -3,6 +3,7 @@
 
 import json
 import math
+import re
 from functools import lru_cache
 import os
 from pathlib import Path
@@ -159,7 +160,7 @@ def read_status(path=None):
         status['menu_page'] = value['menu_page']
         if group:
             status['menu_group'] = group
-    for key, allowed in (('weather_day', ('0', '1', '2', '3', '4')),
+    for key, allowed in (('weather_day', ('0', '1', '2', '3', '4')), ('journeys', ('on',)),
                          ('opt_server', ('on', 'off', 'none')), ('opt_led', ('on', 'off')),
                          ('opt_wake', ('on', 'off', 'none')), ('opt_cue', ('on', 'off', 'none')),
                          ('opt_lore', ('off', 'light', 'full')),
@@ -809,6 +810,136 @@ def render_weather(display, view, day=0, frame=0, network=True, info=None, perso
         temps = f"{entry.get('high', '–')}/{entry.get('low', '–')}"
         text_w = draw.textlength(temps, font=font(9))
         draw.text((x + (width - text_w) / 2, 179), temps, font=font(9), fill='white')
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
+
+
+JOURNEYS_FILE = Path(os.environ.get('PI_DISPLAY_JOURNEYS_FILE',
+                                   '/run/pi-ptt/display-journeys.json'))
+JOURNEY_KINDS = ('tram', 'bus', 'regional', 'sbahn', 'train', 'long', 'other')
+LIVE = (90, 220, 120)
+LATE = (255, 120, 90)
+
+
+def _short_text(value, limit):
+    return ' '.join(str(value).split())[:limit] if isinstance(value, str) else ''
+
+
+def _clock_text(value):
+    """'14:32' or '0:12 +1' as written by journeys.screen_view, else None."""
+    if isinstance(value, str) and re.fullmatch(r'\d{2}:\d{2}( \+\d)?', value):
+        return value
+    return None
+
+
+def _small_int(value, high):
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= high:
+        return value
+    return None
+
+
+def read_journeys(path=None):
+    """The up to three connections ptt.py shows with a journey answer, or None.
+    Only short strings and small numbers survive (the file is plain JSON)."""
+    try:
+        data = json.loads((JOURNEYS_FILE if path is None else Path(path)).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('rows'), list):
+        return None
+    rows = []
+    for raw in data['rows'][:3]:
+        if not isinstance(raw, dict) or _clock_text(raw.get('dep')) is None:
+            continue
+        rows.append(dict(
+            icon=raw.get('icon') if raw.get('icon') in JOURNEY_KINDS else 'other',
+            label=_short_text(raw.get('label'), 10) or '?',
+            direction=_short_text(raw.get('direction'), 40), dep=raw['dep'],
+            arr=_clock_text(raw.get('arr')), leave=_clock_text(raw.get('leave')),
+            walk=_small_int(raw.get('walk'), 180), delay=_small_int(raw.get('delay'), 999) or 0,
+            live=raw.get('live') is True, platform=_short_text(raw.get('platform'), 6),
+            transfers=_small_int(raw.get('transfers'), 9) or 0))
+    if not rows:
+        return None
+    selected = _small_int(data.get('selected'), len(rows) - 1)
+    return dict(title=_short_text(data.get('title'), 40), rows=rows, selected=selected,
+                ask=data.get('ask') is True)
+
+
+def _fit(draw, text, size, width):
+    """``text`` shortened with '…' until it fits ``width`` pixels."""
+    if draw.textlength(text, font=font(size)) <= width:
+        return text
+    while text and draw.textlength(text + '…', font=font(size)) > width:
+        text = text[:-1]
+    return text.rstrip() + '…'
+
+
+def render_journeys(display, view, network=True, info=None):
+    """Journey answer: up to three connections, each with its pictogram, line
+    and direction, departure and arrival, walk time and time to leave (or the
+    platform at a departure board), LIVE or PLAN, the chosen one framed."""
+    from PIL import Image, ImageDraw
+    import transit_icons
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    hint = 'JA / TASTE E' if view['ask'] else ''
+    title_width = 216 - (draw.textlength(hint, font=font(10)) + 6 if hint else 0)
+    draw.text((12, 44), _fit(draw, view['title'], 10, title_width), font=font(10),
+              fill=WEATHER_ACCENT)
+    if hint:
+        _right(draw, 228, 44, hint, 10, LIVE)
+    for index, row in enumerate(view['rows']):
+        y = 58 + index * 46
+        color = transit_icons.COLORS.get(row['icon'], WEATHER_GREY)
+        if index == view['selected']:
+            draw.rectangle((10, y - 1, 229, y + 43), outline=WEATHER_ACCENT)
+        elif index:
+            draw.line((12, y - 2, 228, y - 2), fill=(45, 45, 45))
+        image.paste(transit_icons.icon(row['icon'], scale=2), (13, y + 5))
+        # Line badge in the vehicle's colour, then the direction.
+        label = row['label']
+        badge = draw.textlength(label, font=font(12)) + 8
+        draw.rectangle((50, y + 1, 50 + badge, y + 16), fill=color)
+        draw.text((54, y + 2), label, font=font(12),
+                  fill='black' if sum(color) > 300 else 'white')
+        state = 'LIVE' if row['live'] else 'PLAN'
+        state_width = draw.textlength(state, font=font(9))
+        if row['live']:
+            draw.ellipse((222 - state_width - 8, y + 6, 222 - state_width - 3, y + 11), fill=LIVE)
+        _right(draw, 228, y + 4, state, 9, LIVE if row['live'] else WEATHER_GREY)
+        left = 56 + badge
+        draw.text((left, y + 4), _fit(draw, row['direction'], 10, 222 - state_width - 12 - left),
+                  font=font(10), fill=WEATHER_GREY)
+        # Departure (late: in red, with the delay), arrival.
+        draw.text((50, y + 19), row['dep'][:5], font=font(17),
+                  fill=LATE if row['delay'] else 'white')
+        x = 50 + draw.textlength(row['dep'][:5], font=font(17)) + 5
+        if row['arr']:
+            draw.text((x, y + 24), f"→{row['arr'][:5]}", font=font(11), fill=WEATHER_GREY)
+            x += draw.textlength(f"→{row['arr'][:5]}", font=font(11))
+        # Extras by importance; what does not fit next to the arrival is left out.
+        meta = [part for part in (f"+{row['delay']}'" if row['delay'] else '',
+                                  f"Gl {row['platform']}" if row['platform'] else '',
+                                  f"{row['transfers']}× um" if row['transfers'] else '') if part]
+        meta_color = LATE if row['delay'] else WEATHER_GREY
+        if row['leave']:
+            _right(draw, 228, y + 19, f"LOS {row['leave'][:5]}", 12, WEATHER_ACCENT)
+            right, size, top = 228, 9, y + 32
+            if row['walk']:
+                walk = f"{row['walk']}'"
+                walk_x = 228 - draw.textlength(walk, font=font(10))
+                draw.text((walk_x, y + 32), walk, font=font(10), fill=WEATHER_GREY)
+                image.paste(transit_icons.walker(), (int(walk_x) - 10, y + 33))
+                right = walk_x - 14
+        else:
+            right, size, top = 228, 11, y + 22
+        while meta and draw.textlength(' · '.join(meta), font=font(size)) > right - x - 6:
+            meta.pop()
+        if meta:
+            _right(draw, right, top, ' · '.join(meta), size, meta_color)
     _draw_footer(draw, network, info)
     display.image(image, 180)
 
@@ -1545,6 +1676,9 @@ def main():
             persona_shown = persona
             weather_view = (read_weather() if status.get('weather_day') is not None
                             and info.get('volume') is None else None)
+            journey_view = (read_journeys() if weather_view is None
+                            and status.get('journeys') == 'on'
+                            and info.get('volume') is None else None)
             if weather_view is not None:
                 # Morning report or a weather question: the forecast while it is said.
                 frame = int(now * WEATHER_FPS)
@@ -1554,6 +1688,13 @@ def main():
                 if screen != previous_screen:
                     render_weather(display, weather_view, day, frame, states['network'], info,
                                    persona)
+                    previous_screen = screen
+            elif journey_view is not None:
+                # A journey answer: the connections while they are said (and a while after).
+                screen = ('journeys', json.dumps(journey_view, sort_keys=True),
+                          states['network'], tuple(sorted(shown_info.items())))
+                if screen != previous_screen:
+                    render_journeys(display, journey_view, states['network'], info)
                     previous_screen = screen
             elif now < glitch_until and info.get('volume') is None:
                 # Shown when the menu closes after the switch, in both directions.

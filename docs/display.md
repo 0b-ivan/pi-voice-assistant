@@ -145,6 +145,12 @@ Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nic
 
 Beim Morgenbericht und bei Wetterfragen setzt `ptt.py` `weather_day` (0 = heute … 4) in `display-status.json`; `display.py` zeichnet dann mit 8 Bildern pro Sekunde `render_weather` aus `/run/pi-ptt/display-weather.json` (die vom Sprachdienst auf dem Gedächtnis-Stick gehaltene Fünf-Tage-Vorhersage). Oben „AUSPEX · WETTERDATEN“ (Sprechstil BILLY: „WETTER“) und der Abrufzeitpunkt, links das Piktogramm (24×24 Pixel, dreifach skaliert, mit Scanlines), rechts Tag, Temperatur, Spanne, Wetterlage und Regenwahrscheinlichkeit, unten der Fünf-Tage-Streifen. Die Vorschau ist mit dem Display-Code gerendert, kein Foto. [Architektur](architecture.md#morgenlitanei-und-wetter).
 
+## Fahrten
+
+![Fahrten: Straßenbahn, Bahnreise mit offener Bestätigung, Abfahrtstafel](images/display-journeys.png)
+
+Bei einer Fahrtantwort setzt `ptt.py` `journeys=on` in `display-status.json` und schreibt die bis zu drei Verbindungen nach `/run/pi-ptt/display-journeys.json`; `display.py` zeichnet sie mit `render_journeys`: Piktogramm des Hauptfahrzeugs (16×16 Pixel, doppelt skaliert, [`transit_icons.py`](../src/transit_icons.py)), Linie, Richtung, Abfahrt und Ankunft, LIVE/PLAN, Losgehzeit mit Gehzeit bzw. Gleis. Angezeigt, solange die Antwort läuft, und 20 s danach. Vorschau mit dem Display-Code aus Testdaten gerendert, kein Foto. Einzelheiten: [Fahrten](journeys.md#anzeige).
+
 ## Ruhe und Schlaf
 
 `ptt.py` kennt drei Stufen und schreibt sie als `power` in `display-status.json`:
