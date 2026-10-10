@@ -53,6 +53,7 @@ class DetectionTests(unittest.TestCase):
             'Erzähl die alte Höllenläufer-Sage zehn Minuten lang': 10.0,
             'erzähl mir 12 minuten eine geschichte': 12.0,
             'erzähl eine halbe stunde lang': 30.0,
+            'etc mir immer zehn minuten lang über deine drop': 10.0,   # real STT output
         }
         for text, minutes in cases.items():
             self.assertEqual(story.request(text)['minutes'], minutes, text)
@@ -60,7 +61,8 @@ class DetectionTests(unittest.TestCase):
     def test_ordinary_requests_stay_short(self):
         for text in ('Erzähl eine Geschichte', 'Erzähl mir einen Witz',
                      'Erklär das ausführlich', 'erkläre ausführlich die geschichte des internets',
-                     'Wie lange dauert das?', 'Was hast du gesagt?', 'erzähl weiter'):
+                     'Wie lange dauert das?', 'Was hast du gesagt?', 'erzähl weiter',
+                     'stell einen timer auf zehn minuten', 'wie spät ist es in zehn minuten'):
             self.assertIsNone(story.request(text), text)
 
     def test_default_and_maximum_are_configurable(self):
