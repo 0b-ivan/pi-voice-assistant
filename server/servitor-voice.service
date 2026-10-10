@@ -18,6 +18,8 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/run/servitor-voice
+# systemd-journal: read the journal for the self-test (src/logwatch.py), read-only.
+SupplementaryGroups=systemd-journal
 UMask=0077
 
 [Install]

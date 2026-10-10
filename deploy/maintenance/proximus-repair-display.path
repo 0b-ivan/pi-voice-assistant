@@ -1,0 +1,9 @@
+[Unit]
+Description=Proximus self-test request: restart the display
+
+[Path]
+PathExists=/run/proximus-maintenance/requests/restart-display
+Unit=proximus-repair@restart-display.service
+
+[Install]
+WantedBy=multi-user.target

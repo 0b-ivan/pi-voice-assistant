@@ -30,6 +30,7 @@ install -m 0644 "${repo_root}/src/netprobe.py" /opt/pi-voice-assistant/src/netpr
 install -m 0644 "${repo_root}/src/sysmon.py" /opt/pi-voice-assistant/src/sysmon.py
 install -m 0644 "${repo_root}/src/memory.py" /opt/pi-voice-assistant/src/memory.py
 install -m 0644 "${repo_root}/src/maintenance.py" /opt/pi-voice-assistant/src/maintenance.py
+install -m 0644 "${repo_root}/src/logwatch.py" /opt/pi-voice-assistant/src/logwatch.py
 install -m 0644 "${repo_root}/src/enroll.py" /opt/pi-voice-assistant/src/enroll.py
 install -m 0644 "${repo_root}/src/audio_output.py" /opt/pi-voice-assistant/src/audio_output.py
 install -m 0644 "${repo_root}/src/bluetooth.py" /opt/pi-voice-assistant/src/bluetooth.py

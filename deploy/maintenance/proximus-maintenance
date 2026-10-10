@@ -2,7 +2,13 @@
 # Proximus maintenance worker, run as root by proximus-update.service /
 # proximus-reboot.service when the voice service drops a request file into
 # /run/proximus-maintenance/requests (see docs/maintenance.md). It only knows
-# two fixed actions and takes no input from the request.
+# a few fixed actions and takes no input from the request:
+#   update, reboot          maintenance mode, confirmed with button E
+#   restart-display         self-test (src/logwatch.py) on the Pi
+#   restart-llm             self-test on CT 107
+# The two restarts only act on a unit systemd has given up on (failed state),
+# so a request can never restart a healthy service, and write no status.json
+# (that one belongs to the announced maintenance actions).
 set -u
 DIR=/run/proximus-maintenance
 STATUS="$DIR/status.json"
@@ -39,8 +45,14 @@ reboot)
     sleep 3
     exec systemctl reboot
     ;;
+restart-display|restart-llm)
+    if [ "$action" = restart-display ]; then unit=pi-display.service; else unit=servitor-llm.service; fi
+    systemctl is-failed --quiet "$unit" || exit 0
+    systemctl reset-failed "$unit"
+    exec systemctl restart "$unit"
+    ;;
 *)
-    echo "usage: $0 update|reboot" >&2
+    echo "usage: $0 update|reboot|restart-display|restart-llm" >&2
     exit 2
     ;;
 esac

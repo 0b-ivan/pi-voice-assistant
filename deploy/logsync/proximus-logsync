@@ -1,0 +1,58 @@
+#!/bin/sh
+# Copy the RAM journal to Proximus' memory stick (see docs/logs.md). Run as
+# root by proximus-logsync.timer (every 5 min), on request of pi-ptt (stick
+# plugged in, or the self-test found the copy stalled) and once at shutdown.
+# Without the stick the journal stays in RAM only. Takes no input.
+set -u
+DEV=/dev/disk/by-label/PROXIMUS
+MNT=/mnt/proximus-memory
+DIR="$MNT/logs"
+RUN=/run/proximus-maintenance
+STATE="$RUN/logsync.json"
+KEEP_DAYS=90      # days of logs kept on the stick
+MAX_MB=1024       # and at most this much
+rm -f "$RUN/requests/logsync"
+
+exec 9>/run/proximus-logsync.lock
+flock -n 9 || exit 0
+
+previous="$(sed -n 's/.*"ok_at":\([0-9][0-9]*\).*/\1/p' "$STATE" 2>/dev/null)"
+state() { # stick ok
+    now="$(date +%s)"
+    if [ "$2" = true ]; then ok_at="$now"; else ok_at="${previous:-0}"; fi
+    [ -d "$RUN" ] || return 0
+    printf '{"at":%s,"stick":%s,"ok":%s,"ok_at":%s}\n' "$now" "$1" "$2" "$ok_at" \
+        > "$STATE.tmp" && chmod 0644 "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+}
+
+# Check the device first: an absent stick must not block on the automount.
+if [ ! -e "$DEV" ]; then state false false; exit 0; fi
+ls "$MNT" >/dev/null 2>&1          # wakes the automount
+# The automount point itself is an autofs mount: only ext4 means the stick.
+if [ "$(findmnt -n -o FSTYPE -T "$MNT")" != ext4 ]; then state true false; exit 1; fi
+if ! mkdir -p "$DIR" || ! chmod 0750 "$DIR"; then state true false; exit 1; fi
+
+boot="$(cat /proc/sys/kernel/random/boot_id)"
+cursor="$DIR/.cursor-$boot"
+day="$(date +%F)"
+out="$DIR/$day.log"
+# New entries of this boot since the last copy; journalctl keeps the cursor.
+if journalctl -b 0 --cursor-file="$cursor" -o short-iso-precise --no-pager -q >> "$out" \
+        && chmod 0640 "$out" && sync "$out"; then
+    state true true
+else
+    state true false
+    exit 1
+fi
+
+find "$DIR" -maxdepth 1 -name '.cursor-*' ! -name ".cursor-$boot" -delete
+# Older days compressed, then pruned by age and by size (oldest first).
+find "$DIR" -maxdepth 1 -name '*.log' ! -name "$day.log" -exec gzip -f {} \;
+find "$DIR" -maxdepth 1 -name '*.log.gz' -mtime +"$KEEP_DAYS" -delete
+while [ "$(du -sm "$DIR" | cut -f1)" -gt "$MAX_MB" ]; do
+    oldest="$(ls -1 "$DIR"/*.log.gz 2>/dev/null | head -n 1)"
+    [ -n "$oldest" ] || break
+    rm -f "$oldest"
+done
+sync -f "$DIR" 2>/dev/null || sync
+exit 0

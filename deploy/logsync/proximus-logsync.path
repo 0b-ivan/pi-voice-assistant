@@ -1,0 +1,9 @@
+[Unit]
+Description=Proximus: journal copy requested by the voice service
+
+[Path]
+PathExists=/run/proximus-maintenance/requests/logsync
+Unit=proximus-logsync.service
+
+[Install]
+WantedBy=multi-user.target

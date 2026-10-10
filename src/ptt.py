@@ -24,6 +24,7 @@ import cue as cue_sound
 import device_control
 import enroll
 import people
+import logwatch
 import maintenance
 import memory as memory_core
 import sysmon
@@ -684,6 +685,7 @@ class VoiceController:
             pass
         self.turn_transcript = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
+        self.logwatch = None  # logwatch.LogWatch (self-test), started by main()
         self.maint = maintenance.Mode()
         self.enroll = None                 # running enroll.Session or people.Flow
         self.people = people.Browser()
@@ -1010,7 +1012,9 @@ class VoiceController:
                                     memory='on' if self.memory_present else 'off',
                                     maintenance='on' if self.maint.active else 'off',
                                     devctl='on', pending=self._device_pending_now(),
-                                    **self._mood_fields()))
+                                    **self._mood_fields(),
+                                    **(self.logwatch.snapshot_fields()
+                                       if self.logwatch is not None else {})))
 
     def check_alarms(self, now, network=None):
         """Called every ~10 s by main(); queues alarm sentences to speak."""
@@ -1489,6 +1493,8 @@ class VoiceController:
         if present == self.memory_present:
             return []
         self.memory_present = present
+        if present:
+            logwatch.request('logsync')  # copy the RAM journal to the stick right away
         counts = self.memory.counts() if present else None
         event('memory_core', present=present, **(counts or {}))
         if present and counts is None:
@@ -2314,6 +2320,11 @@ def main():
         if config.bluetooth:
             controller.start_bluetooth()
         controller.update_watch = sysmon.update_watch().start()
+        if config.logwatch:
+            def selftest_report(result):
+                event('selftest', findings=result['findings'], repairs=result['repairs'])
+            controller.logwatch = logwatch.pi_watch(controller.memory.present,
+                                                    report=selftest_report).start()
     battery_monitor = Battery()
     next_power = 0.0
     shim = None

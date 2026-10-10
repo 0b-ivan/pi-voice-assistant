@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 
+import logwatch
 from mood import EMOTIONS
 
 
@@ -191,6 +192,11 @@ def sanitize_snapshot(value):
     for name, allowed in SNAPSHOT_STATES.items():
         if value.get(name) in allowed:
             clean[name] = value[name]
+    # Self-test (logwatch): finding codes with counts, repairs done.
+    findings = logwatch.clean_findings(value.get('log_findings'))
+    if findings is not None:
+        clean['log_findings'] = findings
+        clean['log_repairs'] = logwatch.clean_repairs(value.get('log_repairs')) or []
     return clean
 
 
