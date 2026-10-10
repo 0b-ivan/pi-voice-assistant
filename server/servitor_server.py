@@ -438,6 +438,12 @@ class Service:
                         snapshot['llm'] = state()
                     if intent in ('weather', 'briefing'):
                         snapshot['weather'] = timed('weather', self.weather.get)
+                        day = (intents.weather_day(text, self.now().date())
+                               if intent == 'weather' else 0)
+                        snapshot['weather_day'] = day
+                        if day is not None:
+                            # The Pi shows its stored forecast with the answer.
+                            emit(dict(event='show', screen='weather', day=day))
                     if intent in ('briefing', 'selftest') and self.logwatch is not None:
                         snapshot.update(self.logwatch.snapshot_fields('server_log'))
                     if intent in ('calendar', 'briefing'):

@@ -43,6 +43,7 @@ install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
 install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
 install -m 0644 "${repo_root}/src/device_control.py" /opt/pi-voice-assistant/src/device_control.py
 install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
+install -m 0644 "${repo_root}/src/weather_icons.py" /opt/pi-voice-assistant/src/weather_icons.py
 install -m 0644 "${repo_root}/src/agenda.py" /opt/pi-voice-assistant/src/agenda.py
 install -m 0644 "${repo_root}/src/pronounce.py" /opt/pi-voice-assistant/src/pronounce.py
 install -m 0644 "${repo_root}/src/skull.py" /opt/pi-voice-assistant/src/skull.py

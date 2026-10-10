@@ -33,8 +33,9 @@ _ELSEWHERE = re.compile(r'\bin\s+(?!der\b|dem\b|den\b)\w+')
 _PATTERNS = (
     # First: "guten morgen, wie spät ist es" gets the whole briefing (with the time).
     # The operator may greet; the reply never does (see _opening).
-    ('briefing', re.compile(r'\b(morgenbericht|morgenlitanei|tagesbericht|lagebericht|'
-                            r'briefing|guten morgen|morgen litanei)\b')),
+    # STT often splits compounds: "morgen bericht", "tages bericht".
+    ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|tages ?bericht|lage ?bericht|'
+                            r'briefing|guten morgen)\b')),
     # Before "status": "selbsttest" / "prüfe deine logs" read the log findings.
     ('selftest', re.compile(r'\b(selbsttest|selbst test|selbstdiagnose|eigendiagnose|'
                             r'systemdiagnose|logauswertung|log auswertung|fehlerbericht|'
@@ -43,8 +44,8 @@ _PATTERNS = (
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
-    ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es regnen|regenschirm|'
-                           r'außentemperatur|wie warm ist es|wie kalt ist es)\b')),
+    ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es (\w+ )?regnen|regenschirm|'
+                           r'außentemperatur|wie warm (ist|wird) es|wie kalt (ist|wird) es)\b')),
     ('calendar', re.compile(r'\b(termine?|kalender|was steht heute an|was steht an|'
                             r'habe ich heute (?:was|etwas) vor)\b')),
     ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
@@ -133,8 +134,30 @@ def date_text(now, lore='off'):
     return f"Datum: {date}"
 
 
+_DAY_NAMES = ('montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag')
+
+
+def weather_day(text, today):
+    """Which day a weather question is about: 0 today ... 4, or None if it is
+    beyond the five-day forecast. "heute morgen"/"guten morgen" mean today."""
+    text = normalize(text)
+    if re.search(r'\bübermorgen\b', text):
+        return 2
+    if re.search(r'(?<!heute )(?<!guten )\bmorgen\b', text):
+        return 1
+    for index, name in enumerate(_DAY_NAMES):
+        if re.search(rf'\b{name}\b', text):
+            offset = (index - today.weekday()) % 7
+            return offset if offset < weather.DAYS else None
+    return 0
+
+
 def weather_text(snapshot, lore='off'):
-    text = weather.sentence(snapshot.get('weather'), lore)
+    day = snapshot.get('weather_day', 0)
+    if day is None:
+        return ("So weit reicht meine Vorhersage nicht, Boss." if is_billy(lore)
+                else "Vorhersage reicht nur fünf Tage.")
+    text = weather.day_sentence(snapshot.get('weather'), day, lore)
     if text is None:
         return "Keine Wetterdaten, Boss." if is_billy(lore) else "Wetterdaten nicht verfügbar."
     if lore == 'billy_full':

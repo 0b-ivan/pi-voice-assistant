@@ -29,6 +29,9 @@ class MatchTests(unittest.TestCase):
             "guten morgen": "briefing",
             "guten morgen proximus wie spät ist es": "briefing",
             "morgenbericht": "briefing",
+            "wie ist der morgen bericht": "briefing",
+            "tages bericht bitte": "briefing",
+            "lage bericht": "briefing",
             "starte die morgenlitanei": "briefing",
             "wie ist das wetter": "weather",
             "regnet es heute": "weather",
@@ -125,6 +128,18 @@ class AnswerTests(unittest.TestCase):
                                 "Zeitindex: 14 Uhr 32. Bericht Ende.")
         self.assertIn("Server nicht erreichbar",
                       intents.answer("briefing", self.NOW, {"server": "down"}))
+
+    def test_weather_day(self):
+        saturday = datetime.date(2026, 10, 10)
+        cases = {"wie ist das wetter": 0, "wetter heute morgen": 0, "wie wird das wetter morgen": 1,
+                 "wird es morgen regnen": 1, "wetter übermorgen": 2,
+                 "wie ist das wetter am dienstag": 3, "wetter am freitag": None}
+        for text, day in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(intents.match(text), "weather")
+                self.assertEqual(intents.weather_day(text, saturday), day)
+        self.assertEqual(intents.answer("weather", self.NOW, {"weather_day": None}),
+                         "Vorhersage reicht nur fünf Tage.")
 
     def test_calendar_and_briefing(self):
         dentist = dict(summary="Zahnarzt", start=self.NOW.replace(hour=15, minute=30),
