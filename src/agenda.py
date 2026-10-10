@@ -153,29 +153,43 @@ def _propfind(url, credentials, prop, depth, opener, timeout):
         return ET.fromstring(response.read())
 
 
-def discover(url, credentials, opener=urllib.request.urlopen, timeout=TIMEOUT_SECONDS):
-    """Calendar URLs below a CalDAV root or account URL (e.g. .../remote.php/dav):
-    current-user-principal -> calendar-home-set -> calendars with VEVENT."""
+def _calendar_entries(url, credentials, opener, timeout):
+    """(url, name) of the event calendars below a CalDAV root or account URL
+    (e.g. .../remote.php/dav): current-user-principal -> calendar-home-set ->
+    calendars with VEVENT. None when the URL is no such root."""
     from urllib.parse import urljoin
     root = _propfind(url, credentials, '<d:current-user-principal/>', '0', opener, timeout)
     principal = root.find(f'.//{_DAV}current-user-principal/{_DAV}href')
     if principal is None:
-        return [url]
+        return None
     home = _propfind(urljoin(url, principal.text), credentials, '<c:calendar-home-set/>', '0',
                      opener, timeout).find(f'.//{_CALDAV}calendar-home-set/{_DAV}href')
     if home is None:
-        return [url]
+        return None
     listing = _propfind(urljoin(url, home.text), credentials,
-                        '<d:resourcetype/><c:supported-calendar-component-set/>', '1', opener,
-                        timeout)
+                        '<d:resourcetype/><d:displayname/><c:supported-calendar-component-set/>',
+                        '1', opener, timeout)
     found = []
     for response in listing.findall(f'{_DAV}response'):
         href = response.find(f'{_DAV}href')
         is_calendar = response.find(f'.//{_DAV}resourcetype/{_CALDAV}calendar') is not None
         components = [c.get('name') for c in response.iter(f'{_CALDAV}comp')]
         if href is not None and is_calendar and (not components or 'VEVENT' in components):
-            found.append(urljoin(url, href.text))
+            name = response.find(f'.//{_DAV}displayname')
+            target = urljoin(url, href.text)
+            label = (name.text or '').strip() if name is not None else ''
+            found.append((target, label or _url_name(target)))
     return found
+
+
+def _url_name(url):
+    return url.rstrip('/').rsplit('/', 1)[-1]
+
+
+def discover(url, credentials, opener=urllib.request.urlopen, timeout=TIMEOUT_SECONDS):
+    """Calendar URLs below a CalDAV root or account URL (e.g. .../remote.php/dav)."""
+    entries = _calendar_entries(url, credentials, opener, timeout)
+    return [url] if entries is None else [target for target, _ in entries]
 
 
 def fetch(config, start, end, opener=urllib.request.urlopen, timeout=TIMEOUT_SECONDS):
@@ -190,6 +204,119 @@ def fetch(config, start, end, opener=urllib.request.urlopen, timeout=TIMEOUT_SEC
         with opener(request, timeout=timeout) as response:
             events.extend(parse_multistatus(response.read(), start.tzinfo))
     return events
+
+
+def _credentials(config):
+    return base64.b64encode(f'{config.user}:{config.password}'.encode()).decode()
+
+
+def calendars(config, opener=urllib.request.urlopen, timeout=TIMEOUT_SECONDS):
+    """Writable candidates: [(url, name)] for every configured calendar."""
+    credentials, found = _credentials(config), []
+    for url in config.urls:
+        entries = None if '/calendars/' in url else _calendar_entries(url, credentials, opener,
+                                                                      timeout)
+        found += [(url, _url_name(url))] if entries is None else entries
+    unique = {}
+    for url, name in found:
+        unique.setdefault(url, name)
+    return list(unique.items())
+
+
+# --- writing one event (journeys.py) ------------------------------------------------
+
+def _ics_text(value):
+    value = str(value).replace('\\', '\\\\').replace(';', '\\;').replace(',', '\\,')
+    return value.replace('\r\n', '\n').replace('\n', '\\n')
+
+
+def _fold(line):
+    """RFC 5545: at most 75 octets per line, continued with a leading space,
+    never splitting a UTF-8 character."""
+    parts, current, size = [], '', 0
+    for char in line:
+        width = len(char.encode('utf-8'))
+        if size + width > (75 if not parts else 74):
+            parts.append(current)
+            current, size = '', 0
+        current += char
+        size += width
+    parts.append(current)
+    return '\r\n '.join(parts)
+
+
+def event_ics(uid, start, end, summary, description='', location='', alarm=None,
+              alarm_text='', stamp=None):
+    """One VEVENT as iCalendar text. ``end`` None: no DTEND (an unknown arrival is
+    never invented). ``alarm``: absolute moment of a display alarm, written
+    relative to the start so every client shows it."""
+    stamp = stamp or datetime.datetime.now(datetime.timezone.utc)
+    lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//pi-voice-assistant//journeys//DE',
+             'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', f'UID:{uid}', f'DTSTAMP:{_stamp(stamp)}',
+             f'DTSTART:{_stamp(start)}']
+    if end is not None:
+        lines.append(f'DTEND:{_stamp(end)}')
+    lines.append(f'SUMMARY:{_ics_text(summary)}')
+    if location:
+        lines.append(f'LOCATION:{_ics_text(location)}')
+    if description:
+        lines.append(f'DESCRIPTION:{_ics_text(description)}')
+    if alarm is not None:
+        seconds = int((start - alarm).total_seconds())
+        sign = '-' if seconds >= 0 else ''
+        seconds = abs(seconds)
+        offset = f'PT{seconds // 60}M' if seconds % 60 == 0 else f'PT{seconds}S'
+        lines += ['BEGIN:VALARM', 'ACTION:DISPLAY',
+                  f'DESCRIPTION:{_ics_text(alarm_text or summary)}',
+                  f'TRIGGER;RELATED=START:{sign}{offset}', 'END:VALARM']
+    lines += ['END:VEVENT', 'END:VCALENDAR']
+    return '\r\n'.join(_fold(line) for line in lines) + '\r\n'
+
+
+def event_url(calendar_url, uid):
+    from urllib.parse import quote
+    return calendar_url.rstrip('/') + '/' + quote(f'{uid}.ics')
+
+
+def _exists(url, credentials, opener, timeout):
+    """True/False for a resource, None when that cannot be told either."""
+    import urllib.error
+    request = urllib.request.Request(url, method='GET', headers={
+        'Authorization': f'Basic {credentials}', 'User-Agent': USER_AGENT})
+    try:
+        with opener(request, timeout=timeout) as response:
+            return 200 <= response.status < 300
+    except urllib.error.HTTPError as exc:
+        return False if exc.code in (404, 410) else None
+    except OSError:
+        return None
+
+
+def put_event(config, calendar_url, uid, ics, opener=urllib.request.urlopen,
+              timeout=TIMEOUT_SECONDS):
+    """Create one event once. Returns 'created', 'exists' (same UID already
+    there: an earlier attempt arrived), 'denied' (401/403), 'failed' or
+    'unknown' (no answer and the check could not tell). The resource name comes
+    from the stable UID and If-None-Match: * never overwrites, so a retry after
+    an unclear timeout checks that same resource instead of adding a second."""
+    import urllib.error
+    credentials = _credentials(config)
+    url = event_url(calendar_url, uid)
+    request = urllib.request.Request(url, data=ics.encode('utf-8'), method='PUT', headers={
+        'Authorization': f'Basic {credentials}', 'User-Agent': USER_AGENT,
+        'Content-Type': 'text/calendar; charset=utf-8', 'If-None-Match': '*'})
+    try:
+        with opener(request, timeout=timeout) as response:
+            return 'created' if 200 <= response.status < 300 else 'failed'
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return 'denied'
+        if exc.code == 412:
+            return 'exists' if _exists(url, credentials, opener, timeout) else 'failed'
+        return 'failed'
+    except OSError:
+        found = _exists(url, credentials, opener, timeout)
+        return 'created' if found else 'failed' if found is False else 'unknown'
 
 
 def day_bounds(now):

@@ -1,6 +1,7 @@
 """Servitor status: snapshot of the Pi plus the spoken status text."""
 
 import os
+import re
 from pathlib import Path
 import shutil
 
@@ -172,7 +173,10 @@ SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offli
                    # reboot/shutdown question it is waiting to have confirmed.
                    'devctl': ('on',), 'pending': ('reboot', 'shutdown'),
                    # The Pi plays multi-part long stories (story.py, /v1/story).
-                   'story': ('on',)}
+                   'story': ('on',),
+                   # journeys.py: the Pi knows journeys, and what it is waiting for.
+                   'trip': ('on', 'offers', 'ask', 'origin', 'destination', 'calendar',
+                            'choice')}
 
 
 def sanitize_snapshot(value):
@@ -194,6 +198,10 @@ def sanitize_snapshot(value):
     for name, allowed in SNAPSHOT_STATES.items():
         if value.get(name) in allowed:
             clean[name] = value[name]
+    # ID of the journey proposal waiting for consent (journeys.Journeys.snapshot).
+    if clean.get('trip') == 'ask' and isinstance(value.get('trip_id'), str) \
+            and re.fullmatch(r'[0-9a-f]{16}', value['trip_id']):
+        clean['trip_id'] = value['trip_id']
     # Self-test (logwatch): finding codes with counts, repairs done.
     findings = logwatch.clean_findings(value.get('log_findings'))
     if findings is not None:
