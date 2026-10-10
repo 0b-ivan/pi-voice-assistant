@@ -531,6 +531,9 @@ def prompt_section(context):
         if context.get('directives'):
             parts.append("Direktiven des Bedieners, immer befolgen:\n"
                          + '\n'.join(f'- {d}' for d in context['directives']))
+        parts.append("Der aktuelle Sprecher ist ein Gast. Anredewünsche des Bedieners gelten "
+                     "nur für den erkannten Bediener. Sprich den Gast ohne Namen, Rang oder "
+                     "Titel an, insbesondere nicht als Kommandant, Boss oder Bediener.")
         return '\n\n'.join(parts)
     parts = [LEARN_INSTRUCTION]
     if context.get('speaker'):

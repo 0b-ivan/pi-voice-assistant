@@ -27,6 +27,28 @@ class FakeResponse:
 
 
 class LLMTests(unittest.TestCase):
+    def test_guest_vocatives_are_removed_but_discussion_of_a_commander_is_kept(self):
+        guest = dict(speaker='unknown', directives=['Nenne mich Kommandant'])
+        for text, expected in (
+                ('Kommandant, die Antwort ist 42.', 'die Antwort ist 42.'),
+                ('Bereit, Kommandant.', 'Bereit.'),
+                ('Guten Abend Kommandant. Die Antwort ist 42.', 'Guten Abend. Die Antwort ist 42.'),
+                ('Der Kommandant führt den Trupp.', 'Der Kommandant führt den Trupp.')):
+            self.assertEqual(llm.guest_address(text, guest), expected)
+        self.assertEqual(llm.guest_address('Bereit, Kommandant.', dict(speaker='Ivan')),
+                         'Bereit, Kommandant.')
+        from memory import prompt_section
+        prompt = prompt_section(guest)
+        self.assertIn('Anredewünsche des Bedieners gelten nur', prompt)
+
+    def test_guest_address_guard_is_used_for_both_model_paths(self):
+        response = FakeResponse({'choices': [{'message': {'content': 'Ja, Kommandant.'}}]})
+        with patch.dict('os.environ', self.base_env(), clear=True), \
+             patch('llm.urllib.request.urlopen', return_value=response):
+            for reply in (llm.generate_reply, llm.generate_local_reply):
+                text, _ = reply('frage', memory=dict(speaker='unknown'))
+                self.assertEqual(text, 'Ja.')
+
     def base_env(self):
         return {
             "OPENROUTER_API_KEY": "test-key",

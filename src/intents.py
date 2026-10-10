@@ -35,7 +35,7 @@ _PATTERNS = (
     # First: "guten morgen, wie spät ist es" gets the whole briefing (with the time).
     # The operator may greet; the reply never does (see _opening).
     # STT often splits compounds: "morgen bericht", "tages bericht".
-    ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|tages ?bericht|lage ?bericht|'
+    ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|abend ?bericht|abend ?litanei|tages ?bericht|lage ?bericht|'
                             r'briefing|guten morgen)\b')),
     # Before "status": "selbsttest" / "prüfe deine logs" read the log findings.
     # Vosk small hears "Selbsttest" as "selbst", "selbst theft", "selbst test"
@@ -70,18 +70,23 @@ _PATTERNS = (
                         r'den wievielten|was für ein tag|datum)\b')),
     ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es (\w+ )?regnen|regenschirm|'
                            r'außentemperatur|wie warm (ist|wird) es|wie kalt (ist|wird) es)\b')),
-    ('calendar', re.compile(r'\b(termine?|kalender|was steht (heute )?(noch )?an|steht heute noch (was|etwas) an|'
-                            r'habe ich heute (?:was|etwas) vor)\b')),
+    ('calendar', re.compile(r'\b(termine?|kalender|was steht (?:(?:heute|morgen|übermorgen) )?(noch )?an|'
+                            r'steht (?:heute|morgen|übermorgen) (?:noch )?(was|etwas) an|'
+                            r'habe ich (?:heute|morgen|übermorgen) (?:was|etwas) vor)\b')),
     # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
     ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
-                           r'ladestand)\b')),
+                           r'ladestand|ladezustand|energiereserve\w*)\b|\bwie (?:viel|viele) prozent hast du (?:noch|übrig)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
-                          r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
+                          r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht|'
+                          r'(?:deine? |system ?)(?:temperatur|auslastung|betriebszeit|messwerte)|'
+                          r'wie (?:heiß|warm) bist du|uptime)\b|^status\b')),
     ('network', re.compile(r'\b(netzwerk\w*|netzwerk status|wlan status|wlan signal|'
                            r'wie ist das netz|wie ist die verbindung|internetverbindung|'
                            r'verbindungsqualität|noosphäre)\b')),
     ('updates', re.compile(r'\b(updates?|aktualisierungen|systemwartung|wartung nötig|'
                            r'sicherheitsupdates?)\b')),
+    ('model', re.compile(r'\b((?:welche\w*|was für (?:ein|einen)) (?:sprach ?modell|ki ?modell|'
+                         r'sprachkern|llm)|(?:sprach ?modell|ki ?modell|llm) (?:bist|nutzt|verwendest))\b')),
     ('identity', re.compile(r'\b(wer bist du|wie heißt du|was bist du)\b')),
 )
 # "Wer bist du?" and "Wie geht es dir?" ask about the speaker himself: the
@@ -186,12 +191,21 @@ def match(text, persona=None):
     text = normalize(text)
     if not text:
         return None
+    # Personal measurements and calendar requests stay out of the model even
+    # when politeness, corrections or follow-up clauses make the sentence long.
+    if re.search(r'\bdein\w*\b', text) and re.search(r'\b(temperatur|auslastung|betriebszeit|messwerte)\b', text):
+        return 'status'
     if len(text.split()) > 12:
-        # Long sentences go to the LLM; only a question about the unit's own
-        # hardware is answered here, so it never gets invented numbers.
-        hardware = dict(_PATTERNS)['hardware']
-        return 'hardware' if len(text.split()) <= 20 and hardware.search(text) \
-            and _SELF.search(text) else None
+        calendar = dict(_PATTERNS)['calendar']
+        if calendar.search(text) and (re.search(r'\b(ich|mein\w*)\b', text)
+                                     or re.search(r'\bwas steht\b', text)):
+            return 'calendar'
+        if _SELF.search(text):
+            for name, pattern in _PATTERNS:
+                if name in ('hardware', 'battery', 'status', 'network', 'updates', 'model') \
+                        and pattern.search(text):
+                    return name
+        return None
     for name, pattern in _PATTERNS:
         if pattern.search(text):
             if name in ('time', 'date', 'weather') and _ELSEWHERE.search(text):
@@ -264,8 +278,39 @@ def weather_text(snapshot, lore='off'):
     return f"Auspex meldet: {text}" if lore == 'full' else text
 
 
+def calendar_day(text, today):
+    """Supported calendar window; never answer a future request with today's list."""
+    text = normalize(text)
+    if re.search(r'\b(woche|monat|jahr|nächste\w*|gestern|übermorgen)\b|\bam \d', text):
+        return None
+    return weather_day(text, today)
+
+
 def calendar_text(snapshot, lore='off'):
-    return agenda.sentence(snapshot.get('agenda'), lore) or "Kalenderdaten nicht verfügbar."
+    if snapshot.get('agenda') == agenda.DENIED:
+        return agenda.sentence(agenda.DENIED, lore)
+    day = snapshot.get('agenda_day', 0)
+    if day not in (0, 1):
+        return "Kalenderdaten sind nur für heute und morgen verfügbar."
+    missing = "Kalenderdaten für morgen nicht verfügbar." if day else "Kalenderdaten nicht verfügbar."
+    return agenda.sentence(snapshot.get('agenda'), lore, day=day) or missing
+
+
+def briefing_day(now):
+    """The evening report looks ahead; earlier reports describe today."""
+    return 1 if now.hour >= 18 else 0
+
+
+def model_text(snapshot, lore):
+    if snapshot.get('llm_mode') == 'local':
+        core = "Der lokale Sprachkern auf dem Server beantwortet freie Fragen."
+    elif snapshot.get('llm') == 'offline':
+        core = "Zurzeit beantwortet der lokale Sprachkern auf dem Server freie Fragen."
+    else:
+        core = "Freie Fragen beantwortet der gewählte Sprachkern. Die Auswahl steht im Menü Sprachkern."
+    name = "Ich bin Billy, das menschliche Engramm von Proximus." if is_billy(lore) else \
+        "Diese Einheit ist Servitor Proximus."
+    return f"{name} {core} Messwerte und Termine liefert das Gerät direkt."
 
 
 def _opening(now, lore, name=None):
@@ -301,9 +346,12 @@ def briefing_text(now, snapshot, lore='off'):
     day = f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} {MONTHS[now.month - 1]}"
     parts.append(f"Heute ist {day}, es ist {clock}." if is_billy(lore)
                  else f"Datum: {day}. Zeitindex: {clock}.")
-    sky = weather.sentence(snapshot.get('weather'), lore)
+    day = briefing_day(now)
+    sky = weather.day_sentence(snapshot.get('weather'), day, lore)
     if sky:
         parts.append(sky)
+    elif day:
+        parts.append("Wetterdaten für morgen nicht verfügbar.")
     appointments = snapshot.get('agenda')
     if appointments is not None and appointments != agenda.DENIED:  # guests: just left out
         parts.append(agenda.sentence(appointments, lore))
@@ -354,6 +402,8 @@ def answer(intent, now, snapshot=None, lore=None):
         return logwatch.selftest_text(snapshot, lore, now)
     if intent == 'hardware':
         return hardware_text(snapshot, lore)
+    if intent == 'model':
+        return model_text(snapshot, lore)
     if intent == 'unsupported':
         key = 'billy' if is_billy(lore) else lore
         return variants.pick(f'unsupported.{key}', UNSUPPORTED.get(key, UNSUPPORTED['off']))
