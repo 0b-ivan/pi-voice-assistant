@@ -1,6 +1,6 @@
 # Architektur
 
-Der Pi übernimmt Tasten, Aufnahme, Display, LED und Wiedergabe. Erkennung, Antwort und Stimme laufen im Normalbetrieb auf dem eigenen Servitor-Server **CT 107** ([ADR 0004](decisions/0004-servitor-server.md)); der Pi kann alles davon auch lokal, langsamer, als Fallback.
+Der Pi übernimmt Tasten, Aufnahme, Display, LED und Wiedergabe. Erkennung, Antwort und Stimme laufen im Normalbetrieb auf dem eigenen Servitor-Server **CT 107** ([ADR 0004](decisions/0004-servitor-server.md)). Der Pi bietet als Fallback Vosk, regelbasierte Antworten und Piper; **freie lokale LLM-Antworten ohne CT 107 benötigen Internet/OpenRouter**. Ein Offline-LLM auf dem Pi selbst gibt es nicht.
 
 ```text
 PTT gedrückt (GPIO17 / SHIM A)
@@ -14,7 +14,7 @@ Pi
   → Display/LED aus den Ereignissen → aplay → WM8960
 ```
 
-[`src/ptt.py`](../src/ptt.py) orchestriert Tasten, Aufnahme, Menü und Zustandsfolge und liest seine Einstellungen einmal beim Start über [`src/ptt_config.py`](../src/ptt_config.py) (`PttConfig`); [`src/remote_turn.py`](../src/remote_turn.py) ist der Server-Client; [`server/servitor_server.py`](../server/servitor_server.py) der Dienst auf CT 107. Lokal: [`src/transcribe.py`](../src/transcribe.py) (Vosk), [`src/llm.py`](../src/llm.py) (OpenRouter bzw. lokales LLM, Persona), [`src/voice_controls.py`](../src/voice_controls.py) (Piper, Wiedergabe, Lautstärke). Es gibt **einen** Verarbeitungs-Slot, keine Warteschlange.
+[`src/ptt.py`](../src/ptt.py) orchestriert Tasten, Aufnahme, Menü und Zustandsfolge und liest seine Einstellungen einmal beim Start über [`src/ptt_config.py`](../src/ptt_config.py) (`PttConfig`); [`src/remote_turn.py`](../src/remote_turn.py) ist der Server-Client; [`server/servitor_server.py`](../server/servitor_server.py) der Dienst auf CT 107. Lokal auf dem Pi: [`src/transcribe.py`](../src/transcribe.py) (Vosk), [`src/llm.py`](../src/llm.py) (OpenRouter-Client und Persona; der lokale-LLM-Client wird auf CT 107 verwendet), [`src/voice_controls.py`](../src/voice_controls.py) (Piper, Wiedergabe, Lautstärke). Es gibt **einen** Verarbeitungs-Slot, keine Warteschlange.
 
 Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Das Vosk-Modell wird beim Dienststart vorgewärmt, damit der erste PTT-Zyklus keinen Modell-Load bezahlen muss.
 
@@ -38,7 +38,7 @@ PTT los → Abschlusschunk → NDJSON lesen → Display → aplay remote-reply.w
 | `stage: synthesize` / `render` | Fortschritt `tts/synthesis` → SYNTHESE, `tts/dsp_render` → RENDERN |
 | `audio` + `done` | `speech_started`, Fortschritt `tts/playback` → AUSGABE |
 
-Der Fallback setzt dort an, wo der Server ausgefallen ist: Verbindung/Upload → lokale Vosk-Erkennung der mitgeschriebenen Aufnahme; LLM-Fehler → lokales LLM mit dem Server-Transkript; Synthese-/Renderfehler → lokale Piper-Ausgabe der Server-Antwort. „Keine Sprache erkannt“ wird nicht lokal wiederholt. Das Token steht nur in `/etc/pi-voice-assistant.env` und wird nie geloggt.
+Der Fallback setzt dort an, wo der Server ausgefallen ist: Verbindung/Upload → lokale Vosk-Erkennung der mitgeschriebenen Aufnahme; LLM-Fehler mit vorhandenem Transkript → LLM-Schritt auf dem Pi **über OpenRouter (sofern Internet und Sprachkern-Modus es erlauben)**; Synthese-/Renderfehler mit vorhandener Server-Antwort → lokale Piper-Ausgabe. Das Qwen3-4B-Offline-LLM läuft **nur auf CT 107** und ist bei Serverausfall nicht erreichbar. Im Sprachkern-Modus LOKAL werden ohne CT 107 nur direkte, regelbasierte Antworten gegeben. „Keine Sprache erkannt“ wird nicht lokal wiederholt. Das Token steht nur in `/etc/pi-voice-assistant.env` und wird nie geloggt.
 
 Während der Server erreichbar ist, läuft auf dem Pi keine zusätzliche Live-Vosk-Erkennung. Im Modus `hybrid` bleibt der vorgeladene Vosk-Worker für den Fallback bereit und erkennt bei Bedarf die mitgeschriebene WAV.
 
@@ -267,12 +267,12 @@ Der Display-Dienst greift nicht in Aufnahme, STT oder TTS ein. `ptt.py` veröffe
 
 `DENKEN` wird durch `transcript`/`llm_start` gesetzt; `llm_response` bzw. `speech_started` wechseln auf `SPRECHEN`. LLM-Fehler werden wie STT-/TTS-Fehler kurz als `FEHLER` angezeigt.
 
-OpenRouter verarbeitet nur Text; Mikrofon-Audio geht nur an den eigenen CT 107. Schlüssel und Token kommen ausschließlich aus dem von systemd geladenen Environment. Wake Word, Echounterdrückung und Kamera sind keine aktuellen Funktionen. Menü, Statusinformationen, Akku und Lautstärke auf dem Display: [Display](display.md).
+OpenRouter verarbeitet nur Text; Mikrofon-Audio geht nur an den eigenen CT 107. Schlüssel und Token kommen ausschließlich aus dem von systemd geladenen Environment. Das Aktivierungswort „Hey Jarvis“ ist implementiert, seine Abnahme mit echter Stimme aber offen; **Echounterdrückung und Kamera-Vision** sind nicht implementiert. Menü, Statusinformationen, Akku und Lautstärke auf dem Display: [Display](display.md).
 
 ## Betrieb und Grenzen
 
 Die [Unit](../deploy/pi-ptt.service) läuft als `obivan` mit `audio/gpio/i2c`, ohne root. Runtime-Verzeichnis ist `/run/pi-ptt`; Code unter `/opt`, Home gesperrt. Ein dedizierter Dienstbenutzer ist eine offene Verbesserung, keine bereits implementierte Isolation.
 
-Aufnahme hat standardmäßig 30 s Limit; STT-/LLM-/TTS-Fehler werden protokolliert und beenden den Dienst nicht. Ohne Netz arbeitet der Pi lokal weiter (Vosk, Antworten ohne LLM, Piper); nur freie Fragen brauchen OpenRouter oder den Server. Die Unit wartet nicht auf `network-online.target`. WAVs sind flüchtig; Transkripte und LLM-Antworten stehen im Journal.
+Aufnahme hat standardmäßig 30 s Limit; STT-/LLM-/TTS-Fehler werden protokolliert und beenden den Dienst nicht. Ohne Netz arbeitet der Pi lokal weiter (Vosk, Antworten ohne LLM, Piper); für freie Fragen muss entweder der Server mit seinem Offline-LLM erreichbar sein oder der Pi OpenRouter erreichen. Die Unit wartet nicht auf `network-online.target`. WAVs sind flüchtig; Transkripte und LLM-Antworten stehen im Journal.
 
 Messwerte stehen ausschließlich unter [STT](speech-to-text.md) und [TTS](local-speech.md); Hardware-Abnahmen unter [PTT](push-to-talk.md), [Button SHIM](button-controls.md) und [Erweiterungen](hardware-bring-up.md). Entscheidungen: [Pi-Client](decisions/0001-client-server.md), [OS](decisions/0002-operating-system.md), [Vosk-only STT](decisions/0003-hybrid-stt.md), [Servitor-Server](decisions/0004-servitor-server.md).
