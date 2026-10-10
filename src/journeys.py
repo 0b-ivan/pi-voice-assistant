@@ -521,13 +521,14 @@ class Journeys:
         if origin == 'here':
             return self._ask('origin', "Ohne Ortung weiß ich nicht, wo hier ist. Von zu Hause "
                              "oder ab welcher Haltestelle?", query=dict(query, origin=None))
-        if origin == 'home' and guest:
-            return self._ask('origin', "Den Startpunkt zu Hause nenne ich nur dem Bediener. "
-                             "Ab welcher Haltestelle?", query=dict(query, origin=None))
+        if query['kind'] == 'trip' and origin is None and not guest and self.config.home:
+            # The operator asks without a start: from home ("ab ..." when out).
+            query = dict(query, origin='home')
+            origin = 'home'
         if origin == 'home' and self.config.home is None:
             return self._ask('origin', "Kein Zuhause eingerichtet. Ab welcher Haltestelle?",
                              query=dict(query, origin=None))
-        if destination == 'home' and (guest or self.config.home is None):
+        if destination == 'home' and self.config.home is None:
             return self._ask('destination', "Zuhause ist hier nicht verfügbar. Welche "
                              "Haltestelle?", query=dict(query, destination=None))
         if query['kind'] == 'trip' and origin is None:

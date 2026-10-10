@@ -99,7 +99,7 @@ class Rig:
     """A controller on a fixed clock with a fake timetable and calendar."""
 
     def __init__(self, journeys_list=(), departures=(), calendars=None, city_stop=None,
-                 put_result='created', write_calendar=None):
+                 put_result='created', write_calendar=None, home=HOME):
         self.now = utc(12, 0).astimezone(transit.TZ)
         self.monotonic = 1000.0
         self.client = FakeClient(journeys_list, departures)
@@ -109,7 +109,7 @@ class Rig:
         self.log = []
         self.calendar_list = calendars if calendars is not None else [
             ('https://cloud.example/dav/calendars/u/privat/', 'Privat')]
-        config = transit.Config(home=HOME, city_stop=city_stop, buffer_minutes=2)
+        config = transit.Config(home=home, city_stop=city_stop, buffer_minutes=2)
         self.c = journeys.Journeys(self.client, config, self.agenda, now=lambda: self.now,
                                    clock=lambda: self.monotonic,
                                    log=lambda name, **f: self.log.append(f), put=self.put,
@@ -168,15 +168,23 @@ class ControllerTests(unittest.TestCase):
 
     def test_missing_or_ambiguous_start_is_asked(self):
         rig = Rig([tram_journey(utc(12, 32))], city_stop='3700315')
-        self.assertIn('Von wo aus', rig.say('wann fährt die nächste straßenbahn in die stadt'))
-        self.assertEqual(rig.c.state(), 'origin')
-        self.assertIn('Verbindung', rig.say('von zu hause'))
+        # The operator without a start: from home, no question.
+        self.assertIn('Verbindung', rig.say('wann fährt die nächste straßenbahn in die stadt'))
+        self.assertEqual(rig.client.calls[-1][1][0], 'coord')
         self.assertEqual(rig.client.calls[-1][2], ('stop', '3700315'))
+        # A guest without a start is asked, but may name home (only times are spoken).
+        self.assertIn('Von wo aus', rig.say('wann fährt die nächste straßenbahn in die stadt',
+                                            guest=True))
+        self.assertEqual(rig.c.state(), 'origin')
+        self.assertIn('Verbindung', rig.say('von zu hause', guest=True))
         self.assertIn('Ohne Ortung', rig.say('wann fährt die straßenbahn von hier zum rathaus'))
-        self.assertEqual(rig.client.calls[-1][0], 'trips')       # nothing queried for "hier"
         rig.client.calls.clear()
         rig.say('wie komme ich von zu hause nach nürnberg', guest=True)
-        self.assertEqual(rig.client.calls, [])                   # guests never get home
+        self.assertEqual(rig.client.calls[-1][1][0], 'coord')
+
+    def test_no_home_configured_still_asks(self):
+        rig = Rig([tram_journey(utc(12, 32))], city_stop='3700315', home=None)
+        self.assertIn('Von wo aus', rig.say('wann fährt die nächste straßenbahn in die stadt'))
 
     def test_city_needs_a_configured_stop(self):
         rig = Rig([tram_journey(utc(12, 32))])

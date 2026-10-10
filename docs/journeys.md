@@ -8,7 +8,7 @@ Code: [`src/transit.py`](../src/transit.py) (MoBY/EFA-Adapter), [`src/journeys.p
 
 | Sagen | Ergebnis |
 |---|---|
-| „Wann fährt die nächste Straßenbahn in die Stadt?“ | fragt nach dem Start, wenn keiner genannt ist („Von zu Hause oder ab welcher Haltestelle?“) |
+| „Wann fährt die nächste Straßenbahn in die Stadt?“ | ohne genannten Start: für den erkannten Bediener ab zu Hause (unterwegs „ab …“ sagen); Gäste werden gefragt („Von zu Hause oder ab welcher Haltestelle?“) |
 | „Wie komme ich von zu Hause nach Nürnberg?“ | bis zu drei erreichbare Verbindungen |
 | „Wann fährt der nächste Zug ab Würzburg Hbf?“ | nächste Abfahrten an diesem Bahnhof |
 | „Nur Regionalzüge“ | dieselbe Anfrage ohne ICE/IC |
@@ -29,7 +29,7 @@ Auskunft → Auswahl → Vorschlag → Zustimmung → Ausführung → Ergebnis.
 - Der Pi handelt nur nach einem vollständigen Turn (`done` empfangen). Bricht der Strom ab, beantwortet er den Turn lokal; die einmalige Ausführung je Vorschlags-ID verhindert doppelte Aktionen.
 - Es gibt höchstens eine offene Bestätigungsfrage. Sie gehört zu einer Vorschlags-ID und wird vom nächsten Turn (oder von B/E) verbraucht. Jede andere Antwort verwirft sie.
 - Die Frage gilt 90 Sekunden nach vollständiger Ansage (höchstens 5 Minuten ab Vorschlag).
-- Per Stimme bestätigen kann nur dieselbe Stimme, die den Vorschlag ausgelöst hat; ein nicht erkannter Gast nie. Taste E gilt immer. Gäste bekommen keine Vorschläge und keinen Start „zu Hause“.
+- Per Stimme bestätigen kann nur dieselbe Stimme, die den Vorschlag ausgelöst hat; ein nicht erkannter Gast nie. Taste E gilt immer. Gäste bekommen keine Vorschläge (Erinnerung, Kalender). „Von/nach zu Hause“ dürfen sie nennen: gesprochen werden nur Zeiten und „zu Hause“, nie die Adresse. Das Pi-Journal zeigt die Stimmprüfung als `speaker`-Event (`known`, `score`).
 - Vor der Ausführung fragt der Pi die Fahrt erneut ab. Ändert sich die Abfahrt, Losgehzeit oder Ankunft um zwei Minuten oder mehr, das Abfahrtsgleis, oder fällt die Fahrt aus, gibt es einen neuen Vorschlag statt einer Ausführung. Ist der Fahrplan nicht erreichbar, wird nichts geschrieben.
 
 ## Gehzeit

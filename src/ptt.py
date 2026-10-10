@@ -1944,6 +1944,9 @@ class VoiceController:
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
             self._selftest_requested(text)
+        elif kind == 'speaker':
+            # The server's voice check, for tuning the threshold with real voices.
+            event('speaker', known=bool(item.get('known')), score=item.get('score'))
         elif kind == 'enroll':
             # after the server's announcement
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
