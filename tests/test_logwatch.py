@@ -342,7 +342,9 @@ class IntentTests(unittest.TestCase):
                      'logs prüfen', 'systemdiagnose bitte', 'analysiere die protokolle',
                      # as Vosk small hears "Selbsttest" / "Führe Selbsttest durch"
                      'selbst', 'selbst theft', 'selbst test', 'führer selbst das durch',
-                     'starte die diagnose', 'systemcheck'):
+                     'starte die diagnose', 'systemcheck', 'was steht in den locken',
+                     'was steht in deinen logs', 'was mit dir los', 'was ist mit dir los',
+                     'für ein funktions das durch', 'funktionstest'):
             self.assertEqual(intents.match(text), 'selftest', text)
         for text in ('was ist die diagnose bei grippe', 'wie ist dein status',
                      'mach das selbst', 'das kannst du selbst', 'selbstverständlich',

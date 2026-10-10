@@ -42,8 +42,11 @@ _PATTERNS = (
     ('selftest', re.compile(r'\b(selbst ?(test|tests|tester|theft|text|fest|tess|tast)\w*|'
                             r'selbstdiagnose|eigendiagnose|systemdiagnose|system ?check|'
                             r'systemprüfung|logauswertung|log auswertung|fehlerbericht|'
-                            r'(führ|mach|start)\w* (\w+ )?(diagnose|systemcheck)|(führ|mach)\w* (\w+ )?selbst (\w+ )?durch|'
-                            r'(prüf|check|analysier)\w* (deine |die )?(logs?|protokolle?)|'
+                            r'(führ|mach|start)\w* (\w+ )?(diagnose|systemcheck)|(führ|für|mach)\w* (\w+ )?(selbst|funktions\w*) (\w+ )?durch|'
+                            r'funktions ?(test|prüfung)\w*|was (ist )?(denn )?(mit dir|los mit dir) los|'
+                            r'was ist los mit dir|bist du kaputt|'
+                            r'(prüf|check|analysier)\w* (deine |die )?(logs?|locken|protokolle?)|'
+                            r'was steht in (den |deinen )?(logs?|locken|protokollen)|'
                             r'(logs?|protokolle?) (prüfen|auswerten|checken))\b|^selbst$')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
