@@ -31,7 +31,7 @@
 - **Nachrichten je Person:** Postfach auf dem Stick; ausgeben nur an erkannte Person. Mit Stimmprofilen, Datenschutz und Prioritäten abstimmen.
 - **Durchsagen vom Server:** etwa für Home Assistant/Uptime Kuma; erst nach sicherem Rückkanal. `POST /v1/announce` ist ein Vorschlag, kein vorhandener Endpoint.
 - **Morgenbericht automatisch beim ersten Tastendruck** als abschaltbare Option.
-- **Agonie-Taste / adaptives Feedback:** B-Langdruck bewertet eine tatsächlich erzeugte LLM-Antwort negativ, während B-Kurzdruck weiterhin sofort stoppt/zurückgeht. Eine konkrete Korrektur kann als widerrufbare Präferenz gespeichert werden; simulierte Agonie/Stimmung ist ein Darstellungseffekt. **Nur Konzept, keine Implementierung** (siehe [Konzeptskizze](#agonie-taste-und-adaptives-feedback-konzeptskizze)).
+- **Agonie-Taste / adaptives Feedback:** B-Langdruck bewertet eine tatsächlich erzeugte LLM-Antwort negativ, während B-Kurzdruck weiterhin sofort stoppt/zurückgeht. Eine konkrete Korrektur kann als widerrufbare Präferenz gespeichert werden; simulierte Agonie/Stimmung ist ein Darstellungseffekt. **Nur Konzept, keine Implementierung** (siehe [PALS-Gesamtkonzept](#konzept-proximus-adaptive-learning-system-pals)).
 - **Charakter und Gedächtnis:** echtes Gesprächsfeedback für Servitor/Billy; verbleibende Konzeptschritte (Lore-Archiv, Logbuch/„Was habe ich verpasst?“, Gesprächserkennung, Inbox, Unterbewusstsein) separat planen.
 
 ## P3 · Optionale Erweiterungen (Entscheidung ausstehend)
