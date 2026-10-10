@@ -24,26 +24,14 @@ Taste halten / „Hey Jarvis“ → Pi: Audio, Tasten, Display
 
 *Animation aus dem Display-Code; die Abnahme am echten PiTFT steht teilweise noch aus.*
 
-## Schnellstart und Betrieb
+## Dokumentation
 
-Auf dem **bereits eingerichteten Pi**:
+- [Hardware und Installation](docs/setup.md): Teile, Pinbelegung, Pi/Audio/Display, Stick und CT 107.
+- [Benutzerhandbuch](docs/user-guide.md): Tasten, Menü, Sprache, Persönlichkeit und Personen.
+- [Betriebsleitfaden](docs/operation.md): Konfiguration, Updates, Wartung und Fehlersuche.
+- [Architektur und Sicherheitsgrenzen](docs/architecture.md): Server, Fallbacks, SPX/1 und Git-Historie.
+- [Roadmap](docs/roadmap.md): offene Arbeiten und Geräteabnahmen.
 
-```bash
-systemctl status pi-ptt pi-display --no-pager
-journalctl -u pi-ptt -n 40 --no-pager
-```
+Auf einem eingerichteten Pi: `systemctl status pi-ptt pi-display --no-pager`; Logs: `journalctl -u pi-ptt -n 40 --no-pager`. **Keine Tokens/App-Passwörter ins Repository.** LAN-HTTP überträgt Token und Audio unverschlüsselt; Cloudflare nutzt HTTPS.
 
-Für eine Neuinstallation: [Setup](docs/setup.md). Für den Betrieb und Deployments: [Operation](docs/operation.md). Bei Problemen: [Troubleshooting](docs/troubleshooting.md).
-
-| Bereich | Dokumentation |
-|---|---|
-| System | [Architektur](docs/architecture.md) · [Hardware & Fotos](docs/hardware.md) |
-| Bedienung | [Tasten und Menü](docs/features/controls.md) · [Display](docs/features/display.md) |
-| Sprache | [Vosk, LLM und Piper](docs/features/speech.md) |
-| Persönliches | [Gedächtnis & Stimmprofile](docs/features/memory.md) · [Servitor & Billy](docs/features/personality.md) |
-| Betrieb | [Wartung](docs/features/maintenance.md) · [Roadmap](docs/roadmap.md) |
-| Hintergrund | [ADRs](docs/decisions) · [Historische Prüfungen](docs/history) · [Konzepte](docs/concepts) |
-
-Konfiguration: `/etc/pi-ptt.env` (Tasten/Modi), `/etc/pi-voice-assistant.env` (Pi/Server-Zugangsdaten), `/etc/servitor-voice.env` (CT 107). **Keine Tokens oder App-Passwörter ins Repository.** Der LAN-Zugriff ist HTTP mit Bearer-Token (im LAN unverschlüsselt), der Cloudflare-Zugriff erfolgt über HTTPS ([ADR 0004](docs/decisions/0004-servitor-server.md)).
-
-**Stand 10.10.2026:** Der separate [PR #79](https://github.com/0b-ivan/pi-voice-assistant/pull/79) (Log-Selbsttest) ist noch **nicht** in diesem dokumentierten `main`-Stand.
+Stand 10.10.2026: [PR #79](https://github.com/0b-ivan/pi-voice-assistant/pull/79) (Logs/Selbsttest) ist noch nicht integriert.

@@ -1,10 +1,10 @@
 # Roadmap: offene Aufgaben
 
-**Stand: 10.10.2026 · Arbeitsvorschlag zur Priorisierung.** Diese Datei listet **nur offene** Arbeiten. Implementierte Funktionen und ihre Grenzen stehen in der [README](../README.md) und [Architektur](architecture.md); frühere Änderungen in [history/](history). Ein grüner Unittest bedeutet **nicht** automatisch, dass die Funktion am echten Pi abgenommen wurde.
+**Stand: 10.10.2026 · Arbeitsvorschlag zur Priorisierung.** Diese Datei listet **nur offene** Arbeiten. Implementierte Funktionen und ihre Grenzen stehen in der [README](../README.md) und [Architektur](architecture.md); frühere Änderungen in [Git-Historie](architecture.md#entscheidungen-und-historie). Ein grüner Unittest bedeutet **nicht** automatisch, dass die Funktion am echten Pi abgenommen wurde.
 
 ## P0 · Stabilität und Geräte-Abnahme
 
-- **Neuerungen vom 09.–10.10. am Pi testen** ([Sitzungsprotokoll](history/session-2026-10-09.md)):
+- **Neuerungen vom 09.–10.10. am Pi testen**:
   - Sprachbefehle „WLAN aus/an“, „Geh schlafen“, „Starte dich neu“, „Fahr dich herunter“ und „Bestätigt“ mit echter Stimme; `rfkill`, polkit und Wartungsworker. **Herunterfahren zuletzt testen.**
   - Stimmerkennung bei kurzen Befehlen: `speaker`-Werte auf CT 107 prüfen, Schwelle nur auf Basis echter Messwerte anpassen.
   - Quittungston und Aussprache von „Omnissiah“ anhören; Morgenbericht mit **echter** Nextcloud-Verbindung.
@@ -21,7 +21,7 @@
 - **Zielgerichtetes Refactoring:** `src/ptt.py` weiter aufteilen (Konfiguration bereits `src/ptt_config.py`), ohne die getesteten Zustandsübergänge zu verändern. Tests für Geräte- und Server-Fallback ergänzen.
 - **Dienstrechte:** dedizierten Pi-Dienstbenutzer statt `obivan` prüfen; Installer, Secret-Gruppen, systemd-Units und Schreibpfade gemeinsam migrieren.
 - **CI und Doku:** Links/Anker, Konfigurationsbeispiele, Installer-Syntax und dokumentierte Defaults automatisiert prüfen; zeitabhängigen Testflaky-Fall reproduzieren.
-- **Kommunikation SPX/1:** Sitzung und `ping/ack` sind vorhanden ([PR #74](https://github.com/0b-ivan/pi-voice-assistant/pull/74)); Outbox, Dead-Letter, Zustellgarantien und Server→Pi-Kanal stehen noch aus ([Konzept](concepts/persoenlichkeit-und-protokoll.md#9-umsetzung-in-schritten)).
+- **Kommunikation SPX/1:** Sitzung und `ping/ack` sind vorhanden ([PR #74](https://github.com/0b-ivan/pi-voice-assistant/pull/74)); Outbox, Dead-Letter, Zustellgarantien und Server→Pi-Kanal stehen noch aus ([Architektur](architecture.md#spx1-netzwerk-und-sicherheit)).
 - **Netz und Hardware:** LAN-SSH, Router-Zugriff und alle drei USB-Ports des Hubs einzeln prüfen; anschließend Gehäuse/Montage.
 
 ## P2 · Nützliche Funktionen (noch nicht umgesetzt)
@@ -42,3 +42,4 @@
 - **Optimierungen:** Opus erst bei schnellerer Dekodierung auf dem Pi; satzweises LLM-/TTS-Streaming nur nach Latenzmessungen. WebSocket nur bei nachgewiesenem Mehrwert gegenüber HTTP/SPX/1.
 
 **Prioritäten und Produktentscheidungen sind Vorschläge zur Abstimmung im Dokumentations-PR.** Nach Bestätigung die Phasen festlegen. Keine abgeschlossenen Funktionen mit ~~Durchstreichung~~ wieder in diese Roadmap aufnehmen.
+
