@@ -14,7 +14,7 @@ Pi
   → Display/LED aus den Ereignissen → aplay → WM8960
 ```
 
-[`src/ptt.py`](../src/ptt.py) orchestriert Tasten, Aufnahme, Menü und Zustandsfolge; [`src/remote_turn.py`](../src/remote_turn.py) ist der Server-Client; [`server/servitor_server.py`](../server/servitor_server.py) der Dienst auf CT 107. Lokal: [`src/transcribe.py`](../src/transcribe.py) (Vosk), [`src/llm.py`](../src/llm.py) (OpenRouter bzw. lokales LLM, Persona), [`src/voice_controls.py`](../src/voice_controls.py) (Piper, Wiedergabe, Lautstärke). Es gibt **einen** Verarbeitungs-Slot, keine Warteschlange.
+[`src/ptt.py`](../src/ptt.py) orchestriert Tasten, Aufnahme, Menü und Zustandsfolge und liest seine Einstellungen einmal beim Start über [`src/ptt_config.py`](../src/ptt_config.py) (`PttConfig`); [`src/remote_turn.py`](../src/remote_turn.py) ist der Server-Client; [`server/servitor_server.py`](../server/servitor_server.py) der Dienst auf CT 107. Lokal: [`src/transcribe.py`](../src/transcribe.py) (Vosk), [`src/llm.py`](../src/llm.py) (OpenRouter bzw. lokales LLM, Persona), [`src/voice_controls.py`](../src/voice_controls.py) (Piper, Wiedergabe, Lautstärke). Es gibt **einen** Verarbeitungs-Slot, keine Warteschlange.
 
 Nach STT-Abschluss werden die PTT-Eingänge resynchronisiert; gehaltene Tasten brauchen Release. B verwirft ein laufendes STT-Ergebnis, beendet aber keinen nativen Vosk-Aufruf. Der Slot bleibt bis zum Abschluss gesperrt. Das Vosk-Modell wird beim Dienststart vorgewärmt, damit der erste PTT-Zyklus keinen Modell-Load bezahlen muss.
 

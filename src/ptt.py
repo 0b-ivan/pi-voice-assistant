@@ -40,6 +40,7 @@ from protocol import ClientSession
 import datetime
 import intents
 from power import Battery, throttled_flags
+from ptt_config import LLM_MODES, ConfigError, PttConfig
 from system_status import collect_snapshot, phrase_style, status_text
 from transcribe import (
     LiveVoskRecognizer, RemoteLiveVoskRecognizer, TranscriptionError, prepare_vosk, transcribe_with_provider, prepare_vosk_worker, stop_prepared_vosk
@@ -113,8 +114,6 @@ WAKE_ECHO_PAUSE = 0.6
 # Display status: fixed identifiers and numbers only, never transcripts or
 # reply text. route/last_route: 'server' (CT 107) or 'pi'; last_llm:
 # 'openrouter' or 'offline' (local model on the server).
-# Language core: OpenRouter default model, low-restriction model, local only.
-LLM_MODES = ('auto', 'free', 'local')
 DISPLAY_STATUS_VALUES = {
     'route': {'server', 'pi'},
     'last_route': {'server', 'pi'},
@@ -168,9 +167,7 @@ SHIM_RETRY_MAX_SECONDS = 60.0   # ... backing off to this while it keeps failing
 WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
 # Idle power stages: 'rest' dims the display and calms the skull, 'sleep'
 # switches screen and LED off (optionally WLAN); the wake word keeps listening.
-REST_SECONDS = 30.0
 REST_LED = 0.35                 # LED brightness while resting, like the dimmed screen
-SLEEP_SECONDS = 600.0
 LED_ALARM = (255, 60, 0)         # slow blink while a critical alarm is active
 CRITICAL_ALARMS = {'undervoltage', 'battery', 'memory', 'temperature'}
 # Holding C/D repeats the volume step after a short pause.
@@ -195,10 +192,11 @@ def llm_kind(model):
 class EnrollIO:
     """Hardware side of enroll.Session: clips through aplay, arecord, server."""
 
-    def __init__(self, runtime=None):
-        self.runtime = Path(runtime or os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt'))
-        self.output = os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0')
-        self.input = os.environ.get('PTT_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0')
+    def __init__(self, runtime=None, config=None):
+        config = config if config is not None else PttConfig.from_env()
+        self.runtime = Path(runtime or config.runtime_dir)
+        self.output = config.output_device
+        self.input = config.capture_device
         self.process = None
         self.beep_path = self.runtime / 'enroll-beep.wav'
         enroll.beep_wav(self.beep_path)
@@ -386,8 +384,10 @@ class Button:
 
 
 class Recorder:
-    def __init__(self, directory, device, limit, live_vosk_factory=None, uplink_factory=None):
+    def __init__(self, directory, device, limit, live_vosk_factory=None, uplink_factory=None,
+                 isolated=False):
         self.directory = Path(directory)
+        self.isolated = isolated  # PttConfig.isolated_capture: 16 kHz mono for the STT worker
         self.device = device
         self.limit = limit
         self.live_vosk_factory = live_vosk_factory
@@ -501,9 +501,8 @@ class Recorder:
             event('recording', stt=stt, sample_rate=16000, channels=1, **fields)
             return
 
-        isolated = os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
-        self._capture_rate = 16000 if isolated else 48000
-        self._capture_channels = 1 if isolated else 2
+        self._capture_rate = 16000 if self.isolated else 48000
+        self._capture_channels = 1 if self.isolated else 2
         self.process = subprocess.Popen([
             '/usr/bin/arecord', '-q', '-D', self.device, '-t', 'raw',
             '-f', 'S16_LE', '-r', str(self._capture_rate), '-c', str(self._capture_channels),
@@ -629,7 +628,8 @@ def _after_network(function, text, timeout=25.0, step=0.5):
 class VoiceController:
     """One capture/STT/LLM slot, with A and GPIO17 combined as hold-to-talk."""
     def __init__(self, recorder, speech, debounce, limit, probe=False, remote=False,
-                 wake=None, wake_word=None, cue=None):
+                 wake=None, wake_word=None, cue=None, config=None):
+        self.config = config if config is not None else PttConfig.from_env()
         self.recorder, self.speech, self.probe = recorder, speech, probe
         self.cue = cue                    # cue.Cue: acknowledgement sound on submit
         self.wake = wake                  # WakeListener or None
@@ -654,10 +654,10 @@ class VoiceController:
         self.settings = Settings()
         saved = {key: value for key, value in self.settings.load().items()
                  if isinstance(value, str)}
-        self.lore = lore_level(saved.get('lore') or os.environ.get('PTT_LORE_LEVEL'))
-        self.persona = persona_name(saved.get('persona') or os.environ.get('PTT_PERSONA'))
-        self.voice = voice_effect(saved.get('voice') or os.environ.get('PTT_VOICE_EFFECT'))
-        emotions = saved.get('emotions') or os.environ.get('PTT_EMOTIONS', 'on')
+        self.lore = lore_level(saved.get('lore') or self.config.lore)
+        self.persona = persona_name(saved.get('persona') or self.config.persona)
+        self.voice = voice_effect(saved.get('voice') or self.config.voice_effect)
+        emotions = saved.get('emotions') or self.config.emotions
         self.mood = Mood(enabled=emotions.strip().lower() != 'off')
         self.mood_shown = None
         self._apply_voice_effect()
@@ -666,15 +666,15 @@ class VoiceController:
         self.remote_failed = False
         self.server_probe = None  # netprobe.ServerProbe when a server is configured
         self.alarms = AlarmMonitor()
-        self.alarms_enabled = os.environ.get('PTT_ALARMS', '1') != '0'
+        self.alarms_enabled = self.config.alarms
         self.alarm_queue = []    # sentences waiting until the unit is idle
         self.wlan_on = True
         self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
         self.power = 'awake'
         self.last_activity = time.monotonic()
-        self.rest_after = float(os.environ.get('PTT_REST_SECONDS', REST_SECONDS))
-        self.sleep_after = float(os.environ.get('PTT_SLEEP_SECONDS', SLEEP_SECONDS))
-        self.sleep_wlan_off = os.environ.get('PTT_SLEEP_WLAN', 'keep') == 'off'
+        self.rest_after = self.config.rest_seconds
+        self.sleep_after = self.config.sleep_seconds
+        self.sleep_wlan_off = self.config.sleep_wlan_off
         self.wlan_slept = False      # WLAN was switched off by sleep, not by the user
         self.listen_after_greeting = False  # wake word woke us: listen after the greeting
         # Five-day forecast kept on the memory stick, refreshed by a thread (main).
@@ -714,8 +714,7 @@ class VoiceController:
         self.alarms.notice_store = maintenance.NoticeStore()
         self.maint_jobs = {}          # target -> start time (time.time()) of a running action
         self.internet_probe = None  # netprobe.InternetProbe
-        mode = os.environ.get('PTT_LLM_MODE', 'auto').strip().lower()
-        self.llm_mode = mode if mode in LLM_MODES else 'auto'
+        self.llm_mode = self.config.llm_mode
         self.shutting_down = False
         self.ptt = Button(debounce, limit)
         self.commands = {name: Button(debounce, math.inf) for name in 'BCDE'}
@@ -1394,7 +1393,7 @@ class VoiceController:
             self._publish_picker()
 
     def _publish_picker(self):
-        path = Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'display-people.json'
+        path = self.config.runtime_dir / 'display-people.json'
         if self.picker:
             items = [name[:24] for _, name in self.picker['items']] + ['Zurück']
             try:
@@ -1437,7 +1436,7 @@ class VoiceController:
         self._publish_people()
 
     def _publish_people(self):
-        path = Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'display-people.json'
+        path = self.config.runtime_dir / 'display-people.json'
         if self.people.active:
             try:
                 people.write_view(path, self.people.view())
@@ -1471,7 +1470,7 @@ class VoiceController:
                 else:
                     self.speech.stop()
                     self._release_microphone()
-                    self.enroll = people.Flow(self.memory, EnrollIO(), browser.person, choice[1])
+                    self.enroll = people.Flow(self.memory, EnrollIO(config=self.config), browser.person, choice[1])
                     event('people', action=choice[1])
                     self.enroll.start()
         self._publish_people()
@@ -1501,7 +1500,7 @@ class VoiceController:
         if self.menu.open:
             self.menu.close()
             self._publish_menu()
-        self.enroll = enroll.Session(self.memory, EnrollIO(), mode=mode, target=target)
+        self.enroll = enroll.Session(self.memory, EnrollIO(config=self.config), mode=mode, target=target)
         event('enroll', state='start', mode=mode)
         self.enroll.start()
 
@@ -1580,8 +1579,7 @@ class VoiceController:
         """Play prerecorded clips (no synthesis, works offline and under
         load); fall back to live synthesis when a clip is missing."""
         play = getattr(self.speech, 'play', None)
-        path = (Path(os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')) / 'alarm.wav'
-                if play is not None else None)
+        path = self.config.runtime_dir / 'alarm.wav' if play is not None else None
         voice = self.voice if isinstance(getattr(self, 'voice', None), str) else 'servitor'
         if path is not None and alarm_audio.assemble(texts, path, voice=voice):
             event('speech_started', source=source, clips=True)
@@ -1681,8 +1679,7 @@ class VoiceController:
 
     def _speak_status(self, action):
         if (self.recorder.process is not None or action == 'start'
-                or (os.environ.get('PTT_MEMORY_MODE') in ('isolated', 'hybrid')
-                    and self.job is not None)):
+                or (self.config.isolated_capture and self.job is not None)):
             event('status_skipped', reason='recording_or_processing')
             return
         text = status_text(self.status_snapshot(), processing=self.job is not None)
@@ -2106,7 +2103,7 @@ class VoiceController:
                 self.weather_hide_at is not None and time.monotonic() >= self.weather_hide_at)):
             self._hide_weather()
         if action == 'start':
-            if (self.job is not None or (os.environ.get('PTT_MEMORY_MODE') == 'hybrid'
+            if (self.job is not None or (self.config.hybrid
                     and getattr(self.speech, 'synthesizing', False))):
                 event('busy', reason='processing')
             else:
@@ -2127,7 +2124,7 @@ class VoiceController:
             pressed = action is not None or commands or any(pitft_pressed)
             self._update_power(now, pressed)
 
-        if not self.probe and os.environ.get('PTT_MEMORY_MODE') == 'hybrid':
+        if not self.probe and self.config.hybrid:
             # The standby Vosk worker (~190 MB of 415) only serves the local
             # fallback. While the server answers it is freed: next to Piper,
             # display and wake word only ~50 MB stayed available.
@@ -2198,31 +2195,20 @@ def main():
     from gpiod.line import Bias, Direction, Value
     if not hasattr(gpiod, 'request_lines'):
         parser.error('libgpiod Python API v2 required; install python3-libgpiod on Trixie')
-    chip = os.environ.get('PTT_GPIO_CHIP', '/dev/gpiochip0')
-    line = int(os.environ.get('PTT_GPIO_LINE', '17'))
-    active_low = os.environ.get('PTT_ACTIVE_LOW', '1')
-    if active_low not in ('0', '1'):
-        parser.error('PTT_ACTIVE_LOW must be 0 or 1')
-    limit = float(os.environ.get('PTT_MAX_SECONDS', '30'))
-    debounce = float(os.environ.get('PTT_DEBOUNCE_MS', '40')) / 1000
-    if not math.isfinite(limit) or not 1 <= limit <= 120:
-        parser.error('PTT_MAX_SECONDS must be finite, between 1 and 120')
-    if not math.isfinite(debounce) or not 0.01 <= debounce <= 0.5:
-        parser.error('PTT_DEBOUNCE_MS must be finite, between 10 and 500')
+    try:
+        config = PttConfig.from_env()
+    except ConfigError as exc:
+        parser.error(str(exc))
+    chip, line = config.gpio_chip, config.gpio_line
+    limit, debounce = config.max_seconds, config.debounce
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    shim_enabled = os.environ.get('PTT_BUTTON_SHIM', '0')
-    if shim_enabled not in ('0', '1'):
-        parser.error('PTT_BUTTON_SHIM must be 0 or 1')
-    runtime_dir = os.environ.get('PTT_RUNTIME_DIR', '/run/pi-ptt')
-    memory_mode = os.environ.get('PTT_MEMORY_MODE', 'resident')
-    if memory_mode not in ('resident', 'isolated', 'hybrid'):
-        parser.error('PTT_MEMORY_MODE must be resident, isolated or hybrid')
+    runtime_dir = config.runtime_dir
+    memory_mode = config.memory_mode
     live_vosk_factory = None
     if not args.probe:
-        provider = os.environ.get('STT_PROVIDER', 'vosk').strip().lower()
-        if provider != 'vosk':
+        if config.stt_provider != 'vosk':
             parser.error('STT_PROVIDER must be vosk; OpenRouter is LLM-only')
         event('memory_mode', mode=memory_mode)
     if not args.probe and memory_mode == 'resident':
@@ -2261,18 +2247,17 @@ def main():
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
-        os.environ.get('PTT_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'),
+        config.capture_device,
         limit,
         live_vosk_factory=live_vosk_factory,
         uplink_factory=uplink_factory,
+        isolated=config.isolated_capture,
     )
     settings = gpiod.LineSettings(direction=Direction.INPUT,
-                                  active_low=active_low == '1',
-                                  bias=Bias.PULL_UP if active_low == '1' else Bias.PULL_DOWN)
+                                  active_low=config.active_low,
+                                  bias=Bias.PULL_UP if config.active_low else Bias.PULL_DOWN)
 
-    fallback_command = os.environ.get(
-        'PTT_SPEAK_COMMAND',
-        '/usr/bin/python3 /opt/pi-voice-assistant/src/speak.py')
+    fallback_command = config.speak_command
     if args.probe:
         # Probe mode must never load a TTS model or touch the audio device.
         speech = SpeechOutput('/usr/bin/true')
@@ -2282,25 +2267,19 @@ def main():
         speech = SpeechOutput(
             f'{shlex.quote(os.sys.executable)} '
             '/opt/pi-voice-assistant/src/speak.py')
-        event('tts_ready', mode='isolated', profile=os.environ.get('TTS_VOICE_PROFILE', 'normal'))
+        event('tts_ready', mode='isolated', profile=config.voice_profile)
     else:
-        profile = os.environ.get('TTS_VOICE_PROFILE', 'normal')
+        profile = config.voice_profile
         if profile.strip().lower() == 'servitor':
-            model = os.environ.get(
-                'TTS_SERVITOR_MODEL',
-                '/opt/pi-voice-assistant/tts/de_DE-thorsten_emotional-medium.onnx')
+            model = config.servitor_model
         else:
-            model = os.environ.get(
-                'PIPER_MODEL',
-                '/opt/pi-voice-assistant/tts/de_DE-thorsten-low.onnx')
+            model = config.piper_model
         event('tts_loading', mode='resident', model=model, profile=profile)
         try:
             speech = ResidentSpeechOutput(
                 model,
-                os.environ.get(
-                    'TTS_AUDIO_DEVICE',
-                    'plughw:CARD=wm8960soundcard,DEV=0'),
-                runtime_dir,
+                config.output_device,
+                str(runtime_dir),
                 profile=profile)
         except Exception as exc:
             # TTS must not take PTT/STT down. Keep the old command path as a
@@ -2310,22 +2289,19 @@ def main():
         else:
             event('tts_ready', mode='resident', model=model, profile=speech.profile)
     if uplink_factory is not None:
-        speech = RemoteCapableSpeech(
-            speech, os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'))
+        speech = RemoteCapableSpeech(speech, config.output_device)
     wake, wake_label = None, None
-    wake_word = os.environ.get('PTT_WAKE_WORD', '').strip()
+    wake_word = config.wake_word
     if wake_word and not args.probe:
-        wake_dir = Path(os.environ.get('PTT_WAKE_MODEL_DIR',
-                                       '/opt/pi-voice-assistant/models/wakeword'))
-        threshold = float(os.environ.get('PTT_WAKE_THRESHOLD', '0.5'))
+        wake_dir = config.wake_model_dir
+        threshold = config.wake_threshold
         # Candidate words are scored in the shadow (logged, never trigger),
         # e.g. a freshly trained proximus.onnx, until they are good enough.
         # A model's .json can make it a second, real wake word:
         # {"threshold": 0.9, "patience": 1, "active": true}.
         shadows, active_words = {}, {}
-        for name in os.environ.get('PTT_WAKE_SHADOW', 'proximus').split(','):
-            name = name.strip()
-            if name and name != wake_word and (wake_dir / f'{name}.onnx').is_file():
+        for name in config.wake_shadow:
+            if name != wake_word and (wake_dir / f'{name}.onnx').is_file():
                 try:
                     meta = json.loads((wake_dir / f'{name}.json').read_text())
                     shadows[name] = float(meta.get('threshold', 0.7))
@@ -2338,8 +2314,7 @@ def main():
         else:
             def detector_factory():
                 # numpy/onnxruntime live in the Piper venv (also used by Piper).
-                venv = Path(os.environ.get('PIPER_VENV', '/opt/pi-voice-assistant/.venv'))
-                site = venv / 'lib' / f'python{os.sys.version_info.major}.{os.sys.version_info.minor}' / 'site-packages'
+                site = config.piper_venv / 'lib' / f'python{os.sys.version_info.major}.{os.sys.version_info.minor}' / 'site-packages'
                 if site.is_dir() and str(site) not in os.sys.path:
                     os.sys.path.insert(0, str(site))
                 from wakeword import Detector, WakeWord
@@ -2347,9 +2322,7 @@ def main():
                                 threshold=threshold, shadow_thresholds=shadows,
                                 active=active_words)
             from wake_listener import WakeListener
-            wake = WakeListener(os.environ.get('PTT_AUDIO_DEVICE',
-                                               'plughw:CARD=wm8960soundcard,DEV=0'),
-                                detector_factory)
+            wake = WakeListener(config.capture_device, detector_factory)
             # The display names the trained word when it is active.
             wake_label = next((WAKE_LABELS[w] for w in active_words if w in WAKE_LABELS),
                               WAKE_LABELS.get(wake_word))
@@ -2358,18 +2331,17 @@ def main():
     acknowledge = None
     if not args.probe:
         acknowledge = cue_sound.Cue(
-            Path(runtime_dir) / 'cue.wav',
-            os.environ.get('TTS_AUDIO_DEVICE', 'plughw:CARD=wm8960soundcard,DEV=0'),
-            enabled=os.environ.get('PTT_CUE', '1') != '0')
+            runtime_dir / 'cue.wav', config.output_device, enabled=config.cue)
     controller = VoiceController(recorder, speech, debounce, limit, args.probe,
                                  remote=uplink_factory is not None,
-                                 wake=wake, wake_word=wake_label, cue=acknowledge)
+                                 wake=wake, wake_word=wake_label, cue=acknowledge,
+                                 config=config)
     controller_ref.append(controller)
     if not args.probe and controller.weather.start().configured:
         event('weather_ready', days=weather.DAYS)
     if not args.probe and controller.agenda.start().configured:
         event('agenda_ready', calendars=len(controller.agenda.config.urls))
-    wlan_setting = os.environ.get('PTT_WLAN', '').strip().lower()
+    wlan_setting = config.wlan
     if wlan_setting in ('on', 'off') and not args.probe:
         if not controller.set_wlan(wlan_setting == 'on'):
             controller.wlan_on = wlan_radio.wlan_blocked() is not True
@@ -2381,7 +2353,7 @@ def main():
     if not args.probe:
         controller.internet_probe = InternetProbe().start()
         controller.network_watch = sysmon.network_watch().start()
-        if os.environ.get('PTT_BLUETOOTH', '1') != '0':
+        if config.bluetooth:
             controller.start_bluetooth()
         controller.update_watch = sysmon.update_watch().start()
     battery_monitor = Battery()
@@ -2412,14 +2384,11 @@ def main():
         event('shim_ready', bus=1, address='0x3f')
         shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
 
-    if shim_enabled == '1':
+    if config.button_shim:
         open_shim(time.monotonic())
 
     # PiTFT buttons (upper, lower): menu. Empty PTT_PITFT_BUTTONS disables them.
-    pitft_lines = tuple(int(value) for value in
-                        os.environ.get('PTT_PITFT_BUTTONS', '23,24').split(',') if value.strip())
-    if len(pitft_lines) not in (0, 2) or line in pitft_lines:
-        parser.error('PTT_PITFT_BUTTONS must be two GPIO lines other than PTT_GPIO_LINE, or empty')
+    pitft_lines = config.pitft_buttons
     menu_settings = gpiod.LineSettings(direction=Direction.INPUT, active_low=True,
                                        bias=Bias.PULL_UP)
     config = {line: settings, **{pin: menu_settings for pin in pitft_lines}}
