@@ -13,10 +13,11 @@ Environment=MPLCONFIGDIR=/run/servitor-rvc TORCH_HOME=/run/servitor-rvc
 ExecStart=/opt/servitor-voice/rvc/venv/bin/python /opt/servitor-voice/repo/server/rvc_worker.py
 RuntimeDirectory=servitor-rvc
 RuntimeDirectoryMode=0700
-# CT 107 has 5 GB for llama-server (~2.1 GB), Vosk, Piper and this worker.
-# Better an RVC restart (Billy keeps Piper's voice meanwhile) than the OOM killer
-# taking the voice service.
-MemoryMax=2G
+# CT 107 has 7 GB for llama-server (~3 GB), the voice service (~0.7 GB) and this
+# worker: ~1.9 GB once loaded, 2 GB were too little for the first conversion
+# (OOM-killed on CT 107). Better an RVC restart (Billy keeps Piper's voice
+# meanwhile) than the OOM killer taking the voice service.
+MemoryMax=3G
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=yes
