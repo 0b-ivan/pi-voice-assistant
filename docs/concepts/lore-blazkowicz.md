@@ -4,6 +4,8 @@ Stand 09.10.2026. Status: **Entwurf, in Arbeit**. Gehört zum [Konzept Persönli
 
 Ein Fan-Hintergrund für ein privates Projekt. B.J. Blazkowicz, Commander Keen und der Doomguy gehören id Software / ZeniMax, Warhammer 40.000 gehört Games Workshop. Die Texte hier sind eigene Formulierungen. Zitate aus den Spielen übernehmen wir nicht wörtlich.
 
+**Erweiterung vom 10.10.2026:** Die [ausgearbeitete Lore und Sprachfassung](proximus-billy-lore/LORE_PROXIMUS_BILLY.md) ergänzt diesen Entwurf um 33 Episoden, sechs Doom-/Wolfenstein-Sagen, Regeln für natürliche Varianz und ausdrücklich lange Geschichten von 10–20 Minuten. Der [Claude-Auftrag](proximus-billy-lore/CLAUDE_AUFTRAG.md) beschreibt die Umsetzung. Für diese Erweiterung gelten die dortigen Vorgaben zu Sprache, Abruf, Sichtbarkeit und Erzählumfang; die älteren Sprachbeispiele und Kürzevorgaben unten dokumentieren den ursprünglichen Entwurf. Status: ausgearbeitet, Laufzeitintegration noch umzusetzen.
+
 ## 1. Was der id-Kanon hergibt
 
 - **William Joseph „B.J.“ Blazkowicz** ist der Held aus Wolfenstein 3D, ein Agent der Alliierten im Zweiten Weltkrieg.

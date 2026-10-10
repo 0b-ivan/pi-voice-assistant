@@ -39,4 +39,6 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 
 Vertiefung: [Architektur](docs/architecture.md), [Hardware](docs/hardware.md), [Display](docs/display.md), [Button-Bedienung und LED](docs/button-controls.md), [STT](docs/speech-to-text.md), [TTS](docs/text-to-speech.md), [Entscheidungen](docs/decisions/), [Roadmap](docs/roadmap.md).
 
+Charakter und Lore: [Proximus/Billy – ausgearbeitete Geschichte und Sprachvorgaben](docs/concepts/proximus-billy-lore/LORE_PROXIMUS_BILLY.md) mit 33 Episoden, sechs Doom-/Wolfenstein-Sagen und dem Konzept für ausdrücklich lange Geschichten (10–20 Minuten). [Claude-Auftrag zur Implementierung](docs/concepts/proximus-billy-lore/CLAUDE_AUFTRAG.md). Status: ausgearbeitet, Laufzeitintegration noch umzusetzen.
+
 Geheimnisse (OpenRouter-Key, Server-Token) stehen nur in `/etc/pi-voice-assistant.env` (Pi) bzw. `/etc/servitor-voice.env` (CT 107), nie im Repository. Die Proxmox-Firewall bleibt aus (Docker auf dem Host); Port 8765 ist im LAN offen und nur mit Token nutzbar.
