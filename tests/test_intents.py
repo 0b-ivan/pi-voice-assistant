@@ -44,6 +44,23 @@ class MatchTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(intents.match(text), intent)
 
+    def test_missing_functions_get_an_honest_local_answer(self):
+        # Vosk forms from the 2026-10-10 system test included ("still" for "stell").
+        for text in ("stell einen wecker auf sieben uhr", "still einen wecker auf sieben uhr",
+                     "stelle eine wecker auf sieben uhr", "stellt einen timer auf zehn minuten",
+                     "kannst du einen wecker stellen", "weck mich um sechs",
+                     "ich erinnere mich morgen an den arzttermin",
+                     "erinnere mich morgen an den termin", "schick meiner mutter eine nachricht",
+                     "spielmusik von queen", "spiel musik von queen",
+                     "schalte das licht im wohnzimmer an", "mach das licht aus"):
+            with self.subTest(text=text):
+                self.assertEqual(intents.match(text), 'unsupported')
+        for text in ("wie stelle ich am handy einen wecker", "was ist ein timer",
+                     "wann wurde der wecker erfunden", "erzähl mir einen witz",
+                     "schalte das wlan aus", "wie spät ist es"):
+            with self.subTest(text=text):
+                self.assertNotEqual(intents.match(text), 'unsupported')
+
     def test_everything_else_goes_to_the_llm(self):
         for text in ("wie spät ist es in tokio", "wie ist das wetter in rom",
                      "bis morgen", "welcher tag ist heute in new york",
@@ -116,6 +133,13 @@ class AnswerTests(unittest.TestCase):
                                                    {"lore": "full", "battery_pct": 50}))
 
     WEATHER = dict(now=-2, code=61, high=8, low=-3, rain=70)
+
+    def test_unsupported_names_what_is_missing(self):
+        for lore in ('off', 'light', 'full', 'billy', 'billy_full'):
+            with self.subTest(lore=lore):
+                text = intents.answer('unsupported', self.NOW, {}, lore=lore)
+                self.assertIn('Wecker', text)
+                self.assertNotIn('gestellt', text)
 
     def test_weather(self):
         self.assertEqual(intents.answer("weather", self.NOW, {}), "Wetterdaten nicht verfügbar.")

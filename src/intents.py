@@ -49,6 +49,17 @@ _PATTERNS = (
                             r'(prüf|check|analysier)\w* (deine |die )?(logs?|locken|protokolle?)|'
                             r'was steht in (den |deinen )?(logs?|locken|protokollen)|'
                             r'(logs?|protokolle?) (prüfen|auswerten|checken))\b|^selbst$')),
+    # Requests for functions the unit does not have: a fixed honest answer, because
+    # the LLM sometimes claimed "Wecker gestellt" or "Termin gespeichert" (2026-10-10).
+    # Before "calendar": "erinnere mich an den termin" is no calendar question.
+    ('unsupported', re.compile(
+        r'\b((stell|still|setz|mach|aktivier)\w* (\w+ ){0,3}(wecker|timer|alarm|countdown)|'
+        r'(wecker|timer|countdown) (\w+ ){0,3}(stell|setz|aktivier)\w*|weck\w* mich|'
+        r'erinner\w* mich|'
+        r'(schick|send|schreib)\w* (\w+ ){0,3}(nachricht|sms|mail|e ?mail|whatsapp)|'
+        r'spiel\w* (\w+ ){0,3}(musik|lied|song|radio|playlist)|spielmusik|'
+        r'(schalt|mach|dimm)\w* (\w+ ){0,3}(licht|lampe|lampen|heizung)\w*( an| aus| ein)?|'
+        r'(licht|lampe|heizung) (\w+ ){0,2}(an|aus|ein))\b')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
@@ -112,6 +123,25 @@ IDENTITY = {
 }
 
 
+# "Wie stelle ich am Handy einen Wecker?" asks for knowledge: that stays with the LLM.
+_HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|können)\b')
+
+UNSUPPORTED = {
+    'off': ("Funktion nicht vorhanden. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+            "Haussteuerung besitzt diese Einheit nicht.",
+            "Nicht ausführbar. Diese Einheit hat keine Wecker, Timer, Erinnerungen, "
+            "Nachrichten, Musik oder Haussteuerung."),
+    'light': ("Nicht ausführbar. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+              "Haussteuerung fehlen dieser Einheit.",),
+    'full': ("Protokoll nicht vorhanden. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+             "Haussteuerung wurden dieser Einheit nicht verliehen.",),
+    'billy': ("Das kann ich nicht. Wecker, Timer, Erinnerungen, Nachrichten, Musik oder Licht "
+              "hab ich nicht an Bord.",
+              "Geht nicht, so was hat man mir nicht eingebaut. Kein Wecker, kein Timer, keine "
+              "Erinnerungen, keine Nachrichten, keine Musik, kein Licht."),
+}
+
+
 def normalize(text):
     return ' '.join(re.findall(r"[\wäöüß']+", str(text).lower()))
 
@@ -126,6 +156,8 @@ def match(text, persona=None):
             if name in ('time', 'date', 'weather') and _ELSEWHERE.search(text):
                 return None
             if persona == 'mensch' and (name == 'identity' or _PERSONAL.search(text)):
+                return None
+            if name == 'unsupported' and _HOWTO.search(text):
                 return None
             return name
     return None
@@ -276,6 +308,9 @@ def answer(intent, now, snapshot=None, lore=None):
         return calendar_text(snapshot, lore)
     if intent == 'selftest':
         return logwatch.selftest_text(snapshot, lore, now)
+    if intent == 'unsupported':
+        key = 'billy' if is_billy(lore) else lore
+        return variants.pick(f'unsupported.{key}', UNSUPPORTED.get(key, UNSUPPORTED['off']))
     if intent == 'identity':
         return variants.pick(f'identity.{lore}', IDENTITY.get(lore, IDENTITY['off']))
     raise ValueError(f'unknown intent {intent!r}')
