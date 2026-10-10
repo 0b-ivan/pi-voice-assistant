@@ -130,7 +130,7 @@ Neben dem Servitor gibt es das **Mensch-Modul**: Proximus vor seinem Umbau, Serg
 | Schalter | Werte | Wirkung |
 |---|---|---|
 | Sprechstil | `servitor` / `mensch` | Systemprompt (`PERSONA_PROMPTS`, `LORE_PROMPTS[persona]` in `src/llm.py`) |
-| Stimmeffekt | `servitor` / `natural` | Servitor-DSP oder `NATURAL_FILTER_GRAPH` (etwas tiefer und wärmer) in `src/voice_effects.py`; Piper-Sprecher bleibt gleich |
+| Stimmeffekt | `servitor` / `natural` | Servitor-DSP oder `NATURAL_FILTER_GRAPH` (etwas tiefer und wärmer) in `src/voice_effects.py`; Piper-Sprecher bleibt gleich. Optional auf CT 107: `natural` über RVC mit eigener Billy-Stimme ([TTS](text-to-speech.md#billys-stimme-mit-rvc)) |
 
 Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt danach Prompt und Effekt. Ältere Pis ohne die Felder bekommen den Servitor. Lokal auf dem Pi wirkt der Stimmeffekt nur mit `TTS_VOICE_PROFILE=servitor` (dort ist das `thorsten_emotional`-Modell geladen); vorgefertigte Ansagen (Alarme, Aufwachen) klingen vorerst weiter nach Servitor.
 

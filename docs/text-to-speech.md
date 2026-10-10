@@ -68,6 +68,35 @@ resident Piper
 
 Der residente Servitor-Pfad schreibt Piper-PCM direkt auf FFmpeg-stdin und startet die Wiedergabe mit dem ersten verfügbaren Audio-Chunk. Die Aura wird nicht als frei laufende FFmpeg-Quelle erzeugt, sondern aus der Zeitbasis des eingehenden PCM-Stroms. Dadurch bleibt sie während der explizit eingespeisten Satzpausen hörbar, kann die Sprach-Pipe aber nicht durch vorauseilende Synthese zurückstauen. Eine vollständige Quell-WAV muss nicht mehr fertig synthetisiert werden. Der frühere Reverse-Fade wurde entfernt, weil er die komplette Ansage puffern und damit Streaming verhindern würde. Der kurze Echo-Tail sorgt weiterhin für ein kontrolliertes Ausklingen.
 
+## Billys Stimme mit RVC
+
+Billy (Sprechstil `mensch`, Stimmeffekt `natural`) kann auf CT 107 seine eigene Stimme bekommen: Piper spricht wie bisher Deutsch, danach überträgt ein RVC-v2-Modell (Retrieval-based Voice Conversion) die Klangfarbe, z. B. ein fertiges Modell von B.J. Blazkowicz. Die Aussprache bleibt die von Thorsten, die Stimme wird die des Modells. Das geht nur auf dem Server. Fällt er aus, spricht der Pi Billy wie bisher mit Thorsten und leichtem Filter.
+
+```text
+Piper Thorsten → servitor-rvc (127.0.0.1:8767) → RVC_FILTER_GRAPH (nur Wärme + Limiter) → Pi
+       └── RVC aus, zu langsam oder Fehler → NATURAL_FILTER_GRAPH wie bisher
+```
+
+- [`server/rvc_worker.py`](../server/rvc_worker.py) hält Modell, HuBERT und RMVPE resident ([rvc-python](https://github.com/daswer123/rvc-python) 0.1.5, PyTorch 2.1.2 CPU) und läuft als `servitor-rvc.service` in einer eigenen Python-3.10-Umgebung (rvc-python verlangt fairseq 0.12.2 und numpy 1.23). Er nimmt nur Anfragen von `127.0.0.1` an und begrenzt sich auf 2 GB RAM (`MemoryMax`).
+- Der Sprachdienst schickt nur Antworten mit Stimme `natural` hin, im Schritt `render` (das Display zeigt RENDERN). Ohne Antwort binnen `SERVITOR_RVC_TIMEOUT_SECONDS` (10 s) oder bei einem Fehler bleibt es bei Thorsten, das Journal meldet `rvc_fallback`, und RVC wird `SERVITOR_RVC_RETRY_SECONDS` (60 s) lang übersprungen. Die Zeit steht als `convert` in den `timings`.
+- **Sicherheit:** Ein RVC-Modell (`.pth`) ist eine Pickle-Datei und könnte beim Laden Code ausführen. Der Dienst lädt es deshalb nur als reine Gewichte (`weights_only`) und weist alles andere ab. Nur bei einem Modell, dem du vertraust, hilft `SERVITOR_RVC_UNSAFE_LOAD=1` in `/etc/servitor-rvc.env`.
+- **Rechte:** Die Stimme gehört dem Sprecher der Spielfigur. Das Modell und erzeugte Aufnahmen bleiben privat, nicht im Repository und nicht im Netz.
+
+**Einrichten** (als root in CT 107; das Modell vorher von Hand herunterladen, als `.zip` mit `.pth` und `added_*.index` oder als einzelne `.pth`):
+
+```bash
+sh server/install-rvc.sh /root/bj-blazkowicz.zip      # Dienst, PyTorch CPU, HuBERT/RMVPE, Modell
+/opt/servitor-voice/.venv/bin/python server/bench-rvc.py --pitch 0 -2 -4 --f0 rmvpe pm
+sh server/install-rvc.sh --enable                     # Billy spricht über RVC
+sh server/install-rvc.sh --disable                    # zurück zu Thorsten
+```
+
+`bench-rvc.py` spricht fünf typische Billy-Antworten (von „Gemerkt.“ bis zu zwei Sätzen) genau wie der Sprachdienst, schickt sie durch den laufenden Dienst und gibt je Kombination aus Tonhöhenmethode und Halbtönen den Echtzeitfaktor (Rechenzeit pro Sekunde Audio), die längste Wartezeit gegenüber dem Timeout sowie den RAM von Dienst und Container aus. Die Hörproben liegen in `/tmp/rvc-bench` (`NN-piper.wav` gegen `NN-rvc-<f0>-p<pitch>.wav`). Die beste Kombination kommt nach `/etc/servitor-rvc.env` (`SERVITOR_RVC_PITCH`, `SERVITOR_RVC_F0_METHOD`), dann `systemctl restart servitor-rvc`.
+
+**Erwartung:** Gemessen ist auf CT 107 noch nichts. In einem Test-Container mit 4 Kernen brauchte schon der RVC-Synthesizer allein (mit Zufallsgewichten, ohne HuBERT) etwa 2 s Rechenzeit pro Sekunde Audio. Eine Antwort von 6 s dürfte also eher 10 s und mehr kosten und damit an den Timeout stoßen. `pm` ist schneller als `rmvpe`, klingt aber rauer. Wenn kurze Antworten passen und lange nicht, bleiben die langen bei Thorsten. Dann wechselt Billy mitten im Gespräch die Stimme, das ist beim Hören zu entscheiden.
+
+**Alarm-Clips:** Billys vorgefertigte Ansagen rendert der Server. Nach `--enable` auf dem Pi einmal `alarm_audio.py build --force --voice natural` laufen lassen (~25 min), dann sprechen auch sie mit der neuen Stimme. Die Servitor-Clips bleiben unverändert.
+
 ## Dynamischer Status auf SHIM E
 
 Taste **E** baut den Text beim Tastendruck neu aus lokalen Systemwerten. Laufzeit-Zahlen werden als deutsche Zahlwörter normalisiert, damit Piper Zusammensetzungen wie `53` zuverlässig als „dreiundfünfzig“ spricht. Wenn verfügbar, werden angesagt:

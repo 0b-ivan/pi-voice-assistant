@@ -124,7 +124,7 @@ git archive $C src | ssh obivan@pi 'D=$(mktemp -d); tar -x -C $D; \
 ssh obivan@pi 'sudo -n systemctl restart pi-ptt.service pi-display.service'
 ```
 
-Auf **CT 107** ist `/opt/servitor-voice/repo` ein Git-Checkout: `git fetch` und `git checkout --detach <commit>`, dann `systemctl restart servitor-voice`; Unit/Env bzw. Offline-LLM mit `server/install-ct.sh` bzw. `server/install-llm.sh`. `/opt/servitor-voice/DEPLOYED` nennt den Commit.
+Auf **CT 107** ist `/opt/servitor-voice/repo` ein Git-Checkout: `git fetch` und `git checkout --detach <commit>`, dann `systemctl restart servitor-voice`; Unit/Env bzw. Offline-LLM mit `server/install-ct.sh` bzw. `server/install-llm.sh`; `install-ct.sh` startet einen installierten `servitor-rvc` (Billys RVC-Stimme, `server/install-rvc.sh`) mit neu. `/opt/servitor-voice/DEPLOYED` nennt den Commit.
 
 ## Abnahme nach Änderungen
 

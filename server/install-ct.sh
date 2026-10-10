@@ -8,6 +8,8 @@ if [ "$SRC" != "$B/repo/server" ]; then
   # wanted commit) the files are already in place.
   install -d -o root -g root -m 0755 "$B/repo/server" "$B/repo/src"
   install -o root -g root -m 0644 "$SRC/servitor_server.py" "$B/repo/server/servitor_server.py"
+  # Billy's RVC voice (install-rvc.sh); harmless while RVC is not installed.
+  install -o root -g root -m 0644 "$SRC/rvc_worker.py" "$SRC/bench-rvc.py" "$B/repo/server/"
   # The server imports transcribe/llm/voice_controls/voice_effects from the
   # matching src tree; replace it as a whole so no stale module survives.
   rm -f "$B/repo/src/"*.py
@@ -72,7 +74,12 @@ ENV
   chown root:servitor /etc/servitor-voice.env
   chmod 0640 /etc/servitor-voice.env
 fi
+if systemctl is-enabled --quiet servitor-rvc.service 2>/dev/null; then
+  install -o root -g root -m 0644 "$SRC/servitor-rvc.service" /etc/systemd/system/servitor-rvc.service
+  RESTART_RVC=1
+fi
 systemctl daemon-reload
 systemctl enable servitor-voice.service >/dev/null
 systemctl restart servitor-voice.service
+[ -z "${RESTART_RVC:-}" ] || systemctl restart servitor-rvc.service
 echo installed

@@ -185,8 +185,10 @@ def _render(url, token, piece, user_agent, voice='servitor'):
     raise RuntimeError('no audio in reply')
 
 
-def build(directory=None, force=False, prune=False, out=None, pace=PACE):
-    """Render missing clips via the Servitor server (honours its rate limit)."""
+def build(directory=None, force=False, prune=False, out=None, pace=PACE, only=None):
+    """Render missing clips via the Servitor server (honours its rate limit).
+    ``only``: re-render just this voice with ``force`` (e.g. 'natural' after
+    Billy's RVC voice was switched on); pruning still keeps every voice."""
     out = out or (lambda message: print(message, flush=True))
     from remote_turn import USER_AGENT, load_remote_config
     config = load_remote_config()
@@ -195,7 +197,8 @@ def build(directory=None, force=False, prune=False, out=None, pace=PACE):
     directory = Path(directory or VOICE_DIR)
     directory.mkdir(parents=True, exist_ok=True)
     wanted = [(voice, piece) for voice in VOICES for piece in known_pieces(voice)]
-    todo = [(v, p) for v, p in wanted if force or not clip_path(p, directory, v).is_file()]
+    todo = [(v, p) for v, p in wanted if (only is None or v == only)
+            and (force or not clip_path(p, directory, v).is_file())]
     out(f'{len(wanted)} fragments, {len(todo)} to render')
     for done, (voice, piece) in enumerate(todo, 1):
         for attempt in range(20):
@@ -226,5 +229,8 @@ def build(directory=None, force=False, prune=False, out=None, pace=PACE):
 
 if __name__ == '__main__':
     if sys.argv[1:2] != ['build']:
-        raise SystemExit('usage: alarm_audio.py build [--force] [--prune]')
-    build(force='--force' in sys.argv, prune='--prune' in sys.argv)
+        raise SystemExit('usage: alarm_audio.py build [--force] [--prune] [--voice servitor|natural]')
+    voice = sys.argv[sys.argv.index('--voice') + 1] if '--voice' in sys.argv[:-1] else None
+    if voice is not None and voice not in VOICES:
+        raise SystemExit(f'--voice must be one of {", ".join(VOICES)}')
+    build(force='--force' in sys.argv, prune='--prune' in sys.argv, only=voice)

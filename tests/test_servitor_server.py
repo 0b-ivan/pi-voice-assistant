@@ -1,5 +1,6 @@
 import base64
 import http.client
+import http.server
 import json
 import os
 from pathlib import Path
@@ -70,8 +71,12 @@ class FakePipeline:
         self.voice = voice
         return self._wav('syn-', 22050)
 
+    def convert(self, source):
+        self.converted = source
+        return self._wav('rvc-', 40000) if getattr(self, 'rvc', False) else None
+
     def render(self, source, voice='servitor'):
-        self.render_voice = voice
+        self.render_voice, self.render_source = voice, source
         return self._wav('dsp-', 48000)
 
     def encode(self, source, fmt):
@@ -347,6 +352,22 @@ class ServerTest(unittest.TestCase):
         self.request('/v1/turn', b'\1' * 16000)        # older Pi: no fields, the machine
         self.assertEqual((self.pipeline.persona, self.pipeline.voice), (None, 'servitor'))
 
+    def test_billy_voice_goes_through_rvc_when_it_answers(self):
+        self.pipeline.rvc = True
+        _, data = self.request('/v1/turn', b'\1' * 16000)   # the machine: no RVC
+        self.assertFalse(hasattr(self.pipeline, 'converted'))
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/speak', body=json.dumps({'text': 'Gemerkt.'}), headers={
+            'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps({'voice': 'natural'})})
+        data = conn.getresponse().read()
+        conn.close()
+        events = self.events(data)
+        self.assertEqual(self.pipeline.render_voice, 'rvc')
+        self.assertTrue(self.pipeline.render_source.name.startswith('rvc-'))
+        self.assertIn('convert', next(e for e in events if e['event'] == 'done')['timings'])
+        self.assertIn('audio', [e['event'] for e in events])
+        self.assertEqual(list(Path(self.tmp.name).glob('*.wav')), [])   # all cleaned up
+
     def test_stop_phrase_ends_the_turn_without_audio(self):
         self.pipeline.transcript = 'sei still'
         _, data = self.request('/v1/turn', b'\1' * 16000)
@@ -555,6 +576,65 @@ class ServerTest(unittest.TestCase):
                 pipeline.synthesize('x').unlink()
                 pipeline.render(Path('in.wav')).unlink()
         self.assertEqual(len(os.listdir(fd_dir)), before)
+
+    def _rvc_server(self, status=200, body=None):
+        """A stand-in for server/rvc_worker.py answering every POST alike."""
+        reply = body if body is not None else Path(self.pipeline._wav('ref-', 40000)).read_bytes()
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                seen.append((self.path, self.rfile.read(int(self.headers['Content-Length']))))
+                self.send_response(status)
+                self.send_header('Content-Length', str(len(reply)))
+                self.end_headers()
+                self.wfile.write(reply)
+
+        server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f'http://127.0.0.1:{server.server_address[1]}', seen
+
+    def test_real_pipeline_converts_through_the_rvc_worker(self):
+        url, seen = self._rvc_server()
+        clock = [100.0]
+        pipeline = ss.RealPipeline(self.tmp.name, clock=lambda: clock[0])
+        source = self.pipeline._wav('syn-', 22050)
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_RVC_URL': url + '/'}):
+            converted = pipeline.convert(source)
+        self.assertEqual(seen, [('/v1/convert', source.read_bytes())])
+        self.assertEqual(ss.wav_duration_ms(converted), 500)
+        converted.unlink()
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(pipeline.convert(source))   # RVC not configured
+        self.assertEqual(len(seen), 1)
+
+    def test_real_pipeline_rvc_failure_falls_back_and_pauses(self):
+        url, seen = self._rvc_server(status=500, body=b'{"error": "convert_failed"}')
+        clock = [100.0]
+        pipeline = ss.RealPipeline(self.tmp.name, clock=lambda: clock[0])
+        source = self.pipeline._wav('syn-', 22050)
+        env = {'SERVITOR_RVC_URL': url, 'SERVITOR_RVC_RETRY_SECONDS': '60'}
+        with unittest.mock.patch.dict(os.environ, env), \
+                unittest.mock.patch('builtins.print') as printed:
+            self.assertIsNone(pipeline.convert(source))
+            self.assertIsNone(pipeline.convert(source))       # paused: not asked again
+            self.assertEqual(len(seen), 1)
+            clock[0] += 61
+            self.assertIsNone(pipeline.convert(source))
+            self.assertEqual(len(seen), 2)
+        self.assertIn('rvc_fallback', printed.call_args_list[0].args[0])
+        url, _ = self._rvc_server(body=b'not a wav')
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_RVC_URL': url}), \
+                unittest.mock.patch('builtins.print'):
+            clock[0] += 61
+            self.assertIsNone(pipeline.convert(source))       # broken reply
+        self.assertEqual([p.name[:4] for p in Path(self.tmp.name).glob('*.wav')],
+                         ['syn-'])   # no converted file left behind
 
 
 

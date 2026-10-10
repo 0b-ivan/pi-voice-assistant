@@ -33,7 +33,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 
 1. [Setup](docs/setup.md): OS, WM8960-Audio, Dienst und Offline-STT auf dem Pi.
 2. [Betrieb](docs/operation.md): Konfiguration (inkl. `ASSISTANT_*` für den Server), Aktualisieren, Logs.
-3. Server CT 107: [`server/install-ct.sh`](server/install-ct.sh), Offline-LLM [`server/install-llm.sh`](server/install-llm.sh).
+3. Server CT 107: [`server/install-ct.sh`](server/install-ct.sh), Offline-LLM [`server/install-llm.sh`](server/install-llm.sh), optional Billys eigene Stimme per RVC [`server/install-rvc.sh`](server/install-rvc.sh) ([TTS](docs/text-to-speech.md#billys-stimme-mit-rvc)).
 4. [Troubleshooting](docs/troubleshooting.md).
 
 Vertiefung: [Architektur](docs/architecture.md), [Hardware](docs/hardware.md), [Display](docs/display.md), [Button-Bedienung und LED](docs/button-controls.md), [STT](docs/speech-to-text.md), [TTS](docs/text-to-speech.md), [Entscheidungen](docs/decisions/), [Roadmap](docs/roadmap.md).

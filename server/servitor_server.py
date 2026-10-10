@@ -35,7 +35,9 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import wave
 
 SRC = Path(os.environ.get('SERVITOR_SRC', Path(__file__).resolve().parent.parent / 'src'))
@@ -128,6 +130,8 @@ class RealPipeline:
         # After an OpenRouter failure, go straight to the local model for a
         # while instead of paying the full timeout on every turn of an outage.
         self.openrouter_retry_at = 0.0
+        # Same for Billy's RVC voice (server/rvc_worker.py).
+        self.rvc_retry_at = 0.0
 
     def load(self):
         import transcribe
@@ -197,6 +201,31 @@ class RealPipeline:
             target.unlink(missing_ok=True)
             raise
         return target
+
+    def convert(self, source):
+        """Billy's own voice: Piper's WAV through the RVC worker
+        (server/rvc_worker.py, SERVITOR_RVC_URL). Returns the converted WAV, or
+        None when RVC is off or fails; the turn then keeps the plain natural
+        voice and skips RVC for SERVITOR_RVC_RETRY_SECONDS."""
+        url = os.environ.get('SERVITOR_RVC_URL', '').strip().rstrip('/')
+        if not url or self.clock() < self.rvc_retry_at:
+            return None
+        timeout = float(os.environ.get('SERVITOR_RVC_TIMEOUT_SECONDS', '10'))
+        target = _temporary_wav('rvc-', self.workdir)
+        try:
+            request = urllib.request.Request(
+                f'{url}/v1/convert', data=Path(source).read_bytes(), method='POST',
+                headers={'Content-Type': 'audio/wav'})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                target.write_bytes(response.read())
+            wav_duration_ms(target)  # a broken reply fails here, not in FFmpeg
+            return target
+        except (OSError, ValueError, EOFError, ZeroDivisionError, wave.Error) as exc:
+            target.unlink(missing_ok=True)
+            retry = float(os.environ.get('SERVITOR_RVC_RETRY_SECONDS', '60'))
+            self.rvc_retry_at = self.clock() + retry
+            print(json.dumps(dict(event='rvc_fallback', reason=str(exc))), flush=True)
+            return None
 
     def render(self, source, voice='servitor'):
         from voice_effects import build_render_command
@@ -483,6 +512,12 @@ class Service:
             except Exception as exc:
                 raise TurnError('synthesize', 'tts', str(exc)) from exc
             emit(dict(event='stage', stage='render'))
+            if voice == 'natural' and hasattr(self.pipeline, 'convert'):
+                # Never fails the turn: without RVC, Billy keeps Piper's voice.
+                converted = timed('convert', self.pipeline.convert, raw)
+                if converted:
+                    temporary.append(converted)
+                    raw, voice = converted, 'rvc'
             try:
                 rendered = timed('render', self.pipeline.render, raw, voice)
                 temporary.append(rendered)

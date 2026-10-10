@@ -95,6 +95,15 @@ class VoiceEffectsTests(unittest.TestCase):
         default = build_render_command("in.wav", "out.wav")
         self.assertIn("flanger", default[default.index("-filter_complex") + 1])
 
+    def test_rvc_effect_keeps_the_converted_pitch(self):
+        from voice_effects import RVC_FILTER_GRAPH, build_render_command, voice_effect
+        render = build_render_command("in.wav", "out.wav", effect="rvc")
+        graph = render[render.index("-filter_complex") + 1]
+        self.assertEqual(graph, RVC_FILTER_GRAPH)
+        self.assertNotIn("asetrate", graph)  # RVC already set the pitch
+        self.assertTrue(graph.endswith("aresample=48000[out]"))
+        self.assertEqual(voice_effect("rvc"), "servitor")  # never a menu value
+
     def test_servitor_ffmpeg_path_can_be_overridden(self):
         with patch.dict(os.environ, {"TTS_FFMPEG_BIN": "/custom/ffmpeg"}, clear=True):
             command = build_playback_command(

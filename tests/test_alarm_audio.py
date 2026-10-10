@@ -92,6 +92,26 @@ class BuildTests(unittest.TestCase):
             self.assertFalse((Path(tmp) / "stale.wav").exists())
             self.assertEqual(len(list(Path(tmp).glob("*.wav"))), len(pieces) + len(billy))
 
+    def test_build_one_voice_again_keeps_the_other(self):
+        import remote_turn
+        config = Mock(base_urls=("http://server",), token="t" * 32)
+        rendered = []
+
+        def render(url, token, piece, agent, voice='servitor'):
+            rendered.append(voice)
+            return wav_bytes([0, 4000, 4000, 0])
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.object(remote_turn, "load_remote_config", return_value=config), \
+                unittest.mock.patch.object(alarm_audio, "_render", side_effect=render):
+            alarm_audio.build(tmp, out=lambda m: None, pace=0)
+            total = len(list(Path(tmp).glob("*.wav")))
+            rendered.clear()
+            alarm_audio.build(tmp, force=True, prune=True, out=lambda m: None, pace=0,
+                              only='natural')   # Billy's RVC voice switched on
+            self.assertEqual(rendered, ['natural'] * len(alarm_audio.known_pieces('natural')))
+            self.assertEqual(len(list(Path(tmp).glob("*.wav"))), total)
+
     def test_voices_have_their_own_clips_and_phrases(self):
         self.assertEqual(alarm_audio.clip_path("Warnung", "/x").name,
                          alarm_audio.clip_path("Warnung", "/x", "servitor").name)

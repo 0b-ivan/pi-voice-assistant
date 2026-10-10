@@ -100,6 +100,17 @@ NATURAL_FILTER_GRAPH = (
     "aresample=48000"
     "[out]"
 )
+# Billy after RVC voice conversion on CT 107 (server/rvc_worker.py): the model
+# already sets pitch and timbre, so only the warmth and the limiter remain.
+# Not a menu value; the server picks it when the conversion succeeded.
+RVC_FILTER_GRAPH = (
+    "[0:a]aresample=24000,"
+    "equalizer=f=140:t=q:w=1:g=1.5,"
+    "equalizer=f=2800:t=q:w=1.4:g=1.5,"
+    "alimiter=level_in=1.2:level_out=1:limit=0.97:attack=5:release=60:level=0,"
+    "aresample=48000"
+    "[out]"
+)
 VOICE_EFFECTS = ("servitor", "natural")
 DEFAULT_VOICE_EFFECT = "servitor"
 
@@ -219,11 +230,13 @@ def build_stream_playback_command(
 
 def build_render_command(source, target, ffmpeg_bin=None, effect=None):
     """Finish Servitor DSP before ALSA playback; optionally restore PR #26 aura.
-    The natural effect has no aura variant."""
+    The natural effect has no aura variant; 'rvc' is Billy after RVC."""
     aura = os.environ.get("TTS_SERVITOR_AURA", "pcm").strip().lower()
     if aura not in ("pcm", "reference"):
         raise ValueError("TTS_SERVITOR_AURA must be pcm or reference")
-    if voice_effect(effect) == "natural":
+    if effect == "rvc":
+        graph = RVC_FILTER_GRAPH
+    elif voice_effect(effect) == "natural":
         graph = NATURAL_FILTER_GRAPH
     else:
         graph = SERVITOR_REFERENCE_FILTER_GRAPH if aura == "reference" else SERVITOR_FILTER_GRAPH

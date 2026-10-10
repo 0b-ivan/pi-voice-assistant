@@ -139,6 +139,7 @@ Im Servitor-Modus sind die Namen gelöscht. Hört er einen davon, ist ein **Fehl
 - Für den Veteranen-Klang: Tonhöhe leicht absenken (z. B. `asetrate` −5 %), etwas Wärme im Bass, optional ein Hauch „Funkgerät“-Bandpass bei Lore `voll`. Das Ganze ist viel leichter als der Servitor-Effekt und kostet auf dem Pi kaum etwas.
 - Ein Sprecherwechsel kostet keinen RAM, weil es dasselbe Modell bleibt.
 - **Alternativen:** Eine andere deutsche Piper-Männerstimme (z. B. `karlsson`) zum Probehören, oder später auf CT 107 ein eigenes Modell trainieren bzw. eine Stimme klonen. Ein eigenes Modell wäre die größte Wirkung und der größte Aufwand.
+- **Umgesetzt (optional):** Stimme klonen per RVC auf CT 107. Thorsten spricht, ein fertiges RVC-v2-Modell von B.J. Blazkowicz gibt die Klangfarbe. Einrichtung, Messung und Grenzen: [TTS: Billys Stimme mit RVC](../text-to-speech.md#billys-stimme-mit-rvc).
 
 ## 7. Kern-Engramme fürs Langzeitgedächtnis
 

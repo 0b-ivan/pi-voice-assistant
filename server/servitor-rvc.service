@@ -1,0 +1,30 @@
+[Unit]
+Description=Servitor RVC voice conversion for Billy (rvc-python, loopback only)
+After=network.target
+
+[Service]
+Type=simple
+User=servitor
+Group=servitor
+EnvironmentFile=/etc/servitor-rvc.env
+# numba (librosa) and torch want a writable cache; nothing else is written.
+Environment=XDG_CACHE_HOME=/run/servitor-rvc NUMBA_CACHE_DIR=/run/servitor-rvc
+Environment=MPLCONFIGDIR=/run/servitor-rvc TORCH_HOME=/run/servitor-rvc
+ExecStart=/opt/servitor-voice/rvc/venv/bin/python /opt/servitor-voice/repo/server/rvc_worker.py
+RuntimeDirectory=servitor-rvc
+RuntimeDirectoryMode=0700
+# CT 107 has 5 GB for llama-server (~2.1 GB), Vosk, Piper and this worker.
+# Better an RVC restart (Billy keeps Piper's voice meanwhile) than the OOM killer
+# taking the voice service.
+MemoryMax=2G
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/servitor-rvc
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
