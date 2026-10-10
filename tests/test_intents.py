@@ -58,10 +58,13 @@ class MatchTests(unittest.TestCase):
                      "wie viel arbeitsspeicher hast",
                      "du willst also behaupten dass du ach gigabyte arbeitsspeicher hast "
                      "kannst du es gerne mal nach",
-                     "nie was hast du denn für eine cpu und wie viel liefert sie"):
+                     "nie was hast du denn für eine cpu und wie viel liefert sie",
+                     "wie viel arbeitsspeicher", "was hast du für hart",     # 23:53
+                     "welche hardware hast du", "arbeitsspeicher"):
             with self.subTest(text=text):
                 self.assertEqual(intents.match(text), 'hardware')
-        for text in ("wie viel ram braucht ein laptop", "was ist ein prozessor"):
+        for text in ("wie viel ram braucht ein laptop", "was ist ein prozessor",
+                     "was ist arbeitsspeicher", "das war hart", "wie hart ist diamant"):
             with self.subTest(text=text):
                 self.assertIsNone(intents.match(text))
 

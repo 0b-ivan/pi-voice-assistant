@@ -63,7 +63,8 @@ _PATTERNS = (
     # The LLM invented "8/16 Gigabyte" and "12,8 Teraflops" (operator, 10.10. 23:37).
     ('hardware', re.compile(r'\b(arbeitsspeicher|ram|speicherplatz|festplatte\w*|'
                             r'speicherkarte|prozessor\w*|cpu|hardware|rechenleistung|'
-                            r'rechenkern\w*|kerne|taktfrequenz|gigahertz)\b')),
+                            r'rechenkern\w*|kerne|taktfrequenz|gigahertz|hart ?ware|hard ?ware|'
+                            r'für (eine )?hart$)')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
@@ -135,6 +136,9 @@ _HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|kön
 # Questions about the unit itself (not about hardware in general).
 _SELF = re.compile(r'\b(du|dein\w*|dich|dir|hast|einheit|proximus|billy|servitor)\b')
 
+# "Wie viel Arbeitsspeicher?" alone asks about the unit; "was ist ein Prozessor" does not.
+_DEFINE = re.compile(r'^(was (ist|sind|bedeutet|heißt)|erklär\w*|wofür)\b')
+
 # Raspberry Pi Zero 2 W of this unit; current free values from the snapshot.
 HARDWARE = {
     'off': "Hardware: Raspberry Pi Zero 2 W. Prozessor: 4 Kerne ARM Cortex-A53, 1 Gigahertz. "
@@ -196,7 +200,8 @@ def match(text, persona=None):
                 return None
             if name == 'unsupported' and _HOWTO.search(text):
                 return None
-            if name == 'hardware' and not _SELF.search(text):
+            if name == 'hardware' and not _SELF.search(text) and (
+                    len(text.split()) > 4 or _DEFINE.search(text)):
                 return None   # "wie viel RAM braucht ein Laptop": general knowledge
             return name
     return None
