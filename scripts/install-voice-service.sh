@@ -21,6 +21,7 @@ fi
 
 install -d -m 0755 /opt/pi-voice-assistant/src /opt/pi-voice-assistant/scripts
 install -m 0644 "${repo_root}/src/ptt.py" /opt/pi-voice-assistant/src/ptt.py
+install -m 0644 "${repo_root}/src/ptt_config.py" /opt/pi-voice-assistant/src/ptt_config.py
 install -m 0644 "${repo_root}/src/llm.py" /opt/pi-voice-assistant/src/llm.py
 install -m 0644 "${repo_root}/src/menu.py" /opt/pi-voice-assistant/src/menu.py
 install -m 0644 "${repo_root}/src/intents.py" /opt/pi-voice-assistant/src/intents.py
