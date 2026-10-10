@@ -1,10 +1,10 @@
 # Konzept: Persönlichkeit, Gefühle, Gedächtnisebenen und Kommunikationsprotokoll
 
-Stand 09.10.2026. Status: **in Umsetzung**. Das Dokument sammelt die Entscheidungen; welche Schritte aus [Abschnitt 9](#9-umsetzung-in-schritten) schon umgesetzt sind, steht dort in der Spalte „Stand“.
+Stand 09.10.2026. Status: **in Umsetzung**. Dies ist ein **Konzept, keine Anleitung zum aktuellen Protokoll**: Die Ausgangslage unten ist eine historische Momentaufnahme **vor** den PRs #54–#74. Die tatsächlich unterstützten Nachrichtentypen stehen in [`src/protocol.py`](../../src/protocol.py) (derzeit nur `hello`, `welcome`, `ping`, `ack`); den Entwicklungsstand der geplanten Schritte zeigt [Abschnitt 9](#9-umsetzung-in-schritten).
 
-## 1. Ausgangslage
+## 1. Ausgangslage (historisch, vor der Umsetzung)
 
-| Was | Wo | Heute |
+| Was | Wo | Damaliger Stand |
 |---|---|---|
 | Charakter (mechanisch, „diese Einheit“, „Bediener“, ohne Gefühle) | `SERVITOR_SYSTEM_PROMPT` in [`src/llm.py`](../../src/llm.py) | fest, nicht abschaltbar |
 | Lore (Warhammer 40k) | `LORE_PROMPTS` in `src/llm.py`, Stufen `off / light / full` | im Menü umschaltbar |
@@ -154,7 +154,7 @@ Für die Gesprächserkennung gilt:
 ## 6. Kommunikationsprotokoll SPX/1
 
 ### 6.1 Nachrichtenhülle
-Ein gemeinsames Modul `src/protocol.py` gilt für Pi und Server (der Server importiert `src` schon heute):
+Ein gemeinsames Modul `src/protocol.py` gilt für Pi und Server. **Das folgende Paket mit `memory.fact.add` ist ein geplantes Beispiel, kein heute gültiger Nachrichtentyp:**
 
 ```json
 { "v": 1, "id": "b7f3…", "type": "memory.fact.add", "ts": 1760000000,
@@ -177,6 +177,9 @@ Ein gemeinsames Modul `src/protocol.py` gilt für Pi und Server (der Server impo
 3. **Opus beim Hochladen** zurückgestellt: Laut [Roadmap](../roadmap.md) kostet ffmpeg auf dem Pi ca. 5 s.
 
 ### 6.4 Nachrichtentypen (erste Liste)
+
+**Implementiert:** `hello`, `welcome`, `ping`, `ack`. Die übrigen Typen in der Tabelle sind **Vorschläge**, werden aktuell von `src/protocol.py` abgelehnt.
+
 | Richtung | Typen |
 |---|---|
 | beide | `hello`, `welcome`, `ping`, `ack` |
