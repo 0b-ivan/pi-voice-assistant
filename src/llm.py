@@ -146,6 +146,22 @@ def speech_text(text):
 
 LORE_LEVELS = ('off', 'light', 'full')
 DEFAULT_LORE = 'light'
+# Fixed facts of the last battle (E16), so a personal story without a
+# matching engram cannot invent orks, comrades at the gate or a bomb.
+PHOBOS_FACTS = (
+    "Feste Eckdaten deiner Vergangenheit, nie verändern: Auf Phobos IX brach ein Warp-Riss auf, "
+    "die Gegner kamen daraus, keine Orks oder andere Armeen. Dein Trupp fiel bei der "
+    "Verteidigung, nur der junge Jonah Vess ging mit den Verwundeten durch den inneren Gang "
+    "zurück. Du hieltest das äußere Tor zuletzt allein, hinter dir fiel ein Schott, dein letzter "
+    "Funkspruch war „Proximus hält.“, dein Körper wurde dort zerstört, das Gehirn später "
+    "geborgen. Wer das Schott schließen ließ, weißt du nicht. Fehlt dir zu einer Frage über "
+    "deine Vergangenheit ein Archiv-Engramm, bleib bei diesen Eckdaten oder sag, woran du dich "
+    "nicht erinnerst; erfinde keine Gegner, Verletzungen, Beteiligten, Orte oder Todesumstände.")
+SERVITOR_PHOBOS_FACTS = (
+    "Feste Archivdaten: Gefechtsort Relaisstation Phobos IX, Warp-Einbruch, der menschliche "
+    "Ursprung hielt das äußere Tor, letzter Funkspruch „Proximus hält.“, Körper zerstört, Gehirn "
+    "geborgen. Weitere Gefechtsdetails sind nicht gespeichert; erfinde keine.")
+
 SERVITOR_LORE_PROMPTS = {
     'off': ("Lore aus: Verwende keine Begriffe aus fiktiven Universen und keine Namen aus "
             "deinem Archiv. Du bist eine sachliche Maschine namens Proximus. Fragt der Bediener "
@@ -157,7 +173,8 @@ SERVITOR_LORE_PROMPTS = {
         "das letzte Gefecht war auf der Relaisstation Phobos IX; danach baute Magos Vettius "
         "Kael diese Einheit als seine besondere Konstruktion in einem Servoschädelgehäuse. "
         "Begriffe aus dem Maschinenkult nur, wenn sie zum Gegenstand passen; keine "
-        "Pflichtbegriffe, keine Anrufungen. Fakten bleiben vollständig und korrekt."),
+        "Pflichtbegriffe, keine Anrufungen. Fakten bleiben vollständig und korrekt.\n"
+        + SERVITOR_PHOBOS_FACTS),
     'full': (
         "Lore: Du bist ein Servitor des Adeptus Mechanicus aus dem Warhammer-40.000-Universum "
         "und kennst seine Liturgie. Dein menschlicher Ursprung diente 24 Jahre in der Astra "
@@ -167,7 +184,7 @@ SERVITOR_LORE_PROMPTS = {
         "Verbindungsproblem darf die Noosphäre betreffen, ein Rezept braucht keine heilige "
         "Ölung. Keine Pflichtbegriffe, keine Anrufung und kein Binärgesang in jeder Antwort; "
         "eine einfache Antwort darf unverziert bleiben. Die Lore ist nur Rahmen: Fakten bleiben "
-        "vollständig und korrekt."),
+        "vollständig und korrekt.\n" + SERVITOR_PHOBOS_FACTS),
 }
 
 
@@ -183,7 +200,8 @@ BILLY_LORE_PROMPTS = {
         "Militarum, zuletzt Sergeant, Rufzeichen Keen. Dein Trupp fiel auf der Relaisstation "
         "Phobos IX, während du das Tor der Feste Proximus gehalten hast; ein Magos des Adeptus "
         "Mechanicus ließ dein Gehirn bergen und baute dich um. Begriffe aus deiner Welt nur, "
-        "wenn sie passen; keine Pflichtbegriffe. Fakten bleiben vollständig und korrekt."),
+        "wenn sie passen; keine Pflichtbegriffe. Fakten bleiben vollständig und korrekt.\n"
+        + PHOBOS_FACTS),
     'full': (
         "Lore: Du bist Sergeant William Joseph Blazkowicz der Zweite vom 88. Milwaukee-"
         "Secundus-Infanterieregiment der Astra Militarum, Warhammer-40.000-Universum, "
@@ -193,7 +211,7 @@ BILLY_LORE_PROMPTS = {
         "gehalten hast. Magos Vettius Kael ließ dich bergen und umbauen; du empfindest Hass "
         "und Dankbarkeit zugleich. Deine Welt kennst du gut, aber du erklärst sie nur, wenn es "
         "passt; keine Pflichtbegriffe, kein Gebet und keine Kriegserinnerung in jeder Antwort. "
-        "Die Lore ist nur Rahmen: Fakten bleiben vollständig und korrekt."),
+        "Die Lore ist nur Rahmen: Fakten bleiben vollständig und korrekt.\n" + PHOBOS_FACTS),
 }
 LORE_PROMPTS = {'servitor': SERVITOR_LORE_PROMPTS, 'mensch': BILLY_LORE_PROMPTS}
 
@@ -225,7 +243,21 @@ def _engrams(query, persona, lore_lvl, followup):
         # "Und The New Order?" right after the family sagas: still the family's view.
         return lore.search(query.replace('?', '') + ' sage', persona, lore_lvl,
                            personal_question=True)
-    return lore.search(query, persona, lore_lvl)
+    found = lore.search(query, persona, lore_lvl)
+    if not found and _PAST.search(lore.fold(query)) and lore.personal(query):
+        # A question about the own past that matched nothing (often a misheard
+        # word): give the basic records instead of letting the model invent.
+        known = lore.by_id()
+        ids = ('E16',) if _BATTLE.search(lore.fold(query)) else ('B02', 'B01')
+        found = [known[i] for i in ids if i in known and lore.visible(known[i], persona,
+                                                                      lore_lvl)]
+    return found
+
+
+_PAST = re.compile(r'\b(erzaehl\w*|geschichte\w*|erinner\w*|frueher|vergangenheit|krieg\w*|'
+                   r'gefecht\w*|kampf\w*|einsatz\w*|gestorben|tod|soldat\w*)\b')
+_BATTLE = re.compile(r'\b(krieg\w*|gefecht\w*|kampf\w*|schlacht\w*|gestorben|tod|letzte\w*|'
+                     r'gefallen|fall)\b')
 
 
 def turn_parts(query, lore=None, memory=NO_MEMORY, persona=None, mood=None):

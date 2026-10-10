@@ -153,6 +153,15 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(state['short'])
         self.assertTrue(story.sanitize(state)['short'])
 
+    def test_free_story_is_not_told_as_own_memory(self):
+        free = story.messages(story.start(dict(minutes=10, topic='irgendwas'), 'mensch',
+                                          'light', []))
+        self.assertIn('nicht als deine eigene Erinnerung', free[0]['content'])
+        self.assertNotIn('Du erzählst als Billy in der Ich-Form', free[0]['content'])
+        own = story.messages(story.start(dict(minutes=10, topic='Trupp'), 'mensch', 'light',
+                                         ['E12']))
+        self.assertIn('Du erzählst als Billy in der Ich-Form', own[0]['content'])
+
     def test_sanitize(self):
         state = story.start(dict(minutes=10, topic='x'), 'mensch', 'light', ['E01'])
         self.assertEqual(story.sanitize(json.loads(json.dumps(state)))['ids'], ['E01'])

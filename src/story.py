@@ -295,14 +295,20 @@ def _section_ids(state):
     return ids[start:end]
 
 
+FREE = ("Diese Geschichte stammt nicht aus deinem Archiv: Erzähle sie als erfundene Geschichte "
+        "mit eigenen Figuren, nicht als deine eigene Erinnerung und nicht als Ich-Erzählung über "
+        "dein Leben. Sie verändert nichts an deiner Vergangenheit.")
+
+
 def messages(state):
     """[system, user] for the next section; stable parts first."""
     import llm
     import lore
     persona, level = state['persona'], state['lore']
     minutes = f"{state['minutes']:g}".replace('.', ',')
+    voice = VOICE[persona] if state['ids'] else FREE
     parts = [llm.PERSONA_PROMPTS[persona], llm.LORE_PROMPTS[persona][level],
-             RULES.format(minutes=minutes), VOICE[persona]]
+             RULES.format(minutes=minutes), voice]
     known = lore.by_id()
     current = [known[i] for i in _section_ids(state)
                if i in known and lore.visible(known[i], persona, level)]
