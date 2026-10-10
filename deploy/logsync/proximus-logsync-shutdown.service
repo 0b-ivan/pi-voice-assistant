@@ -1,0 +1,14 @@
+[Unit]
+Description=Proximus: last journal copy to the memory stick at shutdown
+# Stopped before the stick and the local file systems are unmounted.
+After=local-fs.target mnt-proximus\x2dmemory.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/proximus-logsync
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -47,6 +47,7 @@ import weather  # noqa: E402
 import agenda  # noqa: E402
 import device_control  # noqa: E402
 import enroll  # noqa: E402
+import logwatch  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
 import protocol  # noqa: E402
@@ -58,6 +59,8 @@ from system_status import phrase_style, sanitize_snapshot  # noqa: E402
 PCM_RATE = 16000
 HANDLED = ('ping',)   # SPX/1 types /v1/message acts on; more come with later steps
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
+# TurnError codes caused by the input, not by the server (logwatch ignores them).
+OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
 
 
 def device_mood(device, text=''):
@@ -130,6 +133,7 @@ class RealPipeline:
     def __init__(self, workdir, clock=time.monotonic):
         self.workdir = workdir
         self.voice = None
+        self.high = None      # Piper thorsten-high for both voices, if SERVITOR_HIGH_PIPER_MODEL
         self.clock = clock
         # After an OpenRouter failure, go straight to the local model for a
         # while instead of paying the full timeout on every turn of an outage.
@@ -151,6 +155,9 @@ class RealPipeline:
         model = os.environ['SERVITOR_PIPER_MODEL']
         from piper import PiperVoice
         self.voice = PiperVoice.load(model)
+        high = os.environ.get('SERVITOR_HIGH_PIPER_MODEL', '').strip()
+        if high:
+            self.high = PiperVoice.load(high)
         # Warm the ONNX session once so the first real turn pays no setup cost.
         self.synthesize('Bereit.').unlink()
         if os.environ.get('SERVITOR_LOCAL_LLM') == '1':
@@ -206,12 +213,18 @@ class RealPipeline:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
     def synthesize(self, text, voice='servitor'):
-        """Same speaker for both voice effects; only the rendering differs."""
-        from voice_controls import _synthesize_voice
+        """Both voices speak with thorsten-high (calm) when it is loaded, else
+        with the Servitor speaker; the rendering makes Proximus or Billy."""
+        from voice_controls import _synthesize_voice, high_synthesis_config
+        from pronounce import spoken
         target = _temporary_wav('syn-', self.workdir)
         try:
             with wave.open(str(target), 'wb') as output:
-                _synthesize_voice(self.voice, text, output, 'servitor')
+                if self.high is not None:
+                    self.high.synthesize_wav(spoken(text), output,
+                                             syn_config=high_synthesis_config())
+                else:
+                    _synthesize_voice(self.voice, text, output, 'servitor')
         except BaseException:
             target.unlink(missing_ok=True)
             raise
@@ -220,8 +233,11 @@ class RealPipeline:
     def render(self, source, voice='servitor'):
         from voice_effects import build_render_command
         target = _temporary_wav('dsp-', self.workdir)
+        effect = voice
+        if self.high is not None:
+            effect = 'billy' if voice == 'natural' else 'servitor-high'
         try:
-            subprocess.run(build_render_command(source, target, effect=voice), check=True,
+            subprocess.run(build_render_command(source, target, effect=effect), check=True,
                            timeout=60, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except BaseException:
@@ -272,6 +288,7 @@ class Service:
         self.maintenance_dir = maintenance.DIR
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.weather = weather.Forecast()  # WEATHER_LAT/WEATHER_LON, else no weather
+        self.logwatch = None  # logwatch.server_watch(), started by main()
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
         self.ready = False
@@ -463,6 +480,10 @@ class Service:
                         if day is not None:
                             # The Pi shows its stored forecast with the answer.
                             emit(dict(event='show', screen='weather', day=day))
+                    if intent in ('briefing', 'selftest') and self.logwatch is not None:
+                        snapshot.update(self.logwatch.snapshot_fields('server_log'))
+                        if intent == 'selftest':
+                            self.logwatch.refresh(force=True)  # repair now, not in 30 min
                     if intent in ('calendar', 'briefing'):
                         if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
                             snapshot['agenda'] = agenda.DENIED
@@ -834,10 +855,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                       memory_copy=memory_copy, transcribe_only=transcribe_only,
                                       appointments=appointments)
             except TurnError as exc:
+                # Stage and code only in the journal (the message may quote the operator).
+                # Silence or a too short press is no fault: the self-test skips those.
+                name = 'turn_rejected' if exc.code in OPERATOR_CODES else 'turn_error'
+                print(json.dumps(dict(event=name, stage=exc.stage, code=exc.code)), flush=True)
                 emit(dict(event='error', stage=exc.stage, code=exc.code, message=exc.message))
             except (OSError, TimeoutError):
                 raise
             except Exception as exc:  # report, keep serving
+                print(json.dumps(dict(event='turn_error', stage='internal', code='internal',
+                                      error=type(exc).__name__)), flush=True)
                 emit(dict(event='error', stage='internal', code='internal', message=str(exc)))
             self.wfile.write(b'0\r\n\r\n')
             self.wfile.flush()
@@ -873,6 +900,11 @@ def main():
               flush=True)
 
     threading.Thread(target=load, daemon=True).start()
+    if os.environ.get('SERVITOR_LOGWATCH', '1') != '0':
+        def selftest_report(result):
+            print(json.dumps(dict(event='selftest', findings=result['findings'],
+                                  repairs=result['repairs'])), flush=True)
+        service.logwatch = logwatch.server_watch(report=selftest_report).start()
 
     print(json.dumps(dict(event='listening', bind=config.bind, port=config.port)), flush=True)
     server.serve_forever()

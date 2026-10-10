@@ -20,7 +20,7 @@ Befehle ohne Sprachmodell (auch offline): „Merk dir …“, „Installiere/Akt
 
 **Datenschutz:** Die Kopie geht mit jeder Frage an CT 107 und im Sprachkern-Modus AUTO an OpenRouter, wie die gesprochene Frage selbst. Im Modus LOKAL bleibt sie im Haus.
 
-**Robustheit:** eine JSON-Datei `proximus/memory.json`, atomar geschrieben (temporäre Datei, fsync, rename, fsync des Ordners). Abziehen während des Schreibens verliert höchstens die letzte Änderung; eine beschädigte Datei wird als `memory.broken-<zeit>` beiseitegelegt. Ob der Stick steckt, prüft der Pi am Gerät `/dev/disk/by-label/PROXIMUS`, bevor er den Automount anfasst.
+**Robustheit:** eine JSON-Datei `proximus/memory.json`, atomar geschrieben (temporäre Datei, fsync, rename, fsync des Ordners). Abziehen während des Schreibens verliert höchstens die letzte Änderung; eine beschädigte Datei wird als `memory.broken-<zeit>` beiseitegelegt. Ob der Stick steckt, prüft der Pi am Gerät `/dev/disk/by-label/PROXIMUS`, bevor er den Automount anfasst. Neben `proximus/` liegt `logs/` mit den Logs des Pi (root, [Logs und Selbsttest](logs.md)).
 
 ### Einrichtung (einmalig, löscht den Stick)
 

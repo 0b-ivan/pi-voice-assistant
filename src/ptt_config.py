@@ -64,6 +64,7 @@ class PttConfig:
     sleep_wlan_off: bool = False
     wlan: str = ''                      # 'on' | 'off' at start; '' leaves it as is
     bluetooth: bool = True
+    logwatch: bool = True               # self-test: read the journal every 30 min
 
     @property
     def hybrid(self):
@@ -148,4 +149,5 @@ class PttConfig:
             sleep_wlan_off=get('PTT_SLEEP_WLAN', 'keep') == 'off',
             wlan=get('PTT_WLAN').strip().lower(),
             bluetooth=get('PTT_BLUETOOTH', '1') != '0',
+            logwatch=get('PTT_LOGWATCH', '1') != '0',
         )

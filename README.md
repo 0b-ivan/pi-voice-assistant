@@ -25,6 +25,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | Kennenlernen | Menü „Kennenlernen“: 20 Stimmproben „Proximus“, Fragen zur Person, Stimmprofil; danach erkennt der Server den Bediener an der Stimme und gibt Fremden keine persönlichen Daten. [Kennenlernen](docs/memory.md#kennenlernen-und-stimmerkennung) |
 | Wartung und Netz | Meldet wartende Updates (Pi und CT 107), WLAN-Signal, Latenz, DNS; „Wie ist das Netzwerk?“, „Gibt es Updates?“. [Gedächtnis, Wartung, Netz](docs/memory.md#systemwartung) |
 | Gerätesteuerung | „WLAN aus/an“, „Geh schlafen“, „Starte dich neu“, „Fahr dich herunter“ („Terminiere dich selbst“ …); Neustart und Herunterfahren erst nach „Bestätigt“ oder Taste E; WLAN geht bei Bedarf selbst wieder an. [Architektur](docs/architecture.md#gerätesteuerung-per-sprache) |
+| Selbsttest und Logs | Liest alle 30 min die eigenen Logs und die des Servers, behebt kleine Fehler selbst (aufgegebene Anzeige bzw. lokales LLM neu starten, Log-Kopie anstoßen) und nennt Auffälliges im Morgenbericht, ohne Rauschen; „Selbsttest“ fragt nach. Pi-Logs liegen im RAM und werden auf den Gedächtnis-Stick kopiert. [Logs und Selbsttest](docs/logs.md) |
 | Wartungsmodus | Menü „Wartung“ oder Sprache; Updates und Neustarts für Pi und CT 107, jede Aktion mit Taste E bestätigt. [Wartungsmodus](docs/maintenance.md) |
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |
 | Hardware | WM8960, SHIM, PiTFT und PiSugar 3 laufen; Akkulaufzeit/Abschaltung und Kamera offen. [Hardware](docs/hardware.md) |
@@ -32,7 +33,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 ## Einrichten und betreiben
 
 1. [Setup](docs/setup.md): OS, WM8960-Audio, Dienst und Offline-STT auf dem Pi.
-2. [Betrieb](docs/operation.md): Konfiguration (inkl. `ASSISTANT_*` für den Server), Aktualisieren, Logs.
+2. [Betrieb](docs/operation.md): Konfiguration (inkl. `ASSISTANT_*` für den Server), Aktualisieren, Logs ([Logs und Selbsttest](docs/logs.md)).
 3. Server CT 107: [`server/install-ct.sh`](server/install-ct.sh), Offline-LLM [`server/install-llm.sh`](server/install-llm.sh).
 4. [Troubleshooting](docs/troubleshooting.md).
 

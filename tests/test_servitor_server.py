@@ -587,6 +587,42 @@ class IntentServerTest(ServerTest):
         self.request('/v1/turn', b'\1' * 16000)
         self.service.weather.get.assert_called_once()   # only weather questions ask
 
+    def test_briefing_and_selftest_name_pi_and_server_log_findings(self):
+        import logwatch
+        self.pipeline.fail_llm = True
+        watch = logwatch.LogWatch(logwatch.SERVER_RULES, logwatch.SERVER_UNITS,
+                                  reader=lambda since, units: ([], False),
+                                  sleep=lambda s: None)
+        watch.check()
+        watch.result['findings'] = {'crash_llm': 1}
+        self.service.logwatch = watch
+
+        def reply(text, status):
+            self.pipeline.transcript = text
+            _, data = self.request_with_status(status)
+            return next(e for e in self.events(data) if e['event'] == 'reply')['text']
+
+        status = dict(log_findings={'undervoltage': 2, 'bogus': 1}, log_repairs=['display'])
+        text = reply('guten morgen', status)
+        self.assertIn('Selbsttest meldet: Meine Stromversorgung ist eingebrochen, zweimal. '
+                      'Mein lokaler Sprachkern ist abgestürzt.', text)
+        self.assertNotIn('bogus', text)
+        answer = reply('selbsttest', status)
+        self.assertIn('Meine Stromversorgung ist eingebrochen', answer)
+        self.assertIn('Meine Anzeige habe ich neu gestartet.', answer)
+        watch.result['findings'] = {}
+        self.assertNotIn('Selbsttest', reply('guten morgen', dict(log_findings={})))
+
+    def request_with_status(self, status):
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000,
+                     headers={'Authorization': f'Bearer {TOKEN}',
+                              'X-Servitor-Status': json.dumps(status)})
+        response = conn.getresponse()
+        data = response.read()
+        conn.close()
+        return response, data
+
     def test_calendar_comes_from_the_pi_and_only_for_a_recognized_voice(self):
         import agenda
         import datetime
@@ -754,3 +790,70 @@ class WhisperQuickPathTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HighVoiceTest(unittest.TestCase):
+    """RealPipeline: with thorsten-high loaded both voices speak with it, calm;
+    the rendering makes Proximus (base chain + machine DSP) or Billy (limiter)."""
+
+    def setUp(self):
+        import types
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+        class SynthesisConfig:
+            def __init__(self, **fields):
+                self.__dict__.update(fields)
+
+        config = types.ModuleType('piper.config')
+        config.SynthesisConfig = SynthesisConfig
+        piper = types.ModuleType('piper')
+        piper.config = config
+        patcher = unittest.mock.patch.dict(sys.modules, {'piper': piper, 'piper.config': config})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def write(output):
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(22050)
+        output.writeframes(bytes(100))
+
+    def renders(self, pipeline):
+        with unittest.mock.patch.object(ss.subprocess, 'run') as run:
+            for voice in ('natural', 'servitor'):
+                pipeline.render(Path(self.tmp.name) / 'x.wav', voice).unlink(missing_ok=True)
+        return [call[0][0] for call in run.call_args_list]
+
+    def test_both_voices_use_thorsten_high_calm(self):
+        pipeline = ss.RealPipeline(self.tmp.name)
+        pipeline.voice, pipeline.high = unittest.mock.Mock(), unittest.mock.Mock()
+        pipeline.high.synthesize_wav.side_effect = lambda text, out, syn_config: self.write(out)
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_HIGH_NOISE_SCALE': '0.3'}):
+            for voice in ('natural', 'servitor'):
+                pipeline.synthesize('Lob dem Omnissiah.', voice).unlink()
+        from pronounce import spoken
+        for call in pipeline.high.synthesize_wav.call_args_list:
+            config = call[1]['syn_config']
+            self.assertEqual(call[0][0], spoken('Lob dem Omnissiah.'))
+            self.assertEqual((config.noise_scale, config.noise_w_scale, config.length_scale),
+                             (0.3, 0.4, 1.05))
+        pipeline.voice.synthesize.assert_not_called()
+        from voice_effects import BILLY_FILTER_GRAPH, SERVITOR_HIGH_BASE_CHAIN
+        billy, proximus = self.renders(pipeline)
+        self.assertIn(BILLY_FILTER_GRAPH, billy)
+        graph = proximus[proximus.index('-filter_complex') + 1]
+        self.assertTrue(graph.startswith('[0:a]' + SERVITOR_HIGH_BASE_CHAIN + 'aresample=24000'))
+        self.assertIn('flanger', graph)                 # the machine DSP stays on top
+
+    def test_without_thorsten_high_everything_stays_as_before(self):
+        pipeline = ss.RealPipeline(self.tmp.name)
+        with unittest.mock.patch('voice_controls._synthesize_voice',
+                                 side_effect=lambda v, t, out, p: self.write(out)) as synth:
+            pipeline.synthesize('Gemerkt.', 'natural').unlink(missing_ok=True)
+        self.assertEqual(synth.call_args[0][3], 'servitor')
+        from voice_effects import NATURAL_FILTER_GRAPH, SERVITOR_HIGH_BASE_CHAIN
+        billy, proximus = self.renders(pipeline)
+        self.assertIn(NATURAL_FILTER_GRAPH, billy)
+        self.assertNotIn(SERVITOR_HIGH_BASE_CHAIN, ' '.join(proximus))

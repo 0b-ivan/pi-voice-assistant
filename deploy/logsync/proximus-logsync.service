@@ -1,0 +1,9 @@
+[Unit]
+Description=Proximus: copy the RAM journal to the memory stick
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proximus-logsync
+Nice=15
+IOSchedulingClass=idle

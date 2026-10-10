@@ -17,6 +17,7 @@ class PttConfigTests(unittest.TestCase):
             'PTT_MEMORY_MODE': 'hybrid', 'STT_PROVIDER': ' Vosk ', 'PTT_WAKE_WORD': ' proximus ',
             'PTT_WAKE_SHADOW': 'a, ,b', 'PTT_LLM_MODE': ' LOCAL ', 'PTT_SLEEP_WLAN': 'off',
             'PTT_ALARMS': '0', 'PTT_CUE': '0', 'PTT_BLUETOOTH': '0', 'PTT_WLAN': ' Off',
+            'PTT_LOGWATCH': '0',
             'PTT_PERSONA': 'mensch'})
         self.assertEqual(config.gpio_line, 27)
         self.assertFalse(config.active_low)
@@ -30,7 +31,7 @@ class PttConfigTests(unittest.TestCase):
         self.assertEqual(config.wake_shadow, ('a', 'b'))
         self.assertEqual(config.llm_mode, 'local')
         self.assertTrue(config.sleep_wlan_off)
-        self.assertFalse(config.alarms or config.cue or config.bluetooth)
+        self.assertFalse(config.alarms or config.cue or config.bluetooth or config.logwatch)
         self.assertEqual(config.wlan, 'off')
         self.assertEqual(config.persona, 'mensch')
         self.assertIsNone(config.lore)

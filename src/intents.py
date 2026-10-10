@@ -1,5 +1,6 @@
 """Questions answered without the LLM: time, date, status, battery, identity,
-weather, today's appointments and the morning litany (a short briefing).
+weather, today's appointments, the self-test and the morning litany (a short
+briefing).
 
 Runs on the server (normal path, before OpenRouter) and on the Pi (local
 fallback), so these answers also work offline. Input is the recognized text
@@ -11,6 +12,7 @@ import re
 from system_status import (battery_sentence, is_billy, network_text, phrase_style, status_text,
                            updates_sentence, updates_text)
 import agenda
+import logwatch
 import weather
 
 WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
@@ -34,6 +36,18 @@ _PATTERNS = (
     # STT often splits compounds: "morgen bericht", "tages bericht".
     ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|tages ?bericht|lage ?bericht|'
                             r'briefing|guten morgen)\b')),
+    # Before "status": "selbsttest" / "prüfe deine logs" read the log findings.
+    # Vosk small hears "Selbsttest" as "selbst", "selbst theft", "selbst test"
+    # and "Führe Selbsttest durch" as "führer selbst das durch".
+    ('selftest', re.compile(r'\b(selbst ?(test|tests|tester|theft|text|fest|tess|tast)\w*|'
+                            r'selbstdiagnose|eigendiagnose|systemdiagnose|system ?check|'
+                            r'systemprüfung|logauswertung|log auswertung|fehlerbericht|'
+                            r'(führ|mach|start)\w* (\w+ )?(diagnose|systemcheck)|(führ|für|mach)\w* (\w+ )?(selbst|funktions\w*) (\w+ )?durch|'
+                            r'funktions ?(test|prüfung)\w*|was (ist )?(denn )?(mit dir|los mit dir) los|'
+                            r'was ist los mit dir|bist du kaputt|'
+                            r'(prüf|check|analysier)\w* (deine |die )?(logs?|locken|protokolle?)|'
+                            r'was steht in (den |deinen )?(logs?|locken|protokollen)|'
+                            r'(logs?|protokolle?) (prüfen|auswerten|checken))\b|^selbst$')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
@@ -186,7 +200,7 @@ BRIEFING_END = {
 
 def briefing_text(now, snapshot, lore='off'):
     """Morning litany: opening, date, time, weather, then only what needs
-    attention (battery, server, updates)."""
+    attention (battery, server, updates, notable log findings)."""
     parts = [_opening(now, lore, snapshot.get('operator'))]
     clock = f"{now.hour} Uhr" if now.minute == 0 else f"{now.hour} Uhr {now.minute}"
     day = f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} {MONTHS[now.month - 1]}"
@@ -209,6 +223,9 @@ def briefing_text(now, snapshot, lore='off'):
     updates = updates_sentence(snapshot, short=True)
     if updates:
         parts.append(updates)
+    logs = logwatch.briefing_sentence(snapshot, lore, now)  # None when nothing is notable
+    if logs:
+        parts.append(logs)
     parts.append(BRIEFING_END.get(lore, BRIEFING_END['off']))
     return ' '.join(parts)
 
@@ -237,6 +254,8 @@ def answer(intent, now, snapshot=None, lore=None):
         return briefing_text(now, snapshot, lore)
     if intent == 'calendar':
         return calendar_text(snapshot, lore)
+    if intent == 'selftest':
+        return logwatch.selftest_text(snapshot, lore, now)
     if intent == 'identity':
         return IDENTITY.get(lore, IDENTITY['off'])
     raise ValueError(f'unknown intent {intent!r}')
