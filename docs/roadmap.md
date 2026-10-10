@@ -28,6 +28,8 @@ Gesammelt am 09.10.2026. Erledigtes bleibt zur Übersicht stehen.
 7. **Kamera** (siehe Hardware): „Was siehst du?“ schickt ein Foto an ein Vision-Modell über OpenRouter, Antwort als Sensorbericht.
 8. ~~**Gerätesteuerung per Sprache**~~: erledigt 09.10.2026. WLAN aus/an, Ruhemodus, Neustart und Herunterfahren (mit Rückfrage), WLAN geht bei Bedarf selbst an. [Architektur](architecture.md#gerätesteuerung-per-sprache).
 
+9. **Agonie-Taste und adaptives Lernen** (Idee vom 10.10.2026): B kurz bleibt Abbrechen/Zurück; langes B bewertet eine LLM-Antwort negativ, ohne die Abbruchfunktion zu verlieren. Proximus merkt sich den Fehler auf dem Gedächtnis-Stick, kann nach einer konkreten Korrektur sein Antwortverhalten anpassen und zeigt eine **simulierte** Agonie/Stimmung (kein tatsächlicher Schmerz, kein Training der Modellgewichte durch Tastendruck). Erst Feedback-Ereignisse, dann bestätigte Lernregeln; Widerruf und Offline-Betrieb einplanen. **Noch nicht implementiert.** [MVP, Bedienung und Akzeptanzkriterien](concepts/agonie-feedback.md).
+
 ## Server und Netz
 
 - ~~Zugang über Cloudflare als zweite URL~~: erledigt 08.10.2026, `https://proximus.obivan.org` (nur Bearer-Token). Ein Access-Service-Token bleibt optional möglich (`ASSISTANT_CF_ACCESS_*`).
