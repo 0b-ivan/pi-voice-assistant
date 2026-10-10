@@ -2349,7 +2349,7 @@ def main():
     pitft_lines = config.pitft_buttons
     menu_settings = gpiod.LineSettings(direction=Direction.INPUT, active_low=True,
                                        bias=Bias.PULL_UP)
-    config = {line: settings, **{pin: menu_settings for pin in pitft_lines}}
+    line_config = {line: settings, **{pin: menu_settings for pin in pitft_lines}}
     if not args.probe:
         controller._publish_menu()
 
@@ -2366,7 +2366,7 @@ def main():
             shim = None
 
     try:
-        with gpiod.request_lines(chip, consumer='pi-ptt', config=config) as request:
+        with gpiod.request_lines(chip, consumer='pi-ptt', config=line_config) as request:
             event('waiting_for_release', chip=chip, line=line, probe=args.probe,
                   menu_lines=list(pitft_lines))
             while not stop.is_set():
