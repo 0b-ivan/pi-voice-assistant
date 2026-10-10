@@ -54,6 +54,9 @@ class DetectionTests(unittest.TestCase):
             'erzähl mir 12 minuten eine geschichte': 12.0,
             'erzähl eine halbe stunde lang': 30.0,
             'etc mir immer zehn minuten lang über deine drop': 10.0,   # real STT output
+            'erzähl mir eine fünfminütige geschichte aus deiner vergangenheit': 5.0,
+            'erzähl mir eine zehnminütige geschichte': 10.0,
+            'erzähl eine 15 minütige geschichte': 15.0,
         }
         for text, minutes in cases.items():
             self.assertEqual(story.request(text)['minutes'], minutes, text)

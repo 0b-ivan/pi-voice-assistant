@@ -115,6 +115,7 @@ class SessionTests(unittest.TestCase):
 
     def test_commands_and_names(self):
         self.assertEqual(enroll.command("lerne mich kennen"), "enroll")
+        self.assertEqual(enroll.command("lerne meine stimme"), "enroll")
         self.assertEqual(enroll.command("starte das stimmtraining"), "refine")
         self.assertEqual(enroll.command("stimmprofil nachtrainieren"), "refine")
         self.assertIsNone(enroll.command("wie spät ist es"))

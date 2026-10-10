@@ -65,9 +65,11 @@ _PATTERNS = (
                         r'den wievielten|was für ein tag|datum)\b')),
     ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es (\w+ )?regnen|regenschirm|'
                            r'außentemperatur|wie warm (ist|wird) es|wie kalt (ist|wird) es)\b')),
-    ('calendar', re.compile(r'\b(termine?|kalender|was steht heute an|was steht an|'
+    ('calendar', re.compile(r'\b(termine?|kalender|was steht (heute )?(noch )?an|steht heute noch (was|etwas) an|'
                             r'habe ich heute (?:was|etwas) vor)\b')),
-    ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
+    # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
+    ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
+                           r'ladestand)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
     ('network', re.compile(r'\b(netzwerk\w*|netzwerk status|wlan status|wlan signal|'

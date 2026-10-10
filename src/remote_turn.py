@@ -539,6 +539,11 @@ class RemoteTurnJob:
         except (OSError, http.client.HTTPException, ValueError) as exc:
             self.error = str(exc) or type(exc).__name__
             self.error_stage, self.error_code = 'stream', 'network'
+        except AttributeError:
+            # cancel() closed the response under a running readline() (http.client
+            # then reads from fp=None); only a cancelled turn may end like this.
+            if not self.cancelled:
+                raise
         finally:
             self.uplink.close()
             self.done.set()

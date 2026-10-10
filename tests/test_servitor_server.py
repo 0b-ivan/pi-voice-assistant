@@ -665,6 +665,17 @@ class IntentServerTest(ServerTest):
         self.assertIn('nicht als Bediener erkannt', text)
         self.assertNotIn('Zahnarzt', text)
 
+    def test_guest_cannot_start_enrollment(self):
+        # "Lerne meine Stimme" from an unknown voice: a refusal, not the LLM.
+        import memory
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, copy, emit:
+                                        dict(copy, speaker='unknown')):
+            text, _ = self.device_turn('lerne meine stimme', {'memory': 'on'}, copy)
+        self.assertEqual(text, memory.GUEST_TEXT)
+
     def device_turn(self, transcript, status, memory_copy=None):
         import memory
         self.pipeline.transcript = transcript

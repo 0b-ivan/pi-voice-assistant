@@ -44,6 +44,13 @@ class MatchTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(intents.match(text), intent)
 
+    def test_system_test_stt_forms(self):
+        # Vosk outputs and phrasings from the 2026-10-10 system test.
+        self.assertEqual(intents.match("wie ist der akkus dann"), 'battery')
+        self.assertEqual(intents.match("was steht heute noch an"), 'calendar')
+        self.assertEqual(intents.match("steht heute noch was an"), 'calendar')
+        self.assertIsNone(intents.match("wie lange halten lithium akkus"))
+
     def test_missing_functions_get_an_honest_local_answer(self):
         # Vosk forms from the 2026-10-10 system test included ("still" for "stell").
         for text in ("stell einen wecker auf sieben uhr", "still einen wecker auf sieben uhr",

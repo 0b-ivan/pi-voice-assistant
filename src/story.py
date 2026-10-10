@@ -40,7 +40,7 @@ _STORY = re.compile(r'\b(erzähl\w*|geschichte\w*|sage|sagen|märchen|vortrag|li
 _LONG = re.compile(r'\b(lange|langen|langes|lang|längere\w*|ausführlich\w*|ausgiebig\w*|'
                    r'richtig viel)\b')
 _MINUTES = re.compile(r'\b(\d{1,3}|' + '|'.join(sorted(_NUMBERS, key=len, reverse=True)) +
-                      r')\s*minuten\b')
+                      r')\s*(?:minuten\b|minütig\w*)')
 _HALF_HOUR = re.compile(r'\b(halbe stunde|halben stunde)\b')
 _HOUR = re.compile(r'\b(eine stunde|einer stunde|stundenlang)\b')
 _EXPLAIN = re.compile(r'\b(erklär\w*|beschreib\w*)\b')

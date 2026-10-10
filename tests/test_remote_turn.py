@@ -264,6 +264,24 @@ class RemoteTurnTests(LiveServerCase):
         self.assertEqual(job.error_code, 'unauthorized')
         self.assertTrue(job.fallback_allowed)
 
+    def test_cancel_during_readline_ends_quietly(self):
+        # http.client raises AttributeError when cancel() closed the response
+        # under a running readline() (pi-ptt journal 10.10. 19:20 and 20:19).
+        uplink = Mock()
+        uplink.config.response_timeout = 5
+        job = RemoteTurnJob.__new__(RemoteTurnJob)
+
+        def responses():
+            job.cancelled = True
+            raise AttributeError("'NoneType' object has no attribute 'peek'")
+            yield
+
+        uplink.responses = responses
+        RemoteTurnJob.__init__(job, uplink, self.client_dir)
+        self.assertTrue(job.done.wait(5))
+        self.assertIsNone(job.result)
+        uplink.close.assert_called()
+
     def test_cancel_during_upload_stops_cleanly(self):
         uplink = RemoteTurnUplink(self.config())
         uplink.accept_pcm(b'\0' * 3200)
