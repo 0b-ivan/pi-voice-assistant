@@ -49,6 +49,7 @@ import weather  # noqa: E402
 import agenda  # noqa: E402
 import device_control  # noqa: E402
 import enroll  # noqa: E402
+import logwatch  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
 import protocol  # noqa: E402
@@ -60,6 +61,8 @@ from system_status import phrase_style, sanitize_snapshot  # noqa: E402
 PCM_RATE = 16000
 HANDLED = ('ping',)   # SPX/1 types /v1/message acts on; more come with later steps
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
+# TurnError codes caused by the input, not by the server (logwatch ignores them).
+OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
 
 
 def device_mood(device, text=''):
@@ -282,6 +285,7 @@ class Service:
         self.maintenance_dir = maintenance.DIR
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.weather = weather.Forecast()  # WEATHER_LAT/WEATHER_LON, else no weather
+        self.logwatch = None  # logwatch.server_watch(), started by main()
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
         self.ready = False
@@ -469,6 +473,10 @@ class Service:
                         if day is not None:
                             # The Pi shows its stored forecast with the answer.
                             emit(dict(event='show', screen='weather', day=day))
+                    if intent in ('briefing', 'selftest') and self.logwatch is not None:
+                        snapshot.update(self.logwatch.snapshot_fields('server_log'))
+                        if intent == 'selftest':
+                            self.logwatch.refresh(force=True)  # repair now, not in 30 min
                     if intent in ('calendar', 'briefing'):
                         if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
                             snapshot['agenda'] = agenda.DENIED
@@ -846,10 +854,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                       memory_copy=memory_copy, transcribe_only=transcribe_only,
                                       appointments=appointments)
             except TurnError as exc:
+                # Stage and code only in the journal (the message may quote the operator).
+                # Silence or a too short press is no fault: the self-test skips those.
+                name = 'turn_rejected' if exc.code in OPERATOR_CODES else 'turn_error'
+                print(json.dumps(dict(event=name, stage=exc.stage, code=exc.code)), flush=True)
                 emit(dict(event='error', stage=exc.stage, code=exc.code, message=exc.message))
             except (OSError, TimeoutError):
                 raise
             except Exception as exc:  # report, keep serving
+                print(json.dumps(dict(event='turn_error', stage='internal', code='internal',
+                                      error=type(exc).__name__)), flush=True)
                 emit(dict(event='error', stage='internal', code='internal', message=str(exc)))
             self.wfile.write(b'0\r\n\r\n')
             self.wfile.flush()
@@ -885,6 +899,11 @@ def main():
               flush=True)
 
     threading.Thread(target=load, daemon=True).start()
+    if os.environ.get('SERVITOR_LOGWATCH', '1') != '0':
+        def selftest_report(result):
+            print(json.dumps(dict(event='selftest', findings=result['findings'],
+                                  repairs=result['repairs'])), flush=True)
+        service.logwatch = logwatch.server_watch(report=selftest_report).start()
 
     print(json.dumps(dict(event='listening', bind=config.bind, port=config.port)), flush=True)
     server.serve_forever()

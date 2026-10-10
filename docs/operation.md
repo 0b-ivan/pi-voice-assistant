@@ -19,7 +19,7 @@ sudo systemctl stop pi-ptt.service
 sudo systemctl start pi-ptt.service
 ```
 
-Die Logs enthalten Transkripte, LLM-Antworten und Statusmeldungen, auch wenn WAVs flüchtig gespeichert werden. Zusätzlich werden `latency`-Events für `stt`, `llm` und `tts` ausgegeben; der residente Servitor-Pfad meldet weiterhin `tts_first_chunk` und `tts_playback_start`. Logs vor Weitergabe auf private Inhalte prüfen.
+Das Journal liegt auf dem Pi nur im RAM und wird bei steckendem Gedächtnis-Stick alle 5 Minuten nach `/mnt/proximus-memory/logs/` kopiert; der Selbsttest wertet es alle 30 Minuten aus ([Logs und Selbsttest](logs.md)). Die Logs enthalten Transkripte, LLM-Antworten und Statusmeldungen, auch wenn WAVs flüchtig gespeichert werden. Zusätzlich werden `latency`-Events für `stt`, `llm` und `tts` ausgegeben; der residente Servitor-Pfad meldet weiterhin `tts_first_chunk` und `tts_playback_start`. Logs vor Weitergabe auf private Inhalte prüfen.
 
 ## Konfiguration
 

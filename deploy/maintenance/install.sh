@@ -9,7 +9,10 @@ service="$2"
 mode="${3:-all}"
 here="$(cd "$(dirname "$0")" && pwd)"
 install -m 0755 "$here/proximus-maintenance" /usr/local/sbin/proximus-maintenance
-units="proximus-reboot.service proximus-reboot.path"
+units="proximus-reboot.service proximus-reboot.path proximus-repair@.service"
+# Self-test repairs (src/logwatch.py): the display on the Pi, the local LLM on CT 107.
+if [ "$mode" = reboot-only ]; then repair=proximus-repair-llm.path; else repair=proximus-repair-display.path; fi
+units="$units $repair"
 [ "$mode" = reboot-only ] || units="$units proximus-update.service proximus-update.path"
 for unit in $units; do
     install -m 0644 "$here/$unit" "/etc/systemd/system/$unit"
@@ -26,7 +29,7 @@ mkdir -p "/etc/systemd/system/$service.service.d"
 printf '[Service]\nReadWritePaths=-/run/proximus-maintenance/requests\n' \
     > "/etc/systemd/system/$service.service.d/maintenance.conf"
 systemctl daemon-reload
-systemctl enable --now proximus-reboot.path
+systemctl enable --now proximus-reboot.path "$repair"
 [ "$mode" = reboot-only ] || systemctl enable --now proximus-update.path
 systemctl restart "$service"
 echo "maintenance worker installed for $user ($service)"

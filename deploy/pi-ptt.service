@@ -7,7 +7,8 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=obivan
-SupplementaryGroups=audio gpio i2c
+# systemd-journal: read the journal for the self-test (src/logwatch.py), read-only.
+SupplementaryGroups=audio gpio i2c systemd-journal
 EnvironmentFile=/etc/pi-ptt.env
 EnvironmentFile=/etc/pi-voice-assistant.env
 ExecStart=/usr/bin/python3 /opt/pi-voice-assistant/src/ptt.py
