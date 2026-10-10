@@ -419,6 +419,7 @@ class RemoteTurnJob:
         # take minutes), instead of one deadline for the whole reply.
         self.idle_timeout = idle_timeout
         self.story = None          # state from the server's 'story' event
+        self.journey = None        # structured journey request (no audio), journeys.py
         self.parts = 0             # story audio parts received
         self.directory = Path(directory)
         self.decode = decode
@@ -485,6 +486,7 @@ class RemoteTurnJob:
     def _run(self):
         audio = None
         stopped = False
+        finished = False
         timings = {}
         try:
             self.uplink.wait_uploaded(self.uplink.config.response_timeout)
@@ -520,13 +522,27 @@ class RemoteTurnJob:
                     item = {key: value for key, value in item.items() if key != 'data'}
                 elif kind == 'story':
                     self.story = item.get('state') if isinstance(item.get('state'), dict) else None
+                elif kind == 'journey':
+                    if self.journey is not None:
+                        raise RemoteTurnError('stream', 'protocol', 'second journey event')
+                    self.journey = {key: item.get(key) for key in
+                                    ('request', 'speaker', 'guest', 'proposal')}
                 elif kind == 'done':
+                    finished = True
                     timings = item.get('timings') or {}
                 elif kind == 'stop':
                     stopped = True
                 self._events.put(item)
             if audio is None and self.parts:   # a long story: parts went to the queue
                 self.result = dict(audio=None, story=True, timings=timings,
+                                   host=self.uplink.host)
+                return
+            if audio is None and self.journey is not None:
+                # A journey turn has no audio by design; the Pi acts on it only
+                # once the server finished the turn ('done'), never on a partial one.
+                if not finished:
+                    raise RemoteTurnError('stream', 'incomplete', 'journey turn not finished')
+                self.result = dict(audio=None, journey=self.journey, timings=timings,
                                    host=self.uplink.host)
                 return
             if audio is None and stopped:  # "Stop", "Sei still": nothing to play

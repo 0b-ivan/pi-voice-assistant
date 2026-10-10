@@ -23,6 +23,7 @@ import boardled
 import cue as cue_sound
 import device_control
 import enroll
+import journeys as journey_feed
 import people
 import logwatch
 import maintenance
@@ -708,6 +709,11 @@ class VoiceController:
         self.weather_hide_at = None        # ... until then (after the answer was said)
         self.turn_weather_day = None       # server asked to show it with its answer
         self.agenda = agenda_feed.Agenda()  # CALDAV_*; refreshed by a thread (main)
+        # Trams/trains with optional reminder and calendar entry (journeys.py);
+        # None when TRANSIT_ENABLED=off. One controller for both speech paths.
+        self.journeys = journey_feed.Journeys.from_env(self.agenda, log=event)
+        self.turn_trip = None              # journey proposal taken by the current turn
+        self.journey_step = None           # journeys.Step of a running background job
         self.memory = memory_core.MemoryCore()
         self.memory_present = self.memory.present()
         try:  # restart: neutral, with a faint echo of the newest remembered turns
@@ -855,6 +861,8 @@ class VoiceController:
             event('device', op=self.device_after_speech, result='cancelled')
             self.device_after_speech = None
         self.device_pending = None
+        if self.journeys is not None:
+            self.journeys.cancel()
         self.listen_after_greeting = False
         self._drop_story('button')
         self.speech.stop()
@@ -873,6 +881,8 @@ class VoiceController:
         """"Stop", "Sei still", "Klappe halten" ...: no answer, drop announcements
         that were waiting, back to idle (the wake word listens again)."""
         self._drop_story('voice')
+        if self.journeys is not None:
+            self.journeys.cancel()
         self.speech.stop()
         self.speech_started_at = None
         self.alarm_queue = []
@@ -897,6 +907,8 @@ class VoiceController:
         # This turn may answer a pending reboot/shutdown question; either way
         # the question is used up (anything else drops it).
         self.turn_device_pending = self._device_take_pending()
+        # Same for an open journey proposal: only this turn may answer it.
+        self.turn_trip = self.journeys.take() if self.journeys is not None else None
         self.turn_weather_day = None
         if self.cue is not None and self.cue.play():
             event('cue')
@@ -1053,6 +1065,8 @@ class VoiceController:
                                     maintenance='on' if self.maint.active else 'off',
                                     devctl='on', pending=self._device_pending_now(),
                                     story='on',
+                                    **(self.journeys.snapshot()
+                                       if self.journeys is not None else {}),
                                     **self._mood_fields(),
                                     **(self.logwatch.snapshot_fields()
                                        if self.logwatch is not None else {})))
@@ -1795,8 +1809,15 @@ class VoiceController:
         self.turn_transcript = text
         self.mood.hear(text, time.time())
         pending, self.turn_device_pending = self.turn_device_pending, None
+        trip, self.turn_trip = self.turn_trip, None
         # A pending question first: "abbrechen" is also a stop word.
         reply = self._device_turn(intents.normalize(text), pending, commands=False)
+        if reply is None and self.journeys is not None:
+            # Before stop words, the calendar intent and the LLM; no word limit.
+            request = self.journeys.parse(text, trip)
+            if request is not None:
+                self._journey_turn(request, trip)
+                return
         if reply is None and intents.is_stop(text):
             self.stop_by_voice()
             return
@@ -1889,6 +1910,28 @@ class VoiceController:
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
+
+    def _journey_turn(self, request, taken, speaker=None, guest=False, proposal_id=None,
+                      button=False):
+        """Run one journey turn (journeys.py): speak at once or query in the background."""
+        step = self.journeys.turn(request, speaker=speaker, guest=guest, taken=taken,
+                                  proposal_id=proposal_id, button=button)
+        event('journey', request=request.get('type'), step=step.name)
+        if step.work is None:
+            self._journey_say(step.text)
+            return
+        self.journey_step = step
+        self.job = TranscriptionJob(lambda _unused: step.run(), None)
+        self.job_stage = 'journey'
+        self.job_started_at = time.monotonic()
+
+    def _journey_say(self, text):
+        if self.journeys.proposal is not None:
+            self.device_pending = None      # one open question for writing actions
+        self.turn_llm = 'intent'
+        event('llm_response', text=text, model='local/journey')
+        print(f'SERVITOR: {text}', flush=True)
+        self._start_speech(text, source='assistant', model='local/journey')
 
     def _settle_cue(self):
         """The playback device is not shared: let the cue end before speech."""
@@ -2106,12 +2149,32 @@ class VoiceController:
         if job.cancelled:
             event('transcript_discarded')
             return
+        if job.error is None and (job.result or {}).get('journey') is not None:
+            # Structured hand-over without audio: act only on the completed turn.
+            self.remote_failed = False
+            event('remote_done', host=job.result.get('host'), journey=True)
+            item = job.result['journey']
+            taken, self.turn_trip = self.turn_trip, None
+            request = journey_feed.clean_request(item.get('request'))
+            if request is None or self.journeys is None:
+                event('journey', result='invalid_request')
+                self._journey_say("Fahrtanfrage nicht verstanden.")
+                return
+            proposal = item.get('proposal')
+            self._journey_turn(request, taken,
+                               speaker=item['speaker'] if isinstance(item.get('speaker'), str)
+                               else None,
+                               guest=item.get('guest') is True,
+                               proposal_id=proposal if isinstance(proposal, str) else None)
+            return
         if job.transcript and intents.is_stop(job.transcript):
             # Also with an older server that still sent a spoken reply.
             if job.error is None:
                 self.remote_failed = False
             self.stop_by_voice()
             return
+        if job.error is None:
+            self.turn_trip = None          # answered by something else: question gone
         if job.error is None and (job.result or {}).get('story'):
             self.remote_failed = False
             event('remote_done', host=job.result.get('host'), story=True)
@@ -2198,6 +2261,16 @@ class VoiceController:
         if self.people.active and not self.menu.open and ('B' in commands or 'E' in commands):
             self._people_buttons('E' in commands, 'B' in commands, now)
             commands = [name for name in commands if name not in 'BE']
+        if (self.journeys is not None and self.journeys.proposal is not None
+                and not self.menu.open
+                and ('B' in commands or ('E' in commands and self.job is None))):
+            taken = self.journeys.take()
+            if taken is not None and 'E' in commands and 'B' not in commands:
+                self._journey_turn(dict(type='answer', answer='confirm'), taken, button=True)
+            elif taken is not None:
+                event('journey', result='cancelled', id=taken['id'], source='button')
+                self._say("Abgebrochen. Nichts eingetragen.")
+            commands = [name for name in commands if name not in 'BE']
         if (self.device_pending and not self.menu.open
                 and ('B' in commands or 'E' in commands)):
             op = self._device_take_pending()
@@ -2249,6 +2322,8 @@ class VoiceController:
                 self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
+            if self.journeys is not None:
+                self.journeys.spoken()       # 90 s to answer a proposal from now
             if self.enroll_after_speech:
                 mode, self.enroll_after_speech = self.enroll_after_speech, None
                 self._start_enroll(mode)
@@ -2280,6 +2355,15 @@ class VoiceController:
 
             if stage == 'remote':
                 self._finish_remote(job)
+            elif stage == 'journey':
+                step, self.journey_step = self.journey_step, None
+                # Applied even when B cut it off: a confirmed entry may already exist.
+                text = self.journeys.finish(step, job.result, job.error)
+                if job.cancelled:
+                    self.journeys.cancel()    # never leave an unheard question open
+                    event('journey', result='discarded', step=step.name)
+                elif text:
+                    self._journey_say(text)
             elif job.cancelled:
                 event('transcript_discarded' if stage == 'stt' else 'llm_discarded')
             elif job.error is not None:
@@ -2335,6 +2419,11 @@ class VoiceController:
             self.ptt.resync(held, now)
         if self.wake is not None and not self.probe:
             self._wake_tick(now)
+        if (not self.probe and self.journeys is not None and self.journeys.reminders
+                and self._idle() and not self.menu.open):
+            # Pi reminders, each once, and only when they can be said right now:
+            # a reminder held back past the departure is dropped, never said late.
+            self.alarm_queue.extend(self.journeys.due())
         if not self.probe:
             self._speak_alarms()       # alarms go first, between two story parts
             self._story_tick()

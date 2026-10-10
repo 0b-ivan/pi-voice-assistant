@@ -62,6 +62,8 @@ Nach Konfigurationsänderungen `sudo systemctl restart pi-ptt.service`. Für Ove
 
 Akku- und eigene Messwertfragen werden auch bei längeren Formulierungen direkt aus dem Gerätestatus beantwortet, einschließlich Sprachkern LOKAL. Fehlt ein Akkumesswert, wird das gesagt. „Welches Sprachmodell bist du?“ hat eine feste Antwort als Proximus beziehungsweise Billy. Ab 18 Uhr verwendet der Abendbericht die Wettervorhersage für morgen; fehlt sie, meldet er das ausdrücklich.
 
+**Fahrten (Straßenbahn, Zug, Erinnerung, Kalender):** `TRANSIT_HOME` und `TRANSIT_CITY_STOP` in `/etc/pi-voice-assistant.env` setzen; Kalendereinträge nutzen die `CALDAV_*`-Werte und brauchen Schreibrecht. Einzelheiten und offene Voraussetzungen: [Fahrten](journeys.md).
+
 Der Quittungston lässt sich mit `PTT_CUE=0` in `/etc/pi-ptt.env` abschalten (auch im Menü).
 
 `PTT_RUNTIME_DIR=/run/pi-ptt` ist unter der mitgelieferten Unit fest vorgegeben: systemd erstellt/erlaubt genau dieses Verzeichnis. Ein anderer Pfad ist nur bei manuellem Vordergrundbetrieb oder passender eigener Unit möglich.
