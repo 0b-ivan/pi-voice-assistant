@@ -23,6 +23,16 @@ def fake_gpiod():
     return {'gpiod': gpiod, 'gpiod.line': line}
 
 
+class EventTests(unittest.TestCase):
+    def test_field_called_name_does_not_clash_with_event_name(self):
+        # Enrollment results carry the speaker's name (crashed pi-ptt on 2026-10-10).
+        with patch('builtins.print') as printed, patch.object(ptt, 'publish_display_event') as display:
+            ptt.event('enroll', name='ivan', saved=True)
+        self.assertIn('"event": "enroll"', printed.call_args.args[0])
+        self.assertIn('"name": "ivan"', printed.call_args.args[0])
+        display.assert_called_once_with('enroll')
+
+
 class MainWiringTests(unittest.TestCase):
     def test_wake_detector_factory_still_works_after_main_set_up_gpio(self):
         with tempfile.TemporaryDirectory() as tmp:

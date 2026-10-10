@@ -60,7 +60,8 @@ REFINE_MATCH = 0.4      # lower than for recognition: we already expect a known 
 _REFINE = re.compile(r'\b(stimm(e|profil) (nachtrainieren|nach trainieren|verbessern|verfeinern|'
                      r'trainieren)|nachtrainieren|stimmtraining)\b')
 _COMMAND = re.compile(r'\b(lerne? mich kennen|kennenlernen|kennen lernen|trainingsmodus|'
-                      r'stimmprofil (anlegen|erstellen))\b')
+                      r'stimmprofil (anlegen|erstellen)|lerne? meine stimme|'
+                      r'meine stimme (lernen|anlernen|einlernen|kennenlernen))\b')
 _NAME_PREFIX = re.compile(r'^(?:du kannst mich |nenn(?:e)? mich |ich heiße |mein name ist |'
                           r'ich bin |sag |einfach )+')
 

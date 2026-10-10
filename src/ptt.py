@@ -326,7 +326,7 @@ def publish_display_status(**fields):
             pass
 
 
-def event(name, **fields):
+def event(name, /, **fields):
     print(json.dumps(dict(version=1, event=name, **fields)), flush=True)
     publish_display_event(name)
 

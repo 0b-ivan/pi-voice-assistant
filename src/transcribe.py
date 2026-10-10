@@ -11,6 +11,7 @@ import subprocess
 import time
 import threading
 import queue
+import re
 from contextlib import nullcontext
 from runtime_metrics import phase, process_ready
 import wave
@@ -157,6 +158,21 @@ def _load_vosk_model():
     return model
 
 
+# Words the small Vosk model does not know, as it hears them (operator and system
+# test 10.10.2026: "cookie tat", "cookie tatort", "cookie tattoo" for "Kogitator").
+_TERMS = (
+    (re.compile(r"\b(?:cookie|cooky|kuki|koki|kogi|cogi)\s?(?:tat|tattoo|tatoo|tatort|tator|"
+                r"tatar|tat ort|tat or)\b"), "kogitator"),
+)
+
+
+def fix_terms(text: str) -> str:
+    """Replace known mishearings of project words (Kogitator ...)."""
+    for pattern, word in _TERMS:
+        text = pattern.sub(word, text)
+    return text
+
+
 def _result_text(payload: str, source: str) -> str:
     try:
         result = json.loads(payload)
@@ -167,7 +183,7 @@ def _result_text(payload: str, source: str) -> str:
         return ""
     if not isinstance(text, str):
         raise TranscriptionError(f"invalid Vosk {source} result: {result!r}")
-    return text.strip()
+    return fix_terms(text.strip())
 
 
 def prepare_vosk() -> None:

@@ -49,14 +49,32 @@ _PATTERNS = (
                             r'(prüf|check|analysier)\w* (deine |die )?(logs?|locken|protokolle?)|'
                             r'was steht in (den |deinen )?(logs?|locken|protokollen)|'
                             r'(logs?|protokolle?) (prüfen|auswerten|checken))\b|^selbst$')),
+    # Requests for functions the unit does not have: a fixed honest answer, because
+    # the LLM sometimes claimed "Wecker gestellt" or "Termin gespeichert" (2026-10-10).
+    # Before "calendar": "erinnere mich an den termin" is no calendar question.
+    ('unsupported', re.compile(
+        r'\b((stell|still|setz|mach|aktivier)\w* (\w+ ){0,3}(wecker|timer|alarm|countdown)|'
+        r'(wecker|timer|countdown) (\w+ ){0,3}(stell|setz|aktivier)\w*|weck\w* mich|'
+        r'erinner\w* mich|'
+        r'(schick|send|schreib)\w* (\w+ ){0,3}(nachricht|sms|mail|e ?mail|whatsapp)|'
+        r'spiel\w* (\w+ ){0,3}(musik|lied|song|radio|playlist)|spielmusik|'
+        r'(schalt|mach|dimm)\w* (\w+ ){0,3}(licht|lampe|lampen|heizung)\w*( an| aus| ein)?|'
+        r'(licht|lampe|heizung) (\w+ ){0,2}(an|aus|ein))\b')),
+    # The LLM invented "8/16 Gigabyte" and "12,8 Teraflops" (operator, 10.10. 23:37).
+    ('hardware', re.compile(r'\b(arbeitsspeicher|ram|speicherplatz|festplatte\w*|'
+                            r'speicherkarte|prozessor\w*|cpu|hardware|rechenleistung|'
+                            r'rechenkern\w*|kerne|taktfrequenz|gigahertz|hart ?ware|hard ?ware|'
+                            r'für (eine )?hart$)')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
     ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es (\w+ )?regnen|regenschirm|'
                            r'außentemperatur|wie warm (ist|wird) es|wie kalt (ist|wird) es)\b')),
-    ('calendar', re.compile(r'\b(termine?|kalender|was steht heute an|was steht an|'
+    ('calendar', re.compile(r'\b(termine?|kalender|was steht (heute )?(noch )?an|steht heute noch (was|etwas) an|'
                             r'habe ich heute (?:was|etwas) vor)\b')),
-    ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
+    # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
+    ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
+                           r'ladestand)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
     ('network', re.compile(r'\b(netzwerk\w*|netzwerk status|wlan status|wlan signal|'
@@ -112,6 +130,53 @@ IDENTITY = {
 }
 
 
+# "Wie stelle ich am Handy einen Wecker?" asks for knowledge: that stays with the LLM.
+_HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|können)\b')
+
+# Questions about the unit itself (not about hardware in general).
+_SELF = re.compile(r'\b(du|dein\w*|dich|dir|hast|einheit|proximus|billy|servitor)\b')
+
+# "Wie viel Arbeitsspeicher?" alone asks about the unit; "was ist ein Prozessor" does not.
+_DEFINE = re.compile(r'^(was (ist|sind|bedeutet|heißt)|erklär\w*|wofür)\b')
+
+# Raspberry Pi Zero 2 W of this unit; current free values from the snapshot.
+HARDWARE = {
+    'off': "Hardware: Raspberry Pi Zero 2 W. Prozessor: 4 Kerne ARM Cortex-A53, 1 Gigahertz. "
+           "Arbeitsspeicher: 512 Megabyte{mem}. Speicher: 32 Gigabyte Speicherkarte{disk}, "
+           "dazu 8 Gigabyte Gedächtnisstick. Sprachkern auf dem Server.",
+    'full': "Trägersystem: Raspberry Pi Zero 2 W. Rechenkern: 4 Kerne ARM Cortex-A53, "
+            "1 Gigahertz. Arbeitsspeicher: 512 Megabyte{mem}. Datenspeicher: 32 Gigabyte"
+            "{disk}, dazu 8 Gigabyte Gedächtniskern. Das Denken übernimmt der Kogitator.",
+    'billy': "Ich steck in einem Raspberry Pi Zero 2 W: vier kleine Kerne mit 1 Gigahertz, "
+             "512 Megabyte Arbeitsspeicher{mem} und 32 Gigabyte Speicherkarte{disk}, dazu "
+             "ein 8-Gigabyte-Stick. Das Denken macht der Server.",
+}
+
+
+def hardware_text(snapshot, lore='off'):
+    mem, disk = snapshot.get('mem_free_pct'), snapshot.get('disk_free_pct')
+    key = 'billy' if is_billy(lore) else ('full' if lore == 'full' else 'off')
+    return HARDWARE[key].format(
+        mem=f", {mem} Prozent frei" if isinstance(mem, int) else '',
+        disk=f", {disk} Prozent frei" if isinstance(disk, int) else '')
+
+
+UNSUPPORTED = {
+    'off': ("Funktion nicht vorhanden. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+            "Haussteuerung besitzt diese Einheit nicht.",
+            "Nicht ausführbar. Diese Einheit hat keine Wecker, Timer, Erinnerungen, "
+            "Nachrichten, Musik oder Haussteuerung."),
+    'light': ("Nicht ausführbar. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+              "Haussteuerung fehlen dieser Einheit.",),
+    'full': ("Protokoll nicht vorhanden. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+             "Haussteuerung wurden dieser Einheit nicht verliehen.",),
+    'billy': ("Das kann ich nicht. Wecker, Timer, Erinnerungen, Nachrichten, Musik oder Licht "
+              "hab ich nicht an Bord.",
+              "Geht nicht, so was hat man mir nicht eingebaut. Kein Wecker, kein Timer, keine "
+              "Erinnerungen, keine Nachrichten, keine Musik, kein Licht."),
+}
+
+
 def normalize(text):
     return ' '.join(re.findall(r"[\wäöüß']+", str(text).lower()))
 
@@ -119,14 +184,25 @@ def normalize(text):
 def match(text, persona=None):
     """Intent name or None. Conservative: anything unclear goes to the LLM."""
     text = normalize(text)
-    if not text or len(text.split()) > 12:
+    if not text:
         return None
+    if len(text.split()) > 12:
+        # Long sentences go to the LLM; only a question about the unit's own
+        # hardware is answered here, so it never gets invented numbers.
+        hardware = dict(_PATTERNS)['hardware']
+        return 'hardware' if len(text.split()) <= 20 and hardware.search(text) \
+            and _SELF.search(text) else None
     for name, pattern in _PATTERNS:
         if pattern.search(text):
             if name in ('time', 'date', 'weather') and _ELSEWHERE.search(text):
                 return None
             if persona == 'mensch' and (name == 'identity' or _PERSONAL.search(text)):
                 return None
+            if name == 'unsupported' and _HOWTO.search(text):
+                return None
+            if name == 'hardware' and not _SELF.search(text) and (
+                    len(text.split()) > 4 or _DEFINE.search(text)):
+                return None   # "wie viel RAM braucht ein Laptop": general knowledge
             return name
     return None
 
@@ -276,6 +352,11 @@ def answer(intent, now, snapshot=None, lore=None):
         return calendar_text(snapshot, lore)
     if intent == 'selftest':
         return logwatch.selftest_text(snapshot, lore, now)
+    if intent == 'hardware':
+        return hardware_text(snapshot, lore)
+    if intent == 'unsupported':
+        key = 'billy' if is_billy(lore) else lore
+        return variants.pick(f'unsupported.{key}', UNSUPPORTED.get(key, UNSUPPORTED['off']))
     if intent == 'identity':
         return variants.pick(f'identity.{lore}', IDENTITY.get(lore, IDENTITY['off']))
     raise ValueError(f'unknown intent {intent!r}')

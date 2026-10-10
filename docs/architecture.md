@@ -146,7 +146,7 @@ Der Prompt bleibt in stabiler Reihenfolge (Persona, Lore-Stufe, Gedächtnis), da
 
 ### Lange Geschichten
 
-Ausdrücklich lange Erzählwünsche („Erzähl mir eine lange Geschichte“, „erzähl ausführlich …“, „… zwanzig Minuten über …“) erkennt [`src/story.py`](../src/story.py) ohne Modellaufruf; „Erzähl eine Geschichte“ allein bleibt eine normale Antwort, „erklär ausführlich“ ist keine Geschichte. Ohne Dauer gelten `STORY_DEFAULT_MINUTES` (10), höchstens `STORY_MAX_MINUTES` (30). Geplant wird mit `STORY_WORDS_PER_MINUTE` (130); sobald echte Audiolängen da sind, rechnet die Planung mit der gemessenen Sprechgeschwindigkeit.
+Ausdrücklich lange Erzählwünsche („Erzähl mir eine lange Geschichte“, „erzähl ausführlich …“, „… zwanzig Minuten über …“, auch „zehn Minuten lang über …“ ohne erkanntes „erzähl“) erkennt [`src/story.py`](../src/story.py) ohne Modellaufruf; „Erzähl eine Geschichte“ allein bleibt eine normale Antwort, „erklär ausführlich“ ist keine Geschichte. Ohne Dauer gelten `STORY_DEFAULT_MINUTES` (10), höchstens `STORY_MAX_MINUTES` (30). Geplant wird mit `STORY_WORDS_PER_MINUTE` (180, am Pi mit thorsten-high gemessen: etwa 185); sobald echte Audiolängen da sind, rechnet die Planung mit der gemessenen Sprechgeschwindigkeit.
 
 | Stelle | Alltag | lange Geschichte |
 |---|---|---|
@@ -159,7 +159,7 @@ Ausdrücklich lange Erzählwünsche („Erzähl mir eine lange Geschichte“, �
 
 **Abbruch:** Taste B, die Sprechtaste oder das Aktivierungswort in einer Lücke zwischen zwei Teilen beenden die Geschichte sofort: laufende Anfrage abgebrochen, vorgemerkte Teile gelöscht, Wiedergabe gestoppt. Ein „Stopp“ über die Sprechtaste beendet ohne neue Antwort. Während ein Teil spielt, ist das Mikrofon wie immer aus; reine Sprachunterbrechung ohne Taste gibt es weiterhin nicht. Alarme werden an der nächsten Teilgrenze vor dem nächsten Teil gesprochen. Bricht ein Abschnitt ab (Netz, Server, Modell), sagt Proximus einmal, dass die Erzählung hier endet; sie beginnt nie von vorn und wird nach einem Neustart nicht fortgesetzt. Der Zustand liegt nur im Arbeitsspeicher; gespeichert wird höchstens der Anfang des ersten Abschnitts als normaler Verlaufseintrag (gekürzt wie jede Antwort). Ein älterer Pi ohne `story`-Kennung bekommt einen ehrlichen Hinweis statt einer heimlich gekürzten Geschichte. Ohne Server erzählt der Pi über OpenRouter abschnittsweise mit lokaler Sprachausgabe.
 
-Offline geprüft (simulierte Audiolängen für 10, 15 und 20 Minuten, Abbruch, Fehler, Warteschlange). Hörbare Dauer, Übergänge und Leistung auf Pi und CT 107 sind noch nicht real gemessen.
+Offline geprüft (simulierte Audiolängen für 10, 15 und 20 Minuten, Abbruch, Fehler, Warteschlange). **Am Gerät (10.10.2026):** zehn Minuten angefordert, erster Abschnitt nach etwa 21 s Serverzeit fertig (LLM 3,6 s), drei Folgeabschnitte automatisch nachgeladen (264–299 Wörter, je etwa 90–95 s Audio), Taste B stoppte nach 3 Minuten. Eine vollständige 10- bis 20-Minuten-Geschichte und die Lücken zwischen Abschnitten sind noch nicht ganz durchgehört.
 
 ### Sprechstil und Stimmeffekt
 

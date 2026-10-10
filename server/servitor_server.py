@@ -547,6 +547,10 @@ class Service:
                     # Only the operator (or anyone before enrollment) may start it.
                     answer, model = enroll.ANNOUNCE, 'local/enroll'
                     emit(dict(event='enroll', mode=enroll.command(intents.normalize(text))))
+                elif enroll.command(intents.normalize(text)) and memory.unknown_speaker(memory_copy):
+                    # A guest asking to be learned: say no instead of letting the LLM
+                    # claim "Stimme erkannt" (system test 10.10.2026).
+                    answer, model = memory.GUEST_TEXT, 'local/enroll'
                 elif service_op is not None and memory_copy is not NO_MEMORY:
                     # Only Pis that know maintenance send a memory state too.
                     answer = self._maintenance_reply(service_op, device or {})
