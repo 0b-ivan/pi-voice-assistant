@@ -320,7 +320,9 @@ class Service:
         if not prints or not self.embedder.available:
             return memory_copy
         try:
-            embedding = self.embedder.embed(bytes(audio))
+            # Without the pauses before and after the words: the enrolled
+            # voiceprint is built from trimmed speech too.
+            embedding = self.embedder.embed(speaker.trim_silence(bytes(audio)))
         except Exception as exc:  # never fail a turn over speaker recognition
             print(json.dumps(dict(event='speaker_error', message=str(exc))), flush=True)
             return memory_copy
@@ -606,7 +608,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not 0 < length <= PCM_RATE * 2 * 30:
             return self._json(413, dict(error='1 to 30 s of audio'))
         pcm = self.rfile.read(length)
-        embedding = self.service.embedder.embed(pcm)
+        embedding = self.service.embedder.embed(speaker.trim_silence(pcm))
         if embedding is None:
             return self._json(400, dict(error='audio shorter than 1 s'))
         return self._json(200, {'print': speaker.encode(embedding),
