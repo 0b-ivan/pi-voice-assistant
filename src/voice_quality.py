@@ -40,7 +40,7 @@ NOISE_WARMUP_SECONDS = 0.3  # drop startup/ALSA transients from room recording
 
 # Start values for enrollment clips (concept, section 5).
 SPEECH_MIN, SPEECH_MAX = 2.0, 8.0
-SPEECH_RATIO_MIN = 0.65
+SPEECH_RATIO_MIN = 0.50  # short, natural 5s prompts include normal lead/trailing silence
 PAUSE_MAX = 1.2
 CLIP_LEVEL = 0.99 * 32767
 CLIP_RATIO_MAX = 0.001
