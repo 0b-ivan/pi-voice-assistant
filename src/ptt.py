@@ -31,6 +31,8 @@ import memory as memory_core
 import story as stories
 import sysmon
 import variants
+import voice_enroll
+import voice_profile
 from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, AlarmMonitor, wake_phrase,
                     shutdown_text,
                     memory_phrase)
@@ -135,7 +137,10 @@ DISPLAY_STATUS_VALUES = {
     'opt_bt': {'on', 'off', 'none'},
     'menu_group': {'top', *MENU_GROUPS},
     'maint': {'on', 'off'},
-    'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth'},
+    'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth', 'voice', 'baseline',
+               'confirm', 'check'},
+    'enroll_cond': {'near', 'far', 'quiet'},
+    'enroll_check': {'on', 'off'},
     'people': {'on', 'off'},
     'people_rev': set(range(10000)),
     'enroll_rec': {'on', 'off'},
@@ -196,6 +201,9 @@ def llm_kind(model):
     return 'offline' if model.startswith('local/') else 'openrouter'
 
 
+BEEP_SETTLE = 0.3   # start value (concept stimm-einlernen, section 3); longer with echo
+
+
 class EnrollIO:
     """Hardware side of enroll.Session: clips through aplay, arecord, server."""
 
@@ -243,7 +251,10 @@ class EnrollIO:
         self._play(path)
 
     def beep(self):
+        """The beep, then BEEP_SETTLE of silence: the recording starts only
+        once the beep has died away (no beep or echo in the clip)."""
         self._play(self.beep_path, 5)
+        time.sleep(BEEP_SETTLE)
 
     def record(self, path, seconds, attempts=6):
         """Record; while the capture device is still busy (e.g. the wake-word
@@ -276,11 +287,41 @@ class EnrollIO:
     def voiceprint(self, pcm):
         return enroll.voiceprint(pcm)
 
-    def publish(self, stage=None, step=None, total=None, rec=None):
-        publish_display_status(enroll=stage, enroll_step=step if stage else None,
-                               enroll_total=total if stage else None,
-                               enroll_rec=(('on' if rec else 'off') if rec is not None else None)
-                               if stage else None)
+    def clip(self, pcm):
+        return enroll.clip(pcm)
+
+    _UNSET = object()
+
+    def publish(self, stage=_UNSET, step=_UNSET, total=_UNSET, rec=_UNSET, condition=_UNSET,
+                text=_UNSET, checking=_UNSET):
+        """Display state of a session; fields left out keep their value, the
+        sentence to read goes to a separate RAM file (display-enroll.json)."""
+        unset = EnrollIO._UNSET
+        if stage is None:
+            fields = dict(enroll=None, enroll_step=None, enroll_total=None, enroll_rec=None,
+                          enroll_cond=None, enroll_check=None)
+            text = ''
+        else:
+            fields = {}
+            if stage is not unset:
+                fields['enroll'] = stage
+            if step is not unset:
+                fields['enroll_step'] = step
+            if total is not unset:
+                fields['enroll_total'] = total
+            if rec is not unset:
+                fields['enroll_rec'] = None if rec is None else ('on' if rec else 'off')
+            if condition is not unset:
+                fields['enroll_cond'] = condition
+            if checking is not unset:
+                fields['enroll_check'] = 'on' if checking else None
+        if text is not unset:
+            path = self.runtime / 'display-enroll.json'
+            try:
+                people.write_view(path, dict(text=str(text or '')[:200]))
+            except OSError:
+                pass
+        publish_display_status(**fields)
 
 
 def publish_display_status(**fields):
@@ -726,6 +767,7 @@ class VoiceController:
         except (OSError, ValueError, AttributeError):
             pass
         self.turn_transcript = None
+        self.turn_guest = False            # voice not recognized as an enrolled person
         # A running long story (story.StoryRun, RAM only) and, with a server,
         # how to ask it for the next section (set by main()).
         self.story = None
@@ -918,6 +960,7 @@ class VoiceController:
             event('cue')
         self.turn_released_at = time.monotonic()
         self.turn_llm = None
+        self.turn_guest = False
         if uplink is not None:
             if uplink.error is None:
                 self.remote_capture = capture
@@ -978,7 +1021,7 @@ class VoiceController:
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
-        if item in ('enroll', 'refine'):
+        if item in ('enroll', 'refine', 'facts', 'wake_rec'):
             self._publish_menu()
             self._start_enroll(item)
             return
@@ -1559,9 +1602,47 @@ class VoiceController:
         if self.menu.open:
             self.menu.close()
             self._publish_menu()
-        self.enroll = enroll.Session(self.memory, EnrollIO(config=self.config), mode=mode, target=target)
+        io = EnrollIO(config=self.config)
+        if mode == 'wake_rec':
+            self.enroll = enroll.Session(self.memory, io, mode='wake')
+        elif mode == 'facts':
+            self.enroll = voice_enroll.VoiceSession(self.memory, io, mode='facts')
+        elif mode == 'refine':
+            person = self._enroll_target(target)
+            if person is None:
+                return
+            self.enroll = voice_enroll.VoiceSession(self.memory, io, mode='add', target=person)
+        else:
+            self.enroll = voice_enroll.VoiceSession(
+                self.memory, io, mode='new',
+                baseline=os.environ.get('PTT_ENROLL_BASELINE', 'off') == 'on')
         event('enroll', state='start', mode=mode)
         self.enroll.start()
+
+    def _enroll_target(self, name=None):
+        """{name, profile_id} of the person whose voice is recorded again: the
+        one chosen (and authenticated) in "Personen", else the only one known."""
+        names = [person for person, _ in self.memory.people()]
+        v2 = {p['name']: p['profile_id'] for p in self.voice_profiles()}
+        if name is None:
+            known = sorted(set(names) | set(v2))
+            if not known:
+                self._say(enroll.NO_PROFILE)
+                return None
+            if len(known) > 1:
+                self._say(enroll.CHOOSE_PERSON)
+                return None
+            name = known[0]
+        profile = self.memory.profile(name) or {}
+        return dict(name=name, profile_id=profile.get('profile_id') or v2.get(name))
+
+    def _offer_enroll(self):
+        """A spoken "lerne mich kennen" only opens the menu at "Stimme
+        kennenlernen": button E starts, a voice alone never changes a profile."""
+        if self.enroll is not None:
+            return
+        self.menu.select('enroll', time.monotonic())
+        self._publish_menu()
 
     def _check_memory(self):
         """Announce plugging or pulling the memory stick."""
@@ -1578,15 +1659,44 @@ class VoiceController:
             return []  # plugged but not readable yet: next check
         return [memory_phrase(present, (counts or {}).get('facts'), self.style)]
 
+    def _voice_unchecked(self):
+        """Local fallback with someone enrolled: no server checks the voice,
+        so the turn counts as a guest's (no personal data, no changes)."""
+        try:
+            return self.memory.present() and (bool(self.memory.people())
+                                              or bool(self.voice_profiles()))
+        except OSError:
+            return True
+
+    def voice_profiles(self):
+        """The v2 voice profiles on the stick ([] without stick)."""
+        if not self.memory.present():
+            return []
+        return voice_profile.ProfileStore(self.memory.voice_dir / 'profiles-v2').all()
+
+    def voice_core(self):
+        """Calibrated v2 profiles for the server, or None."""
+        try:
+            return voice_profile.voice_core(self.voice_profiles())
+        except OSError:
+            return None
+
+    def _turn_memory(self):
+        context = self.memory.context()
+        if self.turn_guest and context is not None:
+            return memory_core.guest_view(context, 'unverified')
+        return context
+
     def _memory_command(self, text):
         """Local fallback: memory commands answered and applied on the Pi."""
         command = memory_core.command(intents.normalize(text))
         if command is None:
             return None
         op, argument = command
-        context = self.memory.context()
+        context = self._turn_memory()
         reply = memory_core.reply(op, argument, context, self.style)
-        if context is not None and op in ('add_fact', 'add_directive', 'forget'):
+        if (context is not None and op in ('add_fact', 'add_directive', 'forget')
+                and not self.turn_guest):
             self.memory.apply(dict(op=op, text=argument))
             event('memory', op=op)
         return reply
@@ -1594,6 +1704,8 @@ class VoiceController:
     def _learn(self, reply):
         """Strip MERKE/DIREKTIVE lines from an LLM reply and store them."""
         spoken, learned = memory_core.split_learned(reply)
+        if self.turn_guest:
+            return spoken
         for op, value in learned:
             if self.memory.apply(dict(op=op, text=value)):
                 event('memory', op=op, learned=True)
@@ -1811,6 +1923,7 @@ class VoiceController:
 
     def _start_llm(self, text):
         self.turn_transcript = text
+        self.turn_guest = self._voice_unchecked()
         self.mood.hear(text, time.time())
         pending, self.turn_device_pending = self.turn_device_pending, None
         trip, self.turn_trip = self.turn_trip, None
@@ -1820,7 +1933,7 @@ class VoiceController:
             # Before stop words, the calendar intent and the LLM; no word limit.
             request = self.journeys.parse(text, trip)
             if request is not None:
-                self._journey_turn(request, trip)
+                self._journey_turn(request, trip, guest=self.turn_guest)
                 return
         if reply is None and intents.is_stop(text):
             self.stop_by_voice()
@@ -1831,9 +1944,14 @@ class VoiceController:
             event('llm_response', text=reply, model='local/device')
             self._start_speech(reply, source='assistant', model='local/device')
             return
+        if enroll.command(intents.normalize(text)) and self.turn_guest:
+            # Nobody checked the voice: the menu "Kennenlernen" still works.
+            event('llm_response', text=memory_core.GUEST_TEXT, model='local/enroll')
+            self._start_speech(memory_core.GUEST_TEXT, source='assistant', model='local/enroll')
+            return
         if enroll.command(intents.normalize(text)):
             self.enroll_after_speech = enroll.command(intents.normalize(text))
-            reply = enroll.ANNOUNCE
+            reply = enroll.MENU_HINT
             event('llm_response', text=reply, model='local/enroll')
             self._start_speech(reply, source='assistant', model='local/enroll')
             return
@@ -1885,7 +2003,11 @@ class VoiceController:
             if intent in ('calendar', 'briefing'):
                 calendar_day = intents.calendar_day(text, datetime.date.today()) if intent == 'calendar' else 0
                 snapshot['agenda_day'] = calendar_day
-                snapshot['agenda'] = self.agenda.tomorrow() if calendar_day == 1 else self.agenda.today()
+                if self.turn_guest:
+                    snapshot['agenda'] = agenda_feed.DENIED
+                else:
+                    snapshot['agenda'] = (self.agenda.tomorrow() if calendar_day == 1
+                                          else self.agenda.today())
             if intent.startswith('night_') or intent == 'briefing':
                 snapshot['nightwatch'] = self._local_night_view()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
@@ -1904,7 +2026,7 @@ class VoiceController:
             self._story_state(state, remote=False)
             event('story_start', minutes=state['minutes'], ids=state['ids'], route='pi')
             return
-        context = self.memory.context()
+        context = self._turn_memory()
         model = free_model() if self.llm_mode == 'free' else None
         reply_function = functools.partial(generate_reply, lore=self.lore,
                                            memory=context, model=model,
@@ -1997,7 +2119,10 @@ class VoiceController:
             self._selftest_requested(text)
         elif kind == 'speaker':
             # The server's voice check, for tuning the threshold with real voices.
-            event('speaker', known=bool(item.get('known')), score=item.get('score'))
+            status = item.get('status')
+            event('speaker', known=bool(item.get('known')), score=item.get('score'),
+                  **({'status': status} if isinstance(status, str) else {}))
+            self.turn_guest = not item.get('known')
         elif kind == 'enroll':
             # after the server's announcement
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
@@ -2019,7 +2144,8 @@ class VoiceController:
                 event('memory', op=item.get('op'), learned=bool(item.get('learned')))
         elif kind == 'reply':
             text = str(item.get('text', ''))
-            if self.turn_transcript and not intents.is_stop(self.turn_transcript):
+            if (self.turn_transcript and not intents.is_stop(self.turn_transcript)
+                    and not self.turn_guest):
                 self._remember_turn(self.turn_transcript, text,
                                           mood=self.mood.label(time.time()),
                                           persona=self.persona)
@@ -2263,9 +2389,11 @@ class VoiceController:
                     if self.commands[name].update(shim_pressed[i], now) == 'start']
         if self.enroll is not None and not self.probe:
             if self.enroll.running:
-                # The session owns microphone and speaker; only B (cancel) counts.
+                # The session owns microphone and speaker; B cancels, E confirms.
                 if 'B' in commands:
                     self.enroll.cancel()
+                elif 'E' in commands and hasattr(self.enroll, 'press'):
+                    self.enroll.press('E')
                 self.last_activity = now
                 return
             finished, self.enroll = self.enroll, None
@@ -2355,8 +2483,8 @@ class VoiceController:
             if self.journeys is not None:
                 self.journeys.spoken()       # 90 s to answer a proposal from now
             if self.enroll_after_speech:
-                mode, self.enroll_after_speech = self.enroll_after_speech, None
-                self._start_enroll(mode)
+                self.enroll_after_speech = None
+                self._offer_enroll()
             if self.weather_shown:
                 self.weather_hide_at = time.monotonic() + WEATHER_HOLD_SECONDS
             if self.device_after_speech:
@@ -2410,8 +2538,8 @@ class VoiceController:
                 self._publish_mood()
                 reply = self._learn(reply)
                 self._remember_turn(self.turn_transcript or '', reply,
-                                          mood=self.mood.label(time.time()),
-                                          persona=self.persona)
+                                    mood=self.mood.label(time.time()),
+                                    persona=self.persona)
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
@@ -2583,15 +2711,23 @@ def main():
             def uplink_factory():
                 controller = controller_ref[0] if controller_ref else None
                 status = controller.turn_snapshot() if controller else None
-                memory_copy = (memory_core.encode_header(
-                    session.memory_payload(controller.memory.context())) if controller else None)
+                context = controller.memory.context() if controller else None
+                memory_copy = (memory_core.encode_header(session.memory_payload(context))
+                               if controller else None)
+                voice = controller.voice_core() if controller else None
+                # Guest copy for a server that cannot check the v2 voice: marked
+                # as enrolled, so the server stays strict and refuses changes.
+                guest = (memory_core.encode_header(dict(
+                    memory_core.guest_view(context, 'unverified'), enrolled=1))
+                    if voice and context is not None else None)
                 appointments = (agenda_feed.encode_header(controller.agenda.today())
                                 if controller else None)
                 tomorrow = (agenda_feed.encode_header(controller.agenda.tomorrow())
                             if controller else None)
                 return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
                                         agenda=appointments, session=session,
-                                        agenda_tomorrow=tomorrow,
+                                        agenda_tomorrow=tomorrow, voice=voice,
+                                        memory_guest=guest,
                                         nightwatch=nightwatch.encode_view(controller.nightstore.view())
                                         if controller else None)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)

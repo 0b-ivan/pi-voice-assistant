@@ -10,7 +10,7 @@ owns a Menu and publishes its state for display.py, which shares LABELS.
 GROUPS = {
     'voice': ('wake', 'llm', 'server', 'cue', 'back'),
     'persona': ('human', 'persona', 'voice_fx', 'lore', 'emotions', 'back'),
-    'people': ('people', 'enroll', 'refine', 'back'),
+    'people': ('people', 'enroll', 'refine', 'facts', 'wake_rec', 'back'),
     'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
     'device': ('wlan', 'alarms', 'led', 'screen', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
@@ -27,7 +27,8 @@ LABELS = {
     'wake': 'Aktivierungswort', 'llm': 'Sprachkern', 'lore': 'Lore-Stufe',
     'server': 'Server nutzen', 'cue': 'Quittungston', 'human': 'Menschlich',
     'emotions': 'Gefühle',
-    'voice_fx': 'Stimmeffekt', 'enroll': 'Kennenlernen', 'refine': 'Stimme nachtrainieren',
+    'voice_fx': 'Stimmeffekt', 'enroll': 'Stimme kennenlernen', 'refine': 'Stimme ergänzen',
+    'facts': 'Fakten kennenlernen', 'wake_rec': 'Wakeword aufnehmen',
     'wlan': 'WLAN', 'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
 }
@@ -35,7 +36,8 @@ LABELS = {
 # group and the speaking style switch inside it.
 LABELS_IN_GROUP = {'people': 'Bekannte Personen', 'persona': 'Sprechstil'}
 # Selecting these leaves the menu (another screen or an action takes over).
-CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'people', 'bt_scan',
+CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'facts', 'wake_rec',
+           'people', 'bt_scan',
            'bt_forget', 'bt_connect')
 TIMEOUT_SECONDS = 15.0
 

@@ -176,7 +176,10 @@ def read_status(path=None):
                          ('memory', ('on', 'off')),
                          ('opt_bt', ('on', 'off', 'none')),
                          ('maint', ('on', 'off')),
-                         ('enroll', ('intro', 'wake', 'ask', 'process', 'done', 'auth')),
+                         ('enroll', ('intro', 'wake', 'ask', 'process', 'done', 'auth',
+                                     'voice', 'baseline', 'confirm', 'check')),
+                         ('enroll_cond', ('near', 'far', 'quiet')),
+                         ('enroll_check', ('on', 'off')),
                          ('people', ('on', 'off')),
                          ('enroll_rec', ('on', 'off')),
                          ('maint_confirm', MAINT_ITEMS),
@@ -1045,15 +1048,33 @@ def render_enroll(display, status, info=None):
         draw.text((12, 52), f'Frage {step + 1} / {total}', font=font(13), fill=(170, 175, 180))
         for row, line in enumerate(_wrap(draw, ENROLL_QUESTIONS[step], 17, 216)[:4]):
             draw.text((12, 76 + row * 24), line, font=font(17), fill='white')
+    elif stage in ('voice', 'baseline'):
+        # "Stimme 12/24", "fern · sprich jetzt" / "prüfe", the sentence, a bar.
+        label = 'Stimme' if stage == 'voice' else 'Rhythmus'
+        draw.text((12, 46), f'{label} {step}/{total}', font=font(13), fill=(170, 175, 180))
+        state = ('prüfe' if status.get('enroll_check') == 'on' else
+                 'sprich jetzt' if status.get('enroll_rec') == 'on' else 'lies mit')
+        where = ENROLL_CONDITIONS.get(status.get('enroll_cond'))
+        _right(draw, 228, 46, f'{where} · {state}' if where else state, 13, accent)
+        text = (info.get('text') if 'text' in info else read_enroll_text()) or ''
+        for row, line in enumerate(_wrap(draw, text, 16, 216)[:5]):
+            draw.text((12, 68 + row * 21), line, font=font(16), fill='white')
+        if total:
+            draw.rectangle((12, 182, 228, 188), outline=(65, 65, 65))
+            draw.rectangle((12, 182, 12 + int(216 * min(step, total) / total), 188), fill=accent)
+    elif stage == 'confirm':
+        draw.text((12, 52), 'Profil geprüft', font=font(13), fill=(170, 175, 180))
+        for row, line in enumerate(_wrap(draw, 'E übernimmt · B verwirft', 17, 216)):
+            draw.text((12, 76 + row * 24), line, font=font(17), fill='white')
     elif stage == 'auth':
         draw.text((12, 52), 'Authentifizierung', font=font(13), fill=(170, 175, 180))
         for row, line in enumerate(_wrap(draw, 'Nach dem Ton die Passphrase sprechen.', 17, 216)):
             draw.text((12, 76 + row * 24), line, font=font(17), fill='white')
     else:
         text = {'intro': 'Sitzung beginnt …', 'process': 'Stimmprofil wird berechnet …',
-                'done': 'Abgeschlossen'}.get(stage, '')
+                'check': 'Raum wird gemessen …', 'done': 'Abgeschlossen'}.get(stage, '')
         draw.text((12, 90), text, font=font(17), fill='white')
-    if status.get('enroll_rec') == 'on':
+    if status.get('enroll_rec') == 'on' and stage not in ('voice', 'baseline'):
         draw.ellipse((12, 160, 28, 176), fill=(230, 40, 40))
         draw.text((36, 159), 'AUFNAHME', font=font(15), fill=(255, 90, 90))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
@@ -1062,6 +1083,18 @@ def render_enroll(display, status, info=None):
 
 
 PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', '/run/pi-ptt/display-people.json'))
+ENROLL_FILE = Path(os.environ.get('PI_DISPLAY_ENROLL_FILE', '/run/pi-ptt/display-enroll.json'))
+ENROLL_CONDITIONS = {'near': 'nah', 'far': 'fern', 'quiet': 'leise'}
+
+
+def read_enroll_text(path=None):
+    """The sentence to read during enrollment (written by ptt.py), or ''."""
+    try:
+        data = json.loads((ENROLL_FILE if path is None else Path(path)).read_text())
+    except (OSError, ValueError):
+        return ''
+    text = data.get('text') if isinstance(data, dict) else None
+    return text[:200] if isinstance(text, str) else ''
 
 
 def read_people(path=None):
@@ -1484,7 +1517,8 @@ def main():
             time.sleep(SLEEP_POLL_SECONDS)
             continue
         if status.get('enroll'):
-            screen = ('enroll', tuple(sorted(status.items())), battery_view(battery))
+            screen = ('enroll', tuple(sorted(status.items())), read_enroll_text(),
+                      battery_view(battery))
             if screen != previous_screen:
                 render_enroll(display, status, dict(battery=battery))
                 previous_screen = screen

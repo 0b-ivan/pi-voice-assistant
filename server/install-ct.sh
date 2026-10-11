@@ -17,6 +17,10 @@ if [ "$SRC" != "$B/repo/server" ]; then
 fi
 # Speaker recognition (src/speaker.py): sherpa-onnx and the CAM++ VoxCeleb model.
 "$B/.venv/bin/pip" install -q sherpa-onnx==1.13.8
+# Speech frames for the shared voice path (src/voice_quality.py): WebRTC VAD;
+# without it voice_quality falls back to an energy estimate.
+"$B/.venv/bin/pip" install -q webrtcvad-wheels==2.0.14 \
+  || echo "webrtcvad not installed: voice_quality uses the energy estimate" >&2
 SPEAKER="$B/models/speaker/campplus.onnx"
 SPEAKER_SHA=357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b
 if ! echo "$SPEAKER_SHA  $SPEAKER" | sha256sum -c --status 2>/dev/null; then

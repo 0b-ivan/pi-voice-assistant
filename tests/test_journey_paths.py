@@ -57,7 +57,7 @@ class ServerPathTests(LiveServerCase):
         guest = dict(facts=[], directives=[], history=[],
                      voiceprints=[dict(name='Ivan', print='AAAA')])
         with patch.object(ss.Service, '_identify',
-                          lambda self, audio, copy, emit: dict(copy, speaker='unknown')), \
+                          lambda self, audio, copy, emit, voice=None: dict(copy, speaker='unknown')), \
                 patch.object(ss.Handler, '_memory', lambda handler, device: (guest, None)):
             job = self.journey_turn('ja', {'trip': 'ask', 'trip_id': '0123456789abcdef',
                                            'memory': 'on'})

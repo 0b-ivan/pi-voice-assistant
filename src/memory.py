@@ -206,6 +206,9 @@ class MemoryCore:
         prints = self.voiceprints()
         if prints:
             context['voiceprints'] = prints
+            # How many people are enrolled, so the server stays strict even if
+            # it cannot use a single one of the prints (dropped, damaged).
+            context['enrolled'] = len(prints)
         return context
 
     # --- Voiceprint (written by the enrollment session) -------------------
@@ -288,6 +291,35 @@ class MemoryCore:
         return total
 
 
+    def replace_voiceprint(self, name, print_, count, profile_id):
+        """Enrollment v2: the person's v1 print replaced (not averaged) by the
+        new one, linked to the v2 profile id. False when the v1 file of that
+        name belongs to another profile id (never overwrite someone else)."""
+        name = clean_text(name)[:40] or 'Bediener'
+        folder = self.voice_dir / 'profiles'
+        folder.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'bediener'
+        path = folder / f'{slug}.json'
+        old = None
+        if path.is_file():
+            try:
+                old = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                old = None
+        if isinstance(old, dict) and old.get('profile_id') not in (None, profile_id):
+            return False
+        if isinstance(old, dict) and old.get('name') not in (None, name):
+            return False
+        keep = {k: old[k] for k in ('passphrase', 'last_score')
+                if isinstance(old, dict) and k in old}
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(dict(keep, name=name, print=print_, count=int(count),
+                                             at=int(self.clock()), profile_id=profile_id)),
+                             encoding='utf-8')
+        temporary.replace(path)
+        return True
+
+
 _STOPWORDS = {'dass', 'mich', 'mein', 'meine', 'meinen', 'bitte', 'alles', 'über', 'nicht',
               'eine', 'einen', 'einer', 'dich', 'dein', 'deine', 'noch', 'auch', 'bediener'}
 
@@ -356,7 +388,17 @@ def sanitize(data):
                   total_facts=total if isinstance(total, int) and total >= 0 else 0)
     if prints:
         result['voiceprints'] = prints
+    enrolled = data.get('enrolled')
+    if isinstance(enrolled, int) and not isinstance(enrolled, bool) and 0 < enrolled <= 100:
+        result['enrolled'] = enrolled
+    elif prints:
+        result['enrolled'] = len(prints)
     return result
+
+
+def enrolled(context):
+    """Someone is enrolled: an unchecked voice is then a guest."""
+    return isinstance(context, dict) and bool(context.get('voiceprints') or context.get('enrolled'))
 
 
 def unknown_speaker(context):
@@ -364,10 +406,20 @@ def unknown_speaker(context):
     return bool(context) and context.get('speaker') == 'unknown'
 
 
-def guest_view(context):
-    """What an unrecognized voice may use: directives only, nothing personal."""
-    return dict(facts=[], directives=context.get('directives', []), history=[],
-                total_facts=0, speaker='unknown')
+_PUBLIC_DIRECTIVE = re.compile(r'^[\wäöüßÄÖÜ ]{1,40}-(?:Erweiterung|Modul|Protokoll) installiert$')
+
+
+def public_directive(text):
+    """Installed persona modules ("Humor-Erweiterung installiert") are public;
+    every other directive may be personal ("nenne mich Meister")."""
+    return bool(_PUBLIC_DIRECTIVE.match(str(text)))
+
+
+def guest_view(context, status='unknown'):
+    """What an unrecognized voice may use: public persona modules only,
+    nothing personal. ``status`` says why (speaker.decide outcome)."""
+    return dict(facts=[], history=[], total_facts=0, speaker='unknown', identity=status,
+                directives=[d for d in context.get('directives', []) if public_directive(d)])
 
 
 # --- Commands (LLM-free; run on the server and in the Pi's local fallback) ---

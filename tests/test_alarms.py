@@ -323,9 +323,52 @@ class MemoryCoreControllerTests(ControllerAlarmTests):
         out = StringIO()
         with redirect_stdout(out):
             self.c._remote_progress(dict(event='speaker', known=False, score=0.412))
+            self.c._remote_progress(dict(event='speaker', status='insufficient', known=False,
+                                         score=None))
         logged = [json.loads(line) for line in out.getvalue().splitlines()
                   if line.startswith('{')]
         self.assertIn(dict(version=1, event='speaker', known=False, score=0.412), logged)
+        self.assertIn(dict(version=1, event='speaker', known=False, score=None,
+                           status='insufficient'), logged)
+
+    def test_guest_turn_from_the_server_is_not_remembered(self):
+        self.device.touch()
+        self.c.turn_guest = False
+        self.c._remote_progress(dict(event='transcript', text='was weißt du über mich'))
+        self.c._remote_progress(dict(event='speaker', status='unknown', known=False, score=0.2))
+        self.c._remote_progress(dict(event='reply', text='Nicht erkannt.', model='local/memory'))
+        self.assertEqual(self.c.memory.context()['history'], [])
+
+    def enrolled(self):
+        import speaker
+        self.device.touch()
+        self.c.memory.save_voiceprint('Ivan', speaker.encode([1.0, 0.5, 0.0, 0.2] * 4), 4)
+        self.c.memory.apply(dict(op='add_fact', text='Bediener heißt Ivan'))
+
+    def test_local_fallback_with_an_enrolled_voice_is_a_guest(self):
+        import memory
+        self.enrolled()
+        self.c._start_llm('merke dir dass ich katzen mag')
+        self.assertEqual(self.speech.start.call_args.args[0], memory.GUEST_TEXT)
+        self.c._start_llm('was weißt du über mich')
+        self.assertEqual(self.speech.start.call_args.args[0], memory.GUEST_TEXT)
+        self.assertEqual(self.c._learn('Gut. MERKE: Bediener mag Hunde'), 'Gut.')
+        self.c._start_llm('lerne mich kennen')
+        self.assertEqual(self.speech.start.call_args.args[0], memory.GUEST_TEXT)
+        self.assertIsNone(self.c.enroll_after_speech)
+        self.assertEqual(self.c.memory.context()['facts'], ['Bediener heißt Ivan'])
+
+    def test_local_fallback_guest_gets_no_calendar_and_no_personal_llm_context(self):
+        import memory
+        self.enrolled()
+        self.c.memory.apply(dict(op='add_directive', text='Nenne mich Meister'))
+        with patch.object(self.c.agenda, 'today', side_effect=AssertionError('read')):
+            self.c._start_llm('welche termine habe ich heute')
+        self.assertIn(memory.GUEST_TEXT, self.speech.start.call_args.args[0])
+        self.c.turn_guest = True
+        context = self.c._turn_memory()
+        self.assertEqual((context['facts'], context['directives'], context['speaker']),
+                         ([], [], 'unknown'))
 
     def test_local_fallback_handles_memory_commands(self):
         self.device.touch()
