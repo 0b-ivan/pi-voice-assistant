@@ -291,6 +291,35 @@ class MemoryCore:
         return total
 
 
+    def replace_voiceprint(self, name, print_, count, profile_id):
+        """Enrollment v2: the person's v1 print replaced (not averaged) by the
+        new one, linked to the v2 profile id. False when the v1 file of that
+        name belongs to another profile id (never overwrite someone else)."""
+        name = clean_text(name)[:40] or 'Bediener'
+        folder = self.voice_dir / 'profiles'
+        folder.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'bediener'
+        path = folder / f'{slug}.json'
+        old = None
+        if path.is_file():
+            try:
+                old = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                old = None
+        if isinstance(old, dict) and old.get('profile_id') not in (None, profile_id):
+            return False
+        if isinstance(old, dict) and old.get('name') not in (None, name):
+            return False
+        keep = {k: old[k] for k in ('passphrase', 'last_score')
+                if isinstance(old, dict) and k in old}
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(dict(keep, name=name, print=print_, count=int(count),
+                                             at=int(self.clock()), profile_id=profile_id)),
+                             encoding='utf-8')
+        temporary.replace(path)
+        return True
+
+
 _STOPWORDS = {'dass', 'mich', 'mein', 'meine', 'meinen', 'bitte', 'alles', 'über', 'nicht',
               'eine', 'einen', 'einer', 'dich', 'dein', 'deine', 'noch', 'auch', 'bediener'}
 

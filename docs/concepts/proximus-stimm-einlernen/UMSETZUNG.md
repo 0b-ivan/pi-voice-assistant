@@ -80,6 +80,29 @@ Tests: `tests/test_voice_profile.py` (Codec und Ablehnungen, LOO schließt den P
 
 Befund aus den Tests: Mit synthetischen Stimmen nahm ein Profil, das gegen 20 Fremdproben kalibriert war, einen neuen Fremden an. Das bestätigt Abschnitt 9: 20 Fremdproben garantieren nichts für neue Stimmen; `cross_check()` macht solche Fälle nur sichtbar.
 
-## Etappen 4–7: offen
+## Etappe 4 — Generator und Einlern-Dialog: umgesetzt
+
+| Änderung | Datei |
+|---|---|
+| Satzgenerator: Muster und Wortlisten mit korrekten Artikel-/Adjektivendungen, kuratiertes Lexikon mit Lautklassen, Plan aus 24 Sätzen (je Bedingung 2 kurz, 4 mittel, 2 lang; 6 Prüfproben mit eigenen Mustern, die letzten zwei als Challenge mit vier unabhängig gezogenen Wörtern), Abdeckung des ganzen Inventars, Ersatzsätze, zwölf Baseline-Paare mit gezogenen Werten, Normalisierung, WER, Inhaltsprüfung; Produktion mit `secrets`, Tests mit festem Seed | `src/enroll_phrases.py` |
+| Einlern-Dialog als Zustandsfolge: Einführung, Raummessung, Stimmteil mit sofortiger Prüfung (Qualität → Transkript/WER → Embedding), höchstens eine Wiederholung je Satz und drei insgesamt, ≥ 90 s Sprache (kurze Anker werden durch lange ersetzt), optionale Baseline und Fakten nur bei genug Restzeit, Profilbildung und Kalibrierung gegen `reference-v2.json`, Bestätigung per E, harte Grenze 420 s; Serveraufrufe im Hilfsthread, B beendet sofort, späte Antworten werden verworfen; Entwurf im Stick-Verzeichnis `drafts/`, das bei jedem Ende gelöscht wird | `src/voice_enroll.py` |
+| Commit: V2-Profil (ID und Name bei „ergänzen“ erhalten), v1-Abdruck derselben Person ersetzt (nicht verrechnet, nicht bei fremder ID), Fakten erst jetzt, angenommene Aufnahmen mit 20-MB-Grenze | `src/voice_enroll.py`, `src/memory.py` |
+| Server: `POST /v2/enroll/clip` (Qualität, Transkript, Float32-Embedding, Modell-ID mit SHA-256; nur RAM, ein Modelllauf zur Zeit), `PUT /v2/session/<id>/core` (nur kalibrierte Profile, ≤ 5, ≤ 2 MiB, strikte Prüfung), `X-Servitor-Voice` in der Anfrage; ein kalibrierter V2-Kern entscheidet allein, ein fehlender oder fremder Kern gibt die Gastansicht und eine Aufforderung zum erneuten Senden; Feature `voice2` im Welcome | `server/servitor_server.py`, `src/protocol.py`, `src/voice_profile.py`, `src/speaker.py` |
+| Pi: sendet den V2-Kern nur bei Änderung; bestätigt der Server ihn nicht (alter Server, verlorene Session), gehen nur eine Gastkopie und keine Termine hinaus | `src/remote_turn.py`, `src/ptt.py` |
+| Bedienung: Menü „Personen“ mit „Stimme kennenlernen“, „Stimme ergänzen“, „Fakten kennenlernen“, „Wakeword aufnehmen“; Sprachbefehl öffnet nur das Menü; E bestätigt in der laufenden Sitzung; Display zeigt `Stimme n/24`, Bedingung, Satz, Fortschritt; altes `enroll.Session` nur noch für Wakeword-Aufnahmen, `_refine()` und `REFINE_MATCH` entfernt | `src/menu.py`, `src/ptt.py`, `src/display.py`, `src/enroll.py` |
+
+Nebenbei gefunden und behoben: Nach einem Server-Neustart kam die erste Anfrage mit veralteter Session an; das Gedächtnis fiel korrekt weg, der Kalender-Header wurde aber weiter ausgewertet (auch im v1-Weg). Jetzt bleiben Termine bei unbekannter Session oder fehlendem Stimmkern ungenutzt.
+
+Tests: `tests/test_voice_enroll.py` (Plan, Abdeckung, Längen, Challenge-Wörter, Ersatzsätze, Baseline, WER und Inhaltsprüfung; Sitzung mit falscher Uhr: vollständiger Durchlauf, Kalibrierung mit Referenzstimmen, Wiederholung mit neuem Satz, Wiederholungsgrenzen, keine Bestätigung, Deadline, B in jeder Phase, B während hängender Serveranfrage < 300 ms, zu wenig Sprache, Modellwechsel, „ergänzen“ behält ID und Namen, Baseline bleibt außerhalb, Testtexte erzeugen keine Fakten, nur Fakten, Server weg), `tests/test_voice_transport.py` (Kern einmal gesendet, kalibrierte Stimme erkannt, fremde/kurze Stimme Gast, verlorene Session ohne Rückfall und ohne Kalender, fremder Digest, alter Server, Endpunkt-Prüfungen inkl. NaN und Größe, Clip-Endpunkt, Kern vom Stick), `tests/test_people.py` (Menüeinträge, Sprachbefehl, E/B, Display). Gesamtlauf: 949 Tests grün, 1 übersprungen.
+
+Bekannte Grenzen:
+
+- Aufnahme mit fester Länge je Satzklasse (5/7/10 s, `arecord -d`); Endpunkterkennung nach 500 ms Stille fehlt noch.
+- Die Inhaltsprüfung vergleicht auf dem Pi mit dem Satz, den der Pi selbst erzeugt hat; Challenge-Sitzungen mit Solltext aus der Server-Sitzung folgen in Etappe 5.
+- Ohne Fremdproben bleibt jedes V2-Profil „vorläufig“; der Alltag läuft dann weiter über den (jetzt aus den neuen Ankern gebildeten) v1-Abdruck. Ein Weg zum Erfassen von Fremdproben im Testmodus fehlt noch (Etappe 7).
+- Wählt eine neue Person in den Fragen denselben Namen wie ein bestehender v1-Eintrag ohne ID, wird dessen v1-Abdruck ersetzt.
+- Satzlängen und Zeitbudgets sind nicht am Gerät gemessen; Vosk-Erkennbarkeit der Wortlisten ist ungeprüft.
+
+## Etappen 5–7: offen
 
 Hardwareabnahme offen. Keine Messwerte am echten Gerät erhoben.

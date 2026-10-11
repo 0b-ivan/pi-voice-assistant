@@ -254,6 +254,77 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class EnrollControllerTests(ControllerTests):
+    def start(self, mode, target=None):
+        import voice_enroll
+        import enroll
+        self.c.remote = True
+        self.c.server_state = lambda: "ok"
+        with patch.object(voice_enroll.VoiceSession, "start"), \
+                patch.object(enroll.Session, "start"), \
+                patch.object(self.ptt, "EnrollIO", Mock()):
+            self.c._start_enroll(mode, target=target)
+        session, self.c.enroll = self.c.enroll, None
+        return session
+
+    def test_menu_items_start_the_right_module(self):
+        import voice_enroll
+        import enroll
+        new = self.start("enroll")
+        self.assertIsInstance(new, voice_enroll.VoiceSession)
+        self.assertEqual((new.mode, new.voice, new.facts, new.baseline), ("new", True, True, False))
+        add = self.start("refine")                      # only Ivan known: him
+        self.assertEqual((add.mode, add.target["name"], add.facts), ("add", "Ivan", False))
+        self.assertEqual(self.start("facts").mode, "facts")
+        self.assertIsInstance(self.start("wake_rec"), enroll.Session)
+        self.c.memory.save_voiceprint("Anna", speaker.encode(OTHER), 7)
+        self.assertIsNone(self.start("refine"))         # two people: choose in "Personen"
+        self.assertIn(enroll.CHOOSE_PERSON, self.said)
+        self.assertEqual(self.start("refine", target="Anna").target["name"], "Anna")
+
+    def test_a_spoken_command_only_opens_the_menu(self):
+        import menu
+        self.c._offer_enroll()
+        self.assertTrue(self.c.menu.open)
+        self.assertEqual(self.c.menu.items[self.c.menu.index], "enroll")
+        self.assertIsNone(self.c.enroll)
+        self.assertIn("facts", menu.GROUPS["people"])
+        self.assertEqual(menu.LABELS["enroll"], "Stimme kennenlernen")
+
+    def test_e_reaches_a_running_session_and_b_cancels(self):
+        session = Mock(running=True)
+        self.c.enroll = session
+        pressed_e, pressed_b = (False, False, False, False, True), (False, True, False, False, False)
+        for now in (0.0, 0.1):                          # released first: buttons arm
+            self.c.tick(False, (False,) * 5, now)
+        for now in (1.0, 1.1):                          # held past the debounce time
+            self.c.tick(False, pressed_e, now)
+        session.press.assert_called_once_with("E")
+        self.c.tick(False, (False,) * 5, 1.2)
+        for now in (1.3, 1.4):
+            self.c.tick(False, pressed_b, now)
+        session.cancel.assert_called_once_with()
+
+    def test_display_gets_the_sentence_and_the_condition(self):
+        io_ = self.ptt.EnrollIO(runtime=self.tmp.name, config=Mock(runtime_dir=self.tmp.name,
+                                                                  output_device="x",
+                                                                  capture_device="y"))
+        io_.publish(stage="voice", step=12, total=24, condition="far", text="Der Satz.")
+        status = json.loads((Path(self.tmp.name) / "status.json").read_text())
+        self.assertEqual((status["enroll"], status["enroll_step"], status["enroll_cond"]),
+                         ("voice", 12, "far"))
+        sentence = json.loads((Path(self.tmp.name) / "display-enroll.json").read_text())
+        self.assertEqual(sentence["text"], "Der Satz.")
+        io_.publish(rec=True)
+        status = json.loads((Path(self.tmp.name) / "status.json").read_text())
+        self.assertEqual((status["enroll_rec"], status["enroll_step"]), ("on", 12))
+        io_.publish(stage=None)
+        status = json.loads((Path(self.tmp.name) / "status.json").read_text())
+        self.assertNotIn("enroll", status)
+        self.assertEqual(json.loads((Path(self.tmp.name) / "display-enroll.json")
+                                    .read_text())["text"], "")
+
+
 class MicrophoneTests(ControllerTests):
     def test_wake_listener_stays_off_while_a_flow_runs(self):
         wake = Mock(running=False, error=None, detector=None)

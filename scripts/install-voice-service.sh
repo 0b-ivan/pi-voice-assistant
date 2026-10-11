@@ -38,6 +38,9 @@ install -m 0644 "${repo_root}/src/boardled.py" /opt/pi-voice-assistant/src/board
 install -m 0644 "${repo_root}/src/people.py" /opt/pi-voice-assistant/src/people.py
 install -m 0644 "${repo_root}/src/speaker.py" /opt/pi-voice-assistant/src/speaker.py
 install -m 0644 "${repo_root}/src/voice_quality.py" /opt/pi-voice-assistant/src/voice_quality.py
+install -m 0644 "${repo_root}/src/voice_profile.py" /opt/pi-voice-assistant/src/voice_profile.py
+install -m 0644 "${repo_root}/src/voice_enroll.py" /opt/pi-voice-assistant/src/voice_enroll.py
+install -m 0644 "${repo_root}/src/enroll_phrases.py" /opt/pi-voice-assistant/src/enroll_phrases.py
 install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/alarm_audio.py
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py

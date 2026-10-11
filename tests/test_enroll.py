@@ -108,46 +108,28 @@ class SessionTests(unittest.TestCase):
         device.touch()
         self.core = memory.MemoryCore(root, device)
 
-    def test_full_session_stores_clips_facts_directive_and_voiceprint(self):
-        answers = ["nenn mich ivan", "in berlin", "software", "raumfahrt", "meine familie",
-                   "knapp", "ich mag warhammer"]
-        io = FakeIO(answers)
-        session = enroll.Session(self.core, io)
-        result = session.run()
-        self.assertEqual(result["name"], "Ivan")
-        self.assertEqual(len(list((self.core.voice_dir / "wake").glob("*.wav"))), enroll.WAKE_COUNT)
-        self.assertEqual(len(list((self.core.voice_dir / "answers").glob("*.wav"))),
-                         len(enroll.QUESTIONS))
-        context = self.core.context()
-        self.assertIn("Name des Bedieners: Ivan", context["facts"])
-        self.assertIn("Antwortstil nach Wunsch des Bedieners: knapp", context["directives"])
-        self.assertEqual(context["voiceprints"][0]["name"], "Ivan")
-        self.assertIn("Stimmprofil gespeichert", io.said[-1])
-        self.assertEqual(io.states[-1], dict(stage=None))
-
     def run_quiet(self, session):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             result = session.run()
         return result, [json.loads(l) for l in out.getvalue().splitlines() if l.startswith("{")]
 
-    def test_bad_clips_give_no_voiceprint_but_numbers_in_the_log(self):
-        clipped = tone((0.5, 0), (3.0, 32767), (2.5, 0))
-        io_ = FakeIO(["nenn mich ivan"] + ["x"] * 6, take=clipped)
-        result, logged = self.run_quiet(enroll.Session(self.core, io_))
-        self.assertFalse(result["voiceprint"])
+    def test_wake_session_records_samples_only(self):
+        io_ = FakeIO([])
+        result, logged = self.run_quiet(enroll.Session(self.core, io_, mode="wake"))
+        self.assertEqual(result, dict(wake=enroll.WAKE_COUNT))
+        self.assertEqual(len(list((self.core.voice_dir / "wake").glob("*.wav"))), enroll.WAKE_COUNT)
+        self.assertEqual(self.core.voiceprints(), [])          # never a voice profile
         self.assertEqual(io_.printed, [])
-        self.assertIn("Name des Bedieners: Ivan", self.core.context()["facts"])
-        answers = [e for e in logged if e.get("event") == "enroll_clip" and e["kind"] == "answer"]
-        self.assertEqual(len(answers), len(enroll.QUESTIONS))
-        self.assertEqual(answers[0]["problems"][0], "clipping")
-        self.assertNotIn("ivan", json.dumps(logged).lower())       # numbers, no content
+        self.assertEqual(io_.said[-1], enroll.wake_done_text(enroll.WAKE_COUNT))
+        self.assertEqual(len([e for e in logged if e.get("event") == "enroll_clip"]),
+                         enroll.WAKE_COUNT)
 
-    def test_silent_and_broken_clips_are_deleted(self):
-        io_ = FakeIO(["nenn mich ivan"] * 7, take=bytes(16000 * 2 * 6))
-        result, _ = self.run_quiet(enroll.Session(self.core, io_))
-        self.assertEqual(result["facts"], 0)                      # nothing transcribed
-        self.assertEqual(list((self.core.voice_dir / "answers").glob("*.wav")), [])
+    def test_silent_and_broken_takes_are_deleted(self):
+        io_ = FakeIO([], take=bytes(16000 * 2 * 2))
+        result, _ = self.run_quiet(enroll.Session(self.core, io_, mode="wake"))
+        self.assertEqual(result, dict(wake=0))
+        self.assertEqual(list((self.core.voice_dir / "wake").glob("*.wav")), [])
         path = Path(self.tmp.name) / "eight-bit.wav"
         with wave.open(str(path), "wb") as out:
             out.setnchannels(1)
@@ -160,7 +142,7 @@ class SessionTests(unittest.TestCase):
 
     def test_cancel_stops_the_session(self):
         io = FakeIO([], cancel_after=3)
-        session = enroll.Session(self.core, io)
+        session = enroll.Session(self.core, io, mode="wake")
         io.session = session
         session.start()
         session.thread.join(5)
@@ -180,29 +162,6 @@ class SessionTests(unittest.TestCase):
 
 
 class ProfileTests(SessionTests):
-    def test_refine_merges_into_the_matching_profile_and_people_are_listed(self):
-        ivan = speaker.normalize([1.0, 0.5, 0.0, 0.2] * 4)
-        anna = speaker.normalize([-1.0, 0.2, 0.9, 0.0] * 4)
-        self.core.save_voiceprint("Ivan", speaker.encode(ivan), 7)
-        self.core.save_voiceprint("Anna", speaker.encode(anna), 7)
-        io = FakeIO([])                         # its voiceprint() returns Ivan's direction
-        result = enroll.Session(self.core, io, mode="refine").run()
-        self.assertEqual(result["refined"], "Ivan")
-        self.assertEqual(dict(self.core.people()), {"Ivan": 11, "Anna": 7})
-        self.assertIn("Stimmprofil Ivan verfeinert", io.said[-1])
-        reply = memory.reply("list_people", "", self.core.context())
-        self.assertEqual(reply, "2 Personen an der Stimme bekannt: Anna, Ivan.")
-        self.assertEqual(memory.command("wen kennst du"), ("list_people", ""))
-
-    def test_refine_without_matching_profile_changes_nothing(self):
-        other = speaker.normalize([-1.0, 0.2, 0.9, 0.0] * 4)
-        self.core.save_voiceprint("Anna", speaker.encode(other), 7)
-        io = FakeIO([])
-        result = enroll.Session(self.core, io, mode="refine").run()
-        self.assertIsNone(result["refined"])
-        self.assertEqual(io.said[-1], enroll.NO_MATCH)
-        self.assertEqual(dict(self.core.people()), {"Anna": 7})
-
     def test_first_version_profile_is_moved(self):
         voice = self.core.voice_dir
         voice.mkdir(parents=True)

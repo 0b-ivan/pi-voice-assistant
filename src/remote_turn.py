@@ -130,7 +130,7 @@ class RemoteTurnUplink:
     """
 
     def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None,
-                 session=None, agenda_tomorrow=None):
+                 session=None, agenda_tomorrow=None, voice=None, memory_guest=None):
         self.config = config
         # protocol.ClientSession shared by all turns: opened with /v1/hello on
         # first use, then the memory core only travels when it changed.
@@ -142,6 +142,11 @@ class RemoteTurnUplink:
         # Base64 list of today's remaining appointments (agenda.encode_header).
         self.agenda = agenda
         self.agenda_tomorrow = agenda_tomorrow
+        # Calibrated v2 voice profiles (voice_profile.voice_core) and the guest
+        # copy of the memory: while the server has not confirmed the voice
+        # core, only the guest copy travels (no silent fallback to v1).
+        self.voice = voice
+        self.memory_guest = memory_guest
         self._connect = connect
         self._queue = queue.SimpleQueue()
         self._lock = threading.Lock()
@@ -214,13 +219,65 @@ class RemoteTurnUplink:
             ident = welcome['body'].get('session') if welcome['type'] == 'welcome' else None
             if isinstance(ident, str) and ident.isalnum() and len(ident) <= 64:
                 session.start(ident)
+                features = welcome['body'].get('features')
+                session.voice_supported = isinstance(features, list) and 'voice2' in features
         except (OSError, http.client.HTTPException, protocol.ProtocolError):
             pass
         finally:
             connection.close()
 
+    def _send_voice(self, url):
+        """PUT the v2 voice core into the session when the server lacks it.
+        Returns its digest when the server holds it, else None."""
+        session = self.session
+        if not self.voice or session is None or not session.id or not session.voice_supported:
+            return None
+        core = protocol.digest(self.voice)
+        if session.voice == core:
+            return core
+        body = json.dumps(self.voice, separators=(',', ':')).encode('utf-8')
+        connection = self._connect(url, self.config.connect_timeout)
+        try:
+            connection.connect()
+            connection.sock.settimeout(self.config.connect_timeout * 2)
+            path = urllib.parse.urlsplit(url).path.rstrip('/')
+            connection.putrequest('PUT', f'{path}/v2/session/{session.id}/core',
+                                  skip_accept_encoding=True)
+            self._headers(connection, url)
+            connection.putheader('Content-Type', 'application/json')
+            connection.putheader('Content-Length', str(len(body)))
+            connection.endheaders(body)
+            response = connection.getresponse()
+            raw = response.read(4096)
+            if response.status == 404:
+                try:
+                    unknown = json.loads(raw).get('error') == 'unknown session'
+                except (ValueError, AttributeError):
+                    unknown = False
+                if unknown:
+                    session.reset()               # next turn: hello again
+                else:
+                    session.voice_supported = False   # older server: no v2 voice
+                return None
+            if response.status != 200:
+                return None
+            confirmed = json.loads(raw).get('core')
+            with session.lock:
+                session.voice = confirmed if confirmed == core else None
+            return session.voice
+        except (OSError, http.client.HTTPException, ValueError, AttributeError):
+            return None
+        finally:
+            connection.close()
+
     def _request(self, url):
         self._hello(url)
+        voice = self._send_voice(url)
+        memory, agenda, tomorrow = self.memory, self.agenda, self.agenda_tomorrow
+        if self.voice and voice is None:
+            # The voice cannot be checked: nothing personal leaves the Pi, the
+            # calendar neither.
+            memory, agenda, tomorrow = self.memory_guest, None, None
         connection = self._connect(url, self.config.connect_timeout)
         try:
             connection.connect()
@@ -238,12 +295,14 @@ class RemoteTurnUplink:
                                      json.dumps(self.status, separators=(',', ':')))
             if self.session is not None and self.session.id:
                 connection.putheader('X-Servitor-Session', self.session.id)
-            if self.memory:
-                connection.putheader('X-Servitor-Memory', self.memory)
-            if self.agenda:
-                connection.putheader('X-Servitor-Agenda', self.agenda)
-            if self.agenda_tomorrow:
-                connection.putheader('X-Servitor-Agenda-Tomorrow', self.agenda_tomorrow)
+            if voice:
+                connection.putheader('X-Servitor-Voice', voice)
+            if memory:
+                connection.putheader('X-Servitor-Memory', memory)
+            if agenda:
+                connection.putheader('X-Servitor-Agenda', agenda)
+            if tomorrow:
+                connection.putheader('X-Servitor-Agenda-Tomorrow', tomorrow)
             connection.endheaders()
         except BaseException:
             connection.close()
@@ -340,6 +399,9 @@ class RemoteTurnUplink:
     def _session_event(self, item):
         if self.session is None:
             return
+        if item.get('voice') == 'unknown':
+            with self.session.lock:
+                self.session.voice = None  # next turn: the voice core again
         if item.get('state') == 'unknown':
             self.session.reset()       # next turn: hello again, memory in full
         elif isinstance(item.get('core'), str):

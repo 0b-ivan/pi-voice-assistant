@@ -31,6 +31,8 @@ import memory as memory_core
 import story as stories
 import sysmon
 import variants
+import voice_enroll
+import voice_profile
 from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, AlarmMonitor, wake_phrase,
                     shutdown_text,
                     memory_phrase)
@@ -133,7 +135,10 @@ DISPLAY_STATUS_VALUES = {
     'opt_bt': {'on', 'off', 'none'},
     'menu_group': {'top', *MENU_GROUPS},
     'maint': {'on', 'off'},
-    'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth'},
+    'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth', 'voice', 'baseline',
+               'confirm', 'check'},
+    'enroll_cond': {'near', 'far', 'quiet'},
+    'enroll_check': {'on', 'off'},
     'people': {'on', 'off'},
     'people_rev': set(range(10000)),
     'enroll_rec': {'on', 'off'},
@@ -280,11 +285,41 @@ class EnrollIO:
     def voiceprint(self, pcm):
         return enroll.voiceprint(pcm)
 
-    def publish(self, stage=None, step=None, total=None, rec=None):
-        publish_display_status(enroll=stage, enroll_step=step if stage else None,
-                               enroll_total=total if stage else None,
-                               enroll_rec=(('on' if rec else 'off') if rec is not None else None)
-                               if stage else None)
+    def clip(self, pcm):
+        return enroll.clip(pcm)
+
+    _UNSET = object()
+
+    def publish(self, stage=_UNSET, step=_UNSET, total=_UNSET, rec=_UNSET, condition=_UNSET,
+                text=_UNSET, checking=_UNSET):
+        """Display state of a session; fields left out keep their value, the
+        sentence to read goes to a separate RAM file (display-enroll.json)."""
+        unset = EnrollIO._UNSET
+        if stage is None:
+            fields = dict(enroll=None, enroll_step=None, enroll_total=None, enroll_rec=None,
+                          enroll_cond=None, enroll_check=None)
+            text = ''
+        else:
+            fields = {}
+            if stage is not unset:
+                fields['enroll'] = stage
+            if step is not unset:
+                fields['enroll_step'] = step
+            if total is not unset:
+                fields['enroll_total'] = total
+            if rec is not unset:
+                fields['enroll_rec'] = None if rec is None else ('on' if rec else 'off')
+            if condition is not unset:
+                fields['enroll_cond'] = condition
+            if checking is not unset:
+                fields['enroll_check'] = 'on' if checking else None
+        if text is not unset:
+            path = self.runtime / 'display-enroll.json'
+            try:
+                people.write_view(path, dict(text=str(text or '')[:200]))
+            except OSError:
+                pass
+        publish_display_status(**fields)
 
 
 def publish_display_status(**fields):
@@ -982,7 +1017,7 @@ class VoiceController:
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
-        if item in ('enroll', 'refine'):
+        if item in ('enroll', 'refine', 'facts', 'wake_rec'):
             self._publish_menu()
             self._start_enroll(item)
             return
@@ -1563,9 +1598,47 @@ class VoiceController:
         if self.menu.open:
             self.menu.close()
             self._publish_menu()
-        self.enroll = enroll.Session(self.memory, EnrollIO(config=self.config), mode=mode, target=target)
+        io = EnrollIO(config=self.config)
+        if mode == 'wake_rec':
+            self.enroll = enroll.Session(self.memory, io, mode='wake')
+        elif mode == 'facts':
+            self.enroll = voice_enroll.VoiceSession(self.memory, io, mode='facts')
+        elif mode == 'refine':
+            person = self._enroll_target(target)
+            if person is None:
+                return
+            self.enroll = voice_enroll.VoiceSession(self.memory, io, mode='add', target=person)
+        else:
+            self.enroll = voice_enroll.VoiceSession(
+                self.memory, io, mode='new',
+                baseline=os.environ.get('PTT_ENROLL_BASELINE', 'off') == 'on')
         event('enroll', state='start', mode=mode)
         self.enroll.start()
+
+    def _enroll_target(self, name=None):
+        """{name, profile_id} of the person whose voice is recorded again: the
+        one chosen (and authenticated) in "Personen", else the only one known."""
+        names = [person for person, _ in self.memory.people()]
+        v2 = {p['name']: p['profile_id'] for p in self.voice_profiles()}
+        if name is None:
+            known = sorted(set(names) | set(v2))
+            if not known:
+                self._say(enroll.NO_PROFILE)
+                return None
+            if len(known) > 1:
+                self._say(enroll.CHOOSE_PERSON)
+                return None
+            name = known[0]
+        profile = self.memory.profile(name) or {}
+        return dict(name=name, profile_id=profile.get('profile_id') or v2.get(name))
+
+    def _offer_enroll(self):
+        """A spoken "lerne mich kennen" only opens the menu at "Stimme
+        kennenlernen": button E starts, a voice alone never changes a profile."""
+        if self.enroll is not None:
+            return
+        self.menu.select('enroll', time.monotonic())
+        self._publish_menu()
 
     def _check_memory(self):
         """Announce plugging or pulling the memory stick."""
@@ -1586,9 +1659,23 @@ class VoiceController:
         """Local fallback with someone enrolled: no server checks the voice,
         so the turn counts as a guest's (no personal data, no changes)."""
         try:
-            return self.memory.present() and bool(self.memory.people())
+            return self.memory.present() and (bool(self.memory.people())
+                                              or bool(self.voice_profiles()))
         except OSError:
             return True
+
+    def voice_profiles(self):
+        """The v2 voice profiles on the stick ([] without stick)."""
+        if not self.memory.present():
+            return []
+        return voice_profile.ProfileStore(self.memory.voice_dir / 'profiles-v2').all()
+
+    def voice_core(self):
+        """Calibrated v2 profiles for the server, or None."""
+        try:
+            return voice_profile.voice_core(self.voice_profiles())
+        except OSError:
+            return None
 
     def _turn_memory(self):
         context = self.memory.context()
@@ -1860,7 +1947,7 @@ class VoiceController:
             return
         if enroll.command(intents.normalize(text)):
             self.enroll_after_speech = enroll.command(intents.normalize(text))
-            reply = enroll.ANNOUNCE
+            reply = enroll.MENU_HINT
             event('llm_response', text=reply, model='local/enroll')
             self._start_speech(reply, source='assistant', model='local/enroll')
             return
@@ -2275,9 +2362,11 @@ class VoiceController:
                     if self.commands[name].update(shim_pressed[i], now) == 'start']
         if self.enroll is not None and not self.probe:
             if self.enroll.running:
-                # The session owns microphone and speaker; only B (cancel) counts.
+                # The session owns microphone and speaker; B cancels, E confirms.
                 if 'B' in commands:
                     self.enroll.cancel()
+                elif 'E' in commands and hasattr(self.enroll, 'press'):
+                    self.enroll.press('E')
                 self.last_activity = now
                 return
             finished, self.enroll = self.enroll, None
@@ -2367,8 +2456,8 @@ class VoiceController:
             if self.journeys is not None:
                 self.journeys.spoken()       # 90 s to answer a proposal from now
             if self.enroll_after_speech:
-                mode, self.enroll_after_speech = self.enroll_after_speech, None
-                self._start_enroll(mode)
+                self.enroll_after_speech = None
+                self._offer_enroll()
             if self.weather_shown:
                 self.weather_hide_at = time.monotonic() + WEATHER_HOLD_SECONDS
             if self.device_after_speech:
@@ -2587,15 +2676,23 @@ def main():
             def uplink_factory():
                 controller = controller_ref[0] if controller_ref else None
                 status = controller.turn_snapshot() if controller else None
-                memory_copy = (memory_core.encode_header(
-                    session.memory_payload(controller.memory.context())) if controller else None)
+                context = controller.memory.context() if controller else None
+                memory_copy = (memory_core.encode_header(session.memory_payload(context))
+                               if controller else None)
+                voice = controller.voice_core() if controller else None
+                # Guest copy for a server that cannot check the v2 voice: marked
+                # as enrolled, so the server stays strict and refuses changes.
+                guest = (memory_core.encode_header(dict(
+                    memory_core.guest_view(context, 'unverified'), enrolled=1))
+                    if voice and context is not None else None)
                 appointments = (agenda_feed.encode_header(controller.agenda.today())
                                 if controller else None)
                 tomorrow = (agenda_feed.encode_header(controller.agenda.tomorrow())
                             if controller else None)
                 return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
                                         agenda=appointments, session=session,
-                                        agenda_tomorrow=tomorrow)
+                                        agenda_tomorrow=tomorrow, voice=voice,
+                                        memory_guest=guest)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,

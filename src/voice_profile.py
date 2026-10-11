@@ -341,6 +341,50 @@ def cross_check(profiles, samples, model, delta=DELTA):
     return counts
 
 
+# --- transport (Pi -> server, request body, RAM session) ---------------------
+
+CORE_PROFILES_MAX = 5
+CORE_BYTES_MAX = 2 * 1024 * 1024
+_CORE_FIELDS = ('schema_version', 'profile_id', 'name', 'model', 'preprocessing', 'dim',
+                'codec', 'status', 'revision', 'centers')
+
+
+def voice_core(profiles):
+    """What the server needs for everyday comparison: trusted profiles only,
+    centers and threshold, no anchors, checks or raw samples."""
+    compact = []
+    for profile in profiles:
+        if profile.get('status') not in TRUSTED:
+            continue
+        tau = (profile.get('calibration') or {}).get('tau')
+        if not isinstance(tau, (int, float)):
+            continue
+        item = {k: profile[k] for k in _CORE_FIELDS if k in profile}
+        item['calibration'] = dict(tau=tau)
+        compact.append(item)
+    return dict(profiles=compact[:CORE_PROFILES_MAX]) if compact else None
+
+
+def read_core(data):
+    """Server side: the validated profiles of a voice core, ProfileError if
+    anything is off (size, count, schema, a single bad vector)."""
+    if not isinstance(data, dict) or not isinstance(data.get('profiles'), list):
+        raise ProfileError('expected {"profiles": [...]}')
+    if not 0 < len(data['profiles']) <= CORE_PROFILES_MAX:
+        raise ProfileError(f'1 to {CORE_PROFILES_MAX} profiles')
+    profiles = []
+    for item in data['profiles']:
+        if not isinstance(item, dict) or set(item) - set(_CORE_FIELDS) - {'calibration'}:
+            raise ProfileError('unexpected fields in a core profile')
+        profile = validate(dict(item))
+        tau = (profile.get('calibration') or {}).get('tau')
+        if (profile['status'] not in TRUSTED or not isinstance(tau, (int, float))
+                or not -1.0 <= tau <= 1.0):
+            raise ProfileError('core profiles must be calibrated, with a threshold')
+        profiles.append(profile)
+    return profiles
+
+
 # --- migration ---------------------------------------------------------------
 
 def slug(name):

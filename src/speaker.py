@@ -129,6 +129,18 @@ class Embedder:
     def available(self):
         return self.model.is_file()
 
+    def model_info(self):
+        """{name, sha256} of the model file (hashed once), or None without it.
+        Stored with v2 profiles: vectors of other models are never compared."""
+        if getattr(self, '_model_info', None) is None and self.available:
+            import hashlib
+            digest = hashlib.sha256()
+            with open(self.model, 'rb') as source:
+                for block in iter(lambda: source.read(1 << 20), b''):
+                    digest.update(block)
+            self._model_info = dict(name=self.model.stem, sha256=digest.hexdigest())
+        return getattr(self, '_model_info', None)
+
     def embed(self, pcm, rate=16000):
         """16 kHz mono int16 PCM -> unit embedding, or None if too short or the
         model gives no usable vector. Callers check speech_seconds() first, on
