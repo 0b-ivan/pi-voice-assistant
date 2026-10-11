@@ -316,3 +316,69 @@ Die [Unit](../deploy/pi-ptt.service) läuft als `obivan` mit `audio/gpio/i2c`, o
 Aufnahme hat standardmäßig 30 s Limit; STT-/LLM-/TTS-Fehler werden protokolliert und beenden den Dienst nicht. Ohne Netz arbeitet der Pi lokal weiter (Vosk, Antworten ohne LLM, Piper); nur freie Fragen brauchen OpenRouter oder den Server. Die Unit wartet nicht auf `network-online.target`. WAVs sind flüchtig; Transkripte und LLM-Antworten stehen im Journal.
 
 Messwerte stehen ausschließlich unter [STT](speech-to-text.md) und [TTS](local-speech.md); Hardware-Abnahmen unter [PTT](push-to-talk.md), [Button SHIM](button-controls.md) und [Erweiterungen](hardware-bring-up.md). Entscheidungen: [Pi-Client](decisions/0001-client-server.md), [OS](decisions/0002-operating-system.md), [Vosk-only STT](decisions/0003-hybrid-stt.md), [Servitor-Server](decisions/0004-servitor-server.md).
+
+
+## Proximus Web – dieselbe Codebasis (erste Etappe)
+
+Web und Pi verwenden **dieses Repository**. Es gibt keine zweite Kopie der
+Servitor-Intents, LLM-Persona oder TTS-Effekte:
+
+- `src/`: gemeinsam verwendete Regeln, Persona, Routen, Stimmverarbeitung und Datenformate.
+- `server/servitor_server.py`: ein Server und ein Verarbeitungsslot für Sprach-`/v1/turn`
+  **und** Text-`/v1/chat`. Beides durchläuft denselben Intent-/LLM-/TTS-Abschnitt;
+  der Textweg überspringt ausschließlich STT und Sprecheridentifikation.
+  `/v1/speak` bleibt unverändert (reiner TTS-Aufruf).
+- `web/gateway.py`: kleiner **serverseitiger** Same-Origin-Proxy für `/api/chat`,
+  der das vorhandene Bearer-Token nur auf dem Server hält.
+- `web/index.html`, `app.js`, `styles.css`: austauschbarer Browser-Client.
+- `src/ptt.py`: weiterhin GPIO/WM8960/SHIM/PiTFT sowie lokaler Fallback.
+  Weder Webserver noch Browser-Abhängigkeiten werden auf dem Pi installiert.
+
+**Absichtliche Grenzen:** Web v1 hat Textchat und Browser-Wiedergabe derselben
+Servitor-Audioantwort, aber noch **keine Browser-Aufnahme**, keine gemeinsame
+Sprecherverifikation und kein gemeinsames Gesprächsgedächtnis. Private
+Pi-Funktionen (Kalender, Status, Gerät neustarten, individuelle Erinnerungen)
+werden nicht automatisch dem Browser freigegeben. Sie benötigen später
+explizite Client-Fähigkeiten und Autorisierung; die aktuelle Implementierung
+der Pi-spezifischen Aktionen bleibt auf dem Pi.
+
+**Drift vermeiden:** Neue sprachunabhängige Fachlogik gehört nach `src/`, nicht
+in `web/app.js` oder einen zweiten API-Handler. Regressionstests prüfen,
+dass Text-`/v1/chat` und Sprach-`/v1/turn` dieselben Antwortregeln nutzen;
+`tests/test_web.py` prüft die Weiterleitung über den Proxy. Beide Clients
+werden aus **demselben Commit** ausgerollt. Beim späteren Ausbau sollen
+Pi- und Server-Orchestrierung in einen gemeinsamen `turn_core`-Adapter
+gezogen werden, um auch den Fallback vollständig gleichzuhalten.
+
+### Web lokal testen (CT 107)
+
+`web/proximus-web.service` ist bewusst **optional**, wird vom bestehenden
+Pi-/CT-Installer nicht automatisch aktiviert. Voraussetzung: Repo-Checkout
+`/opt/servitor-voice/repo`, laufender `servitor-voice.service` und
+`/etc/servitor-voice.env` (enthält `SERVITOR_API_TOKEN`).
+
+```sh
+sudo install -o root -g root -m 0644 web/proximus-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now proximus-web.service
+sudo systemctl status proximus-web.service --no-pager
+```
+
+Standardbindung: `127.0.0.1:8780`. Test vom Mac mittels
+`ssh -L 8780:127.0.0.1:8780 <ct-host>`, dann
+`http://localhost:8780` aufrufen. Das Gateway fragt intern
+`127.0.0.1:8765` ab. Konfigurierbar über
+`PROXIMUS_WEB_BIND`, `PROXIMUS_WEB_PORT`,
+`PROXIMUS_WEB_HOSTS`, `PROXIMUS_UPSTREAM_HOST` und
+`PROXIMUS_UPSTREAM_PORT` (EnvironmentFile).
+
+**Sicherheitsvoraussetzung für öffentlichen Zugriff:** Das Gateway hat
+keine eigene Benutzeranmeldung. Es darf *nur* hinter einem korrekt
+erzwungenen Cloudflare-Access- oder vergleichbaren Auth-Proxy erreichbar
+sein. Standardmäßig ist es ausschließlich über Loopback erreichbar. Für
+eine externe Cloudflare-Tunnel-Instanz auf einem anderen CT sind
+Firewall-Regeln ausschließlich für den Proxy, ein Access-geschützter
+Hostname in `PROXIMUS_WEB_HOSTS` und gegebenenfalls eine gezielte
+`PROXIMUS_WEB_BIND`-Adresse nötig. Ein offener Port 8780 im LAN oder
+öffentlichen Internet ist **kein sicherer Betriebsmodus**. Die bestehende
+Servitor-API `/v1/turn` bleibt unabhängig davon token-geschützt.
