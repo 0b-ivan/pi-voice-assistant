@@ -48,10 +48,14 @@ ACTIONS = ('remind', 'calendar')
 
 _VEHICLE = (r'(straßenbahn\w*|strassenbahn\w*|tram|trams|zug|züge|zuge|bahn|bahnen|s bahn|'
             r'regionalzug\w*|regionalbahn\w*|regionalexpress|regio|ice|intercity|fernzug\w*|'
-            r'verbindung\w*|abfahrt\w*|bus\w*)')
-_ASKS = re.compile(r'\b(wann|nächste[nrs]?|wie komme ich|verbindung\w*|abfahrt\w*|fahrplan|'
+            r'verbindung(?:en)?|abfahrt(?:en)?|bus\w*)')
+_ASKS = re.compile(r'\b(wann|nächste[nrs]?|wie komme ich|fahrplan|'
                    r'fährt|fahren|geht|gehen|welche[rn]?)\b')
 _HOW = re.compile(r'\bwie (komme|kommen) (ich|wir)\b.*\b(nach|zum|zur|in die (innen)?stadt)\b')
+# Bare timetable nouns are valid only at the start of a direct request,
+# not within speech about errors, logs or departure-time parsing.
+_BARE_BOARD = re.compile(r'^(?:bitte )?(?:(?:zeige|zeig|nenn|sag)(?: mir)? )?'
+                         r'(?:die |den )?(?:abfahrt(?:en)?|verbindung(?:en)?)\b')
 _HOME = re.compile(r'\b(von |ab )?(zu ?hause|daheim|der wohnung)\b')
 _HERE = re.compile(r'\b(von hier|ab hier|hier)\b')
 # "in die stadt"; Vosk merges "bahn in die" into "bahnen die stadt".
@@ -130,7 +134,7 @@ _NONE = re.compile(r'^(?:nein,? )?keine?(?: davon| von (?:denen|beiden|den dreie
 def _query(text):
     if _DESTINATION.search(text) is None and not _CITY.search(text):
         text = _NOCH.sub('nach ', text, count=1)
-    is_query = bool(_HOW.search(text)) or (
+    is_query = bool(_HOW.search(text)) or bool(_BARE_BOARD.search(text)) or (
         re.search(rf'\b{_VEHICLE}\b', text) is not None and _ASKS.search(text) is not None)
     if not is_query:
         return None
