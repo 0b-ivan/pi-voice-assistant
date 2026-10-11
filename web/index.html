@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#15191d">
+  <title>Proximus // Servitor-Interface</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <div class="sigil" aria-hidden="true">P<span>∴</span></div>
+      <div class="branding"><p class="eyebrow">SERVITOR // INTERFACE</p><h1>PROXIMUS</h1><p class="subtitle">Ein Maschinengeist. Mehrere Schnittstellen.</p></div>
+      <div id="status" class="status" role="status">Verbindung wird geprüft …</div>
+    </header>
+    <main class="panel" aria-label="Proximus-Chat">
+      <div class="panel-header"><span>NOOSPHÄREN-VERBINDUNG</span><span class="edition">WEB CLIENT / v1</span></div>
+      <div id="messages" class="messages" aria-live="polite" aria-relevant="additions text">
+        <div class="entry assistant"><div class="label">PROXIMUS</div><p>Verbindung etabliert. Befehl erwartet.</p></div>
+      </div>
+      <form id="chat-form" class="composer">
+        <label for="prompt" class="input-label">DEINE ANFRAGE</label>
+        <div class="input-row">
+          <textarea id="prompt" rows="2" maxlength="1200" placeholder="Gib deinen Befehl ein …" required></textarea>
+          <button id="send" type="submit">SENDEN <span aria-hidden="true">↗</span></button>
+        </div>
+        <p class="hint">Eingabe: Enter zum Senden · Umschalt+Enter für Zeilenumbruch · Sprache folgt in der nächsten Etappe.</p>
+      </form>
+    </main>
+    <footer><span>Gemeinsamer Servitor-Core auf CT 107</span><span>Pi · Web · eine Codebasis</span></footer>
+  </div>
+</body>
+</html>
