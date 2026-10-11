@@ -15,8 +15,10 @@ import urllib.parse
 ROOT = Path(__file__).resolve().parent
 STATIC = {'/': ('index.html', 'text/html; charset=utf-8'),
           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+          '/recorder-worklet.js': ('recorder-worklet.js', 'text/javascript; charset=utf-8'),
           '/styles.css': ('styles.css', 'text/css; charset=utf-8')}
 MAX_REQUEST_BYTES = 8192
+MAX_AUDIO_BYTES = 30 * 16000 * 2  # 30 s of mono 16 kHz signed PCM16
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; "
        "connect-src 'self'; img-src 'self'; media-src 'self' blob:; "
        "base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
@@ -84,7 +86,7 @@ class Gateway(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_allowed():
             return self._json(403, {'error': 'unknown host'})
-        if self.path != '/api/chat':
+        if self.path not in ('/api/chat', '/api/voice'):
             return self._json(404, {'error': 'not found'})
         # Cross-origin requests must not use an Access-authenticated session.
         origin = self.headers.get('Origin', '')
@@ -93,29 +95,42 @@ class Gateway(http.server.BaseHTTPRequestHandler):
                 parsed.scheme not in ('https', 'http') or
                 parsed.netloc.lower() != self.headers.get('Host', '').lower()):
             return self._json(403, {'error': 'invalid origin'})
-        if self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
-            return self._json(415, {'error': 'application/json required'})
+        is_voice = self.path == '/api/voice'
+        content_type = self.headers.get('Content-Type', '').split(';')[0].strip().lower()
+        expected_type = 'application/octet-stream' if is_voice else 'application/json'
+        if content_type != expected_type:
+            return self._json(415, {'error': expected_type + ' required'})
         try:
             length = int(self.headers.get('Content-Length', ''))
         except ValueError:
             return self._json(411, {'error': 'length required'})
-        if not 0 < length <= MAX_REQUEST_BYTES:
+        maximum = MAX_AUDIO_BYTES if is_voice else MAX_REQUEST_BYTES
+        if not 0 < length <= maximum:
             return self._json(413, {'error': 'request too large'})
-        try:
-            data = json.loads(self.rfile.read(length))
-            message = data['text']
-        except (ValueError, KeyError, TypeError):
-            return self._json(400, {'error': 'invalid JSON chat request'})
-        if not isinstance(message, str) or not message.strip() or len(message) > 1200:
-            return self._json(400, {'error': 'text must contain 1-1200 characters'})
-        payload = json.dumps({'text': message.strip()}, ensure_ascii=False).encode('utf-8')
+        if is_voice and (length < 16000 * 2 // 5 or length % 2):
+            return self._json(400, {'error': 'expected at least 0.2 s of PCM16 mono'})
+        body = self.rfile.read(length)
+        if len(body) != length:
+            return self._json(400, {'error': 'truncated request'})
+        if is_voice:
+            payload = body
+            upstream_path = '/v1/turn?format=wav'
+        else:
+            try:
+                message = json.loads(body)['text']
+            except (ValueError, KeyError, TypeError):
+                return self._json(400, {'error': 'invalid JSON chat request'})
+            if not isinstance(message, str) or not message.strip() or len(message) > 1200:
+                return self._json(400, {'error': 'text must contain 1-1200 characters'})
+            payload = json.dumps({'text': message.strip()}, ensure_ascii=False).encode('utf-8')
+            upstream_path = '/v1/chat?format=wav'
         connection = http.client.HTTPConnection(self.server.upstream_host,
                                                 self.server.upstream_port, timeout=90)
         started = False
         try:
-            connection.request('POST', '/v1/chat?format=wav', body=payload,
+            connection.request('POST', upstream_path, body=payload,
                                headers={'Authorization': 'Bearer ' + self.server.api_token,
-                                        'Content-Type': 'application/json'})
+                                        'Content-Type': expected_type})
             response = connection.getresponse()
             self.send_response(response.status)
             self._headers('application/x-ndjson' if response.status == 200
