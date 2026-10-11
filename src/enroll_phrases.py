@@ -7,8 +7,8 @@ when its sentences cover the whole INVENTORY, spelling is never taken as
 proof. Production randomness comes from ``secrets``; tests pass a seeded
 ``random.Random``.
 
-Plan: 24 sentences, eight per condition (near, far, quiet), two short (4-7
-words), four middle (8-12), two long (13-20). Six of them are held-out
+Plan: 24 natural sentences of 6-8 words, eight per condition (near, far,
+quiet). Six of them are held-out
 checks, two per condition, built from *other* patterns than the anchors; the
 last two (quiet) are challenges with at least three freshly drawn words in
 the middle and at the end. Every text is a recording task only: it is never
@@ -16,8 +16,9 @@ stored as a fact and never dispatched as a command.
 
 Content check: WER = (substitutions + deletions + insertions) / words of the
 target, after Unicode, case, punctuation and number normalization. Normal
-sentences pass with WER <= 0.20; challenges need WER <= 0.15 and every drawn
-word in order, answers of up to five words an exact match. WER checks the
+checks pass with WER <= 0.20; challenges need WER <= 0.15 and every drawn
+word in order, answers of up to five words an exact match. Normal anchors are
+validated by audio quality and the voice embedding, not by Vosk's transcript. WER checks the
 content, it does not detect synthetic speech.
 """
 import re
@@ -32,7 +33,7 @@ CONDITION_HINTS = {
 }
 CONDITION_LABELS = {'near': 'nah', 'far': 'fern', 'quiet': 'leise'}
 # Recording length per sentence class (arecord takes whole seconds).
-RECORD_SECONDS = {'short': 5, 'mid': 7, 'long': 10, 'challenge': 7}
+RECORD_SECONDS = {'short': 6, 'mid': 6, 'long': 7, 'challenge': 6}
 WER_MAX, CHALLENGE_WER_MAX, EXACT_WORDS = 0.20, 0.15, 5
 
 # Sound classes (Standard German inventory, fixed in advance).
@@ -298,23 +299,48 @@ def challenge(rng):
     the middle and at the end."""
     words = [rng.choice(CHALLENGE_NOUNS), rng.choice(CHALLENGE_MATERIALS),
              rng.choice(CHALLENGE_NUMBERS), rng.choice(CHALLENGE_TARGETS)]
-    text = f"Prüfe bitte {words[0]} {words[1]} {words[2]} und melde danach {words[3]}."
+    text = f"Prüfe {words[0]} {words[1]} {words[2]} und melde {words[3]}."
     return text, words
 
 
-# (role, length, pattern) per condition; the quiet checks are the challenges.
+# Short, readable tasks. The held-out checks have distinct syntactic
+# patterns, but the same 6-8 word budget. No long generated clauses.
 _LAYOUT = {
-    'near': (('anchor', 'short', 'S1'), ('anchor', 'mid', 'M1'), ('anchor', 'short', 'S2'),
-             ('check', 'mid', 'C1'), ('anchor', 'mid', 'M2'), ('anchor', 'mid', 'M1'),
-             ('check', 'long', 'C2'), ('anchor', 'long', 'L1')),
-    'far': (('anchor', 'short', 'S2'), ('anchor', 'mid', 'M2'), ('anchor', 'short', 'S1'),
-            ('check', 'mid', 'C1'), ('anchor', 'mid', 'M1'), ('anchor', 'mid', 'M2'),
-            ('check', 'long', 'C2'), ('anchor', 'long', 'L2')),
-    'quiet': (('anchor', 'short', 'S1'), ('anchor', 'mid', 'M1'), ('anchor', 'short', 'S2'),
-              ('anchor', 'long', 'L1'), ('anchor', 'mid', 'M2'), ('anchor', 'long', 'L2'),
+    'near': (('anchor', 'short', 'A1'), ('anchor', 'short', 'A2'),
+             ('anchor', 'short', 'A3'), ('check', 'short', 'C1'),
+             ('anchor', 'short', 'A4'), ('anchor', 'short', 'A2'),
+             ('check', 'short', 'C2'), ('anchor', 'short', 'A1')),
+    'far': (('anchor', 'short', 'A3'), ('anchor', 'short', 'A1'),
+            ('anchor', 'short', 'A2'), ('check', 'short', 'C1'),
+            ('anchor', 'short', 'A4'), ('anchor', 'short', 'A1'),
+            ('check', 'short', 'C2'), ('anchor', 'short', 'A2')),
+    'quiet': (('anchor', 'short', 'A1'), ('anchor', 'short', 'A2'),
+              ('anchor', 'short', 'A3'), ('anchor', 'short', 'A1'),
+              ('anchor', 'short', 'A4'), ('anchor', 'short', 'A2'),
               ('check', 'challenge', 'CH'), ('check', 'challenge', 'CH')),
 }
 
+
+def _natural_sentence(pattern, rng):
+    """Short grammatical German with stable articulatory coverage."""
+    subject = _np(rng, _SUBJECTS, 'nom')
+    obj = _np(rng, _OBJECTS, 'acc')
+    verb_i = rng.choice(_INTRANSITIVE)
+    verb_t = rng.choice(_TRANSITIVE)[0]
+    place = rng.choice(_PLACES)
+    if pattern == 'A1':
+        return f"{_cap(subject)} {verb_i} {place}."
+    if pattern == 'A2':
+        return f"{_cap(subject)} {verb_t} {obj}."
+    if pattern == 'A3':
+        return f"{_cap(subject)} {verb_i} heute {place}."
+    if pattern == 'A4':
+        return f"Warum {verb_i} {subject} heute?"
+    if pattern == 'C1':
+        return f"{_cap(place)} {verb_i} {subject}."
+    if pattern == 'C2':
+        return f"Wann {verb_i} {subject} {place}?"
+    raise ValueError(pattern)
 
 def task(condition, role, length, pattern, rng, avoid=()):
     """One recording task {condition, role, length, pattern, text, words}."""
@@ -322,7 +348,9 @@ def task(condition, role, length, pattern, rng, avoid=()):
         if pattern == 'CH':
             text, words = challenge(rng)
         else:
-            text, words = _sentence(pattern, rng), []
+            text, words = _natural_sentence(pattern, rng), []
+            if not 6 <= len(normalize(text).split()) <= 8:
+                continue
         if text not in avoid:
             return dict(condition=condition, role=role, length=length, pattern=pattern,
                         text=text, words=words)
@@ -345,7 +373,7 @@ def unknown_words(text):
 
 
 def plan(rng=None, tries=200):
-    """24 tasks covering the whole sound inventory, no text twice."""
+    """24 tasks of 6-8 words covering the full sound inventory, no duplicates."""
     rng = rng or system_random()
     for _ in range(tries):
         tasks, seen = [], set()
@@ -362,8 +390,7 @@ def plan(rng=None, tries=200):
 
 
 def replacement(item, rng=None, avoid=()):
-    """A new sentence for a failed take: same condition, role, length and
-    pattern, a different text."""
+    """A new short sentence for the same condition and role."""
     rng = rng or system_random()
     fresh = task(item['condition'], item['role'], item['length'], item['pattern'], rng,
                  set(avoid) | {item['text']})

@@ -40,7 +40,7 @@ NOISE_WARMUP_SECONDS = 0.3  # drop startup/ALSA transients from room recording
 
 # Start values for enrollment clips (concept, section 5).
 SPEECH_MIN, SPEECH_MAX = 2.0, 8.0
-SPEECH_RATIO_MIN = 0.65
+SPEECH_RATIO_MIN = 0.65  # default for legacy enrollment and other callers
 PAUSE_MAX = 1.2
 CLIP_LEVEL = 0.99 * 32767
 CLIP_RATIO_MAX = 0.001
@@ -307,7 +307,8 @@ def analyze(pcm, rate=RATE, noise=None, vad=None):
     return result
 
 
-def problems(quality, speech_min=SPEECH_MIN, speech_max=SPEECH_MAX):
+def problems(quality, speech_min=SPEECH_MIN, speech_max=SPEECH_MAX,
+             speech_ratio_min=SPEECH_RATIO_MIN):
     """Problem codes of an enrollment clip, the dominant one first; [] passes."""
     found = set()
     if quality['speech_seconds'] < speech_min:
@@ -319,7 +320,7 @@ def problems(quality, speech_min=SPEECH_MIN, speech_max=SPEECH_MAX):
         found.add('clipping')
     if quality['rms_dbfs'] is None or quality['rms_dbfs'] < LEVEL_MIN_DBFS:
         found.add('too_quiet')
-    if quality['speech_seconds'] and (quality['speech_ratio'] < SPEECH_RATIO_MIN
+    if quality['speech_seconds'] and (quality['speech_ratio'] < speech_ratio_min
                                       or quality['longest_pause'] > PAUSE_MAX):
         found.add('pauses')
     if not quality['snr_valid']:

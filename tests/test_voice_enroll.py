@@ -3,6 +3,7 @@ import io
 import json
 import math
 import random
+import shutil
 import sys
 import tempfile
 import threading
@@ -143,9 +144,7 @@ class PhraseTests(unittest.TestCase):
             for t in tasks:
                 self.assertEqual(ep.unknown_words(t["text"]), [], t["text"])
                 words = len(ep.normalize(t["text"]).split())
-                low, high = dict(short=(4, 7), mid=(8, 12), long=(13, 20),
-                                 challenge=(8, 12))[t["length"]]
-                self.assertTrue(low <= words <= high, (t["length"], t["text"]))
+                self.assertTrue(6 <= words <= 8, (t["length"], t["text"]))
 
     def test_challenges_draw_fresh_words_in_the_middle_and_at_the_end(self):
         tasks = ep.plan(random.Random(4))
@@ -153,7 +152,7 @@ class PhraseTests(unittest.TestCase):
             self.assertGreaterEqual(len(item["words"]), 3)
             words = ep.normalize(item["text"]).split()
             self.assertEqual(words[-1], ep.normalize(item["words"][-1]))
-            self.assertIn(ep.normalize(item["words"][0]), words[2:4])
+            self.assertIn(ep.normalize(item["words"][0]), words[1:3])
         drawn = {tuple(ep.challenge(random.Random(seed))[1]) for seed in range(30)}
         self.assertGreater(len(drawn), 25)
 
@@ -222,8 +221,9 @@ class SessionTests(unittest.TestCase):
 
     def session(self, io_=None, **kwargs):
         io_ = io_ or FakeIO(self.clock, self.voice, kwargs.pop("answers", ()))
+        wall = kwargs.pop("wall", lambda: 1_700_000_000)
         session = ve.VoiceSession(self.core, io_, clock=self.clock, rng=random.Random(3),
-                                  wall=lambda: 1_700_000_000, **kwargs)
+                                  wall=wall, **kwargs)
         io_.session = session
         return session, io_
 
@@ -296,33 +296,46 @@ class SessionTests(unittest.TestCase):
 
     def test_failed_take_is_repeated_with_a_new_sentence(self):
         io_ = FakeIO(self.clock, self.voice)
-        io_.wrong = {3}            # first voice take after the noise record
+        io_.wrong = {5}            # first held-out check after 3 anchors
         session, _ = self.session(io_, facts=False)
         result, logged = self.run_quiet(session)
         self.assertTrue(result["stored"])
         clips = [e for e in logged if e.get("event") == "enroll_clip"]
-        self.assertEqual(clips[1]["result"], "content")
+        self.assertEqual(clips[3]["result"], "content")
         texts = {s["text"] for s in io_.states if s.get("stage") == "voice" and s.get("text")}
         self.assertEqual(len(texts), 25)            # 24 sentences plus a new one for the repeat
         self.assertIn(ve.CONTENT_HINT, io_.said)
 
-    def test_too_many_failures_stop_without_touching_the_old_profile(self):
+    def test_repeated_check_failure_pauses_then_resumes_without_losing_profile(self):
         old = vp.new_profile("Ivan", [dict(condition="near", vector=self.voice.take("near"))],
                              model=MODEL)
         self.store().save(old)
         io_ = FakeIO(self.clock, self.voice)
-        io_.wrong = {2, 3, 4, 5}       # the same sentence twice, then two more
+        io_.wrong = {5, 6, 7}     # three bad takes of the first check, not anchors
         session, _ = self.session(io_, facts=False)
-        result, _ = self.run_quiet(session)
-        self.assertEqual(result, dict(stored=False, reason="unsuitable"))
-        self.assertEqual(io_.said[-1], ve.UNSUITABLE)
+        result, logged = self.run_quiet(session)
+        self.assertEqual(result, dict(stored=False, reason="paused"))
+        self.assertEqual(io_.said[-1], ve.PAUSED)
+        self.assertTrue(any(x.get("event") == "enroll_clip"
+                            and x.get("result") == "content" for x in logged))
         self.assertEqual([p["profile_id"] for p in self.store().all()], [old["profile_id"]])
+        self.assertFalse(self.drafts_empty())
+        # A new session picks up the first three good anchors.
+        session, next_io = self.session(facts=False)
+        result, logged = self.run_quiet(session)
+        self.assertTrue(result["stored"], result)
+        self.assertTrue(any(x.get("result") == "resumed" for x in logged))
+        self.assertLess(len(next_io.records), 25)
         self.assertTrue(self.drafts_empty())
+
+    def test_wrong_anchor_transcript_keeps_a_high_quality_voice_sample(self):
         io_ = FakeIO(self.clock, self.voice)
-        io_.wrong = {3, 5, 8, 11}      # four sentences once each: three repeats allowed
+        io_.wrong = {2}     # anchor #1; checks must still match
         session, _ = self.session(io_, facts=False)
-        result, _ = self.run_quiet(session)
-        self.assertEqual(result["reason"], "unsuitable")
+        result, logged = self.run_quiet(session)
+        self.assertTrue(result["stored"], result)
+        first = next(x for x in logged if x.get("event") == "enroll_clip")
+        self.assertEqual((first["result"], first["text_ok"]), ("accepted", False))
 
     def test_not_confirmed_stores_nothing(self):
         io_ = FakeIO(self.clock, self.voice, ["nenn mich ivan"], confirm=False)
@@ -332,7 +345,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.store().all(), [])
         self.assertEqual(self.core.context()["facts"], [])        # facts were a draft
         self.assertEqual(self.core.people(), [])
-        self.assertTrue(self.drafts_empty())
+        self.assertFalse(self.drafts_empty())  # confirmed only after E
 
     def test_deadline_stops_cleanly(self):
         io_ = FakeIO(self.clock, self.voice)
@@ -342,20 +355,47 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(result, dict(stored=False, reason="timeout"))
         self.assertEqual(io_.said[-1], ve.TIMEOUT)
         self.assertEqual(self.store().all(), [])
-        self.assertTrue(self.drafts_empty())
+        self.assertFalse(self.drafts_empty())
 
     def test_cancel_in_every_phase(self):
-        for phase in (1, 2, 12, 25, 26):     # noise, first take, middle, after the voice part
+        for phase in (1, 2, 12, 25, 26):
             with self.subTest(phase=phase):
+                shutil.rmtree(self.core.voice_dir / "drafts", ignore_errors=True)
                 io_ = FakeIO(self.clock, self.voice, ["ivan"] * 7)
                 session, _ = self.session(io_)
-                io_.on_record = lambda n, s=session, p=phase: s.cancel() if n == p else None
+                io_.on_record = lambda n, v=session, p=phase: v.cancel() if n == p else None
                 result, _ = self.run_quiet(session)
                 self.assertEqual(result, dict(cancelled=True))
-                self.assertEqual(io_.said[-1], ve.CANCELLED)
+                self.assertEqual(io_.said[-1], ve.CANCELLED if phase == 1 else ve.PAUSED)
                 self.assertEqual(self.store().all(), [])
                 self.assertEqual(self.core.context()["facts"], [])
-                self.assertTrue(self.drafts_empty())
+                self.assertEqual(self.drafts_empty(), phase == 1)
+
+    def test_cancel_after_some_good_takes_resumes_within_24h(self):
+        io_ = FakeIO(self.clock, self.voice)
+        session, _ = self.session(io_, facts=False)
+        io_.on_record = lambda n: session.cancel() if n == 12 else None
+        result, _ = self.run_quiet(session)
+        self.assertEqual(result, dict(cancelled=True))
+        self.assertFalse(self.drafts_empty())
+        next_session, next_io = self.session(facts=False)
+        outcome, logged = self.run_quiet(next_session)
+        self.assertTrue(outcome["stored"], outcome)
+        self.assertTrue(any(item.get("result") == "resumed" for item in logged))
+        self.assertLess(len(next_io.records), 25)
+        self.assertTrue(self.drafts_empty())
+
+    def test_expired_draft_is_not_resumed(self):
+        io_ = FakeIO(self.clock, self.voice)
+        session, _ = self.session(io_, facts=False)
+        io_.on_record = lambda n: session.cancel() if n == 12 else None
+        self.run_quiet(session)
+        later = lambda: 1_700_000_000 + ve.RESUME_SECONDS + 1
+        next_session, next_io = self.session(facts=False, wall=later)
+        result, logged = self.run_quiet(next_session)
+        self.assertTrue(result["stored"], result)
+        self.assertFalse(any(item.get("result") == "resumed" for item in logged))
+        self.assertEqual(len(next_io.records), 25)
 
     def test_cancel_during_a_blocking_server_call_is_immediate(self):
         io_ = FakeIO(self.clock, self.voice)
@@ -379,13 +419,14 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.result, dict(cancelled=True))
         self.assertEqual(io_.states[-1], dict(stage=None))
 
-    def test_too_little_speech_replaces_short_takes_or_stops(self):
+    def test_short_prompts_can_reach_minimum_speech_without_long_repeats(self):
         io_ = FakeIO(self.clock, self.voice)
-        io_.speech = 2.2                  # every take just long enough, too little in all
+        io_.speech = 2.2
         session, _ = self.session(io_, facts=False)
-        result, logged = self.run_quiet(session)
-        self.assertEqual(result, dict(stored=False, reason="too_little_speech"))
-        self.assertEqual(len([r for r in io_.records if "anchor" in r]), 18 + ve.EXTRA_ATTEMPTS)
+        result, _ = self.run_quiet(session)
+        self.assertTrue(result["stored"], result)
+        self.assertGreaterEqual(result["speech"], ve.MIN_SPEECH)
+        self.assertEqual(len(io_.records), 25)  # room + 24 short takes
 
     def test_a_model_change_mid_session_stops(self):
         io_ = FakeIO(self.clock, self.voice)
