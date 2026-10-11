@@ -221,8 +221,9 @@ class SessionTests(unittest.TestCase):
 
     def session(self, io_=None, **kwargs):
         io_ = io_ or FakeIO(self.clock, self.voice, kwargs.pop("answers", ()))
+        wall = kwargs.pop("wall", lambda: 1_700_000_000)
         session = ve.VoiceSession(self.core, io_, clock=self.clock, rng=random.Random(3),
-                                  wall=lambda: 1_700_000_000, **kwargs)
+                                  wall=wall, **kwargs)
         io_.session = session
         return session, io_
 
