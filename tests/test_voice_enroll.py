@@ -205,6 +205,24 @@ class PhraseTests(unittest.TestCase):
         self.assertFalse(ep.check(short, "leitung drei lampe blau ja")["ok"])   # exact
         self.assertFalse(ep.check(item, None)["ok"])
 
+    def test_long_training_anchor_tolerates_vosk_errors_not_checks(self):
+        # 4/16 tokens wrong (WER 0.25): the second attempt for a ten-second
+        # long anchor was previously discarded despite 25+ dB SNR.
+        target = ("eins zwei drei vier fünf sechs sieben acht neun zehn elf zwölf "
+                  "dreizehn vierzehn fünfzehn sechzehn")
+        four_errors = ("eins zwei drei vier fünf sechs sieben acht neun zehn elf zwölf "
+                       "anderes weiteres anderes wort")
+        five_errors = ("eins zwei drei vier fünf sechs sieben acht neun zehn elf "
+                       "anderes weiteres anderes wort falsch")
+        anchor = dict(text=target, role="anchor", length="long")
+        self.assertEqual(ep.wer(target, four_errors), 0.25)
+        self.assertEqual(ep.check(anchor, four_errors)["ok"], True)
+        self.assertFalse(ep.check(anchor, five_errors)["ok"])
+        self.assertFalse(ep.check(dict(anchor, role="check"), four_errors)["ok"])
+        self.assertFalse(ep.check(dict(anchor, length="mid"), four_errors)["ok"])
+        self.assertEqual(ep.WER_MAX, 0.20)
+        self.assertEqual(ep.CHALLENGE_WER_MAX, 0.15)
+
     def test_production_randomness_is_secrets(self):
         self.assertIsInstance(ep.system_random(), ep.secrets.SystemRandom)
 
