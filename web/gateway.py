@@ -111,6 +111,7 @@ class Gateway(http.server.BaseHTTPRequestHandler):
         payload = json.dumps({'text': message.strip()}, ensure_ascii=False).encode('utf-8')
         connection = http.client.HTTPConnection(self.server.upstream_host,
                                                 self.server.upstream_port, timeout=90)
+        started = False
         try:
             connection.request('POST', '/v1/chat?format=wav', body=payload,
                                headers={'Authorization': 'Bearer ' + self.server.api_token,
@@ -120,6 +121,7 @@ class Gateway(http.server.BaseHTTPRequestHandler):
             self._headers('application/x-ndjson' if response.status == 200
                           else 'application/json; charset=utf-8')
             self.end_headers()
+            started = True
             while True:
                 part = response.read(16384)
                 if not part:
@@ -128,7 +130,7 @@ class Gateway(http.server.BaseHTTPRequestHandler):
         except (OSError, TimeoutError):
             # Network failure before response headers: reply with 502. After
             # streaming began, close instead (headers cannot be resent).
-            if not self.wfile.closed and not getattr(self, '_headers_sent', False):
+            if not started:
                 try:
                     self._json(502, {'error': 'Proximus server unavailable'})
                 except OSError:
