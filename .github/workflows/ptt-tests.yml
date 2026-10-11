@@ -10,3 +10,7 @@ jobs:
           python-version: '3.13'
       - run: python -m pip install Pillow numpy
       - run: python -m unittest discover -s tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check web/app.js && node --check web/recorder-worklet.js
