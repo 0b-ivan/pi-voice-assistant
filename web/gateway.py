@@ -20,7 +20,7 @@ STATIC = {'/': ('index.html', 'text/html; charset=utf-8'),
 MAX_REQUEST_BYTES = 8192
 MAX_AUDIO_BYTES = 30 * 16000 * 2  # 30 s of mono 16 kHz signed PCM16
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; "
-       "connect-src 'self'; img-src 'self'; media-src 'self' blob:; "
+       "connect-src 'self'; worker-src 'self'; img-src 'self'; media-src 'self' blob:; "
        "base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 
 
