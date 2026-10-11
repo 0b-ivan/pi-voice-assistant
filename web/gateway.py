@@ -91,9 +91,13 @@ class Gateway(http.server.BaseHTTPRequestHandler):
         # Cross-origin requests must not use an Access-authenticated session.
         origin = self.headers.get('Origin', '')
         parsed = urllib.parse.urlsplit(origin)
+        host_header = self.headers.get('Host', '').lower()
+        local = host_header.split(':', 1)[0] in ('localhost', '127.0.0.1')
+        # Non-local browser access must be HTTPS, even when TLS terminates at
+        # Cloudflare Access. HTTP is permitted only for loopback smoke tests.
         if (self.headers.get('Sec-Fetch-Site') == 'cross-site' or
-                parsed.scheme not in ('https', 'http') or
-                parsed.netloc.lower() != self.headers.get('Host', '').lower()):
+                parsed.scheme not in (('http', 'https') if local else ('https',)) or
+                parsed.netloc.lower() != host_header):
             return self._json(403, {'error': 'invalid origin'})
         is_voice = self.path == '/api/voice'
         content_type = self.headers.get('Content-Type', '').split(';')[0].strip().lower()
