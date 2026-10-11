@@ -31,9 +31,8 @@ from voice_controls import _terminate_process_group
 FORMATS = ('wav', 'opus')
 MAX_RESPONSE_LINE = 16 * 1024 * 1024
 MAX_AUDIO_BYTES = 8 * 1024 * 1024
-# Only "heard nothing" is final. Upload limits (too_short/too_large) differ
-# between Pi and server, so the saved capture still goes to local Vosk.
-NO_FALLBACK_CODES = {'no_speech'}
+# A short tap cannot benefit from loading the Pi's fallback model.
+NO_FALLBACK_CODES = {'no_speech', 'too_short'}
 
 _END = object()
 _CANCEL = object()
@@ -131,7 +130,7 @@ class RemoteTurnUplink:
     """
 
     def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None,
-                 session=None):
+                 session=None, agenda_tomorrow=None):
         self.config = config
         # protocol.ClientSession shared by all turns: opened with /v1/hello on
         # first use, then the memory core only travels when it changed.
@@ -142,6 +141,7 @@ class RemoteTurnUplink:
         self.memory = memory
         # Base64 list of today's remaining appointments (agenda.encode_header).
         self.agenda = agenda
+        self.agenda_tomorrow = agenda_tomorrow
         self._connect = connect
         self._queue = queue.SimpleQueue()
         self._lock = threading.Lock()
@@ -242,6 +242,8 @@ class RemoteTurnUplink:
                 connection.putheader('X-Servitor-Memory', self.memory)
             if self.agenda:
                 connection.putheader('X-Servitor-Agenda', self.agenda)
+            if self.agenda_tomorrow:
+                connection.putheader('X-Servitor-Agenda-Tomorrow', self.agenda_tomorrow)
             connection.endheaders()
         except BaseException:
             connection.close()
@@ -344,6 +346,55 @@ class RemoteTurnUplink:
             self.session.confirmed(item['core'])
 
 
+def story_timeout(env=None):
+    """Seconds without any event before a story section counts as failed. A
+    section is one long LLM call plus synthesis, far more than a short turn;
+    the everyday response timeout stays as it is."""
+    env = os.environ if env is None else env
+    return _float(env, 'ASSISTANT_STORY_TIMEOUT_SECONDS', 180, 20, 900)
+
+
+class RemoteStoryUplink(RemoteTurnUplink):
+    """``POST /v1/story`` with the story state: the next section of a long
+    story. Same interface as the turn uplink, so RemoteTurnJob reads it."""
+
+    def __init__(self, config, state, connect=_open_connection, status=None, timeout=None):
+        self.body = json.dumps(dict(story=state), separators=(',', ':')).encode()
+        self.timeout = timeout or story_timeout()
+        super().__init__(config, connect=connect, status=status)
+
+    def _request(self, url):
+        connection = self._connect(url, self.config.connect_timeout)
+        try:
+            connection.connect()
+            connection.sock.settimeout(self.timeout)
+            path = urllib.parse.urlsplit(url).path.rstrip('/')
+            connection.putrequest('POST', f'{path}/v1/story?format={self.config.audio_format}',
+                                  skip_accept_encoding=True)
+            self._headers(connection, url)
+            connection.putheader('Content-Type', 'application/json')
+            connection.putheader('Content-Length', str(len(self.body)))
+            connection.putheader('Accept', 'application/x-ndjson')
+            if self.status:
+                connection.putheader('X-Servitor-Status',
+                                     json.dumps(self.status, separators=(',', ':')))
+            connection.endheaders(self.body)
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    def _send(self):
+        try:
+            self._open()
+            self.upload_finished_at = time.monotonic()
+        except (OSError, http.client.HTTPException) as exc:
+            if not self.cancelled:
+                self.error = str(exc) or type(exc).__name__
+                self.rejection = self._early_rejection()
+            self.close()
+
+
 def decode_opus(source, target, ffmpeg=None, run=subprocess.run):
     ffmpeg = ffmpeg or os.environ.get('TTS_FFMPEG_BIN', '/usr/bin/ffmpeg')
     run([ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
@@ -360,8 +411,16 @@ class RemoteTurnJob:
     are kept even on failure: the controller resumes locally from there.
     """
 
-    def __init__(self, uplink, directory, decode=decode_opus):
+    _sequence = 0
+
+    def __init__(self, uplink, directory, decode=decode_opus, idle_timeout=None):
         self.uplink = uplink
+        # Long stories: the deadline restarts with every event (one section can
+        # take minutes), instead of one deadline for the whole reply.
+        self.idle_timeout = idle_timeout
+        self.story = None          # state from the server's 'story' event
+        self.journey = None        # structured journey request (no audio), journeys.py
+        self.parts = 0             # story audio parts received
         self.directory = Path(directory)
         self.decode = decode
         self.cancelled = False
@@ -399,7 +458,12 @@ class RemoteTurnJob:
             raise RemoteTurnError('stream', 'protocol', 'invalid audio payload') from exc
         if not data or len(data) > MAX_AUDIO_BYTES:
             raise RemoteTurnError('stream', 'protocol', 'empty or oversized audio')
-        target = self.directory / 'remote-reply.wav'
+        if item.get('part') is not None:
+            # Parts of a long story are queued, each in its own file.
+            RemoteTurnJob._sequence += 1
+            target = self.directory / f'story-{os.getpid()}-{RemoteTurnJob._sequence}.wav'
+        else:
+            target = self.directory / 'remote-reply.wav'
         partial = self.directory / f'.remote-reply.{fmt}.part'
         decoded = self.directory / '.remote-reply.decoded.wav'
         try:
@@ -422,15 +486,19 @@ class RemoteTurnJob:
     def _run(self):
         audio = None
         stopped = False
+        finished = False
         timings = {}
         try:
             self.uplink.wait_uploaded(self.uplink.config.response_timeout)
-            deadline = time.monotonic() + self.uplink.config.response_timeout
+            window = self.idle_timeout or self.uplink.config.response_timeout
+            deadline = time.monotonic() + window
             for item in self.uplink.responses():
                 if self.cancelled:
                     return
                 if time.monotonic() > deadline:
                     raise RemoteTurnError('stream', 'network', 'server reply timed out')
+                if self.idle_timeout:
+                    deadline = time.monotonic() + window
                 kind = item.get('event')
                 if kind == 'error':
                     raise RemoteTurnError(str(item.get('stage', 'server')),
@@ -441,14 +509,42 @@ class RemoteTurnJob:
                 elif kind == 'reply':
                     self.reply = str(item.get('text', '')).strip() or None
                     self.model = item.get('model')
+                elif kind == 'audio' and item.get('part') is not None:
+                    path = self._store_audio(item)
+                    if self.cancelled:
+                        path.unlink(missing_ok=True)
+                        return
+                    self.parts += 1
+                    item = {key: value for key, value in item.items() if key != 'data'}
+                    item['path'] = str(path)
                 elif kind == 'audio':
                     audio = self._store_audio(item)
                     item = {key: value for key, value in item.items() if key != 'data'}
+                elif kind == 'story':
+                    self.story = item.get('state') if isinstance(item.get('state'), dict) else None
+                elif kind == 'journey':
+                    if self.journey is not None:
+                        raise RemoteTurnError('stream', 'protocol', 'second journey event')
+                    self.journey = {key: item.get(key) for key in
+                                    ('request', 'speaker', 'guest', 'proposal')}
                 elif kind == 'done':
+                    finished = True
                     timings = item.get('timings') or {}
                 elif kind == 'stop':
                     stopped = True
                 self._events.put(item)
+            if audio is None and self.parts:   # a long story: parts went to the queue
+                self.result = dict(audio=None, story=True, timings=timings,
+                                   host=self.uplink.host)
+                return
+            if audio is None and self.journey is not None:
+                # A journey turn has no audio by design; the Pi acts on it only
+                # once the server finished the turn ('done'), never on a partial one.
+                if not finished:
+                    raise RemoteTurnError('stream', 'incomplete', 'journey turn not finished')
+                self.result = dict(audio=None, journey=self.journey, timings=timings,
+                                   host=self.uplink.host)
+                return
             if audio is None and stopped:  # "Stop", "Sei still": nothing to play
                 self.result = dict(audio=None, stop=True, timings=timings,
                                    host=self.uplink.host)
@@ -461,6 +557,11 @@ class RemoteTurnJob:
         except (OSError, http.client.HTTPException, ValueError) as exc:
             self.error = str(exc) or type(exc).__name__
             self.error_stage, self.error_code = 'stream', 'network'
+        except AttributeError:
+            # cancel() closed the response under a running readline() (http.client
+            # then reads from fp=None); only a cancelled turn may end like this.
+            if not self.cancelled:
+                raise
         finally:
             self.uplink.close()
             self.done.set()

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'server'))
 import servitor_server as ss  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from transcribe import NoSpeechError  # noqa: E402
+import memory  # noqa: E402
 
 TOKEN = 'x' * 40
 
@@ -79,6 +80,70 @@ class FakePipeline:
 
 
 class ServerTest(unittest.TestCase):
+    def test_local_mode_uses_real_measurements_and_fixed_model_identity(self):
+        cases = ('wie voll ist dein akku',
+                 'kannst du bitte einmal nachsehen wie hoch dein akku gerade wirklich ist und ob du lädst',
+                 'sag mir bitte einmal deine messwerte und deinen aktuellen status ohne etwas zu raten',
+                 'welches sprachmodell bist du')
+        self.pipeline.fail_llm = True  # any model invocation would fail this test
+        for persona in ('servitor', 'mensch'):
+            for question in cases:
+                self.pipeline.transcript = question
+                events = []
+                self.service.run_turn([b'\1' * 16000], events.append, 'wav', device=dict(
+                    llm_mode='local', persona=persona, battery_pct=80, battery_charging=True))
+                reply = next(e for e in events if e['event'] == 'reply')
+                self.assertEqual(reply['model'], 'local/intent')
+                if 'sprachmodell' in question:
+                    self.assertIn('Billy' if persona == 'mensch' else 'Proximus', reply['text'])
+                else:
+                    self.assertIn('80 Prozent', reply['text'])
+                    self.assertNotIn('48 Prozent', reply['text'])
+        self.pipeline.transcript = 'wie voll ist dein akku'
+        events = []
+        self.service.run_turn([b'\1' * 16000], events.append, 'wav', device=dict(llm_mode='local'))
+        self.assertEqual(next(e['text'] for e in events if e['event'] == 'reply'),
+                         'Energiedaten nicht verfügbar.')
+
+    def test_tomorrow_calendar_header_is_used_and_legacy_client_gets_no_guesses(self):
+        import agenda
+        import datetime
+        import zoneinfo
+        now = datetime.datetime(2026, 10, 10, 23, 0, tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        early = dict(summary='Frühtermin', start=(now + datetime.timedelta(days=1)).replace(hour=6),
+                     end=None, all_day=False)
+        today = dict(early, summary='Termin heute', start=now)
+        self.pipeline.transcript = 'was steht morgen an'
+        self.pipeline.fail_llm = True
+
+        def turn(tomorrow=None, guest=False):
+            headers = {'Authorization': f'Bearer {TOKEN}',
+                       'X-Servitor-Agenda': agenda.encode_header([today])}
+            if tomorrow is not None:
+                headers['X-Servitor-Agenda-Tomorrow'] = tomorrow
+            if guest:
+                import speaker
+                copy = dict(facts=[], directives=[], history=[], voiceprints=[dict(
+                    name='Ivan', print=speaker.encode([1.0, 0.0]))])
+                headers['X-Servitor-Status'] = json.dumps(dict(memory='on'))
+                headers['X-Servitor-Memory'] = memory.encode_header(copy)
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+            try:
+                conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+                events = self.events(conn.getresponse().read())
+                return next(e['text'] for e in events if e['event'] == 'reply')
+            finally:
+                conn.close()
+
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=now):
+            self.assertEqual(turn(agenda.encode_header([early])), 'Termine morgen. 6 Uhr: Frühtermin.')
+            self.assertEqual(turn(), 'Kalenderdaten für morgen nicht verfügbar.')
+            self.assertEqual(turn(agenda.encode_header([])), 'Keine weiteren Termine morgen.')
+            self.assertEqual(turn('invalid header'), 'Kalenderdaten für morgen nicht verfügbar.')
+            with unittest.mock.patch.object(ss.Service, '_identify',
+                                             lambda self, audio, copy, emit: memory.guest_view(copy)):
+                self.assertIn('nicht als Bediener erkannt', turn(agenda.encode_header([early]), guest=True))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         config = ss.Config({'SERVITOR_API_TOKEN': TOKEN, 'SERVITOR_BIND': '127.0.0.1',
@@ -333,7 +398,7 @@ class ServerTest(unittest.TestCase):
         data = conn.getresponse().read()
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
-        self.assertIn('Omnissiah', reply['text'])
+        self.assertIn('Adeptus Mechanicus', reply['text'])
 
     def test_persona_and_voice_from_device_reach_pipeline(self):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
@@ -453,11 +518,12 @@ class ServerTest(unittest.TestCase):
     def test_billy_words_for_memory_commands_and_intents(self):
         self.pipeline.transcript = 'merk dir dass ich kaffee mag'
         events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
-        self.assertEqual(next(e for e in events if e['event'] == 'reply')['text'], 'Gemerkt.')
+        self.assertIn(next(e for e in events if e['event'] == 'reply')['text'],
+                      memory.BILLY_REPLIES['add_fact'])
         self.pipeline.transcript = 'wie spät ist es'
         events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
-        self.assertTrue(next(e for e in events if e['event'] == 'reply')['text']
-                        .startswith('Es ist '))
+        self.assertRegex(next(e for e in events if e['event'] == 'reply')['text'],
+                         r'^(Es ist |Gerade ist es )?\d+ Uhr')
 
     def test_memory_copy_reaches_llm_and_learned_lines_are_not_spoken(self):
         copy = dict(facts=['Bediener heißt Ivan'], directives=['Städte heißen Makropolen'],
@@ -569,7 +635,8 @@ class IntentServerTest(ServerTest):
             _, data = self.request('/v1/turn', b'\1' * 16000)
         events = self.events(data)
         reply = next(e for e in events if e['event'] == 'reply')
-        self.assertEqual((reply['text'], reply['model']), ('Zeitindex: 4 Uhr 7.', 'local/intent'))
+        self.assertIn(reply['text'], ('Zeitindex: 4 Uhr 7.', 'Es ist 4 Uhr 7.'))
+        self.assertEqual(reply['model'], 'local/intent')
         self.assertNotIn('think', [e.get('stage') for e in events])
         self.assertEqual(events[-1]['event'], 'done')
 
@@ -661,6 +728,17 @@ class IntentServerTest(ServerTest):
                                  voiceprints=[dict(name='Ivan', print='AAAA')]))
         self.assertIn('nicht als Bediener erkannt', text)
         self.assertNotIn('Zahnarzt', text)
+
+    def test_guest_cannot_start_enrollment(self):
+        # "Lerne meine Stimme" from an unknown voice: a refusal, not the LLM.
+        import memory
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, copy, emit:
+                                        dict(copy, speaker='unknown')):
+            text, _ = self.device_turn('lerne meine stimme', {'memory': 'on'}, copy)
+        self.assertEqual(text, memory.GUEST_TEXT)
 
     def device_turn(self, transcript, status, memory_copy=None):
         import memory
@@ -756,6 +834,37 @@ class IntentServerTest(ServerTest):
         self.assertIn('Verbindung zum Server stabil.', reply['text'])  # server knows it is up
         self.assertNotIn('nicht erreichbar', reply['text'])
 
+
+
+class WhisperQuickPathTests(unittest.TestCase):
+    def test_fixed_requests_and_stop_keep_the_vosk_text(self):
+        self.assertTrue(ss.quick_text('wie spät ist es'))
+        self.assertTrue(ss.quick_text('sei still'))
+        self.assertFalse(ss.quick_text('wie hoch ist der eiffelturm'))
+
+    def test_transcribe_mode_keeps_vosk_for_passphrases(self):
+        seen = []
+
+        class Recognizer:
+            whisper = True
+
+            def accept_pcm(self, pcm):
+                pass
+
+            def finish(self):
+                seen.append(self.whisper)
+                return 'omnissiah segne diese maschine'
+
+        class Pipeline:
+            def recognizer(self):
+                return Recognizer()
+
+        config = ss.Config({'SERVITOR_API_TOKEN': 'x' * 40})
+        service = ss.Service(config, Pipeline())
+        events = []
+        service.run_turn([b'\1\0' * 8000], events.append, 'wav', transcribe_only=True)
+        self.assertEqual(seen, [False])
+        self.assertIn(dict(event='transcript', text='omnissiah segne diese maschine'), events)
 
 if __name__ == '__main__':
     unittest.main()

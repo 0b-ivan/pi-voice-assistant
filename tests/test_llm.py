@@ -27,6 +27,28 @@ class FakeResponse:
 
 
 class LLMTests(unittest.TestCase):
+    def test_guest_vocatives_are_removed_but_discussion_of_a_commander_is_kept(self):
+        guest = dict(speaker='unknown', directives=['Nenne mich Kommandant'])
+        for text, expected in (
+                ('Kommandant, die Antwort ist 42.', 'die Antwort ist 42.'),
+                ('Bereit, Kommandant.', 'Bereit.'),
+                ('Guten Abend Kommandant. Die Antwort ist 42.', 'Guten Abend. Die Antwort ist 42.'),
+                ('Der Kommandant führt den Trupp.', 'Der Kommandant führt den Trupp.')):
+            self.assertEqual(llm.guest_address(text, guest), expected)
+        self.assertEqual(llm.guest_address('Bereit, Kommandant.', dict(speaker='Ivan')),
+                         'Bereit, Kommandant.')
+        from memory import prompt_section
+        prompt = prompt_section(guest)
+        self.assertIn('Anredewünsche des Bedieners gelten nur', prompt)
+
+    def test_guest_address_guard_is_used_for_both_model_paths(self):
+        response = FakeResponse({'choices': [{'message': {'content': 'Ja, Kommandant.'}}]})
+        with patch.dict('os.environ', self.base_env(), clear=True), \
+             patch('llm.urllib.request.urlopen', return_value=response):
+            for reply in (llm.generate_reply, llm.generate_local_reply):
+                text, _ = reply('frage', memory=dict(speaker='unknown'))
+                self.assertEqual(text, 'Ja.')
+
     def base_env(self):
         return {
             "OPENROUTER_API_KEY": "test-key",
@@ -268,16 +290,21 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class LoreHintTests(unittest.TestCase):
-    def test_light_is_mostly_plain_and_full_varies_without_constant_binary(self):
-        import random
-        rng = random.Random(3)
-        light = [llm.lore_hint("servitor", "light", rng) for _ in range(300)]
-        plain = sum("keine Begriffe" in h for h in light)
-        self.assertTrue(150 < plain < 250, plain)            # about two thirds plain
-        full = [llm.lore_hint("servitor", "full", rng) for _ in range(300)]
-        binary = sum("binärer Lobgesang" in h for h in full)
-        self.assertTrue(20 < binary < 90, binary)             # about one in six
-        self.assertGreater(len(set(full)), 250)               # hardly ever the same prompt
-        self.assertEqual(llm.lore_hint("mensch", "off", rng), "")
-        self.assertNotIn("Null Eins", llm.system_prompt("full", persona="servitor"))
+class LoreLevelTests(unittest.TestCase):
+    def test_no_random_word_pools_or_forced_invocations(self):
+        self.assertFalse(hasattr(llm, "lore_hint"))
+        self.assertFalse(hasattr(llm, "LORE_POOLS"))
+        for persona in ("servitor", "mensch"):
+            prompt = llm.system_prompt("full", persona=persona)
+            self.assertNotIn("Null Eins", prompt)
+            self.assertNotIn("Humorprotokoll", prompt)
+            self.assertNotIn("zwei bis drei", prompt)
+            # Two identical requests give the same prompt (cache friendly).
+            self.assertEqual(prompt.split("Aktueller Zeitpunkt")[0],
+                             llm.system_prompt("full", persona=persona).split("Aktueller Zeitpunkt")[0])
+
+
+class TimetableRuleTests(unittest.TestCase):
+    def test_the_model_never_gives_departure_times(self):
+        self.assertIn('Fahrpläne kennst du nicht', llm.CONTENT_RULES)
+        self.assertIn('Fahrpläne kennst du nicht', llm.SERVITOR_SYSTEM_PROMPT)

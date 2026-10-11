@@ -10,8 +10,10 @@ if [ "$SRC" != "$B/repo/server" ]; then
   install -o root -g root -m 0644 "$SRC/servitor_server.py" "$B/repo/server/servitor_server.py"
   # The server imports transcribe/llm/voice_controls/voice_effects from the
   # matching src tree; replace it as a whole so no stale module survives.
-  rm -f "$B/repo/src/"*.py
+  rm -f "$B/repo/src/"*.py "$B/repo/src/"*.json
   install -o root -g root -m 0644 "$SRC/../src/"*.py "$B/repo/src/"
+  # Lore archive (src/lore_engrams.json): without it the lore search returns nothing.
+  install -o root -g root -m 0644 "$SRC/../src/"*.json "$B/repo/src/"
 fi
 # Speaker recognition (src/speaker.py): sherpa-onnx and the CAM++ VoxCeleb model.
 "$B/.venv/bin/pip" install -q sherpa-onnx==1.13.8
@@ -59,6 +61,10 @@ SERVITOR_TRUSTED_PROXIES=127.0.0.1,::1,172.22.2.100
 SERVITOR_PIPER_MODEL=$B/tts/de_DE-thorsten_emotional-medium.onnx
 VOSK_MODEL_PATH=$B/models/vosk-model-small-de-0.15
 STT_PROVIDER=vosk
+# Whisper after release (server/install-whisper.sh), Vosk stays the speech
+# gate and answers fixed requests at once. Unset = Vosk only.
+# SERVITOR_STT=whisper
+# SERVITOR_WHISPER_MODEL=small
 TTS_VOICE_PROFILE=servitor
 TTS_SERVITOR_AURA=reference
 TTS_PIPER_SPEAKER_ID=4

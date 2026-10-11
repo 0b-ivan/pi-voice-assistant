@@ -77,14 +77,27 @@ def memory_phrase(present, facts, lore):
             else "Gedächtniskern verbunden." + count)
 
 
-# Spoken when the unit wakes from sleep, per lore level.
+# Spoken when the unit wakes from sleep, per lore level. Each variant has its
+# own prerecorded clips (alarm_audio.known_pieces lists all of them), so the
+# chosen text and the played audio always match; a variant without clips is
+# synthesized live with exactly that text.
 WAKE_PHRASES = {
-    'off': "Aktiviert. Systeme werden vorbereitet.",
-    'light': "Proximus erwacht. Systeme werden vorgewärmt.",
-    'full': "Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.",
-    'billy': "Bin wach, Boss. Moment, ich sortier mich.",
-    'billy_full': "Aufstehen, Gardist. Systeme laufen warm.",
+    'off': ("Aktiviert. Systeme werden vorbereitet.", "Aktiviert. Bereit in wenigen Sekunden."),
+    'light': ("Proximus erwacht. Systeme werden vorgewärmt.",
+              "Proximus aktiv. Systeme werden vorbereitet."),
+    'full': ("Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.",
+             "Proximus erwacht. Die Kogitatoren laufen an."),
+    'billy': ("Bin wach. Moment, ich sortier mich.", "Bin da. Gib mir einen Moment.",
+              "Wach. Ich komme gleich in Gang."),
+    'billy_full': ("Bin wach. Systeme laufen warm.", "Bin da. Gib mir einen Moment.",
+                   "Wach. Ich komme gleich in Gang."),
 }
+
+
+def wake_phrase(style):
+    """One wake-up line for ``style``, not the same as last time."""
+    import variants
+    return variants.pick(f'wake.{style}', WAKE_PHRASES.get(style, WAKE_PHRASES['light']))
 
 
 @dataclass

@@ -115,6 +115,7 @@ class SessionTests(unittest.TestCase):
 
     def test_commands_and_names(self):
         self.assertEqual(enroll.command("lerne mich kennen"), "enroll")
+        self.assertEqual(enroll.command("lerne meine stimme"), "enroll")
         self.assertEqual(enroll.command("starte das stimmtraining"), "refine")
         self.assertEqual(enroll.command("stimmprofil nachtrainieren"), "refine")
         self.assertIsNone(enroll.command("wie spät ist es"))
@@ -203,6 +204,7 @@ class ServerSpeakerTests(unittest.TestCase):
             vector = self.voice
 
             def embed(inner, pcm):
+                inner.seen = len(pcm)
                 return inner.vector if len(pcm) >= 32000 else None
 
         self.service.embedder = Embedder()
@@ -233,6 +235,18 @@ class ServerSpeakerTests(unittest.TestCase):
         events = self.turn()
         self.assertTrue(any(e["event"] == "speaker" and not e["known"] for e in events))
         self.assertEqual(self.pipeline.memory["facts"], [])
+
+    def test_turn_voice_is_compared_without_the_silence_around_it(self):
+        quiet, loud = b"\0\0" * 32000, (b"\x40\x1f" * 32000)   # 2 s silence, 2 s at 8000
+        copy = dict(facts=[], directives=[], history=[], total_facts=0,
+                    voiceprints=[dict(name="Ivan", print=speaker.encode(self.voice))])
+        conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)
+        conn.request("POST", "/v1/turn", body=quiet + loud + quiet, headers={
+            "Authorization": f"Bearer {self.token}", "X-Servitor-Status": json.dumps({"memory": "on"}),
+            "X-Servitor-Memory": memory.encode_header(copy)})
+        conn.getresponse().read()
+        conn.close()
+        self.assertAlmostEqual(self.service.embedder.seen / 32000, 2.0 + 2 * 0.2, delta=0.1)
 
     def test_voiceprint_endpoint_and_transcribe_mode(self):
         conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)

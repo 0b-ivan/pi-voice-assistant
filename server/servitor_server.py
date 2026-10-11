@@ -11,6 +11,11 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 * ``POST /v1/turn?format=wav|opus`` with raw 16 kHz mono s16le PCM as body
   (Content-Length or chunked; chunks are recognized while they arrive).
 * ``POST /v1/speak?format=wav|opus`` with JSON ``{"text": "..."}``.
+* ``POST /v1/story?format=wav|opus`` with JSON ``{"story": state}``: the next
+  section of an explicitly long story (src/story.py). Like a turn that asks
+  for a long story, it answers with ``reply``, several ``audio`` events with
+  a ``part`` number (each at most SERVITOR_MAX_TEXT_CHARS of text, so nothing
+  is cut) and a ``story`` event carrying the state for the next request.
 * ``POST /v1/hello`` with an SPX/1 ``hello`` (src/protocol.py): opens a
   session, answered with ``welcome``. A turn naming the session in
   ``X-Servitor-Session`` may send only the digest of a memory core the
@@ -21,9 +26,14 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 Responses of /v1 are NDJSON events: ``stage`` (recognize, think, synthesize,
 render), ``transcript``, ``reply``, ``audio`` (base64), ``done`` (timings) or
 ``error``. Only one turn runs at a time; a second one gets HTTP 503.
+A journey turn (src/journeys.py, only for Pis that send ``trip`` in their
+status) ends with ``journey`` (the structured request, the recognized voice
+and the proposal ID) and ``done``, without ``audio``: the Pi queries the
+timetable and speaks the answer itself.
 """
 import base64
 import collections
+import datetime
 import hmac
 import http.server
 import json
@@ -47,11 +57,13 @@ import weather  # noqa: E402
 import agenda  # noqa: E402
 import device_control  # noqa: E402
 import enroll  # noqa: E402
+import journeys  # noqa: E402
 import logwatch  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
 import protocol  # noqa: E402
 import speaker  # noqa: E402
+import story as stories  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from mood import emergency, split_tag  # noqa: E402
 from system_status import phrase_style, sanitize_snapshot  # noqa: E402
@@ -121,6 +133,12 @@ class Config:
         return PCM_RATE * 2 * self.max_seconds
 
 
+def quick_text(text):
+    """Vosk's text is good enough as it is: a stop word or a fixed request
+    answered without the LLM (Whisper would only add a second)."""
+    return intents.is_stop(text) or intents.match(text) is not None
+
+
 class RealPipeline:
     """Resident models; every method is called under the service turn lock."""
 
@@ -136,6 +154,16 @@ class RealPipeline:
     def load(self):
         import transcribe
         transcribe._load_vosk_model()
+        import whisper_stt
+        if whisper_stt.enabled():
+            # Optional and never fatal: without it the turn stays on Vosk.
+            try:
+                whisper_stt.load()
+                print(json.dumps(dict(event='whisper_ready', model=whisper_stt.MODEL)),
+                      flush=True)
+            except Exception as exc:
+                print(json.dumps(dict(event='whisper_unavailable', error=str(exc))),
+                      flush=True)
         model = os.environ['SERVITOR_PIPER_MODEL']
         from piper import PiperVoice
         self.voice = PiperVoice.load(model)
@@ -152,8 +180,13 @@ class RealPipeline:
             except LLMError as exc:
                 print(json.dumps(dict(event='local_llm_warmup_failed', error=str(exc))),
                       flush=True)
+            else:
+                print(json.dumps(dict(event='local_llm_ready')), flush=True)
 
     def recognizer(self):
+        import whisper_stt
+        if whisper_stt.loaded():
+            return whisper_stt.HybridRecognizer(quick=quick_text)
         from transcribe import LiveVoskRecognizer
         return LiveVoskRecognizer()
 
@@ -163,23 +196,30 @@ class RealPipeline:
             return 'offline'
         return 'openrouter'
 
-    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None, mood=None):
+    def reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None, mood=None,
+              story=None):
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
-        the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1."""
+        the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1.
+        ``story``: a long story's state; the reply is its next section."""
         from llm import LLMError, free_model, generate_local_reply, generate_reply
+        def successful(result):
+            event = 'local_llm_ready' if result[1].startswith('local/') else 'openrouter_ready'
+            print(json.dumps(dict(event=event)), flush=True)
+            return result
+
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
         # "FREI": the low-restriction model; otherwise the configured one.
         chosen = free_model() if mode == 'free' else None
         if local and mode == 'local':
             # Operator chose "Sprachkern LOKAL" on the Pi: never call OpenRouter.
-            return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
-                                        mood=mood)
+            return successful(generate_local_reply(text, lore=lore, memory=memory, persona=persona,
+                                                   mood=mood, story=story))
         if local and self.clock() < self.openrouter_retry_at:
             primary = 'OpenRouter skipped after a recent failure'
         else:
             try:
-                return generate_reply(text, lore=lore, memory=memory, model=chosen,
-                                      persona=persona, mood=mood)
+                return successful(generate_reply(text, lore=lore, memory=memory, model=chosen,
+                                                 persona=persona, mood=mood, story=story))
             except LLMError as exc:
                 if not local:
                     raise
@@ -188,8 +228,8 @@ class RealPipeline:
                 self.openrouter_retry_at = self.clock() + retry
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
-            return generate_local_reply(text, lore=lore, memory=memory, persona=persona,
-                                        mood=mood)
+            return successful(generate_local_reply(text, lore=lore, memory=memory, persona=persona,
+                                                   mood=mood, story=story))
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
@@ -337,7 +377,9 @@ class Service:
         if not prints or not self.embedder.available:
             return memory_copy
         try:
-            embedding = self.embedder.embed(bytes(audio))
+            # Without the pauses before and after the words: the enrolled
+            # voiceprint is built from trimmed speech too.
+            embedding = self.embedder.embed(speaker.trim_silence(bytes(audio)))
         except Exception as exc:  # never fail a turn over speaker recognition
             print(json.dumps(dict(event='speaker_error', message=str(exc))), flush=True)
             return memory_copy
@@ -350,8 +392,74 @@ class Service:
             return memory.guest_view(memory_copy)
         return dict(memory_copy, speaker=name)
 
+    def _story_start(self, text, emit, fmt, device, timings):
+        """An explicitly long story: plan it and tell its first, short section."""
+        import lore
+        from llm import lore_level, persona_name
+        persona, level = persona_name(device.get('persona')), lore_level(device.get('lore'))
+        request = stories.request(text)
+        state = stories.start(request, persona, level, lore.packet(text, persona, level))
+        print(json.dumps(dict(event='story_start', minutes=state['minutes'],
+                              persona=persona, ids=state['ids'])), flush=True)
+        self._story_section(state, emit, fmt, device, timings)
+
+    def run_story(self, state, emit, fmt, device=None):
+        """POST /v1/story: the next section of a running story."""
+        timings = {}
+        if state.get('done'):
+            raise TurnError('think', 'bad_request', 'story already finished')
+        self._story_section(state, emit, fmt, device or {}, timings)
+        emit(dict(event='done', timings=timings))
+
+    def _story_section(self, state, emit, fmt, device, timings):
+        """One section: a single LLM call with the compact story state, then
+        audio in small parts at sentence boundaries, each sent as soon as it
+        is ready. The new state goes back last, as a ``story`` event."""
+        started = time.monotonic()
+        emit(dict(event='stage', stage='think'))
+        try:
+            raw, model = self.pipeline.reply(state['topic'], state['lore'],
+                                             device.get('llm_mode'), NO_MEMORY,
+                                             state['persona'], None, story=state)
+        except Exception as exc:
+            raise TurnError('think', 'llm', str(exc)) from exc
+        timings['llm'] = round(time.monotonic() - started, 3)
+        text, note = stories.split_note(split_tag(raw)[0])
+        text = stories.trim_incomplete(memory.split_learned(text)[0])
+        if not text:
+            raise TurnError('think', 'llm', 'empty story section')
+        state = stories.advance(state, text, note)
+        emit(dict(event='reply', text=text, model=model, story=True))
+        voice = device.get('voice', 'servitor')
+        parts = stories.split_parts(text, self.config.max_text)
+        for index, part in enumerate(parts):
+            temporary = []
+            try:
+                emit(dict(event='stage', stage='synthesize'))
+                try:
+                    raw_audio = self.pipeline.synthesize(part, voice)
+                    temporary.append(raw_audio)
+                except Exception as exc:
+                    raise TurnError('synthesize', 'tts', str(exc)) from exc
+                try:
+                    rendered = self.pipeline.render(raw_audio, voice)
+                    temporary.append(rendered)
+                    data = self.pipeline.encode(rendered, fmt)
+                    duration = wav_duration_ms(rendered)
+                except Exception as exc:
+                    raise TurnError('render', 'dsp', str(exc)) from exc
+            finally:
+                for path in temporary:
+                    Path(path).unlink(missing_ok=True)
+            state['ms'] += duration
+            emit(dict(event='audio', format=fmt, mime=FORMATS[fmt], duration_ms=duration,
+                      bytes=len(data), part=index, parts=len(parts), text=part,
+                      data=base64.b64encode(data).decode('ascii')))
+        timings['story_section'] = round(time.monotonic() - started, 3)
+        emit(dict(event='story', state=state))
+
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
-                 transcribe_only=False, appointments=None):
+                 transcribe_only=False, appointments=None, appointments_tomorrow=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
@@ -375,6 +483,8 @@ class Service:
                     recognizer = self.pipeline.recognizer()
                 except Exception as exc:
                     raise TurnError('recognize', 'stt', str(exc)) from exc
+                if transcribe_only and hasattr(recognizer, 'whisper'):
+                    recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
                 pending = b''
                 received = 0
                 # Keep the audio only when a voice must be recognized.
@@ -395,7 +505,7 @@ class Service:
                             raise TurnError('recognize', 'stt', str(exc)) from exc
                         pending = pending[usable:]
                 upload_end = time.monotonic()
-                if received < PCM_RATE * 2 // 5:
+                if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
                     raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
                 emit(dict(event='stage', stage='recognize'))
                 try:
@@ -408,6 +518,21 @@ class Service:
                     raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
                 if transcribe_only:  # enrollment answers: the Pi stores them itself
+                    emit(dict(event='done', timings=timings))
+                    return
+                trip_state = (device or {}).get('trip')
+                trip = journeys.parse(text, trip_state) if trip_state else None
+                if trip is not None:
+                    # Trams/trains, reminder, calendar: the Pi queries and acts itself
+                    # (home and calendar stay there). Structured, no LLM, no audio.
+                    if keep:
+                        memory_copy = timed('speaker', self._identify, audio, memory_copy,
+                                            emit)
+                    guest = isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy)
+                    name = memory_copy.get('speaker') if isinstance(memory_copy, dict) else None
+                    emit(dict(event='journey', request=trip,
+                              speaker=None if guest or not isinstance(name, str) else name,
+                              guest=guest, proposal=(device or {}).get('trip_id')))
                     emit(dict(event='done', timings=timings))
                     return
                 if intents.is_stop(text):
@@ -430,6 +555,10 @@ class Service:
                     # Only the operator (or anyone before enrollment) may start it.
                     answer, model = enroll.ANNOUNCE, 'local/enroll'
                     emit(dict(event='enroll', mode=enroll.command(intents.normalize(text))))
+                elif enroll.command(intents.normalize(text)) and memory.unknown_speaker(memory_copy):
+                    # A guest asking to be learned: say no instead of letting the LLM
+                    # claim "Stimme erkannt" (system test 10.10.2026).
+                    answer, model = memory.GUEST_TEXT, 'local/enroll'
                 elif service_op is not None and memory_copy is not NO_MEMORY:
                     # Only Pis that know maintenance send a memory state too.
                     answer = self._maintenance_reply(service_op, device or {})
@@ -451,8 +580,8 @@ class Service:
                         snapshot['llm'] = state()
                     if intent in ('weather', 'briefing'):
                         snapshot['weather'] = timed('weather', self.weather.get)
-                        day = (intents.weather_day(text, self.now().date())
-                               if intent == 'weather' else 0)
+                        day = (intents.weather_day(text, self.now().date()) if intent == 'weather'
+                               else intents.briefing_day(self.now()))
                         snapshot['weather_day'] = day
                         if day is not None:
                             # The Pi shows its stored forecast with the answer.
@@ -462,15 +591,32 @@ class Service:
                         if intent == 'selftest':
                             self.logwatch.refresh(force=True)  # repair now, not in 30 min
                     if intent in ('calendar', 'briefing'):
+                        day = intents.calendar_day(text, self.now().date()) if intent == 'calendar' else 0
+                        snapshot['agenda_day'] = day
                         if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
                             snapshot['agenda'] = agenda.DENIED
-                        elif appointments is not None:
+                        elif day == 1 and appointments_tomorrow is not None:
+                            start, _ = agenda.day_bounds(self.now())
+                            snapshot['agenda'] = agenda.upcoming(
+                                appointments_tomorrow, start + datetime.timedelta(days=1))
+                        elif day == 0 and appointments is not None:
                             snapshot['agenda'] = agenda.upcoming(appointments, self.now())
                     if (isinstance(memory_copy, dict) and memory_copy.get('speaker')
                             and not memory.unknown_speaker(memory_copy)):
                         snapshot['operator'] = memory_copy['speaker']  # recognized voice
                     answer = timed('intent', intents.answer, intent, self.now(), snapshot)
                     model = 'local/intent'
+                elif stories.request(text) is not None:
+                    if (device or {}).get('story') != 'on':
+                        # An older Pi would play only the last part: say so instead of
+                        # handing out a story whose end is silently missing.
+                        persona = 'mensch' if (device or {}).get('persona') == 'mensch' \
+                            else 'servitor'
+                        answer, model = stories.OLD_DEVICE[persona], 'local/story'
+                    else:
+                        self._story_start(text, emit, fmt, device or {}, timings)
+                        emit(dict(event='done', timings=timings))
+                        return
                 else:
                     emit(dict(event='stage', stage='think'))
                     try:
@@ -627,7 +773,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not 0 < length <= PCM_RATE * 2 * 30:
             return self._json(413, dict(error='1 to 30 s of audio'))
         pcm = self.rfile.read(length)
-        embedding = self.service.embedder.embed(pcm)
+        embedding = self.service.embedder.embed(speaker.trim_silence(pcm))
         if embedding is None:
             return self._json(400, dict(error='audio shorter than 1 s'))
         return self._json(200, {'print': speaker.encode(embedding),
@@ -746,7 +892,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._maintenance()
         if url.path == '/v1/voiceprint':
             return self._voiceprint()
-        if url.path not in ('/v1/turn', '/v1/speak'):
+        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
         self.close_connection = True  # never reuse a connection with an unread body
@@ -777,7 +923,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(413, dict(error='body too large'))
 
         text = None
-        if url.path == '/v1/speak':
+        story_state = None
+        if url.path in ('/v1/speak', '/v1/story'):
             if chunked:
                 return self._json(411, dict(error='length required'))
             try:
@@ -786,15 +933,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             if len(raw) != length:
                 return self._json(400, dict(error='truncated body'))
-            try:
-                text = json.loads(raw)['text']
-            except (ValueError, KeyError, TypeError):
-                text = None
-            if not isinstance(text, str):
-                return self._json(400, dict(error='expected JSON {"text": "..."}'))
-            text = text.strip()
-            if not text:
-                return self._json(400, dict(error='text must not be empty'))
+            if url.path == '/v1/story':
+                try:
+                    story_state = stories.sanitize(json.loads(raw)['story'])
+                except (ValueError, KeyError, TypeError):
+                    story_state = None
+                if story_state is None:
+                    return self._json(400, dict(error='expected JSON {"story": state}'))
+            else:
+                try:
+                    text = json.loads(raw)['text']
+                except (ValueError, KeyError, TypeError):
+                    text = None
+                if not isinstance(text, str):
+                    return self._json(400, dict(error='expected JSON {"text": "..."}'))
+                text = text.strip()
+                if not text:
+                    return self._json(400, dict(error='text must not be empty'))
             body = iter(())
         else:
             body = read_chunked(self.rfile, limit) if chunked else read_length(self.rfile, length)
@@ -809,6 +964,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         appointments = agenda.decode_header(self.headers.get('X-Servitor-Agenda', ''),
                                             self.service.now().tzinfo)
+        appointments_tomorrow = agenda.decode_header(
+            self.headers.get('X-Servitor-Agenda-Tomorrow', ''), self.service.now().tzinfo)
 
         if not self.service.turn_lock.acquire(timeout=max(0.0, self.service.config.busy_wait)):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
@@ -828,9 +985,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if session_event:
                 emit(session_event)
             try:
-                self.service.run_turn(body, emit, fmt, text=text, device=device,
-                                      memory_copy=memory_copy, transcribe_only=transcribe_only,
-                                      appointments=appointments)
+                if story_state is not None:
+                    self.service.run_story(story_state, emit, fmt, device=device)
+                else:
+                    self.service.run_turn(body, emit, fmt, text=text, device=device,
+                                          memory_copy=memory_copy,
+                                          transcribe_only=transcribe_only,
+                                          appointments=appointments,
+                                          appointments_tomorrow=appointments_tomorrow)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.

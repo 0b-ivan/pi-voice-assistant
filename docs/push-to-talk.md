@@ -25,6 +25,8 @@ Während Aufnahme: `capture.part.pcm`; beim Verpacken kurz zusätzlich `capture.
 
 Dauer = Frames / `sample_rate`. `reason` ist `release`, `limit` oder `process_exit`. Auf `capture_ready` folgt `processing`, danach `transcript`/`ERKANNT` oder `stt_error`. Bei Erfolg folgen `llm_start`, `llm_response` und die lokale Sprachausgabe. Der Dienst ruft die Komponenten direkt auf; Journal-Tailing ist keine Transport-API.
 
+Aufnahmen unter 200 ms werden mit `capture_discarded` verworfen; die Anzeige geht auf BEREIT. Dabei startet keine lokale Spracherkennung. Im lokalen Live-Pfad wird Vosk erst nach 200 ms Audio geladen, die ersten Audioblöcke bleiben erhalten. Meldet der Server `too_short`, lädt der Pi ebenfalls kein Ersatzmodell.
+
 Die fertige Datei bleibt bis zum nächsten Aufnahmestart, Dienststop oder Reboot verfügbar. **Vor Stop und nächstem Tastendruck abhören:**
 
 ```bash

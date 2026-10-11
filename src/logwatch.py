@@ -135,6 +135,15 @@ BENIGN_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
 _BENIGN = re.compile(r'no transcript|no speech|too short', re.IGNORECASE)
 _LIMITED = re.compile(r'insufficient permissions|not seeing messages from other users',
                       re.IGNORECASE)
+# Only a matching success proves recovery. A voice-service startup does not
+# prove that its local language model finished warming up.
+RECOVERY_EVENTS = {
+    ('servitor-voice.service', 'ready'): ('load', 'crash_voice'),
+    ('servitor-voice.service', 'local_llm_ready'): ('local_llm', 'crash_llm'),
+    ('servitor-voice.service', 'openrouter_ready'): ('openrouter',),
+    ('pi-ptt.service', 'speech_finished'): ('tts',),
+    ('pi-ptt.service', 'transcript'): ('stt',),
+}
 
 
 def _text(value):
@@ -217,7 +226,7 @@ def _unplugged(entry, offline):
                                for at in offline.get(match.group(1), ()))
 
 
-def analyse(entries, rules, units, ignore=None, last=None):
+def analyse(entries, rules, units, ignore=None, last=None, recovered=None):
     """Counts of the findings that reach their threshold: {code: count}.
     ``last``, a dict, receives the time each code was last seen."""
     ignore = compile_ignore() if ignore is None else ignore
@@ -229,6 +238,9 @@ def analyse(entries, rules, units, ignore=None, last=None):
     counts = {}
     restarting = set()
     for entry in entries:
+        if recovered is not None:
+            for code in RECOVERY_EVENTS.get((entry['unit'], entry['event']), ()):
+                recovered[code] = max(recovered.get(code, 0.0), entry['at'])
         if entry['unit'] in units and _RESTART.search(entry['text']):
             restarting.add(entry['unit'])
             continue
@@ -252,7 +264,7 @@ def _journal(args, timeout=120):
     """(entries, limited) of one journalctl query, read as a stream: a day of
     service logs does not have to fit into memory at once."""
     command = ['nice', '-n', '15', 'journalctl', '-o', 'json', '--no-pager', '-q',
-               '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT',
+               '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,__REALTIME_TIMESTAMP',
                '-n', str(MAX_LINES)] + args
     entries = []
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -388,8 +400,8 @@ class LogWatch:
                 entries, limited = self.reader(now - WINDOW, list(self.units))
             except (OSError, subprocess.SubprocessError):
                 entries, limited = [], True
-            last = {}
-            findings = analyse(entries, self.rules, self.units, self.ignore, last)
+            last, recovered = {}, {}
+            findings = analyse(entries, self.rules, self.units, self.ignore, last, recovered)
             if limited:
                 findings['limited'] = 1
             for check in self.checks:
@@ -406,8 +418,13 @@ class LogWatch:
             # Checks, repairs and an unreadable journal are current by nature.
             last = {code: last.get(code) or now for code in findings}
             self.result = dict(at=now, findings=findings, repairs=repairs, last=last)
+            resolved = {code: at for code, at in recovered.items()
+                        if code in findings and at > last[code]}
+            if resolved:
+                self.result['resolved'] = resolved
             if self.report and (previous is None or previous['findings'] != findings
-                                or previous['repairs'] != repairs):
+                                or previous['repairs'] != repairs
+                                or previous.get('resolved') != self.result.get('resolved')):
                 self.report(self.result)
             return self.result
 
@@ -432,9 +449,12 @@ class LogWatch:
         result = self.result
         if result is None:
             return {}
-        return {f'{prefix}_findings': dict(result['findings']),
-                f'{prefix}_repairs': list(result['repairs']),
-                f'{prefix}_last': dict(result.get('last', {}))}
+        fields = {f'{prefix}_findings': dict(result['findings']),
+                  f'{prefix}_repairs': list(result['repairs']),
+                  f'{prefix}_last': dict(result.get('last', {}))}
+        if result.get('resolved'):
+            fields[f'{prefix}_resolved'] = dict(result['resolved'])
+        return fields
 
 
 def pi_watch(memory_present, report=None, requests=REQUESTS, state=LOGSYNC_STATE):
@@ -636,11 +656,13 @@ def _findings(snapshot, now):
     for side in ('log', 'server_log'):
         findings = clean_findings(snapshot.get(f'{side}_findings')) or {}
         last = clean_last(snapshot.get(f'{side}_last'))
+        resolved = clean_last(snapshot.get(f'{side}_resolved'))
         for code, n in findings.items():
             at = last.get(code)
-            current = at is None or now.timestamp() - at < ONGOING
+            fixed = at is not None and resolved.get(code, 0) > at
+            current = not fixed and (at is None or now.timestamp() - at < ONGOING)
             out.append(dict(side=side, code=code, n=n, at=at, current=current,
-                            severity=CODES[code][0]))
+                            resolved=fixed, severity=CODES[code][0]))
     out.sort(key=lambda f: (not f['current'], f['severity'], -f['n']))
     return out
 
@@ -669,6 +691,8 @@ def _sentence(finding, lore, now, advise=True):
         seen.append(f"zuletzt {_clock(finding['at'], now)}")
     text = what + (f", {', '.join(seen)}" if seen else '') + '.'
     if not finding['current']:
+        if finding.get('resolved'):
+            return text + " Danach wieder erfolgreich ausgeführt."
         return text + (" Seitdem herrscht Ruhe." if full else " Seitdem ist Ruhe.")
     if not advise:
         return text

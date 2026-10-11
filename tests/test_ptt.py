@@ -223,11 +223,33 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('1', argv)
         self.assertNotIn(str(live.raw), argv)
         recognizer.accept_pcm.assert_called()
+        self.assertEqual(b''.join(call.args[0] for call in recognizer.accept_pcm.call_args_list), pcm)
         self.assertEqual(live.take_live_transcript(), ('hallo live', 'vosk'))
         with wave.open(str(capture), 'rb') as audio:
             self.assertEqual(audio.getframerate(), 16000)
             self.assertEqual(audio.getnchannels(), 1)
             self.assertEqual(audio.getsampwidth(), 2)
+
+    def test_short_tap_neither_loads_live_vosk_nor_publishes_a_capture(self):
+        pcm = b'\x01\x00' * 1600  # 100 ms: shorter than a server turn too
+        proc = FakeProcess()
+        proc.stdout = BytesIO(pcm)
+        factory = unittest.mock.Mock()
+        live = Recorder(self.tmp.name, 'test-device', 1, live_vosk_factory=factory)
+        with patch('ptt.subprocess.Popen', return_value=proc), redirect_stdout(self.output):
+            live.start()
+            self.assertIsNone(live.finish('release'))
+        factory.assert_not_called()
+        self.assertFalse(live.ready.exists())
+        self.assertFalse(live.raw.exists())
+        self.assertIn('too_short', self.output.getvalue())
+
+    def test_short_file_capture_is_discarded_as_well(self):
+        self.r.process = FakeProcess()
+        self.wav(frames=7200)  # 150 ms of 48 kHz stereo
+        with redirect_stdout(self.output):
+            self.assertIsNone(self.r.finish('release'))
+        self.assertFalse(self.r.ready.exists())
 
 
 class DisplayEventPublishingTests(unittest.TestCase):

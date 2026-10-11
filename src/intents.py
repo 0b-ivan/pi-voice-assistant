@@ -13,6 +13,7 @@ from system_status import (battery_sentence, is_billy, network_text, phrase_styl
                            updates_sentence, updates_text)
 import agenda
 import logwatch
+import variants
 import weather
 
 WEEKDAYS = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
@@ -34,7 +35,7 @@ _PATTERNS = (
     # First: "guten morgen, wie spät ist es" gets the whole briefing (with the time).
     # The operator may greet; the reply never does (see _opening).
     # STT often splits compounds: "morgen bericht", "tages bericht".
-    ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|tages ?bericht|lage ?bericht|'
+    ('briefing', re.compile(r'\b(morgen ?bericht|morgen ?litanei|abend ?bericht|abend ?litanei|tages ?bericht|lage ?bericht|'
                             r'briefing|guten morgen)\b')),
     # Before "status": "selbsttest" / "prüfe deine logs" read the log findings.
     # Vosk small hears "Selbsttest" as "selbst", "selbst theft", "selbst test"
@@ -48,21 +49,44 @@ _PATTERNS = (
                             r'(prüf|check|analysier)\w* (deine |die )?(logs?|locken|protokolle?)|'
                             r'was steht in (den |deinen )?(logs?|locken|protokollen)|'
                             r'(logs?|protokolle?) (prüfen|auswerten|checken))\b|^selbst$')),
+    # Requests for functions the unit does not have: a fixed honest answer, because
+    # the LLM sometimes claimed "Wecker gestellt" or "Termin gespeichert" (2026-10-10).
+    # Before "calendar": "erinnere mich an den termin" is no calendar question.
+    ('unsupported', re.compile(
+        r'\b((stell|still|setz|mach|aktivier)\w* (\w+ ){0,3}(wecker|timer|alarm|countdown)|'
+        r'(wecker|timer|countdown) (\w+ ){0,3}(stell|setz|aktivier)\w*|weck\w* mich|'
+        r'erinner\w* mich|'
+        r'(schick|send|schreib)\w* (\w+ ){0,3}(nachricht|sms|mail|e ?mail|whatsapp)|'
+        r'spiel\w* (\w+ ){0,3}(musik|lied|song|radio|playlist)|spielmusik|'
+        r'(schalt|mach|dimm)\w* (\w+ ){0,3}(licht|lampe|lampen|heizung)\w*( an| aus| ein)?|'
+        r'(licht|lampe|heizung) (\w+ ){0,2}(an|aus|ein))\b')),
+    # The LLM invented "8/16 Gigabyte" and "12,8 Teraflops" (operator, 10.10. 23:37).
+    ('hardware', re.compile(r'\b(arbeitsspeicher|ram|speicherplatz|festplatte\w*|'
+                            r'speicherkarte|prozessor\w*|cpu|hardware|rechenleistung|'
+                            r'rechenkern\w*|kerne|taktfrequenz|gigahertz|hart ?ware|hard ?ware|'
+                            r'für (eine )?hart$)')),
     ('time', re.compile(r'\b(wie ?viel uhr|wie spät|uhrzeit|zeitindex)\b')),
     ('date', re.compile(r'\b(welche[rn]? (tag|datum|wochentag)|welches datum|der wievielte|'
                         r'den wievielten|was für ein tag|datum)\b')),
     ('weather', re.compile(r'\b(wetter\w*|regnet es|wird es (\w+ )?regnen|regenschirm|'
                            r'außentemperatur|wie warm (ist|wird) es|wie kalt (ist|wird) es)\b')),
-    ('calendar', re.compile(r'\b(termine?|kalender|was steht heute an|was steht an|'
-                            r'habe ich heute (?:was|etwas) vor)\b')),
-    ('battery', re.compile(r'\b(akku|akkustand|batterie|energiespeicher|ladestand)\b')),
+    ('calendar', re.compile(r'\b(termine?|kalender|was steht (?:(?:heute|morgen|übermorgen) )?(noch )?an|'
+                            r'steht (?:heute|morgen|übermorgen) (?:noch )?(was|etwas) an|'
+                            r'habe ich (?:heute|morgen|übermorgen) (?:was|etwas) vor)\b')),
+    # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
+    ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
+                           r'ladestand|ladezustand|energiereserve\w*)\b|\bwie (?:viel|viele) prozent hast du (?:noch|übrig)\b')),
     ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
-                          r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht)\b|^status\b')),
+                          r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht|'
+                          r'(?:deine? |system ?)(?:temperatur|auslastung|betriebszeit|messwerte)|'
+                          r'wie (?:heiß|warm) bist du|uptime)\b|^status\b')),
     ('network', re.compile(r'\b(netzwerk\w*|netzwerk status|wlan status|wlan signal|'
                            r'wie ist das netz|wie ist die verbindung|internetverbindung|'
                            r'verbindungsqualität|noosphäre)\b')),
     ('updates', re.compile(r'\b(updates?|aktualisierungen|systemwartung|wartung nötig|'
                            r'sicherheitsupdates?)\b')),
+    ('model', re.compile(r'\b((?:welche\w*|was für (?:ein|einen)) (?:sprach ?modell|ki ?modell|'
+                         r'sprachkern|llm)|(?:sprach ?modell|ki ?modell|llm) (?:bist|nutzt|verwendest))\b')),
     ('identity', re.compile(r'\b(wer bist du|wie heißt du|was bist du)\b')),
 )
 # "Wer bist du?" and "Wie geht es dir?" ask about the speaker himself: the
@@ -87,17 +111,85 @@ def is_stop(text):
     return bool(words) and len(words) <= 4 and bool(_STOP.fullmatch(' '.join(words)))
 
 
+# Variants per style; each one names the unit and its function (see variants.py).
 IDENTITY = {
-    'off': ("Diese Einheit ist Servitor Proximus. Sprachgesteuerte Diensteinheit. "
-            "Funktion: Anfragen des Bedieners beantworten."),
-    'light': ("Diese Einheit ist Servitor Proximus, gebunden an den Kogitator. "
-              "Funktion: Anfragen des Bedieners beantworten."),
-    'full': ("Diese Einheit ist Servitor Proximus, Diener des Adeptus Mechanicus, gebunden "
-             "an den Kogitator des Magos. Funktion: Dienst am Bediener. Lob dem Omnissiah."),
+    'off': ("Servitor Proximus, eine sprachgesteuerte Diensteinheit. Funktion: Anfragen "
+            "beantworten und verfügbare Funktionen bereitstellen.",
+            "Diese Einheit ist Servitor Proximus. Sie beantwortet Anfragen und stellt "
+            "verfügbare Funktionen bereit."),
+    'light': ("Servitor Proximus, eine Diensteinheit mit menschlichem Ursprung. Funktion: "
+              "Anfragen des Bedieners beantworten.",
+              "Diese Einheit ist Servitor Proximus. Sie unterstützt den Bediener bei "
+              "Informationen und verfügbaren Funktionen."),
+    'full': ("Servitor Proximus, Diensteinheit des Adeptus Mechanicus, gebaut von Magos "
+             "Vettius Kael. Funktion: Dienst am Bediener.",
+             "Diese Einheit ist Servitor Proximus, eine Konstruktion des Adeptus Mechanicus. "
+             "Sie dient dem Bediener mit Informationen und verfügbaren Funktionen."),
     # Billy normally answers this himself through the LLM; these are fallbacks.
-    'billy': "Billy. Ein alter Soldat in einer Maschine. Was brauchst du?",
-    'billy_full': ("Sergeant William Joseph Blazkowicz der Zweite, Imperiale Armee. "
-                   "Jedenfalls das, was das Mechanicus von mir übrig gelassen hat."),
+    'billy': ("Billy. Früher Soldat, heute der menschliche Teil dieser Maschine. Frag ruhig.",
+              "Ich bin Billy, ein alter Soldat, der jetzt in dieser Maschine steckt."),
+    'billy_full': ("Billy. Sergeant William Joseph Blazkowicz der Zweite, früher Imperiale "
+                   "Armee. Frag ruhig.",
+                   "William Joseph Blazkowicz der Zweite, Rufzeichen Keen. Früher Sergeant, "
+                   "heute der menschliche Teil von Proximus."),
+}
+
+
+# "Wie stelle ich am Handy einen Wecker?" asks for knowledge: that stays with the LLM.
+_HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|können)\b')
+
+# Questions about the unit itself (not about hardware in general).
+_SELF = re.compile(r'\b(du|dein\w*|dich|dir|hast|einheit|proximus|billy|servitor)\b')
+
+# The unit's own readings, the possessive right before them ("deine cpu
+# temperatur"), not "die temperatur in deinem heimatland".
+_OWN_MEASUREMENT = re.compile(r'\bdein(?:e|en|er)? (?:\w+ )?(?:temperatur|auslastung|betriebszeit|'
+                              r'messwerte)\b')
+# Long sentences: only an actual request for the calendar, not every
+# mention of an appointment ("ich habe morgen einen termin beim zahnarzt").
+_CALENDAR_ASK = re.compile(r'\b(was steht (?:(?:heute|morgen) )?(?:noch )?an|'
+                           r'steht (?:heute|morgen) (?:noch )?(?:was|etwas) an|'
+                           r'habe? ich (?:heute|morgen) (?:noch )?(?:was|etwas) vor|'
+                           r'welche termine habe? ich|meine termine|(?:in|im) meinem kalender)\b')
+
+# "Wie viel Arbeitsspeicher?" alone asks about the unit; "was ist ein Prozessor" does not.
+_DEFINE = re.compile(r'^(was (ist|sind|bedeutet|heißt)|erklär\w*|wofür)\b')
+
+# Raspberry Pi Zero 2 W of this unit; current free values from the snapshot.
+HARDWARE = {
+    'off': "Hardware: Raspberry Pi Zero 2 W. Prozessor: 4 Kerne ARM Cortex-A53, 1 Gigahertz. "
+           "Arbeitsspeicher: 512 Megabyte{mem}. Speicher: 32 Gigabyte Speicherkarte{disk}, "
+           "dazu 8 Gigabyte Gedächtnisstick. Sprachkern auf dem Server.",
+    'full': "Trägersystem: Raspberry Pi Zero 2 W. Rechenkern: 4 Kerne ARM Cortex-A53, "
+            "1 Gigahertz. Arbeitsspeicher: 512 Megabyte{mem}. Datenspeicher: 32 Gigabyte"
+            "{disk}, dazu 8 Gigabyte Gedächtniskern. Das Denken übernimmt der Kogitator.",
+    'billy': "Ich steck in einem Raspberry Pi Zero 2 W: vier kleine Kerne mit 1 Gigahertz, "
+             "512 Megabyte Arbeitsspeicher{mem} und 32 Gigabyte Speicherkarte{disk}, dazu "
+             "ein 8-Gigabyte-Stick. Das Denken macht der Server.",
+}
+
+
+def hardware_text(snapshot, lore='off'):
+    mem, disk = snapshot.get('mem_free_pct'), snapshot.get('disk_free_pct')
+    key = 'billy' if is_billy(lore) else ('full' if lore == 'full' else 'off')
+    return HARDWARE[key].format(
+        mem=f", {mem} Prozent frei" if isinstance(mem, int) else '',
+        disk=f", {disk} Prozent frei" if isinstance(disk, int) else '')
+
+
+UNSUPPORTED = {
+    'off': ("Funktion nicht vorhanden. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+            "Haussteuerung besitzt diese Einheit nicht.",
+            "Nicht ausführbar. Diese Einheit hat keine Wecker, Timer, Erinnerungen, "
+            "Nachrichten, Musik oder Haussteuerung."),
+    'light': ("Nicht ausführbar. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+              "Haussteuerung fehlen dieser Einheit.",),
+    'full': ("Protokoll nicht vorhanden. Wecker, Timer, Erinnerungen, Nachrichten, Musik und "
+             "Haussteuerung wurden dieser Einheit nicht verliehen.",),
+    'billy': ("Das kann ich nicht. Wecker, Timer, Erinnerungen, Nachrichten, Musik oder Licht "
+              "hab ich nicht an Bord.",
+              "Geht nicht, so was hat man mir nicht eingebaut. Kein Wecker, kein Timer, keine "
+              "Erinnerungen, keine Nachrichten, keine Musik, kein Licht."),
 }
 
 
@@ -108,7 +200,20 @@ def normalize(text):
 def match(text, persona=None):
     """Intent name or None. Conservative: anything unclear goes to the LLM."""
     text = normalize(text)
-    if not text or len(text.split()) > 12:
+    if not text:
+        return None
+    # Personal measurements and calendar requests stay out of the model even
+    # when politeness, corrections or follow-up clauses make the sentence long.
+    if _OWN_MEASUREMENT.search(text):
+        return 'status'
+    if len(text.split()) > 12:
+        if _CALENDAR_ASK.search(text):
+            return 'calendar'
+        if _SELF.search(text):
+            for name, pattern in _PATTERNS:
+                if name in ('hardware', 'battery', 'status', 'network', 'updates', 'model') \
+                        and pattern.search(text):
+                    return name
         return None
     for name, pattern in _PATTERNS:
         if pattern.search(text):
@@ -116,29 +221,38 @@ def match(text, persona=None):
                 return None
             if persona == 'mensch' and (name == 'identity' or _PERSONAL.search(text)):
                 return None
+            if name == 'unsupported' and _HOWTO.search(text):
+                return None
+            if name == 'hardware' and not _SELF.search(text) and (
+                    len(text.split()) > 4 or _DEFINE.search(text)):
+                return None   # "wie viel RAM braucht ein Laptop": general knowledge
             return name
     return None
 
 
+TIME_TEXTS = {
+    'billy': ("Es ist {clock}", "{clock}", "Gerade ist es {clock}"),
+    'billy_full': ("Es ist {clock}", "{clock}", "Gerade ist es {clock}"),
+    'full': ("Der Chronometer meldet: {clock}", "Zeitindex: {clock}"),
+    'light': ("Zeitindex: {clock}", "Es ist {clock}"),
+    'off': ("Zeitindex: {clock}", "Es ist {clock}"),
+}
+
+
 def time_text(now, lore='off'):
     clock = f"{now.hour} Uhr." if now.minute == 0 else f"{now.hour} Uhr {now.minute}."
-    if lore == 'billy':
-        return f"Es ist {clock}"
-    if lore == 'billy_full':
-        return f"Es ist {clock} Wachablösung ist noch nicht."
-    if lore == 'full':
-        return f"Der heilige Chronometer meldet: {clock} Lob dem Omnissiah."
-    return f"Zeitindex: {clock}"
+    return variants.pick(f'time.{lore}', TIME_TEXTS.get(lore, TIME_TEXTS['off']), clock=clock)
 
 
 def date_text(now, lore='off'):
     date = (f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} "
             f"{MONTHS[now.month - 1]} {now.year}.")
     if is_billy(lore):
-        return f"Heute ist {date}"
+        return variants.pick('date.billy', ("Heute ist {date}", "Wir haben {date}"), date=date)
     if lore == 'full':
-        return f"Datum nach terranischer Zählung: {date} Der Maschinengeist bestätigt."
-    return f"Datum: {date}"
+        return variants.pick('date.full', ("Datum nach terranischer Zählung: {date}",
+                                           "Datum: {date}"), date=date)
+    return variants.pick('date.servitor', ("Datum: {date}", "Heute ist {date}"), date=date)
 
 
 _DAY_NAMES = ('montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag')
@@ -162,27 +276,62 @@ def weather_day(text, today):
 def weather_text(snapshot, lore='off'):
     day = snapshot.get('weather_day', 0)
     if day is None:
-        return ("So weit reicht meine Vorhersage nicht, Boss." if is_billy(lore)
+        return ("So weit reicht meine Vorhersage nicht." if is_billy(lore)
                 else "Vorhersage reicht nur fünf Tage.")
     text = weather.day_sentence(snapshot.get('weather'), day, lore)
     if text is None:
-        return "Keine Wetterdaten, Boss." if is_billy(lore) else "Wetterdaten nicht verfügbar."
+        return ("Ich habe gerade keine Wetterdaten." if is_billy(lore)
+                else "Wetterdaten nicht verfügbar.")
     if lore == 'billy_full':
         return f"Lage draußen: {text}"
     return f"Auspex meldet: {text}" if lore == 'full' else text
 
 
+def calendar_day(text, today):
+    """Supported calendar window; never answer a future request with today's list."""
+    text = normalize(text)
+    if re.search(r'\b(woche|monat|jahr|nächste\w*|gestern|übermorgen)\b|\bam \d', text):
+        return None
+    return weather_day(text, today)
+
+
 def calendar_text(snapshot, lore='off'):
-    return agenda.sentence(snapshot.get('agenda'), lore) or "Kalenderdaten nicht verfügbar."
+    if snapshot.get('agenda') == agenda.DENIED:
+        return agenda.sentence(agenda.DENIED, lore)
+    day = snapshot.get('agenda_day', 0)
+    if day not in (0, 1):
+        return "Kalenderdaten sind nur für heute und morgen verfügbar."
+    missing = "Kalenderdaten für morgen nicht verfügbar." if day else "Kalenderdaten nicht verfügbar."
+    return agenda.sentence(snapshot.get('agenda'), lore, day=day) or missing
+
+
+def briefing_day(now):
+    """The evening report looks ahead; earlier reports describe today."""
+    return 1 if now.hour >= 18 else 0
+
+
+def model_text(snapshot, lore):
+    if snapshot.get('llm_mode') == 'local':
+        core = "Der lokale Sprachkern auf dem Server beantwortet freie Fragen."
+    elif snapshot.get('llm') == 'offline':
+        core = "Zurzeit beantwortet der lokale Sprachkern auf dem Server freie Fragen."
+    else:
+        core = "Freie Fragen beantwortet der gewählte Sprachkern. Die Auswahl steht im Menü Sprachkern."
+    name = "Ich bin Billy, das menschliche Engramm von Proximus." if is_billy(lore) else \
+        "Diese Einheit ist Servitor Proximus."
+    return f"{name} {core} Messwerte und Termine liefert das Gerät direkt."
 
 
 def _opening(now, lore, name=None):
     """No human greeting: a servitor identifies the operator and starts the report."""
     part = 'Morgen' if now.hour < 11 else 'Tages' if now.hour < 18 else 'Abend'
-    if lore == 'billy':
-        return f"Morgen, {name or 'Boss'}." if part == 'Morgen' else f"Hallo {name or 'Boss'}."
-    if lore == 'billy_full':
-        return f"{part}appell, {name or 'Gardist'}. Stillgestanden, war ein Witz."
+    if is_billy(lore):
+        hello = 'Morgen' if part == 'Morgen' else 'Hallo'
+        if name:   # the recognized operator is always named
+            return variants.pick('briefing.open.billy.name',
+                                 (f"{hello}, {name}.", f"{hello}, {name}. Kurz zur Lage."))
+        return variants.pick('briefing.open.billy',
+                             (f"{hello}.", "Hier ist der Überblick.", f"{hello}. Kurz zur Lage."))
     identified = f"Bediener {name} identifiziert. " if name else ""
     if lore == 'full':
         return f"{identified}Die {part}litanei beginnt. Ave Omnissiah."
@@ -193,8 +342,8 @@ BRIEFING_END = {
     'off': "Bericht Ende.",
     'light': "Bericht Ende. Diensteinheit bereit.",
     'full': "Lob dem Omnissiah. Das Tagwerk möge beginnen.",
-    'billy': "Das war's. Los geht's.",
-    'billy_full': "Das war's. Wegtreten.",
+    'billy': "Das war's.",
+    'billy_full': "Das war's.",
 }
 
 
@@ -206,9 +355,12 @@ def briefing_text(now, snapshot, lore='off'):
     day = f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} {MONTHS[now.month - 1]}"
     parts.append(f"Heute ist {day}, es ist {clock}." if is_billy(lore)
                  else f"Datum: {day}. Zeitindex: {clock}.")
-    sky = weather.sentence(snapshot.get('weather'), lore)
+    day = briefing_day(now)
+    sky = weather.day_sentence(snapshot.get('weather'), day, lore)
     if sky:
         parts.append(sky)
+    elif day:
+        parts.append("Wetterdaten für morgen nicht verfügbar.")
     appointments = snapshot.get('agenda')
     if appointments is not None and appointments != agenda.DENIED:  # guests: just left out
         parts.append(agenda.sentence(appointments, lore))
@@ -242,8 +394,9 @@ def answer(intent, now, snapshot=None, lore=None):
     if intent == 'battery':
         sentence = battery_sentence(snapshot, lore)
         if sentence is None:
-            return "Keine Akkudaten, Boss." if is_billy(lore) else "Energiedaten nicht verfügbar."
-        return f"{sentence} Heilige Ölung empfohlen." if lore == 'full' else sentence
+            return ("Zum Akku habe ich gerade keine Daten." if is_billy(lore)
+                    else "Energiedaten nicht verfügbar.")
+        return sentence
     if intent == 'network':
         return network_text(snapshot, lore=lore)
     if intent == 'updates':
@@ -256,6 +409,13 @@ def answer(intent, now, snapshot=None, lore=None):
         return calendar_text(snapshot, lore)
     if intent == 'selftest':
         return logwatch.selftest_text(snapshot, lore, now)
+    if intent == 'hardware':
+        return hardware_text(snapshot, lore)
+    if intent == 'model':
+        return model_text(snapshot, lore)
+    if intent == 'unsupported':
+        key = 'billy' if is_billy(lore) else lore
+        return variants.pick(f'unsupported.{key}', UNSUPPORTED.get(key, UNSUPPORTED['off']))
     if intent == 'identity':
-        return IDENTITY.get(lore, IDENTITY['off'])
+        return variants.pick(f'identity.{lore}', IDENTITY.get(lore, IDENTITY['off']))
     raise ValueError(f'unknown intent {intent!r}')
