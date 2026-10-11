@@ -53,11 +53,13 @@ def sanitize_finding(item):
     if not out['title']:
         return None
     out['priority'] = priority
+    if item.get('known_exploited') is True:
+        out['known_exploited'] = True
     sources = item.get('sources', [])
     out['sources'] = [url for value in sources[:5] if (url := source_url(value))] \
         if isinstance(sources, list) else []
     out['status'] = item.get('status') if item.get('status') in (*OPEN, 'resolved', 'dismissed') else 'open'
-    for key in ('first_seen', 'last_seen'):
+    for key in ('first_seen', 'last_seen', 'observed_at'):
         value = item.get(key)
         if type(value) in (int, float) and math.isfinite(value) and value >= 0:
             out[key] = value
@@ -162,6 +164,13 @@ class Store:
                             last_seen=report['at'])
                 if previous.get('status') in ('decision', 'working', 'dismissed'):
                     item['status'] = previous['status']
+                if previous.get('known_exploited') and not item.get('known_exploited'):
+                    # Failure/absence of optional priority enrichment is not
+                    # evidence that known exploitation has ceased.
+                    item['known_exploited'] = True
+                    item['priority'] = 0
+                    item['note'] = previous.get('note', '')
+                    item['sources'] = list(dict.fromkeys(previous['sources'] + item['sources']))[:5]
                 items[item['id']] = item
                 seen.add(item['id'])
             # Only fully checked scopes may close absent findings. Partial scans,
@@ -171,7 +180,8 @@ class Store:
                         and item['status'] in OPEN:
                     item['status'] = 'resolved'
             values = sorted(items.values(), key=lambda x: (x['status'] not in OPEN,
-                            x['category'] != 'security', x['priority'], -x.get('last_seen', 0)))
+                            x['priority'], not x.get('known_exploited', False),
+                            x['category'] != 'security', -x.get('last_seen', 0)))
             if len(values) > 512 or len(json.dumps(values).encode()) > MAX_REPORT // 2:
                 self.error = 'Nachtregister voll. Alte Einträge müssen archiviert werden.'
                 return False  # do not silently drop open security findings
@@ -203,6 +213,9 @@ class Store:
         selected += [item for item in items if item not in selected][:6 - len(selected)]
         compact = [{key: item[key] for key in ('id', 'scope', 'category', 'key', 'title',
                     'advice', 'priority', 'status')} for item in selected]
+        for row, item in zip(compact, selected):
+            if item.get('known_exploited'):
+                row['known_exploited'] = True
         return dict(open=len(items), findings=compact, last=({key: last[key] for key in
                     ('at', 'state', 'night')} | dict(limits=last['limits'][:3]) if last else None))
 
@@ -282,6 +295,8 @@ def answer(kind, view, brief=False):
         parts.append('Keine Sicherheitsbefunde in der abrufbaren Auswahl. Gesamtstand mit Was ist offen.')
     for item in findings[:3 if brief else 5]:
         parts.append(item['title'] + '.')
+        if item.get('known_exploited'):
+            parts.append('Bekannte Ausnutzung gemeldet; zuerst prüfen.')
         if not brief and item['advice']:
             parts.append(item['advice'])
     if last.get('limits'):

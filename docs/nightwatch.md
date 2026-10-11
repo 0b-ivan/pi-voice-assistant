@@ -8,6 +8,10 @@ direkt gegen llama-server auf CT 107. Der Nachtlauf ruft weder OpenRouter noch
 den normalen LLM-Adapter auf; auch bei Ausfall des lokalen Modells gibt es
 keinen Cloud-Fallback. Lokale Rechenzeit und Strom werden weiterhin gebraucht.
 
+Die vertiefte [Beschreibung der Nachtarbeit](nightwatch-design.md) erklärt
+Nachweise, Sicherheitsprioritäten, die Grenzen des Trainings und die noch
+offenen Ausbaustufen.
+
 ## Wann die Prüfung startet
 
 Standard: 02:00–05:00 Uhr **Europe/Berlin**, nach 20 Minuten ohne Bedienung,
@@ -41,14 +45,15 @@ Loopback-Adressen `127.0.0.1` und `::1` sind für Nachtinferenz erlaubt.
 
 | Prüfung | Ergebnis und Grenzen |
 |---|---|
-| Logs | Übernimmt feste Fehlercodes und Häufigkeiten aus der bestehenden Logüberwachung auf Pi und CT 107: eigenes Dienstjournal sowie Systemwarnungen der letzten 24 Stunden, alle 30 Minuten gelesen. Eingeschränkter Journalzugriff oder fehlende Ergebnisse werden als Prüflücke gespeichert. Rohe Logs bleiben lokal. |
+| Logs | Übernimmt feste Fehlercodes, Häufigkeiten und Beobachtungszeiten aus der bestehenden Logüberwachung auf Pi und CT 107: eigenes Dienstjournal sowie Systemwarnungen der letzten 24 Stunden, alle 30 Minuten gelesen. Der Prüfzeitpunkt muss höchstens eine Stunde alt sein. Ein nachfolgender Wiederherstellungsnachweis kann einen Fehler erledigen; alte oder eingeschränkte Auswertungen können das nicht. Rohe Logs bleiben lokal. |
 | Betrieb | Wenig freier RAM/Datenträger und wartende Pi-/Server-Updates werden als offene Punkte abgelegt. Der Updatebestand stammt aus der bestehenden Simulation und hängt von der Aktualität der APT-Listen ab. |
 | Debian-Pakete | Erfasst tatsächlich installierte Binär- und Quellpaketversionen mit `dpkg-query`, gleicht die passende Distribution und Ausgabe mit dem [Debian Security Tracker](https://security-tracker.debian.org/tracker/) ab und berücksichtigt Debian-Backports durch `dpkg --compare-versions`. |
 | Python und llama.cpp | Erfasst Paketmetadaten der laufenden Python-Umgebung, auf dem Pi auch der separaten Piper-Umgebung. Fragt [OSV](https://google.github.io/osv.dev/post-v1-querybatch/) mit öffentlichen Paketnamen/Versionen oder einem nachgewiesenen Git-Commit ab. Treffer sind Hinweise zur Version; Voraussetzungen und Distributionspatches müssen geprüft werden. Zurückgezogene Meldungen werden ignoriert. |
+| Bekannte Ausnutzung | Gleicht bereits gefundene CVEs mit dem offiziellen CISA-Katalog ab. Bekannte Ausnutzung erhält Vorrang und wird im Sprachabruf genannt; sie beweist keinen lokalen Angriff. Quellenfehler werden als Prüflücke gespeichert. Ein früherer Ausnutzungshinweis bleibt erhalten. |
 | Sprache | Eine geeignete gespeicherte „Proximus“-Aufnahme prüft Vosk; Synthese und DSP erzeugen eine temporäre Audiodatei, die anschließend gelöscht wird. Das Mikrofon wird nicht neu aufgenommen und der Lautsprecher nicht benutzt. Ohne geeignete Aufnahme wird der Erkennungstest als ungeprüft gemeldet. |
 | Lokales Modell | Feste Rechenprobe mit bekannter Antwort. Bei Befunden erstellt das lokale Modell einen ausdrücklich ungeprüften nächsten Prüfvorschlag. Das ist eine kurze Funktionsprobe, kein umfassender Qualitätstest. |
 | Lösungssuche | Sucht zu festen Fehlercodes in öffentlichen Upstream-Issues von llama.cpp, Vosk, Piper und openWakeWord. Nur vorgegebene technische Suchbegriffe verlassen das Gerät; Webauszüge sind Daten im Prompt und können keine Aktionen ausführen. Quellenlinks werden gespeichert. |
-| Trainingsdaten | Prüft höchstens 200 vorhandene Weckwort-WAVs auf Format, Länge, hörbares Signal und starkes Clipping. Speichert SHA-256/Framezahl als Manifest und schlägt bei mindestens 20 geeigneten Clips einen Trainingsvergleich vor. |
+| Trainingsdaten | Prüft höchstens 200 vorhandene Weckwort-WAVs auf Format, Länge, hörbares Signal und starkes Clipping. Zählt identischen PCM-Inhalt nur einmal und teilt bekannte Aufnahmesitzungen stabil auf Training, Validierung und Test auf. Das lokale Manifest enthält Hashes und Framezahlen; der Server erhält nur Anzahlen und die formale Bereitschaft des Positivsplits. Ein vollständiger Trainingsvergleich braucht zusätzlich Negativmaterial und unabhängige Messungen. |
 
 Das komplette Debian-JSON wird auf CT 107 paketweise gelesen; nur installierte
 Quellpakete bleiben im Speicher und im sechs Stunden gültigen Cache. Download,
@@ -75,7 +80,11 @@ kopieren, täglich erneuern und dort für `servitor` lesbar machen. In dessen
 NIGHTWATCH_EXTRA_INVENTORIES=/var/lib/servitor-voice/inventories/proxmox.json,/var/lib/servitor-voice/inventories/cloudflared.json
 ```
 
-Exporte über einen Tag alt werden als Prüflücke gemeldet. Der Export erfasst
+Dateizeit und Erfassungszeit im Inhalt müssen höchstens einen Tag alt sein;
+Zeitpunkte über zwei Minuten in der Zukunft werden abgelehnt. Erneutes Kopieren
+macht einen alten Export nicht frisch. Höchstens acht zusätzliche, eindeutig
+benannte Systeme sind erlaubt; darüber hinaus wird eine Prüflücke gemeldet.
+Der Export erfasst
 APT und die Python-Umgebung, mit der er läuft. Für weitere virtuelle Umgebungen
 oder manuell installierte Programme sind zusätzliche Bestandsdaten nötig.
 Die Servicekennung `system` muss pro Maschine eindeutig sein.
@@ -145,12 +154,27 @@ und führt keine Befehle aus Webtext oder Modellantworten aus. Die bisherigen
 kleinen Reparaturen der Logüberwachung und der Wartungsmodus gelten weiter.
 Pi-/Server-Updates bleiben an die vorhandene Bestätigung gebunden.
 
-Die Sprachsamples dienen zunächst dem **Weckwort-Modell**, nicht einem
-Nachtraining von Qwen. Das vorhandene
-[`train_wakeword.py`](../server/wakeword/train_wakeword.py) kann später mit
-getrennten Trainings- und Testaufnahmen einen Kandidaten vergleichen.
-Dieser Nachtlauf bereitet die Datenprüfung und den Vorschlag vor; er trainiert
-noch keinen Kandidaten automatisch und aktiviert kein neues Modell.
+Die Sprachsamples dienen zunächst dem **Weckwort-Modell**. Ein formal
+vorbereiteter Positivsplit benötigt mindestens 20 eindeutige Clips aus drei
+Sitzungen: mindestens 10 Training, 5 Validierung und 5 Test. Unbekannte Sitzungen
+bleiben unzugeordnet; Negativaufnahmen werden dadurch nicht ersetzt.
+Der Sitzungsplan muss noch in
+[`train_wakeword.py`](../server/wakeword/train_wakeword.py) integriert werden.
+Dessen bisherige `positive_real_test`-Daten werden zur Checkpoint-Auswahl genutzt
+und sind deshalb kein unabhängiger Abschlusstest.
+
+Bereits unabhängig gemessene Bestands- und Kandidatenberichte lassen sich prüfen:
+
+```sh
+python3 scripts/review-wakeword-candidate.py --manifest /pfad/manifest.json --baseline /pfad/bestand.json --candidate /pfad/kandidat.json --output /pfad/bewertung.json
+```
+
+Die [vertiefte Beschreibung](nightwatch-design.md#implementierte-prüfung-gemessener-kandidatenberichte)
+nennt die Berichtsfelder und Grenzen für Trefferquote, Fehlaktivierungen und
+Pi-Latenz. Das Skript prüft Messberichte; es erzeugt die Messungen nicht selbst.
+Selbst bei bestandenem Vergleich bleibt `activated` immer `false`.
+Dieser Nachtlauf trainiert noch keinen Kandidaten automatisch und aktiviert
+kein neues Modell.
 Ein Sprachmodell-Feintuning benötigt zusätzlich passende Textdaten,
 Trainingshardware und eine eigene Qualitätsprüfung.
 

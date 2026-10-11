@@ -33,6 +33,7 @@ install -m 0644 "${repo_root}/src/maintenance.py" /opt/pi-voice-assistant/src/ma
 install -m 0644 "${repo_root}/src/logwatch.py" /opt/pi-voice-assistant/src/logwatch.py
 install -m 0644 "${repo_root}/src/nightwatch.py" /opt/pi-voice-assistant/src/nightwatch.py
 install -m 0644 "${repo_root}/src/nightwatch_client.py" /opt/pi-voice-assistant/src/nightwatch_client.py
+install -m 0644 "${repo_root}/src/nightwatch_training.py" /opt/pi-voice-assistant/src/nightwatch_training.py
 install -m 0644 "${repo_root}/src/security_audit.py" /opt/pi-voice-assistant/src/security_audit.py
 install -m 0644 "${repo_root}/src/enroll.py" /opt/pi-voice-assistant/src/enroll.py
 install -m 0644 "${repo_root}/src/audio_output.py" /opt/pi-voice-assistant/src/audio_output.py

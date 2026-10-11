@@ -7,7 +7,8 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from security_audit import Audit, Fetcher, DEBIAN, OSV, sanitize_inventory
+from security_audit import Audit, ExploitPriority, Fetcher, DEBIAN, OSV, KEV_SOURCES, sanitize_inventory
+from nightwatch import finding
 from nightwatch_server import Guard, Interrupted
 
 
@@ -126,6 +127,50 @@ class SecurityTests(unittest.TestCase):
                                 ranges=[dict(events=[dict(fixed='2')])])])]
         issues, _, _ = self.audit.scan([self.inv])
         self.assertEqual(issues[0]['fixed'], '2')
+
+
+class PriorityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.fetch = Mock()
+        self.fetch.json.return_value = dict(catalogVersion='2026.10.10',
+            dateReleased='2026-10-10T00:00:00Z', count=1,
+            vulnerabilities=[dict(cveID='CVE-2026-10001')])
+        self.priority = ExploitPriority(self.tmp.name, self.fetch)
+        self.issue = finding('security:pi:osv', 'sample:CVE-2026-10001', 'Eine bekannte CVE',
+                             'Abhilfe prüfen.', 'security', 1)
+
+    def test_kev_enriches_only_an_existing_version_match_and_is_cached(self):
+        self.assertEqual(self.priority.enrich([self.issue]), [])
+        self.assertTrue(self.issue['known_exploited'])
+        self.assertEqual(self.issue['priority'], 0)
+        self.assertIn('kein Nachweis', self.issue['note'])
+        self.assertEqual(self.priority.enrich([self.issue]), [])
+        self.fetch.json.assert_called_once()
+        harmless = finding('operation:pi', 'CVE-2026-10001', 'Logtext', '', 'operation', 2)
+        self.priority.enrich([harmless])
+        self.assertNotIn('known_exploited', harmless)
+
+    def test_official_mirror_is_used_on_source_failure(self):
+        data = self.fetch.json.return_value
+        self.fetch.json.side_effect = [OSError('403'), data]
+        self.assertEqual(self.priority.enrich([self.issue]), [])
+        self.assertEqual(self.issue['sources'][0], KEV_SOURCES[1])
+
+    def test_offline_priority_is_unknown_and_does_not_invent_exploitation(self):
+        self.fetch.json.side_effect = OSError('offline')
+        self.assertTrue(self.priority.enrich([self.issue]))
+        self.assertNotIn('known_exploited', self.issue)
+        self.assertEqual(self.issue['priority'], 1)
+
+    def test_bad_schema_does_not_claim_a_successful_priority_check(self):
+        for broken in ({}, dict(self.fetch.json.return_value, count=2),
+                       dict(self.fetch.json.return_value, dateReleased='2099-01-01T00:00:00Z'),
+                       dict(self.fetch.json.return_value, vulnerabilities=[dict(cveID=[])])):
+            with self.subTest(data=broken):
+                self.fetch.json.return_value = broken
+                self.assertTrue(self.priority.enrich([self.issue]))
 
 
 if __name__ == '__main__':

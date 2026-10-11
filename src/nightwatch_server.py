@@ -2,6 +2,7 @@
 import base64
 import http.client
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -12,7 +13,7 @@ import urllib.parse
 
 import logwatch
 import nightwatch as nw
-from security_audit import Audit, Fetcher, inventory, sanitize_inventory
+from security_audit import Audit, ExploitPriority, Fetcher, inventory, sanitize_inventory
 
 
 class Interrupted(Exception):
@@ -93,12 +94,17 @@ def operations(snapshot, system):
     result = []
     prefix = 'log' if system == 'pi' else 'server_log'
     codes = logwatch.clean_findings(snapshot.get(prefix + '_findings')) or {}
+    last = logwatch.clean_last(snapshot.get(prefix + '_last'))
+    resolved = logwatch.clean_last(snapshot.get(prefix + '_resolved'))
     for code, count in codes.items():
+        if last.get(code) is not None and resolved.get(code, 0) > last[code]:
+            continue  # recovery is evidence; age alone is not
         label = logwatch.CODES[code][1]
+        remedy = logwatch.ADVICE.get(code, ('', 'Aktuellen Selbsttest prüfen.'))[1]
         result.append(nw.finding('operation:' + system + ':log', code,
             f'{system}: {label}, {count} Ereignisse im Selbsttest',
-            'Aktuellen Selbsttest und letzte Auftretenszeit prüfen.',
-            priority=min(2, logwatch.CODES[code][0])))
+            nw.clean(remedy + ' Letzte Auftretenszeit und Behebung prüfen.', 500),
+            priority=min(2, logwatch.CODES[code][0]), observed_at=last.get(code)))
     for key, threshold, label, advice in (
         ('mem_free_pct', 15, 'wenig freier Arbeitsspeicher', 'Speicherverbrauch der Dienste vergleichen.'),
         ('disk_free_pct', 10, 'wenig freier Speicherplatz', 'Ablage und Aufbewahrungsgrenzen prüfen.'),
@@ -111,6 +117,37 @@ def operations(snapshot, system):
             f"{system}: {snapshot['updates']} Aktualisierungen stehen bereit",
             'Pi-Aktualisierung im Wartungsmodus prüfen; Bestätigung bleibt erforderlich.'))
     return result
+
+
+def log_coverage(snapshot, system, now=None):
+    prefix = 'log' if system == 'pi' else 'server_log'
+    codes = logwatch.clean_findings(snapshot.get(prefix + '_findings'))
+    if codes is None:
+        return False, f'{system}: Logüberwachung hat kein Ergebnis geliefert'
+    if 'limited' in codes:
+        return False, f'{system}: Systemprotokoll nur eingeschränkt lesbar'
+    at = snapshot.get(prefix + '_checked_at')
+    now = time.time() if now is None else now
+    if type(at) not in (int, float) or not math.isfinite(at) or not -120 <= now - at <= 3600:
+        return False, f'{system}: Logauswertung nicht nachweislich aktuell'
+    return True, None
+
+
+def extra_inventory(path, now=None):
+    """Copying an old export must not refresh its actual collection date."""
+    now = time.time() if now is None else now
+    path = Path(path)
+    stat = path.stat()
+    if stat.st_size > nw.MAX_REPORT or not -120 <= now - stat.st_mtime <= 86400:
+        raise ValueError('stale inventory file')
+    raw = json.loads(path.read_text())
+    name = raw.get('system', '')
+    at = raw.get('at')
+    if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,30}', name) \
+            or name in ('pi', 'server') \
+            or type(at) not in (int, float) or not math.isfinite(at) or not -120 <= now - at <= 86400:
+        raise ValueError('invalid or stale inventory')
+    return sanitize_inventory(raw, name)
 
 
 def research(fetch, findings):
@@ -141,10 +178,12 @@ def research(fetch, findings):
 
 
 class Manager:
-    def __init__(self, service, root=None, audit_factory=Audit, chat=local_chat):
+    def __init__(self, service, root=None, audit_factory=Audit, chat=local_chat,
+                 priority_factory=ExploitPriority):
         self.service = service
         self.root = Path(root or os.environ.get('NIGHTWATCH_STATE_DIR', '/var/lib/servitor-voice/nightwatch'))
         self.audit_factory, self.chat = audit_factory, chat
+        self.priority_factory = priority_factory
         self.lock = threading.Lock()
         self.guard, self.thread, self.report, self.ident = None, None, None, None
         self.last_activity = time.monotonic()
@@ -192,6 +231,11 @@ class Manager:
         if not isinstance(samples, dict) or type(samples.get('valid', 0)) is not int \
                 or not 0 <= samples.get('valid', 0) <= 10000:
             raise ValueError('invalid sample metadata')
+        samples = {key: samples.get(key, 0) for key in ('valid', 'sessions', 'duplicates')} | dict(
+            positive_split_ready=samples.get('positive_split_ready') is True)
+        if any(type(samples[key]) is not int or not 0 <= samples[key] <= 10000
+               for key in ('valid', 'sessions', 'duplicates')):
+            raise ValueError('invalid sample counts')
         probe = payload.get('probe', '')
         if not isinstance(probe, str) or len(probe) > 90000:
             raise ValueError('invalid audio probe')
@@ -276,35 +320,35 @@ class Manager:
             inventories = [pi, sanitize_inventory(server_inv, 'server')]
             # Explicit local exports permit other machines without root/SSH credentials
             # in this service. The operator owns and refreshes those exports.
-            for filename in os.environ.get('NIGHTWATCH_EXTRA_INVENTORIES', '').split(','):
+            names = {'pi', 'server'}
+            exports = [s.strip() for s in os.environ.get('NIGHTWATCH_EXTRA_INVENTORIES', '').split(',') if s.strip()]
+            if len(exports) > 8:
+                limits.append('Mehr als acht zusätzliche Inventare; nur die ersten acht geprüft')
+            for filename in exports[:8]:
                 if not filename.strip():
                     continue
                 try:
-                    path = Path(filename.strip())
-                    if path.stat().st_size > nw.MAX_REPORT or time.time() - path.stat().st_mtime > 86400:
-                        raise ValueError('stale inventory')
-                    raw = json.loads(path.read_text())
-                    name = raw.get('system', '')
-                    if not re.fullmatch(r'[a-z][a-z0-9_-]{0,30}', name) or name in ('pi', 'server'):
-                        raise ValueError('invalid external system')
-                    inventories.append(sanitize_inventory(raw, name))
+                    extra = extra_inventory(filename)
+                    if extra['system'] in names:
+                        raise ValueError('duplicate system identity')
+                    names.add(extra['system'])
+                    inventories.append(extra)
                 except (OSError, ValueError, AttributeError):
                     limits.append('Zusätzlicher Infrastruktur-Bestand nicht aktuell lesbar')
             fetch = Fetcher(self.guard)
             audit = self.audit_factory(self.root / 'cache', fetch)
             found, scopes, gaps = audit.scan(inventories)
+            limits.extend(self.priority_factory(self.root / 'cache', fetch).enrich(found))
             findings.extend(found)
             checked.extend(scopes)
             limits.extend(gaps)
             limits.append('Firmware- und Herstellerhinweise benötigen eine zusätzliche Produktprüfung')
             findings.extend(operations(snapshot, 'pi'))
-            if 'log_findings' in snapshot:
-                if 'limited' not in snapshot['log_findings']:
-                    checked.append('operation:pi:log')
-                else:
-                    limits.append('Pi-Systemprotokoll nur eingeschränkt lesbar')
+            complete, gap = log_coverage(snapshot, 'pi')
+            if complete:
+                checked.append('operation:pi:log')
             else:
-                limits.append('Pi-Logüberwachung hat noch kein Ergebnis geliefert')
+                limits.append(gap)
             for metric in ('mem_free_pct', 'disk_free_pct', 'updates'):
                 if type(snapshot.get(metric)) in (int, float):
                     checked.append('operation:pi:' + metric)
@@ -312,10 +356,11 @@ class Manager:
             if watch is not None:
                 server_snapshot = watch.snapshot_fields('server_log')
                 findings.extend(operations(server_snapshot, 'server'))
-                if 'server_log_findings' in server_snapshot and 'limited' not in server_snapshot['server_log_findings']:
+                complete, gap = log_coverage(server_snapshot, 'server')
+                if complete:
                     checked.append('operation:server:log')
                 else:
-                    limits.append('Server-Logüberwachung hat kein vollständig lesbares Ergebnis')
+                    limits.append(gap)
             else:
                 limits.append('Server-Logüberwachung nicht aktiv')
             if isinstance(self.service.updates, dict):
@@ -327,11 +372,13 @@ class Manager:
                             'Aktualisierung im Wartungsmodus prüfen; Bestätigung bleibt erforderlich.'))
                     checked.append('operation:server:updates')
             if samples.get('valid', 0) >= 20:
+                ready = samples['positive_split_ready']
                 findings.append(nw.finding('training:pi', 'wake_samples',
-                    f"{samples['valid']} geeignete Weckwortaufnahmen für einen Trainingsvergleich vorhanden",
-                    'Vergleichstraining mit getrennten Testaufnahmen vorbereiten; aktives Modell beibehalten.',
+                    f"{samples['valid']} eindeutige Weckwortaufnahmen aus {samples['sessions']} Sitzungen vorhanden",
+                    ('Positivdaten getrennt; Alltags-Negativtests und Kandidatenvergleich vorbereiten.' if ready else
+                     'Trainings-, Validierungs- und Testaufnahmen aus getrennten Sitzungen ergänzen.'),
                     'training', 3, ['https://github.com/dscripka/openWakeWord'],
-                    assessment='candidate-data'))
+                    assessment='positive-split-ready' if ready else 'more-data-needed'))
             checked.extend(self._pipeline_tests(probe, findings, limits))
             try:
                 test = self._inference('Berechne 17 mal 23. Antworte ausschließlich mit der Zahl.', 24)

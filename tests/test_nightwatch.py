@@ -56,6 +56,21 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(path.read_text(), '{broken')
         self.assertIn('nicht lesbar', self.store.view()['error'])
 
+    def test_known_exploitation_stays_visible_when_priority_lookup_is_missing(self):
+        source = 'https://www.cisa.gov/known-exploited-vulnerabilities-catalog'
+        self.issue.update(known_exploited=True, priority=0, note='CISA: bekannte Ausnutzung',
+                          sources=[source])
+        self.assertTrue(self.store.save(report([self.issue])))
+        newer = dict(self.issue)
+        newer.pop('known_exploited')
+        newer['priority'] = 1
+        newer['sources'] = []
+        self.assertTrue(self.store.save(report([newer], state='partial', ident='b' * 32)))
+        self.assertTrue(self.store.view()['findings'][0]['known_exploited'])
+        self.assertEqual(self.store.view()['findings'][0]['priority'], 0)
+        self.assertIn(source, self.store.load()['findings'][0]['sources'])
+        self.assertIn('Bekannte Ausnutzung', nw.answer('night_security', self.store.view()))
+
     def test_invalid_ids_never_become_paths_and_maximal_view_fits_header(self):
         with self.assertRaises(ValueError):
             self.store.save(report(ident='../bad'))

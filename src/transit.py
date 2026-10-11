@@ -255,11 +255,18 @@ def _label(transportation, kind):
     return str(transportation.get('name') or number or 'Verbindung').strip()
 
 
+_PLATFORM_NAME = re.compile(r'^(?:gleis|bstg|bussteig|steig|bahnsteig)?\.?\s*[\w-]{1,3}$', re.I)
+
+
 def _stop_name(point):
+    """The stop's name; a platform point ("5", "Bstg. B") names its parent stop."""
     point = point if isinstance(point, dict) else {}
     parent = point.get('parent') if isinstance(point.get('parent'), dict) else {}
-    return str(point.get('disassembledName') or parent.get('disassembledName')
-               or point.get('name') or parent.get('name') or '').strip() or None
+    own = str(point.get('disassembledName') or point.get('name') or '').strip()
+    above = str(parent.get('disassembledName') or parent.get('name') or '').strip()
+    if above and (point.get('type') == 'platform' or not own or _PLATFORM_NAME.match(own)):
+        return above
+    return own or above or None
 
 
 def _platform(point):

@@ -1,5 +1,6 @@
 """Servitor status: snapshot of the Pi plus the spoken status text."""
 
+import math
 import os
 import re
 from pathlib import Path
@@ -160,6 +161,7 @@ SNAPSHOT_FIELDS = {
     'server_updates': (int, 0, 9999),
     'server_updates_security': (int, 0, 9999),
     'apt_age_days': (int, 0, 3650),
+    'log_checked_at': (int, 1, 10 ** 10),
     'mood_level': (int, 0, 100),
 }
 SNAPSHOT_FLAGS = ('battery_charging', 'battery_plugged')
@@ -187,7 +189,8 @@ def sanitize_snapshot(value):
     clean = {}
     for name, (kind, low, high) in SNAPSHOT_FIELDS.items():
         item = value.get(name)
-        if isinstance(item, bool) or not isinstance(item, (int, float)):
+        if isinstance(item, bool) or not isinstance(item, (int, float)) \
+                or not math.isfinite(item):
             continue
         item = int(item)
         if low <= item <= high:

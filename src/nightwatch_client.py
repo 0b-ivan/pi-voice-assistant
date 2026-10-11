@@ -16,6 +16,7 @@ import zoneinfo
 
 import nightwatch as nw
 from security_audit import inventory, NoRedirect
+from nightwatch_training import dataset_plan
 
 
 def samples(core):
@@ -37,11 +38,11 @@ def samples(core):
             clipped = sum(abs(v) >= 32700 for v in values)
             if audible < len(values) // 100 or clipped > len(values) // 20:
                 continue
-            manifest.append(dict(sha256=hashlib.sha256(pcm).hexdigest(), frames=len(values)))
+            manifest.append(dict(sha256=hashlib.sha256(pcm).hexdigest(), frames=len(values), file=path.name))
             probe = base64.b64encode(pcm).decode()
         except (OSError, ValueError, wave.Error, EOFError):
             continue
-    return dict(valid=len(manifest), manifest=manifest), probe
+    return dataset_plan(manifest), probe
 
 
 class Client:
@@ -145,7 +146,8 @@ class Client:
                 if self.abort.is_set():
                     return
                 self._rpc(dict(action='start', id=ident, night=night, inventory=inv,
-                               snapshot=snapshot, samples=dict(valid=sample_data['valid']), probe=probe))
+                               snapshot=snapshot, samples={key: sample_data.get(key, 0) for key in
+                                    ('valid', 'sessions', 'duplicates', 'positive_split_ready')}, probe=probe))
             deadline = time.monotonic() + 1250
             while time.monotonic() < deadline:
                 if self.abort.wait(1):

@@ -1,5 +1,6 @@
 """Read-only installed inventory and known-vulnerability matching; no AI or upgrades."""
 import codecs
+import datetime
 import gzip
 import hashlib
 import importlib.metadata
@@ -22,7 +23,12 @@ OSV = 'https://api.osv.dev/v1/querybatch'
 MAX_PACKAGES = 3000
 PUBLIC_HOSTS = {'security-tracker.debian.org', 'api.osv.dev', 'www.raspberrypi.com',
                 'github.com', 'api.github.com', 'docs.python.org', 'alphacephei.com',
-                'huggingface.co', 'google.github.io', 'forum.proxmox.com'}
+                'huggingface.co', 'google.github.io', 'forum.proxmox.com',
+                'www.cisa.gov', 'raw.githubusercontent.com'}
+KEV_SOURCES = (
+    'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json',
+    'https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json',
+)
 
 
 def inventory(system, run=subprocess.run, os_release=Path('/etc/os-release')):
@@ -399,3 +405,66 @@ class Audit:
             gaps.append('Mehr als 100 Sicherheitsbefunde; Abgleich nicht vollständig abgelegt')
             checked = []  # never close anything from a capped report
         return findings[:100], checked, list(dict.fromkeys(gaps))
+
+
+class ExploitPriority:
+    """Prioritise already matched CVEs; KEV is not an installed-version scan."""
+    def __init__(self, cache, fetch, clock=time.time):
+        self.cache, self.fetch, self.clock = Path(cache), fetch, clock
+
+    def _validate(self, data):
+        if not isinstance(data, dict) or not isinstance(data.get('vulnerabilities'), list) \
+                or type(data.get('count')) is not int \
+                or not 1 <= data['count'] == len(data['vulnerabilities']) <= 20000 \
+                or not isinstance(data.get('catalogVersion'), str) or not data['catalogVersion']:
+            raise ValueError('invalid KEV catalog')
+        released = datetime.datetime.fromisoformat(data.get('dateReleased', '').replace('Z', '+00:00'))
+        if released.tzinfo is None or released.timestamp() > self.clock() + 120:
+            raise ValueError('invalid KEV release date')
+        ids = [item.get('cveID', '') for item in data['vulnerabilities'] if isinstance(item, dict)]
+        if len(ids) != data['count'] or any(
+                not isinstance(cve, str) or not re.fullmatch(r'CVE-\d{4}-\d{4,19}', cve) for cve in ids) \
+                or len(set(ids)) != len(ids):
+            raise ValueError('invalid KEV ids')
+        return set(ids)
+
+    def data(self):
+        path = self.cache / 'kev.json'
+        try:
+            if path.stat().st_size <= 8 * 1024 * 1024 and 0 <= self.clock() - path.stat().st_mtime < 6 * 3600:
+                data = json.loads(path.read_text())
+                if data.get('source') in KEV_SOURCES:
+                    return self._validate(data['catalog']), data['source']
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
+            pass
+        for source in KEV_SOURCES:
+            try:
+                data = self.fetch.json(source, limit=8 * 1024 * 1024)
+                ids = self._validate(data)
+                try:
+                    atomic_json(path, dict(source=source, catalog=data))
+                except OSError:
+                    pass
+                return ids, source
+            except (OSError, ValueError, TypeError, AttributeError, EOFError):
+                continue
+        raise OSError('KEV priority source unavailable')
+
+    def enrich(self, findings):
+        matched = [(item, re.search(r'\bCVE-\d{4}-\d{4,19}\b', item['key']))
+                   for item in findings if item['category'] == 'security']
+        matched = [(item, match[0]) for item, match in matched if match]
+        if not matched:
+            return []  # no CVE to prioritise: no needless extra request
+        try:
+            ids, source = self.data()
+        except OSError:
+            return ['Ausnutzungspriorität ungeprüft: CISA-KEV-Katalog nicht erreichbar']
+        for item, cve in matched:
+            if cve in ids:
+                item['priority'] = 0
+                item['known_exploited'] = True
+                item['note'] = 'CISA meldet bekannte Ausnutzung dieser CVE; kein Nachweis eines Angriffs auf dieses Gerät.'
+                item['advice'] = clean('Bekannt ausgenutzt: zuerst Betroffenheit und Abhilfe prüfen. ' + item['advice'], 500)
+                item['sources'] = list(dict.fromkeys([source] + item.get('sources', [])))[:5]
+        return []

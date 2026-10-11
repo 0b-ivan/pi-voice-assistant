@@ -51,6 +51,43 @@ class BackgroundFixture(unittest.TestCase):
         self.assertFalse(self.manager.thread.is_alive())
 
 class BackgroundTests(BackgroundFixture):
+    def test_recovered_error_is_not_an_open_operation(self):
+        now = time.time()
+        snapshot = dict(log_findings={'stt': 4, 'oom': 1},
+                        log_last={'stt': now - 100, 'oom': now - 100},
+                        log_resolved={'stt': now - 50})
+        items = ns.operations(snapshot, 'pi')
+        self.assertEqual([item['key'] for item in items], ['oom'])
+        self.assertIn('kleineres Modell', items[0]['advice'])
+
+    def test_stale_or_missing_log_time_cannot_close_old_issues(self):
+        now = time.time()
+        self.assertFalse(ns.log_coverage(dict(log_findings={}), 'pi', now)[0])
+        self.assertFalse(ns.log_coverage(dict(log_findings={}, log_checked_at=now - 3601), 'pi', now)[0])
+        self.assertFalse(ns.log_coverage(dict(log_findings={}, log_checked_at=now + 121), 'pi', now)[0])
+        self.assertTrue(ns.log_coverage(dict(log_findings={}, log_checked_at=now - 60), 'pi', now)[0])
+        self.start(snapshot=dict(log_findings={}, log_checked_at=now - 7200))
+        self.assertNotIn('operation:pi:log', self.manager.report['checked'])
+
+    def test_new_copy_of_old_inventory_is_still_rejected(self):
+        path = Path(self.tmp.name) / 'inventory.json'
+        now = time.time()
+        data = dict(INVENTORY, system='proxmox', at=now - 86401)
+        path.write_text(json.dumps(data))
+        with self.assertRaises(ValueError):
+            ns.extra_inventory(path, now)
+        data['at'] = now - 60
+        path.write_text(json.dumps(data))
+        self.assertEqual(ns.extra_inventory(path, now)['system'], 'proxmox')
+        data['at'] = now + 121
+        path.write_text(json.dumps(data))
+        with self.assertRaises(ValueError):
+            ns.extra_inventory(path, now)
+        data.update(at=now - 60, system=None)
+        path.write_text(json.dumps(data))
+        with self.assertRaises(ValueError):
+            ns.extra_inventory(path, now)
+
     def test_background_uses_only_local_model_and_retains_unacknowledged_report(self):
         self.start()
         self.pipeline.reply.assert_not_called()
