@@ -564,9 +564,11 @@ class Service:
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None, appointments_tomorrow=None,
-                 voice=None, nightwatch_copy=None):
+                 voice=None, nightwatch_copy=None, user_text=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
+        ``user_text`` is a typed request run through the same intent/LLM/TTS flow.
+        Unlike ``text`` (speak-only), it does not bypass the answer logic.
         ``device`` is the Pi's sanitized status snapshot; questions such as
         time, date or status are answered from it without the LLM.
         ``memory_copy``: the Pi's memory core (None: stick absent, NO_MEMORY:
@@ -584,44 +586,51 @@ class Service:
 
         try:
             if text is None:
-                try:
-                    recognizer = self.pipeline.recognizer()
-                except Exception as exc:
-                    raise TurnError('recognize', 'stt', str(exc)) from exc
-                if transcribe_only and hasattr(recognizer, 'whisper'):
-                    recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
-                pending = b''
-                received = 0
-                # Keep the audio only when a voice must be recognized.
-                keep = memory.enrolled(memory_copy) or voice is not None
-                audio = bytearray()
-                for chunk in pcm_chunks:
-                    received += len(chunk)
-                    if received > self.config.max_bytes:
-                        raise TurnError('upload', 'too_large', 'audio exceeds limit')
-                    if keep:
-                        audio += chunk
-                    pending += chunk
-                    usable = len(pending) - len(pending) % 2
-                    if usable:
-                        try:
-                            recognizer.accept_pcm(pending[:usable])
-                        except Exception as exc:
-                            raise TurnError('recognize', 'stt', str(exc)) from exc
-                        pending = pending[usable:]
-                upload_end = time.monotonic()
-                if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
-                    raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
-                emit(dict(event='stage', stage='recognize'))
-                try:
-                    text = timed('stt_finalize', recognizer.finish)
-                except Exception as exc:
-                    # Only an empty transcript is final for the Pi; a broken
-                    # finalization must still let it retry with local Vosk.
-                    from transcribe import NoSpeechError
-                    code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
-                    raise TurnError('recognize', code, str(exc)) from exc
-                emit(dict(event='transcript', text=text))
+                if user_text is None:
+                    try:
+                        recognizer = self.pipeline.recognizer()
+                    except Exception as exc:
+                        raise TurnError('recognize', 'stt', str(exc)) from exc
+                    if transcribe_only and hasattr(recognizer, 'whisper'):
+                        recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
+                    pending = b''
+                    received = 0
+                    # Keep the audio only when a voice must be recognized.
+                    keep = memory.enrolled(memory_copy) or voice is not None
+                    audio = bytearray()
+                    for chunk in pcm_chunks:
+                        received += len(chunk)
+                        if received > self.config.max_bytes:
+                            raise TurnError('upload', 'too_large', 'audio exceeds limit')
+                        if keep:
+                            audio += chunk
+                        pending += chunk
+                        usable = len(pending) - len(pending) % 2
+                        if usable:
+                            try:
+                                recognizer.accept_pcm(pending[:usable])
+                            except Exception as exc:
+                                raise TurnError('recognize', 'stt', str(exc)) from exc
+                            pending = pending[usable:]
+                    upload_end = time.monotonic()
+                    if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
+                        raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
+                    emit(dict(event='stage', stage='recognize'))
+                    try:
+                        text = timed('stt_finalize', recognizer.finish)
+                    except Exception as exc:
+                        # Only an empty transcript is final for the Pi; a broken
+                        # finalization must still let it retry with local Vosk.
+                        from transcribe import NoSpeechError
+                        code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
+                        raise TurnError('recognize', code, str(exc)) from exc
+                    emit(dict(event='transcript', text=text))
+                else:
+                    upload_end = time.monotonic()
+                    text = user_text
+                    keep = False  # no microphone sample; never infer speaker identity
+                    audio = bytearray()
+                    emit(dict(event='transcript', text=text))
                 if transcribe_only:  # enrollment answers: the Pi stores them itself
                     emit(dict(event='done', timings=timings))
                     return
@@ -1116,7 +1125,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._enroll_clip()
         if url.path == '/v1/nightwatch':
             return self._nightwatch()
-        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story'):
+        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story', '/v1/chat'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
         self.close_connection = True  # never reuse a connection with an unread body
@@ -1132,7 +1141,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not self.service.ready:
             return self._json(503, dict(error='loading'), {'Retry-After': '5'})
         fmt = urllib.parse.parse_qs(url.query).get('format', ['wav'])[0]
-        transcribe_only = urllib.parse.parse_qs(url.query).get('mode', [''])[0] == 'transcribe'
+        transcribe_only = (url.path == '/v1/turn' and
+                           urllib.parse.parse_qs(url.query).get('mode', [''])[0] == 'transcribe')
         if fmt not in FORMATS:
             return self._json(400, dict(error='format must be wav or opus'))
 
@@ -1148,8 +1158,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(413, dict(error='body too large'))
 
         text = None
+        user_text = None
         story_state = None
-        if url.path in ('/v1/speak', '/v1/story'):
+        if url.path in ('/v1/speak', '/v1/story', '/v1/chat'):
             if chunked:
                 return self._json(411, dict(error='length required'))
             try:
@@ -1175,6 +1186,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 text = text.strip()
                 if not text:
                     return self._json(400, dict(error='text must not be empty'))
+                if len(text) > self.service.config.max_text:
+                    return self._json(413, dict(error='text too long'))
+                if url.path == '/v1/chat':
+                    user_text, text = text, None
             body = iter(())
         else:
             body = read_chunked(self.rfile, limit) if chunked else read_length(self.rfile, length)
@@ -1225,7 +1240,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           transcribe_only=transcribe_only,
                                           appointments=appointments,
                                           appointments_tomorrow=appointments_tomorrow,
-                                          voice=voice, nightwatch_copy=nightwatch_copy)
+                                          voice=voice, nightwatch_copy=nightwatch_copy,
+                                          user_text=user_text)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.
