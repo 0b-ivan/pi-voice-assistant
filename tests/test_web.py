@@ -125,6 +125,14 @@ class WebGatewayTest(unittest.TestCase):
         self.assertEqual(self.call('/api/chat', {'text': 'Hallo'},
                                    origin='https://evil.example')[0], 403)
 
+    def test_public_host_rejects_http_origin_without_tls(self):
+        self.web.allowed_hosts.add('proximus.example')
+        payload = {'text': 'Wer bist du?'}
+        self.assertEqual(self.call('/api/chat', payload, host='proximus.example',
+                                   origin='http://proximus.example')[0], 403)
+        self.assertEqual(self.call('/api/chat', payload, host='proximus.example',
+                                   origin='https://proximus.example')[0], 200)
+
     def test_web_must_have_server_secret(self):
         with self.assertRaises(ValueError):
             gateway.make_server({'SERVITOR_API_TOKEN': 'short'})
