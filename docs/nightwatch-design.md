@@ -139,11 +139,22 @@ Zusätzlich geht eine begrenzte Audioprobe über das private LAN an CT 107 für
 den lokalen Erkennungstest. Keine Aufnahme geht an Rechercheanbieter.
 Negativmaterial bleibt für einen Trainingsvergleich zusätzlich erforderlich.
 
-**Offene Integration:** Der vorhandene Trainer wählt derzeit seine Checkpoints
-anhand der eigenen `positive_real_test`-Daten. Diese Daten sind damit
-Validierungsdaten. Sie dürfen nicht als unabhängiger Abschlusstest ausgegeben
-werden. Der neue Sitzungsplan muss erst in den Trainer eingebaut werden, mit
-einem getrennten, bei Training und Schwellenauswahl unbenutzten Abschlusstest.
+**Implementierungsschritt 1:** Der Trainer übernimmt jetzt dieses Manifest
+und prüft die Dateien gegen PCM-Hash und Framezahl, bevor er Modelle lädt.
+Training, Validierung und Abschlusstest erhalten getrennte Featuredateien.
+Nur Training und Validierung werden augmentiert. Die Testproben werden
+deterministisch aufbereitet; sie ersetzen noch keine Streamingmessung auf dem Pi.
+Der Trainingslader öffnet die Testdatei nicht. Checkpoint und Schwellwert werden
+ausschließlich anhand der Validierung gewählt. Die synthetischen Dateien mit
+historischem Suffix `_test` heißen im Trainingsbericht ausdrücklich Validierung.
+
+Featuredateien, Clipzuordnung und eingefrorene ONNX-Frontends erhalten Hashes;
+eine unterbrochene oder veränderte Vorbereitung kann nicht unbemerkt mit einem
+alten Index trainieren. Der Index wird erst nach allen Dateien veröffentlicht.
+Der alte Real-Datensatz mit „jedem fünften Clip“ muss explizit neu aufgebaut
+werden. Er wird nicht automatisch wiederverwendet. Ohne zulässigen Checkpoint
+wird kein neuer Kandidat exportiert. Der Bericht kennzeichnet die Validierungsquote
+und behauptet keinen unabhängigen Abschlusstest.
 
 ### Implementierte Prüfung gemessener Kandidatenberichte
 
@@ -207,10 +218,55 @@ Webtexte und Modellantworten dürfen keine Befehle auslösen.
    cloudflared; Hardware, Hostbestand und tatsächlich aktiven Kernel nachweisen.
 3. Befundarchiv und vollständigen Abruf größerer Bestände ergänzen. Heute ist
    das Register auf 512 Einträge begrenzt; kurze Sprachantworten zeigen eine Auswahl.
-4. Einen getrennten Trainings- und Messprozess bauen, den Sitzungsplan in den
-   Trainer integrieren und reproduzierbare Messberichte auf dem Pi erzeugen.
+4. Einen getrennten, begrenzten Trainingsprozess bauen und reproduzierbare
+   Streamingmessungen auf dem Pi erzeugen. Der Sitzungsplan ist im Trainer
+   integriert; automatischer Start und diese Messungen stehen noch aus.
 5. Betriebsverläufe vergleichen und kleine Verbesserungsexperimente planen,
    deren Wirkung mit festgelegten Prüfungen nachgewiesen wird.
 
 Diese Schritte ergänzen den vorhandenen Nachtlauf. Sie sind noch keine
 automatischen Funktionen und ändern weder Dienste noch Modelle im Schlaf.
+
+## Repo-Abgleich und Reihenfolge der weiteren Implementierung
+
+Geprüft am 11.10.2026 gegen `main` auf `97151af` und alle sechs offenen PRs.
+Die Fahrtenkorrekturen aus #94, #96 und #99 sind bereits enthalten. Die folgenden
+PRs sind Vorschläge; ihre Funktionen sind deshalb nicht als produktiv vorausgesetzt.
+
+| PR und geprüfter Stand | Konsequenz für diese Implementierung |
+|---|---|
+| [#100](https://github.com/0b-ivan/pi-voice-assistant/pull/100), `cdb1c2c2` | Gastschutz, gemeinsamer VAD-/Audioqualitätspfad und vorbereitete V2-Profile; deren Laufzeitanbindung fehlt noch. Drei Überschneidungen in `src/ptt.py` benötigen beim Zusammenführen beide Regeln: Gastschutz **und** `_remember_turn` als Schranke gegen Nachtinformationen im Gesprächsgedächtnis. Lokal werden Nachtberichte bei vorhandenen Stimmprofilen schon jetzt ohne Stimmnachweis verweigert. |
+| [#97](https://github.com/0b-ivan/pi-voice-assistant/pull/97), `5ecd17c4` | Owner-/Threadspeicher und stabile Profil-IDs; noch nicht im Sprachweg aktiv. Der Nachtlauf behält seine separate Ablage und verändert keine Gesprächsschemata oder Profil-IDs. Persönliches Texttraining soll später auf dieser Besitzerzuordnung aufbauen. |
+| [#85](https://github.com/0b-ivan/pi-voice-assistant/pull/85), `f713c130` | PALS ist ein Entwurf für bestätigtes Nutzerfeedback. Seine persönlichen Textdaten werden nicht zu Nachtbefunden oder Weckwortaufnahmen umgedeutet. Qwen-Training bleibt ein eigener späterer Schritt mit freigegebenen Textdaten und Evaluation. |
+| [#81](https://github.com/0b-ivan/pi-voice-assistant/pull/81), `8207278b` | Die geplante Dokumentationskonsolidierung hat bereits Konflikte mit dem aktuellen Stand. Diese Beschreibung und die Betriebsanleitung müssen dort in Architektur, Betrieb und Roadmap übernommen werden; aktuelle Featureseiten nicht einfach entfernen. |
+| [#84](https://github.com/0b-ivan/pi-voice-assistant/pull/84), `7a6dc28f` | Dokumentiert Geräteabnahmen und verworfene Stimmen. Die deutsche MLS-Stimme entfällt im Standard für **neue** synthetische Trainingsdaten. Alte Featuredateien werden dadurch nicht korrigiert: neue Basis in eigenem Arbeitsverzeichnis erzeugen. Der dort genannte CT-Speicherstand von 7 GB ist vor einem Trainingsbudget am aktuellen Rechner zu prüfen. |
+| [#98](https://github.com/0b-ivan/pi-voice-assistant/pull/98) | Trägt Nachtlauf und diesen ersten Implementierungsschritt. Keine anderen PRs werden dadurch automatisch gemergt oder produktiv eingespielt. |
+
+Auf diesen Abgleich folgen kleine, prüfbare Schritte:
+
+1. **Jetzt:** Gastschutz der Nachtinformationen, geprüfter Sitzungsplan im Trainer
+   und separate Validierung; keine automatischen langen Trainingsjobs.
+2. **Danach:** Ein abbrechbarer Worker mit geprüftem RAM-/CPU-Budget und eigenen
+   Kandidatenverzeichnissen. Fehlende Ressourcen verschieben den Job. Nach
+   Integration von #100 dessen gemeinsame Audioqualität verwenden, statt
+   eine zweite VAD-Implementierung einzubauen.
+3. **Dann:** Bestands-/Kandidatenmessung auf dem Pi mit unbekannten Positivclips,
+   unabhängigen Negativaufnahmen und denselben Detektorregeln wie im Betrieb.
+4. **Weitere Prüfung:** Herstelleradapter für konkrete Hardware und laufenden
+   Host-Kernel; danach vollständiger Nachttest und bestätigte Modellübernahme.
+
+Vor persönlichem Texttraining und V2-Profilanbindung ist eine konkrete
+Kompatibilitätsfrage zu lösen: #97 speichert die stabile Besitzerkennung als
+`id`; die Migration in #100 übernimmt derzeit nur `profile_id` oder vergibt eine
+neue Kennung. Die bisherige ID muss ausdrücklich übernommen oder durch eine
+dauerhafte, eindeutige Zuordnung verbunden werden. Der kombinierte aktuelle
+Sprachweg nutzt weiterhin v1-Profile; der Nachtlauf führt keine Migration aus.
+
+**Prüfergebnisse der ersten Etappe:** 915 Tests im eigenen Stand, zwei
+übersprungen. In einer getrennten lokalen Kopie zusammen mit #97 und dem
+genannten Stand von #100: 990 Tests, drei übersprungen, nach Auflösung der drei
+Überschneidungen unter Erhalt beider Schutzregeln. Die separate Migrationsprobe
+bestätigt den ID-Wechsel bei einem Profil mit vorhandener `id`; die Quelldatei
+bleibt erhalten. Die Featuretests verwenden Modell-Doubles und echte Test-WAVs.
+Ein echtes PyTorch-Training, ONNX-Export und Pi-Streamingvergleich wurden hier
+nicht ausgeführt; die entsprechende Trainingsumgebung und Geräte fehlen.

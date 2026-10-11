@@ -146,6 +146,8 @@ Gesprächsverlauf gespeichert. Die Nachtinformationen gelangen nicht in den
 normalen Modellprompt, auch wenn Gespräche im AUTO-Modus OpenRouter benutzen.
 Der Nacht-Endpunkt benötigt das bestehende API-Token und eine direkte
 private LAN-Verbindung; Anfragen von konfigurierten Tunnel-Proxies sind gesperrt.
+Beim lokalen Fallback fehlt die serverseitige Stimmprüfung. Sind Stimmprofile
+vorhanden, verweigert dieser Weg Nachtberichte und deren Teil des Morgenberichts.
 
 ## Updates und Training
 
@@ -158,10 +160,31 @@ Die Sprachsamples dienen zunächst dem **Weckwort-Modell**. Ein formal
 vorbereiteter Positivsplit benötigt mindestens 20 eindeutige Clips aus drei
 Sitzungen: mindestens 10 Training, 5 Validierung und 5 Test. Unbekannte Sitzungen
 bleiben unzugeordnet; Negativaufnahmen werden dadurch nicht ersetzt.
-Der Sitzungsplan muss noch in
-[`train_wakeword.py`](../server/wakeword/train_wakeword.py) integriert werden.
-Dessen bisherige `positive_real_test`-Daten werden zur Checkpoint-Auswahl genutzt
-und sind deshalb kein unabhängiger Abschlusstest.
+[`train_wakeword.py`](../server/wakeword/train_wakeword.py) verwendet jetzt das
+geprüfte Manifest. Auf dem Trainingsrechner sind ein explizit bereitgestellter
+Aufnahmeordner und das zugehörige Manifest nötig. Der Nachtlauf überträgt sie
+nicht automatisch. Vorbereitung in einem **eigenen Arbeitsverzeichnis**:
+
+```sh
+python3 server/wakeword/train_wakeword.py real --root /pfad/kandidat-001 --real /pfad/aufnahmen --manifest /pfad/manifest.json --copies 60
+```
+
+Der Rechner braucht die vorhandene Trainingsumgebung und eingefrorenen ONNX-
+Frontends. Der neue Root verknüpft die vorhandenen Basisressourcen, lädt aber
+keine Daten herunter. `real` prüft Format, Framezahl, Sitzung und PCM-Hash.
+Es erzeugt `positive_real_train.npy`, `positive_real_validation.npy` und
+`positive_real_test.npy` mit einem geprüften `real_manifest.json`.
+Nur Training und Validierung erhalten Augmentation; die Testdatei bleibt beim
+Trainieren ungeöffnet. Alte `positive_real.npy`-Bestände müssen neu vorbereitet
+werden. Neue synthetische Basisdaten ohne die verworfene deutsche MLS-Stimme
+werden mit `build` im selben frischen Arbeitsverzeichnis erzeugt.
+
+Der anschließende manuelle `train --root /pfad/kandidat-001` nutzt Validierung
+für Checkpoint und Schwellwert. Er exportiert nur bei eingehaltenem
+Fehlaktivierungsbudget einen Kandidaten in dieses Arbeitsverzeichnis. Der
+Bericht enthält `validation_recall`, Manifestkennung und Modellhash; er ist
+keine Pi-Abschlussmessung. Der begrenzte automatische Worker und die Messroutine
+sind die folgenden Implementierungsschritte.
 
 Bereits unabhängig gemessene Bestands- und Kandidatenberichte lassen sich prüfen:
 

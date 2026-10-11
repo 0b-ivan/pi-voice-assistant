@@ -21,7 +21,6 @@ for f in openwakeword_features_ACAV100M_2000_hrs_16bit.npy validation_set_featur
 done
 
 for v in \
-  de/de_DE/mls/medium/de_DE-mls-medium \
   de/de_DE/eva_k/x_low/de_DE-eva_k-x_low \
   de/de_DE/karlsson/low/de_DE-karlsson-low \
   de/de_DE/kerstin/low/de_DE-kerstin-low \

@@ -1887,7 +1887,7 @@ class VoiceController:
                 snapshot['agenda_day'] = calendar_day
                 snapshot['agenda'] = self.agenda.tomorrow() if calendar_day == 1 else self.agenda.today()
             if intent.startswith('night_') or intent == 'briefing':
-                snapshot['nightwatch'] = self.nightstore.view()
+                snapshot['nightwatch'] = self._local_night_view()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'
             event('llm_response', text=reply, model='local/intent')
@@ -1954,11 +1954,24 @@ class VoiceController:
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
 
+    def _local_night_view(self):
+        # A local fallback has no server-side voice verification. Keep this
+        # compatible with PR #100's explicit guest flag and enrolled profiles.
+        if getattr(self, 'turn_guest', False):
+            return dict(denied=True)
+        try:
+            if self.memory.present() and self.memory.people():
+                return dict(denied=True)
+        except (OSError, ValueError):
+            return dict(denied=True)
+        return self.nightstore.view()
+
     def _remember_turn(self, question, answer, **fields):
         # Night reports must not enter the personal history subsequently sent
         # to OpenRouter in AUTO mode, including reports embedded in a briefing.
         kind = intents.match(question, self.persona)
-        if kind and (kind.startswith('night_') or kind == 'briefing'):
+        if getattr(self, 'turn_guest', False) \
+                or kind and (kind.startswith('night_') or kind == 'briefing'):
             return
         self.memory.remember_turn(question, answer, **fields)
 

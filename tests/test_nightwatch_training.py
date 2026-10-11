@@ -6,7 +6,7 @@ import unittest
 import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from nightwatch_training import dataset_plan, assess_candidate
+from nightwatch_training import dataset_plan, assess_candidate, validate_plan
 from nightwatch_client import samples
 from memory import MemoryCore
 
@@ -14,6 +14,20 @@ from memory import MemoryCore
 def row(number, session='20261011-010000'):
     return dict(file=f'{session}-{number:02d}.wav', frames=16000,
                 sha256=hashlib.sha256(str(number).encode()).hexdigest())
+
+
+def session_for(split):
+    for second in range(60):
+        session = f'20261011-0100{second:02d}'
+        if dataset_plan([row(0, session)])['manifest'][0]['split'] == split:
+            return session
+    raise AssertionError('no session for split')
+
+
+def review_plan():
+    return dataset_plan([row(i, session_for('train')) for i in range(10)]
+                        + [row(i, session_for('validation')) for i in range(10, 15)]
+                        + [row(i, session_for('test')) for i in range(15, 45)])
 
 
 class PlanTests(unittest.TestCase):
@@ -58,9 +72,9 @@ class PlanTests(unittest.TestCase):
 
 class ReviewTests(unittest.TestCase):
     def setUp(self):
-        test = [row(i) | dict(split='test') for i in range(30)]
-        self.plan = dict(dataset_id='d' * 64, manifest=test, positive_split_ready=True)
-        self.baseline = dict(dataset_id='d' * 64, test_sha256=sorted(r['sha256'] for r in test),
+        self.plan = review_plan()
+        test = [row for row in self.plan['manifest'] if row['split'] == 'test']
+        self.baseline = dict(dataset_id=self.plan['dataset_id'], test_sha256=sorted(r['sha256'] for r in test),
                              measured_on='pi-zero-2-w', selection_used_test=False,
                              positive_count=30, false_activations=5, negative_hours=10,
                              recall=0.9, true_positives=27, latency_p95_ms=10, threshold=0.8,
@@ -71,6 +85,15 @@ class ReviewTests(unittest.TestCase):
     def test_improved_candidate_can_only_be_ready_for_review(self):
         result = assess_candidate(self.baseline, self.candidate, self.plan)
         self.assertTrue(result['review_ready'])
+        self.assertFalse(result['activated'])
+
+    def test_forged_readiness_or_test_assignment_never_counts_as_independence(self):
+        plan = review_plan()
+        plan['manifest'][0]['split'] = 'test' if plan['manifest'][0]['split'] != 'test' else 'train'
+        with self.assertRaises(ValueError):
+            validate_plan(plan)
+        result = assess_candidate(self.baseline, self.candidate, plan)
+        self.assertFalse(result['review_ready'])
         self.assertFalse(result['activated'])
 
     def test_test_leakage_different_corpus_and_regressions_block_review(self):

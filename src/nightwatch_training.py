@@ -2,8 +2,9 @@
 import hashlib
 import json
 import math
-from pathlib import PurePath
+from pathlib import Path, PurePath
 import re
+import wave
 
 
 def dataset_plan(records):
@@ -41,10 +42,68 @@ def dataset_plan(records):
                         'Aufnahmesitzung trennt Daten, ersetzt aber keine verschiedenen Räume und Tage.'])
 
 
+def validate_plan(data):
+    """Recompute split/identity; edited flags cannot make a dataset independent."""
+    if not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] != 1:
+        raise ValueError('unsupported recording manifest')
+    rows = data.get('manifest')
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 200:
+        raise ValueError('manifest needs 1 to 200 recordings')
+    for row in rows:
+        if not isinstance(row, dict) or type(row.get('frames')) is not int \
+                or not 8000 <= row['frames'] <= 32000:
+            raise ValueError('invalid recording length')
+    canonical = dataset_plan(rows)
+    if canonical['duplicates'] or len({row['file'] for row in rows}) != len(rows):
+        raise ValueError('duplicate recording in manifest')
+    expected = {row['sha256']: row for row in canonical['manifest']}
+    if any(row.get('session') != expected[row['sha256']]['session']
+           or row.get('split') != expected[row['sha256']]['split'] for row in rows):
+        raise ValueError('recording split does not match its session')
+    for key in ('dataset_id', 'valid', 'sessions', 'split_counts', 'positive_split_ready'):
+        if type(data.get(key)) is not type(canonical[key]) or data[key] != canonical[key]:
+            raise ValueError('manifest identity or counts changed: ' + key)
+    return canonical
+
+
+def read_plan(path):
+    path = Path(path)
+    if path.stat().st_size > 512 * 1024:
+        raise ValueError('recording manifest too large')
+    return validate_plan(json.loads(path.read_text(encoding='utf-8')))
+
+
+def verified_recordings(folder, plan):
+    """Read exact manifest PCM; refuse missing/changed files and outside links."""
+    folder = Path(folder).resolve()
+    result = {split: [] for split in ('train', 'validation', 'test', 'unassigned')}
+    for row in plan['manifest']:
+        path = folder / row['file']
+        if path.resolve().parent != folder or path.stat().st_size > 128 * 1024:
+            raise ValueError('recording is outside the folder or too large')
+        try:
+            with wave.open(str(path), 'rb') as audio:
+                if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, 16000) \
+                        or audio.getnframes() != row['frames']:
+                    raise ValueError('recording format changed')
+                pcm = audio.readframes(32001)
+        except (wave.Error, EOFError) as error:
+            raise ValueError('recording is not a readable PCM WAV') from error
+        if len(pcm) != row['frames'] * 2 or hashlib.sha256(pcm).hexdigest() != row['sha256']:
+            raise ValueError('recording content changed')
+        result[row['split']].append((row, pcm))
+    return result
+
+
 def assess_candidate(baseline, candidate, plan):
     """Check measured, independently produced reports, not model-generated claims.
     Passing permits human review only. No file is promoted to the running model."""
     reasons = []
+    try:
+        plan = validate_plan(plan)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        reasons.append('Aufnahme-Manifest oder unabhängiger Datensplit ungültig')
+        plan = {}
     test = sorted(row['sha256'] for row in plan.get('manifest', []) if row.get('split') == 'test')
     identity = plan.get('dataset_id')
     for label, report in (('Bestandsmodell', baseline), ('Kandidat', candidate)):

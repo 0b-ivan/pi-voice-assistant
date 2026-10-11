@@ -113,6 +113,31 @@ class StoreTests(unittest.TestCase):
         controller._remember_turn('wie hoch ist der eiffelturm', '330 Meter')
         controller.memory.remember_turn.assert_called_once()
 
+    def test_local_fallback_cannot_reveal_reports_without_voice_verification(self):
+        from controller_fixture import make_controller
+        from speaker import encode
+        controller = make_controller(self)
+        controller.memory, controller.nightstore = self.core, self.store
+        self.assertTrue(self.store.save(report([self.issue])))
+        self.assertEqual(controller._local_night_view()['open'], 1)
+        self.core.save_voiceprint('Bediener', encode([1.0, 0.0]), 1)
+        with patch.object(controller, '_start_speech') as speech:
+            controller._start_llm('was ist offen')
+        text = speech.call_args.args[0]
+        self.assertIn('nicht als Bediener', text)
+        self.assertNotIn('Eine Lücke', text)
+
+    def test_explicit_guest_flag_from_speaker_pr_blocks_report_and_history(self):
+        from controller_fixture import make_controller
+        controller = make_controller(self)
+        controller.turn_guest = True
+        controller.nightstore = Mock()
+        controller.memory = Mock()
+        self.assertEqual(controller._local_night_view(), dict(denied=True))
+        controller.nightstore.view.assert_not_called()
+        controller._remember_turn('eine öffentliche Frage', 'Antwort')
+        controller.memory.remember_turn.assert_not_called()
+
 
 class ScheduleTests(unittest.TestCase):
     def test_crossing_midnight_and_default_window(self):
