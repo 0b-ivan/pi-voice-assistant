@@ -150,14 +150,16 @@ class ClientSession:
         self.id = None
         self.core = None           # digest of the core the server confirmed
         self.supported = True      # False after an old server answered 404
+        self.voice = None          # digest of the v2 voice core the server confirmed
+        self.voice_supported = True  # False after an old server answered 404 to it
 
     def start(self, ident):
         with self.lock:
-            self.id, self.core = ident, None
+            self.id, self.core, self.voice = ident, None, None
 
     def reset(self):
         with self.lock:
-            self.id, self.core = None, None
+            self.id, self.core, self.voice = None, None, None
 
     def confirmed(self, core_digest):
         with self.lock:
@@ -221,6 +223,23 @@ class Sessions:
                 return None
             session['core'], session['digest'] = core, digest(core)
             return session['digest']
+
+    def set_voice(self, ident, core_digest, profiles):
+        """Keep the v2 voice profiles a Pi sent for this session (RAM only)."""
+        with self.lock:
+            session = self.items.get(ident)
+            if session is None:
+                return False
+            session['voice'], session['voice_digest'] = profiles, core_digest
+            return True
+
+    def voice(self, ident, core_digest):
+        """The v2 voice profiles of this session if their digest matches, else None."""
+        with self.lock:
+            session = self.items.get(ident)
+            if session is None or session.get('voice_digest') != core_digest:
+                return None
+            return session.get('voice')
 
     def restore(self, ident, payload):
         """Full context from a slim payload (core digest + history), or None

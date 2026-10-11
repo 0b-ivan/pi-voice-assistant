@@ -63,6 +63,8 @@ import maintenance  # noqa: E402
 import memory  # noqa: E402
 import protocol  # noqa: E402
 import speaker  # noqa: E402
+import voice_profile  # noqa: E402
+import voice_quality  # noqa: E402
 import story as stories  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from mood import emergency, split_tag  # noqa: E402
@@ -70,6 +72,10 @@ from system_status import phrase_style, sanitize_snapshot  # noqa: E402
 
 PCM_RATE = 16000
 HANDLED = ('ping',)   # SPX/1 types /v1/message acts on; more come with later steps
+FEATURES = ('voice2',)  # announced in the welcome: v2 voice core and enrollment clips
+VOICE_MISSING = object()  # the Pi named a v2 voice core this server does not hold
+VOICE_MIN_SECONDS = 1.5   # v2: less speech is 'insufficient' (concept, section 5)
+CLIP_MAX_SECONDS = 12
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 # TurnError codes caused by the input, not by the server (logwatch ignores them).
 OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
@@ -187,6 +193,12 @@ class RealPipeline:
         import whisper_stt
         if whisper_stt.loaded():
             return whisper_stt.HybridRecognizer(quick=quick_text)
+        from transcribe import LiveVoskRecognizer
+        return LiveVoskRecognizer()
+
+    def night_recognizer(self):
+        # Short Vosk probe; never invoke an optional long Whisper pass while
+        # foreground work is waiting. Full ASR comparisons remain offline jobs.
         from transcribe import LiveVoskRecognizer
         return LiveVoskRecognizer()
 
@@ -313,6 +325,8 @@ class Service:
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
         self.ready = False
+        import nightwatch_server
+        self.nightwatch = nightwatch_server.Manager(self)
 
     def authorized(self, header):
         expected = f'Bearer {self.config.token}'.encode()
@@ -368,35 +382,119 @@ class Service:
         emit(dict(event='device', op=op))
         return device_control.reply(op, device.get('wlan'), style)
 
-    def _identify(self, audio, memory_copy, emit):
-        """Compare the turn's voice with the enrolled voiceprint; returns the
-        memory copy the turn may use (guest view for an unknown voice)."""
-        prints = [dict(name=p['name'], vector=speaker.decode(p['print']))
-                  for p in memory_copy.get('voiceprints', [])]
+    def _identify(self, audio, memory_copy, emit, voice=None):
+        """Compare the turn's voice with the enrolled voiceprints; returns the
+        memory copy the turn may use. Only a clear match names a person; too
+        little speech, no model, a broken profile, an error or two profiles
+        too close all give the guest view (concept stimm-einlernen, section 2).
+        ``voice``: the session's calibrated v2 profiles (they alone decide),
+        VOICE_MISSING when the Pi named a core this server lacks, or None."""
+        if voice is not None:
+            return self._identify_v2(audio, memory_copy, emit, voice)
+        if not memory.enrolled(memory_copy):
+            return memory_copy      # nobody enrolled: nothing to protect
+        listed = memory_copy.get('voiceprints') or []
+        prints = [dict(name=p['name'], vector=speaker.decode(p['print'])) for p in listed]
         prints = [p for p in prints if p['vector']]
-        if not prints or not self.embedder.available:
-            return memory_copy
-        try:
-            # Without the pauses before and after the words: the enrolled
-            # voiceprint is built from trimmed speech too.
-            embedding = self.embedder.embed(speaker.trim_silence(bytes(audio)))
-        except Exception as exc:  # never fail a turn over speaker recognition
-            print(json.dumps(dict(event='speaker_error', message=str(exc))), flush=True)
-            return memory_copy
-        if embedding is None:  # very short: no reliable decision, treat as operator
-            return memory_copy
-        name, score = speaker.identify(embedding, prints)
-        trusted = memory_copy.get('trusted')
-        carried = name is None and trusted in [p['name'] for p in prints]
-        emit(dict(event='speaker', known=name is not None, name=name or None,
-                  carried=carried, score=None if score is None else round(score, 3)))
+        result = dict(status=speaker.UNAVAILABLE, best=None)
+        if prints and self.embedder.available:
+            try:
+                pcm = bytes(audio)
+                if speaker.speech_seconds(pcm) < speaker.MIN_SECONDS:
+                    result = dict(status=speaker.INSUFFICIENT, best=None)
+                else:
+                    # Without the pauses before and after the words: the
+                    # enrolled voiceprint is built from trimmed speech too.
+                    embedding = self.embedder.embed(speaker.trim_silence(pcm))
+                    result = (speaker.decide(embedding, prints) if embedding is not None
+                              else dict(status=speaker.INSUFFICIENT, best=None))
+            except Exception as exc:  # never fail a turn over speaker recognition
+                print(json.dumps(dict(event='speaker_error', error=type(exc).__name__)),
+                      flush=True)
+                result = dict(status=speaker.UNAVAILABLE, best=None)
+        best = result.get('best')
+        matched = result['status'] == speaker.MATCHED
+        carried = self._carried(memory_copy, None if matched else memory_copy.get('trusted'),
+                                [p['name'] for p in prints])
+        emit(dict(event='speaker', status=result['status'], known=matched,
+                  name=result['name'] if matched else None, carried=bool(carried),
+                  score=None if best is None else round(best, 3)))
         if carried:
-            # Short questions are no reliable voice proof; the Pi vouches for a
-            # person it identified surely a few minutes ago (memory.Trust).
-            return dict(memory_copy, speaker=trusted)
+            return dict(memory_copy, speaker=carried)
+        if not matched:
+            return memory.guest_view(memory_copy, result['status'])
+        return dict(memory_copy, speaker=result['name'])
+
+    @staticmethod
+    def _carried(memory_copy, trusted, names):
+        """The person the Pi vouches for after a sure identification a few
+        minutes ago (memory.Trust), if enrolled; short questions alone are no
+        reliable voice proof (docs/memory.md)."""
+        if isinstance(memory_copy, dict) and isinstance(trusted, str) and trusted in names:
+            return trusted
+        return None
+
+    def _identify_v2(self, audio, memory_copy, emit, voice):
+        status, best, ident, name = voice_profile.UNAVAILABLE, None, None, None
+        if voice is VOICE_MISSING:
+            emit(dict(event='session', voice='unknown'))   # the Pi sends its core again
+        elif self.embedder.available:
+            try:
+                pcm = bytes(audio)
+                if speaker.speech_seconds(pcm) < VOICE_MIN_SECONDS:
+                    status = speaker.INSUFFICIENT
+                else:
+                    embedding = self.embedder.embed(speaker.trim_silence(pcm))
+                    if embedding is None:
+                        status = speaker.INSUFFICIENT
+                    else:
+                        result = voice_profile.decide(embedding, voice,
+                                                      self.embedder.model_info())
+                        status, best, ident = (result['status'], result['best'],
+                                               result['profile_id'])
+            except Exception as exc:  # never fail a turn over speaker recognition
+                print(json.dumps(dict(event='speaker_error', error=type(exc).__name__)),
+                      flush=True)
+                status = voice_profile.UNAVAILABLE
+        if status == voice_profile.MATCHED:
+            name = next(p['name'] for p in voice if p['profile_id'] == ident)
+        carried = None
+        if name is None and isinstance(voice, list):
+            carried = self._carried(memory_copy, (memory_copy or {}).get('trusted'),
+                                    [p['name'] for p in voice])
+        emit(dict(event='speaker', status=status, known=name is not None, profile=2,
+                  name=name, carried=bool(carried),
+                  score=None if best is None else round(best, 3)))
+        if not isinstance(memory_copy, dict):
+            return memory_copy      # no stick or no memory support: nothing personal
+        if carried:
+            ident = next(p['profile_id'] for p in voice if p['name'] == carried)
+            return dict(memory_copy, speaker=carried, speaker_id=ident)
         if name is None:
-            return memory.guest_view(memory_copy)
-        return dict(memory_copy, speaker=name)
+            return memory.guest_view(memory_copy, status)
+        return dict(memory_copy, speaker=name, speaker_id=ident)
+
+    def enroll_clip(self, pcm):
+        """POST /v2/enroll/clip: one enrollment take -> numbers, transcript and,
+        with enough speech, a float32 embedding of the model in use. RAM only;
+        the Pi judges the take (it knows the target sentence and room noise)."""
+        quality = voice_quality.analyze(pcm)
+        try:
+            recognizer = self.pipeline.recognizer()
+            if hasattr(recognizer, 'whisper'):
+                recognizer.whisper = False      # the same spelling as everyday Vosk
+            recognizer.accept_pcm(pcm[:len(pcm) - len(pcm) % 2])
+            text = recognizer.finish()
+        except Exception:  # no speech or a broken recognizer: no transcript
+            text = ''
+        reply = dict(quality=quality, transcript=text or '', vector=None,
+                     model=self.embedder.model_info(), preprocessing=voice_quality.VERSION)
+        if quality['speech_seconds'] >= speaker.MIN_SECONDS and self.embedder.available:
+            embedding = self.embedder.embed(speaker.trim_silence(pcm))
+            if embedding is not None:
+                reply['vector'] = voice_profile.encode(embedding)
+                reply['dim'] = len(embedding)
+        return reply
 
     def _story_start(self, text, emit, fmt, device, timings):
         """An explicitly long story: plan it and tell its first, short section."""
@@ -465,7 +563,8 @@ class Service:
         emit(dict(event='story', state=state))
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
-                 transcribe_only=False, appointments=None, appointments_tomorrow=None):
+                 transcribe_only=False, appointments=None, appointments_tomorrow=None,
+                 voice=None, nightwatch_copy=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
@@ -494,7 +593,7 @@ class Service:
                 pending = b''
                 received = 0
                 # Keep the audio only when a voice must be recognized.
-                keep = isinstance(memory_copy, dict) and bool(memory_copy.get('voiceprints'))
+                keep = memory.enrolled(memory_copy) or voice is not None
                 audio = bytearray()
                 for chunk in pcm_chunks:
                     received += len(chunk)
@@ -533,7 +632,7 @@ class Service:
                     # (home and calendar stay there). Structured, no LLM, no audio.
                     if keep:
                         memory_copy = timed('speaker', self._identify, audio, memory_copy,
-                                            emit)
+                                            emit, voice)
                     guest = isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy)
                     name = memory_copy.get('speaker') if isinstance(memory_copy, dict) else None
                     emit(dict(event='journey', request=trip,
@@ -547,7 +646,8 @@ class Service:
                     emit(dict(event='done', timings=timings))
                     return
                 if keep:
-                    memory_copy = timed('speaker', self._identify, audio, memory_copy, emit)
+                    memory_copy = timed('speaker', self._identify, audio, memory_copy, emit,
+                                        voice)
                 intent = intents.match(text, (device or {}).get('persona'))
                 command = (memory.command(intents.normalize(text))
                            if memory_copy is not NO_MEMORY else None)
@@ -559,7 +659,7 @@ class Service:
                 elif (enroll.command(intents.normalize(text)) and memory_copy is not NO_MEMORY
                         and not memory.unknown_speaker(memory_copy)):
                     # Only the operator (or anyone before enrollment) may start it.
-                    answer, model = enroll.ANNOUNCE, 'local/enroll'
+                    answer, model = enroll.MENU_HINT, 'local/enroll'
                     emit(dict(event='enroll', mode=enroll.command(intents.normalize(text))))
                 elif enroll.command(intents.normalize(text)) and memory.unknown_speaker(memory_copy):
                     # A guest asking to be learned: say no instead of letting the LLM
@@ -581,6 +681,10 @@ class Service:
                     model = 'local/memory'
                 elif intent is not None:
                     snapshot = dict(device or {}, server='ok')
+                    if intent.startswith('night_') or intent == 'briefing':
+                        snapshot['nightwatch'] = (dict(denied=True)
+                            if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy)
+                            else nightwatch_copy)
                     state = getattr(self.pipeline, 'llm_state', None)
                     if state is not None:
                         snapshot['llm'] = state()
@@ -750,6 +854,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split('?', 1)[0]
+        if path == '/v1/nightwatch':
+            return self._nightwatch()
         if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
         elif path == '/v1/status':
@@ -763,6 +869,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self._json(404, dict(error='not found'))
 
+    def _nightwatch(self):
+        """Authenticated LAN-only job control; no arbitrary commands or paths."""
+        import ipaddress
+        import nightwatch
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        if os.environ.get('SERVITOR_NIGHTWATCH', '1') == '0':
+            return self._json(503, dict(error='nightwatch disabled'))
+        peer = self.client_address[0]
+        if peer in self.service.config.trusted_proxies or not ipaddress.ip_address(peer).is_private:
+            return self._json(403, dict(error='nightwatch only on the LAN'))
+        manager = self.service.nightwatch
+        if self.command == 'GET':
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                return self._json(200, manager.status(query.get('id', [None])[0]))
+            except ValueError:
+                return self._json(404, dict(error='unknown run'))
+        self.connection.settimeout(5)
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+            if not 0 < length <= nightwatch.MAX_REPORT:
+                return self._json(413, dict(error='request too large'))
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError('truncated body')
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError('expected object')
+            action = data.get('action')
+            if action == 'start':
+                return self._json(202, dict(id=manager.start(data)))
+            if action not in ('cancel', 'ack') or data.get('id') != manager.ident:
+                raise ValueError('invalid action or run')
+            if action == 'cancel':
+                if manager.guard:
+                    manager.guard.cancel()
+            else:
+                manager.ack(data['id'])
+            return self._json(200, dict(ok=True))
+        except RuntimeError:
+            return self._json(409, dict(error='nightwatch busy or awaiting acknowledgement'))
+        except (ValueError, TypeError, OSError):
+            return self._json(400, dict(error='invalid nightwatch request'))
+
     def _voiceprint(self):
         """Enrollment: raw 16 kHz mono PCM -> int8 voice embedding."""
         self.close_connection = True
@@ -772,6 +924,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
         if not self.service.embedder.available:
             return self._json(503, dict(error='speaker model not installed'))
+        self.service.nightwatch.foreground()
         try:
             length = int(self.headers.get('Content-Length', ''))
         except ValueError:
@@ -779,11 +932,71 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not 0 < length <= PCM_RATE * 2 * 30:
             return self._json(413, dict(error='1 to 30 s of audio'))
         pcm = self.rfile.read(length)
+        # The same path as a turn's voice check (_identify): speech, not file
+        # length, then the same trim. The numbers go back, never the audio.
+        quality = voice_quality.analyze(pcm)
+        if quality['speech_seconds'] < speaker.MIN_SECONDS:
+            return self._json(400, dict(error='less than 1 s of speech', quality=quality))
         embedding = self.service.embedder.embed(speaker.trim_silence(pcm))
         if embedding is None:
-            return self._json(400, dict(error='audio shorter than 1 s'))
+            return self._json(400, dict(error='less than 1 s of speech', quality=quality))
         return self._json(200, {'print': speaker.encode(embedding),
-                                'seconds': round(len(pcm) / (PCM_RATE * 2), 1)})
+                                'seconds': round(len(pcm) / (PCM_RATE * 2), 1),
+                                'quality': quality})
+
+    def _enroll_clip(self):
+        self.close_connection = True
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        if not self.service.limiter.allow(self._client()):
+            return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+        except ValueError:
+            return self._json(411, dict(error='length required'))
+        if not 0 < length <= PCM_RATE * 2 * CLIP_MAX_SECONDS:
+            return self._json(413, dict(error=f'1 to {CLIP_MAX_SECONDS} s of audio'))
+        pcm = self.rfile.read(length)
+        if len(pcm) != length:
+            return self._json(400, dict(error='truncated body'))
+        with self.service.turn_lock:     # one model run at a time (concept, section 10)
+            return self._json(200, self.service.enroll_clip(pcm))
+
+    def do_PUT(self):
+        """PUT /v2/session/<id>/core: the session's calibrated v2 voice profiles."""
+        self.close_connection = True
+        parts = urllib.parse.urlsplit(self.path).path.strip('/').split('/')
+        if len(parts) != 4 or parts[:2] != ['v2', 'session'] or parts[3] != 'core':
+            return self._json(404, dict(error='not found'))
+        if not self.service.authorized(self.headers.get('Authorization')):
+            return self._json(401, dict(error='unauthorized'))
+        ident = parts[2][:64]
+        if not self.service.sessions.known(ident):
+            return self._json(404, dict(error='unknown session'))
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+        except ValueError:
+            return self._json(411, dict(error='length required'))
+        if not 0 < length <= voice_profile.CORE_BYTES_MAX:
+            return self._json(413, dict(error='voice core too large'))
+        try:
+            data = json.loads(self.rfile.read(length))
+            profiles = voice_profile.read_core(data)
+        except (ValueError, voice_profile.ProfileError) as exc:
+            return self._json(400, dict(error=str(exc)[:200]))
+        core = protocol.digest(data)
+        self.service.sessions.set_voice(ident, core, profiles)
+        return self._json(200, dict(core=core, profiles=len(profiles)))
+
+    def _voice(self):
+        """None without X-Servitor-Voice, else the session's matching profiles
+        or VOICE_MISSING (unknown session or digest: strict, never v1)."""
+        named = self.headers.get('X-Servitor-Voice', '')[:64]
+        if not named:
+            return None
+        session = self.headers.get('X-Servitor-Session', '')[:64]
+        profiles = self.service.sessions.voice(session, named) if session else None
+        return profiles if profiles else VOICE_MISSING
 
     def _maintenance(self):
         """Update or reboot CT 107 on request of the Pi (button-confirmed there)."""
@@ -847,7 +1060,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         session = self.service.sessions.open(item['body'].get('device', ''))
         welcome = protocol.message('welcome', dict(session=session,
                                                    idle=self.service.sessions.idle,
-                                                   handles=sorted(HANDLED)))
+                                                   handles=sorted(HANDLED),
+                                                   features=list(FEATURES)))
         return self._json(200, welcome)
 
     def _message(self):
@@ -898,6 +1112,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._maintenance()
         if url.path == '/v1/voiceprint':
             return self._voiceprint()
+        if url.path == '/v2/enroll/clip':
+            return self._enroll_clip()
+        if url.path == '/v1/nightwatch':
+            return self._nightwatch()
         if url.path not in ('/v1/turn', '/v1/speak', '/v1/story'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
@@ -905,6 +1123,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.connection.settimeout(self.service.config.idle_timeout)
         if not self.service.authorized(self.headers.get('Authorization')):
             return self._json(401, dict(error='unauthorized'))
+        self.service.nightwatch.foreground()
         if not self.service.limiter.allow(self._client()):
             return self._json(429, dict(error='rate limited'), {'Retry-After': '30'})
         deadline = time.monotonic() + self.service.config.loading_wait
@@ -967,11 +1186,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 device = None
         memory_copy, session_event = self._memory(device)
+        voice = self._voice()
+        import nightwatch
+        nightwatch_copy = nightwatch.decode_view(self.headers.get('X-Servitor-Nightwatch', ''))
 
         appointments = agenda.decode_header(self.headers.get('X-Servitor-Agenda', ''),
                                             self.service.now().tzinfo)
         appointments_tomorrow = agenda.decode_header(
             self.headers.get('X-Servitor-Agenda-Tomorrow', ''), self.service.now().tzinfo)
+        if (session_event or {}).get('state') == 'unknown' or voice is VOICE_MISSING:
+            # The memory (with the voiceprints) did not arrive: nobody can check
+            # the voice, so the calendar stays unused too.
+            appointments = appointments_tomorrow = None
 
         if not self.service.turn_lock.acquire(timeout=max(0.0, self.service.config.busy_wait)):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
@@ -998,7 +1224,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           memory_copy=memory_copy,
                                           transcribe_only=transcribe_only,
                                           appointments=appointments,
-                                          appointments_tomorrow=appointments_tomorrow)
+                                          appointments_tomorrow=appointments_tomorrow,
+                                          voice=voice, nightwatch_copy=nightwatch_copy)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.

@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 import memory  # noqa: E402
 import protocol  # noqa: E402
 import speaker  # noqa: E402
+import voice_profile  # noqa: E402
 
 PRINTS = [dict(name='Ivan', print='AAAA')]
 
@@ -73,7 +74,11 @@ class IdentifyTests(unittest.TestCase):
         self.events = []
 
     def identify(self, copy, result):
-        with unittest.mock.patch.object(speaker, 'identify', return_value=result), \
+        name, score = result
+        decided = (dict(status=speaker.MATCHED, name=name, best=score, second=None) if name
+                   else dict(status=speaker.UNKNOWN, name=None, best=score, second=None))
+        with unittest.mock.patch.object(speaker, 'decide', return_value=decided), \
+                unittest.mock.patch.object(speaker, 'speech_seconds', return_value=2.0), \
                 unittest.mock.patch.object(speaker, 'decode', return_value=[1.0, 0.0]):
             return self.service._identify(b'\0' * 64000, copy, self.events.append)
 
@@ -83,8 +88,9 @@ class IdentifyTests(unittest.TestCase):
         result = self.identify(copy, (None, 0.38))
         self.assertEqual(result['speaker'], 'Ivan')
         self.assertEqual(result['facts'], ['Hund heißt Rex'])
-        self.assertEqual(self.events[-1], dict(event='speaker', known=False, name=None,
-                                               carried=True, score=0.38))
+        self.assertEqual(self.events[-1], dict(event='speaker', status=speaker.UNKNOWN,
+                                               known=False, name=None, carried=True,
+                                               score=0.38))
 
     def test_without_trust_an_unknown_voice_stays_a_guest(self):
         copy = dict(facts=['Hund heißt Rex'], directives=[], history=[], voiceprints=PRINTS)
@@ -98,6 +104,24 @@ class IdentifyTests(unittest.TestCase):
         self.assertEqual(self.identify(copy, ('Ivan', 0.61))['speaker'], 'Ivan')
         self.assertEqual(self.events[-1]['name'], 'Ivan')
 
+
+    def test_v2_profiles_carry_the_profile_id(self):
+        self.service.embedder.model_info = lambda: {}
+        voice = [dict(profile_id='p-ivan', name='Ivan')]
+        copy = dict(facts=['Hund heißt Rex'], directives=[], history=[], voiceprints=PRINTS,
+                    trusted='Ivan')
+        with unittest.mock.patch.object(voice_profile, 'decide', return_value=dict(
+                status=voice_profile.UNKNOWN, best=0.3, profile_id=None)), \
+                unittest.mock.patch.object(speaker, 'speech_seconds', return_value=2.0):
+            result = self.service._identify(b'\0' * 64000, copy, self.events.append, voice)
+        self.assertEqual((result['speaker'], result['speaker_id']), ('Ivan', 'p-ivan'))
+        self.assertTrue(self.events[-1]['carried'])
+        with unittest.mock.patch.object(voice_profile, 'decide', return_value=dict(
+                status=voice_profile.UNKNOWN, best=0.3, profile_id=None)), \
+                unittest.mock.patch.object(speaker, 'speech_seconds', return_value=2.0):
+            result = self.service._identify(b'\0' * 64000, dict(copy, trusted=None),
+                                            self.events.append, voice)
+        self.assertTrue(memory.unknown_speaker(result))
 
 if __name__ == '__main__':
     unittest.main()

@@ -198,7 +198,7 @@ class WatchTests(unittest.TestCase):
         watch.check()
         self.assertEqual(len(self.reports), 1)  # unchanged results are not logged again
         self.assertEqual(watch.snapshot_fields(),
-                         dict(log_findings={}, log_repairs=[], log_last={}))
+                         dict(log_findings={}, log_repairs=[], log_last={}, log_checked_at=100000.0))
 
     def test_successful_repair_is_reported(self):
         watch = self.make(broken=True)
