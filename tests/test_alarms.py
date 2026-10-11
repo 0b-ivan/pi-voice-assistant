@@ -327,9 +327,10 @@ class MemoryCoreControllerTests(ControllerAlarmTests):
                                          score=None))
         logged = [json.loads(line) for line in out.getvalue().splitlines()
                   if line.startswith('{')]
-        self.assertIn(dict(version=1, event='speaker', known=False, score=0.412), logged)
+        self.assertIn(dict(version=1, event='speaker', known=False, score=0.412,
+                           carried=False), logged)
         self.assertIn(dict(version=1, event='speaker', known=False, score=None,
-                           status='insufficient'), logged)
+                           carried=False, status='insufficient'), logged)
 
     def test_guest_turn_from_the_server_is_not_remembered(self):
         self.device.touch()
@@ -369,6 +370,27 @@ class MemoryCoreControllerTests(ControllerAlarmTests):
         context = self.c._turn_memory()
         self.assertEqual((context['facts'], context['directives'], context['speaker']),
                          ([], [], 'unknown'))
+
+    def test_sure_voice_is_vouched_for_on_the_next_short_turns(self):
+        self.device.touch()
+        self.c.memory.save_voiceprint('Ivan', 'AAAA', 3)
+        self.assertNotIn('trusted', self.c.memory_context())
+        with redirect_stdout(StringIO()):
+            self.c._remote_progress(dict(event='speaker', known=True, name='Ivan', score=0.6))
+        self.assertEqual(self.c.memory_context()['trusted'], 'Ivan')
+        with redirect_stdout(StringIO()):
+            self.c._remote_progress(dict(event='speaker', known=False, carried=True, score=0.3))
+        self.assertEqual(self.c.memory_context()['trusted'], 'Ivan')
+        with redirect_stdout(StringIO()):    # an unknown voice without the Pi's vouching
+            self.c._remote_progress(dict(event='speaker', known=False, carried=False, score=0.2))
+        self.assertNotIn('trusted', self.c.memory_context())
+        # Server unreachable: the vouched person stays operator until it runs out.
+        with redirect_stdout(StringIO()):
+            self.c._remote_progress(dict(event='speaker', known=True, name='Ivan', score=0.6))
+        self.assertFalse(self.c._voice_unchecked())
+        self.c.trust.clear()
+        self.assertTrue(self.c._voice_unchecked())
+
 
     def test_local_fallback_handles_memory_commands(self):
         self.device.touch()

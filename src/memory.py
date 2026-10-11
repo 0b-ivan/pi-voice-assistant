@@ -388,6 +388,9 @@ def sanitize(data):
                   total_facts=total if isinstance(total, int) and total >= 0 else 0)
     if prints:
         result['voiceprints'] = prints
+        trusted = data.get('trusted')
+        if isinstance(trusted, str) and trusted in [p['name'] for p in prints]:
+            result['trusted'] = trusted
     enrolled = data.get('enrolled')
     if isinstance(enrolled, int) and not isinstance(enrolled, bool) and 0 < enrolled <= 100:
         result['enrolled'] = enrolled
@@ -399,6 +402,45 @@ def sanitize(data):
 def enrolled(context):
     """Someone is enrolled: an unchecked voice is then a guest."""
     return isinstance(context, dict) and bool(context.get('voiceprints') or context.get('enrolled'))
+
+
+TRUST_MINUTES = float(os.environ.get('PTT_SPEAKER_TRUST_MINUTES', '10'))
+TRUST_MAX_MINUTES = 60
+
+
+class Trust:
+    """Operator status that outlasts one turn.
+
+    Short questions (1-3 s) cannot be told apart from strangers by the voice
+    model (docs/memory.md). After a sure identification (a turn above the
+    threshold, the passphrase, a fresh enrollment) the Pi keeps the person as
+    operator while the conversation goes on: each carried turn extends the
+    window by ``minutes``, at most ``max_minutes`` after the last sure one.
+    A pause longer than the window ends it."""
+
+    def __init__(self, clock=time.monotonic, minutes=TRUST_MINUTES, max_minutes=TRUST_MAX_MINUTES):
+        self.clock, self.window, self.cap = clock, minutes * 60, max_minutes * 60
+        self.name, self.until, self.sure = None, 0.0, 0.0
+
+    def confirm(self, name):
+        if self.window <= 0 or not isinstance(name, str) or not name:
+            return
+        now = self.clock()
+        self.name, self.sure, self.until = name, now, now + self.window
+
+    def extend(self):
+        now = self.clock()
+        if self.current() is not None:
+            self.until = min(now + self.window, self.sure + self.cap)
+
+    def current(self):
+        if self.name is not None and self.clock() < self.until:
+            return self.name
+        self.name = None
+        return None
+
+    def clear(self):
+        self.name, self.until = None, 0.0
 
 
 def unknown_speaker(context):

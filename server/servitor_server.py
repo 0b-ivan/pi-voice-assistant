@@ -413,12 +413,26 @@ class Service:
                       flush=True)
                 result = dict(status=speaker.UNAVAILABLE, best=None)
         best = result.get('best')
-        emit(dict(event='speaker', status=result['status'],
-                  known=result['status'] == speaker.MATCHED,
+        matched = result['status'] == speaker.MATCHED
+        carried = self._carried(memory_copy, None if matched else memory_copy.get('trusted'),
+                                [p['name'] for p in prints])
+        emit(dict(event='speaker', status=result['status'], known=matched,
+                  name=result['name'] if matched else None, carried=bool(carried),
                   score=None if best is None else round(best, 3)))
-        if result['status'] != speaker.MATCHED:
+        if carried:
+            return dict(memory_copy, speaker=carried)
+        if not matched:
             return memory.guest_view(memory_copy, result['status'])
         return dict(memory_copy, speaker=result['name'])
+
+    @staticmethod
+    def _carried(memory_copy, trusted, names):
+        """The person the Pi vouches for after a sure identification a few
+        minutes ago (memory.Trust), if enrolled; short questions alone are no
+        reliable voice proof (docs/memory.md)."""
+        if isinstance(memory_copy, dict) and isinstance(trusted, str) and trusted in names:
+            return trusted
+        return None
 
     def _identify_v2(self, audio, memory_copy, emit, voice):
         status, best, ident, name = voice_profile.UNAVAILABLE, None, None, None
@@ -444,10 +458,18 @@ class Service:
                 status = voice_profile.UNAVAILABLE
         if status == voice_profile.MATCHED:
             name = next(p['name'] for p in voice if p['profile_id'] == ident)
+        carried = None
+        if name is None and isinstance(voice, list):
+            carried = self._carried(memory_copy, (memory_copy or {}).get('trusted'),
+                                    [p['name'] for p in voice])
         emit(dict(event='speaker', status=status, known=name is not None, profile=2,
+                  name=name, carried=bool(carried),
                   score=None if best is None else round(best, 3)))
         if not isinstance(memory_copy, dict):
             return memory_copy      # no stick or no memory support: nothing personal
+        if carried:
+            ident = next(p['profile_id'] for p in voice if p['name'] == carried)
+            return dict(memory_copy, speaker=carried, speaker_id=ident)
         if name is None:
             return memory.guest_view(memory_copy, status)
         return dict(memory_copy, speaker=name, speaker_id=ident)

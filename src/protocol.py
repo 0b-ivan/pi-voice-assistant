@@ -137,7 +137,8 @@ class Seen:
 
 def split_memory(context):
     """(stable core, recent history) of a memory context (memory.Memory.context)."""
-    core = {key: value for key, value in context.items() if key != 'history'}
+    # "trusted" (memory.Trust) changes between turns: it travels with the history.
+    core = {key: value for key, value in context.items() if key not in ('history', 'trusted')}
     return core, context.get('history', [])
 
 
@@ -174,7 +175,10 @@ class ClientSession:
         with self.lock:
             known = self.id is not None and self.core == digest(core)
         if known:
-            return dict(core=digest(core), history=history)
+            slim = dict(core=digest(core), history=history)
+            if context.get('trusted'):
+                slim['trusted'] = context['trusted']
+            return slim
         return context
 
 
@@ -244,4 +248,7 @@ class Sessions:
             session = self.items.get(ident)
             if session is None or session['digest'] != payload.get('core'):
                 return None
-            return dict(session['core'], history=payload.get('history', []))
+            full = dict(session['core'], history=payload.get('history', []))
+            if payload.get('trusted'):
+                full['trusted'] = payload['trusted']
+            return full
