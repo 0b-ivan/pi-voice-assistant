@@ -34,7 +34,8 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 
 
 **Web-Erweiterung (Feature-Branch):** Ein Browser-Client über denselben
-Servitor-Core auf CT 107, zunächst mit Textchat und Servitor-Audiowiedergabe.
+Servitor-Core auf CT 107, mit Textchat, Browser-Mikrofon und Servitor-Audiowiedergabe. Sprachaufnahmen
+werden nach dem Beenden an denselben `/v1/turn`-Pfad wie vom Pi geschickt.
 Keine zweite LLM-/Intent-/TTS-Implementierung und keine Web-Abhängigkeit auf
 dem Pi. Hinweise zu Testbetrieb, Sicherheitsgrenzen und Ausbaustufen:
 [Proximus Web in der Architektur](docs/architecture.md#proximus-web--dieselbe-codebasis-erste-etappe).
