@@ -141,7 +141,7 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(turn(agenda.encode_header([])), 'Keine weiteren Termine morgen.')
             self.assertEqual(turn('invalid header'), 'Kalenderdaten für morgen nicht verfügbar.')
             with unittest.mock.patch.object(ss.Service, '_identify',
-                                             lambda self, audio, copy, emit: memory.guest_view(copy)):
+                                             lambda self, audio, copy, emit, voice=None: memory.guest_view(copy)):
                 self.assertIn('nicht als Bediener erkannt', turn(agenda.encode_header([early]), guest=True))
 
     def setUp(self):
@@ -721,7 +721,7 @@ class IntentServerTest(ServerTest):
                              'Termine heute. 9 Uhr 30: Zahnarzt.')
             self.assertEqual(turn(None), 'Kalenderdaten nicht verfügbar.')
             with unittest.mock.patch.object(ss.Service, '_identify',
-                                            lambda self, audio, copy, emit:
+                                            lambda self, audio, copy, emit, voice=None:
                                             dict(copy, speaker='unknown')):
                 text = turn(agenda.encode_header([dentist]),
                             dict(facts=[], directives=[], history=[],
@@ -735,7 +735,7 @@ class IntentServerTest(ServerTest):
         copy = dict(facts=[], directives=[], history=[],
                     voiceprints=[dict(name='Ivan', print='AAAA')])
         with unittest.mock.patch.object(ss.Service, '_identify',
-                                        lambda self, audio, copy, emit:
+                                        lambda self, audio, copy, emit, voice=None:
                                         dict(copy, speaker='unknown')):
             text, _ = self.device_turn('lerne meine stimme', {'memory': 'on'}, copy)
         self.assertEqual(text, memory.GUEST_TEXT)
@@ -780,7 +780,7 @@ class IntentServerTest(ServerTest):
         guest = dict(facts=[], directives=[], history=[],
                      voiceprints=[dict(name='Ivan', print='AAAA')])
         with unittest.mock.patch.object(ss.Service, '_identify',
-                                        lambda self, audio, copy, emit:
+                                        lambda self, audio, copy, emit, voice=None:
                                         dict(copy, speaker='unknown')):
             text, device = self.device_turn('fahr dich herunter',
                                             {'devctl': 'on', 'memory': 'on'}, guest)
