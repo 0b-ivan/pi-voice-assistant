@@ -46,6 +46,8 @@ from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, 
 from protocol import ClientSession, MIN_TURN_SECONDS
 import datetime
 import intents
+import nightwatch
+import nightwatch_client
 from power import Battery, throttled_flags
 from ptt_config import LLM_MODES, ConfigError, PttConfig
 from system_status import collect_snapshot, phrase_style, status_text
@@ -756,6 +758,8 @@ class VoiceController:
         self.turn_trip = None              # journey proposal taken by the current turn
         self.journey_step = None           # journeys.Step of a running background job
         self.memory = memory_core.MemoryCore()
+        self.nightstore = nightwatch.Store(self.memory)
+        self.nightwatch = None
         self.memory_present = self.memory.present()
         try:  # restart: neutral, with a faint echo of the newest remembered turns
             data = self.memory.load() if self.memory_present else None
@@ -2004,6 +2008,8 @@ class VoiceController:
                 else:
                     snapshot['agenda'] = (self.agenda.tomorrow() if calendar_day == 1
                                           else self.agenda.today())
+            if intent.startswith('night_') or intent == 'briefing':
+                snapshot['nightwatch'] = self._local_night_view()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'
             event('llm_response', text=reply, model='local/intent')
@@ -2070,6 +2076,27 @@ class VoiceController:
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
 
+    def _local_night_view(self):
+        # A local fallback has no server-side voice verification. Keep this
+        # compatible with PR #100's explicit guest flag and enrolled profiles.
+        if getattr(self, 'turn_guest', False):
+            return dict(denied=True)
+        try:
+            if self.memory.present() and self.memory.people():
+                return dict(denied=True)
+        except (OSError, ValueError):
+            return dict(denied=True)
+        return self.nightstore.view()
+
+    def _remember_turn(self, question, answer, **fields):
+        # Night reports must not enter the personal history subsequently sent
+        # to OpenRouter in AUTO mode, including reports embedded in a briefing.
+        kind = intents.match(question, self.persona)
+        if getattr(self, 'turn_guest', False) \
+                or kind and (kind.startswith('night_') or kind == 'briefing'):
+            return
+        self.memory.remember_turn(question, answer, **fields)
+
     def _remote_progress(self, item):
         """Map server NDJSON events onto the existing journal/display events."""
         kind = item.get('event')
@@ -2119,7 +2146,7 @@ class VoiceController:
             text = str(item.get('text', ''))
             if (self.turn_transcript and not intents.is_stop(self.turn_transcript)
                     and not self.turn_guest):
-                self.memory.remember_turn(self.turn_transcript, text,
+                self._remember_turn(self.turn_transcript, text,
                                           mood=self.mood.label(time.time()),
                                           persona=self.persona)
             self.turn_llm = llm_kind(item.get('model'))
@@ -2510,10 +2537,9 @@ class VoiceController:
                 self.mood.react(feeling, time.time())
                 self._publish_mood()
                 reply = self._learn(reply)
-                if not self.turn_guest:
-                    self.memory.remember_turn(self.turn_transcript or '', reply,
-                                              mood=self.mood.label(time.time()),
-                                              persona=self.persona)
+                self._remember_turn(self.turn_transcript or '', reply,
+                                    mood=self.mood.label(time.time()),
+                                    persona=self.persona)
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
@@ -2561,6 +2587,15 @@ class VoiceController:
             self._story_tick()
             pressed = action is not None or commands or any(pitft_pressed)
             self._update_power(now, pressed)
+            if self.nightwatch is not None:
+                eligible = (not held and not pressed and self._idle() and not self.menu.open
+                            and not self.maint.active and not self.story and not self.alarm_queue
+                            and not self.bt_busy and not self.maint_jobs
+                            and self.server_state() == 'ok'
+                            and bool(self.battery and self.battery.get('plugged')))
+                snapshot = (self.status_snapshot() if eligible
+                            and time.monotonic() - self.nightwatch.last_check >= 30 else {})
+                self.nightwatch.tick(now - self.last_activity, eligible, snapshot)
 
         if not self.probe and self.config.hybrid:
             # The standby Vosk worker (~190 MB of 415) only serves the local
@@ -2692,7 +2727,9 @@ def main():
                 return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
                                         agenda=appointments, session=session,
                                         agenda_tomorrow=tomorrow, voice=voice,
-                                        memory_guest=guest)
+                                        memory_guest=guest,
+                                        nightwatch=nightwatch.encode_view(controller.nightstore.view())
+                                        if controller else None)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
@@ -2786,6 +2823,9 @@ def main():
                                  wake=wake, wake_word=wake_label, cue=acknowledge,
                                  config=config)
     controller_ref.append(controller)
+    if not args.probe and remote_config is not None and config.nightwatch:
+        controller.nightwatch = nightwatch_client.Client(controller.memory, remote_config,
+            start=config.night_start, end=config.night_end, idle_seconds=config.night_idle, log=event)
     if uplink_factory is not None:
         def story_uplink_factory(state):
             return RemoteStoryUplink(remote_config, state, status=controller.turn_snapshot())

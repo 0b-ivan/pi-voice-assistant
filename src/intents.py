@@ -13,6 +13,7 @@ from system_status import (battery_sentence, is_billy, network_text, phrase_styl
                            updates_sentence, updates_text)
 import agenda
 import logwatch
+import nightwatch
 import variants
 import weather
 
@@ -202,6 +203,9 @@ def match(text, persona=None):
     text = normalize(text)
     if not text:
         return None
+    night = nightwatch.intent(text)
+    if night is not None:
+        return night
     # Personal measurements and calendar requests stay out of the model even
     # when politeness, corrections or follow-up clauses make the sentence long.
     if _OWN_MEASUREMENT.search(text):
@@ -378,6 +382,9 @@ def briefing_text(now, snapshot, lore='off'):
     logs = logwatch.briefing_sentence(snapshot, lore, now)  # None when nothing is notable
     if logs:
         parts.append(logs)
+    night = nightwatch.answer('night_report', snapshot.get('nightwatch'), brief=True)
+    if night:
+        parts.append(night)
     parts.append(BRIEFING_END.get(lore, BRIEFING_END['off']))
     return ' '.join(parts)
 
@@ -385,6 +392,8 @@ def briefing_text(now, snapshot, lore='off'):
 def answer(intent, now, snapshot=None, lore=None):
     snapshot = snapshot or {}
     lore = lore or phrase_style(snapshot.get('lore'), snapshot.get('persona'))
+    if intent.startswith('night_'):
+        return nightwatch.answer(intent, snapshot.get('nightwatch'))
     if intent == 'time':
         return time_text(now, lore)
     if intent == 'date':

@@ -130,7 +130,8 @@ class RemoteTurnUplink:
     """
 
     def __init__(self, config, connect=_open_connection, status=None, memory=None, agenda=None,
-                 session=None, agenda_tomorrow=None, voice=None, memory_guest=None):
+                 session=None, agenda_tomorrow=None, voice=None, memory_guest=None,
+                 nightwatch=None):
         self.config = config
         # protocol.ClientSession shared by all turns: opened with /v1/hello on
         # first use, then the memory core only travels when it changed.
@@ -147,6 +148,7 @@ class RemoteTurnUplink:
         # core, only the guest copy travels (no silent fallback to v1).
         self.voice = voice
         self.memory_guest = memory_guest
+        self.nightwatch = nightwatch
         self._connect = connect
         self._queue = queue.SimpleQueue()
         self._lock = threading.Lock()
@@ -303,6 +305,8 @@ class RemoteTurnUplink:
                 connection.putheader('X-Servitor-Agenda', agenda)
             if tomorrow:
                 connection.putheader('X-Servitor-Agenda-Tomorrow', tomorrow)
+            if self.nightwatch:
+                connection.putheader('X-Servitor-Nightwatch', self.nightwatch)
             connection.endheaders()
         except BaseException:
             connection.close()

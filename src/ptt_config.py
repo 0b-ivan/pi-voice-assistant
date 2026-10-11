@@ -65,6 +65,10 @@ class PttConfig:
     wlan: str = ''                      # 'on' | 'off' at start; '' leaves it as is
     bluetooth: bool = True
     logwatch: bool = True               # self-test: read the journal every 30 min
+    nightwatch: bool = True
+    night_start: int = 2
+    night_end: int = 5
+    night_idle: float = 1200.0
 
     @property
     def hybrid(self):
@@ -114,6 +118,13 @@ class PttConfig:
             raise ConfigError('PTT_PITFT_BUTTONS must be two GPIO lines other than '
                               'PTT_GPIO_LINE, or empty')
         llm_mode = get('PTT_LLM_MODE', 'auto').strip().lower()
+        night_start = number('PTT_NIGHTWATCH_START', '2', int)
+        night_end = number('PTT_NIGHTWATCH_END', '5', int)
+        night_idle = number('PTT_NIGHTWATCH_IDLE_SECONDS', '1200')
+        if not 0 <= night_start <= 23 or not 0 <= night_end <= 23 or night_start == night_end:
+            raise ConfigError('nightwatch hours must be different values between 0 and 23')
+        if not math.isfinite(night_idle) or not 60 <= night_idle <= 86400:
+            raise ConfigError('PTT_NIGHTWATCH_IDLE_SECONDS must be between 60 and 86400')
         return cls(
             gpio_chip=get('PTT_GPIO_CHIP', '/dev/gpiochip0'),
             gpio_line=gpio_line,
@@ -150,4 +161,6 @@ class PttConfig:
             wlan=get('PTT_WLAN').strip().lower(),
             bluetooth=get('PTT_BLUETOOTH', '1') != '0',
             logwatch=get('PTT_LOGWATCH', '1') != '0',
+            nightwatch=flag('PTT_NIGHTWATCH', '1'),
+            night_start=night_start, night_end=night_end, night_idle=night_idle,
         )

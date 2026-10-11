@@ -36,6 +36,12 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(clean, {"temp_c": 45, "llm": "offline"})
         self.assertEqual(ss.sanitize_snapshot("not a dict"), {})
 
+    def test_log_timestamp_survives_transport_but_nonfinite_values_do_not(self):
+        self.assertEqual(ss.sanitize_snapshot({'log_checked_at': 1791660000.9}),
+                         {'log_checked_at': 1791660000})
+        for value in (float('nan'), float('inf'), float('-inf'), True):
+            self.assertEqual(ss.sanitize_snapshot({'log_checked_at': value}), {})
+
 
 class StatusTextTests(unittest.TestCase):
     NOMINAL = dict(temp_c=45, load_pct=10, mem_free_pct=40, disk_free_pct=70,

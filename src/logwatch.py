@@ -450,6 +450,7 @@ class LogWatch:
         if result is None:
             return {}
         fields = {f'{prefix}_findings': dict(result['findings']),
+                  f'{prefix}_checked_at': result['at'],
                   f'{prefix}_repairs': list(result['repairs']),
                   f'{prefix}_last': dict(result.get('last', {}))}
         if result.get('resolved'):
