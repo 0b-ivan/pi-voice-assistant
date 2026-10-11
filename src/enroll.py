@@ -12,6 +12,14 @@ One session (menu "Kennenlernen" or "Lerne mich kennen"):
    (POST /v1/voiceprint); their mean becomes the operator's voiceprint on
    the stick, used to recognize the operator in later turns.
 
+Every clip goes through voice_quality (the path the server uses for turns):
+the WAV format is checked, then its numbers are logged as an 'enroll_clip'
+event (no content). Clips without speech or with a bad format are deleted;
+clips that fail the enrollment limits (too little speech, clipping, too
+quiet, noisy, too many pauses) still give their transcript but no voice
+embedding. Until the room noise is measured on its own (Etappe 4), a missing
+SNR estimate is logged, not held against the clip.
+
 Everything stays on the stick; button B cancels at any time. The session
 runs in its own thread and talks to the hardware through small callables,
 so it can be tested without a microphone.
@@ -22,6 +30,8 @@ import threading
 import time
 import wave
 from pathlib import Path
+
+import voice_quality
 
 WAKE_COUNT = 20
 WAKE_SECONDS = 2
@@ -57,6 +67,10 @@ REFINE_INTRO = "Stimmprofil nachtrainieren. Sage nach jedem Signalton Proximus. 
 NO_PROFILE = "Noch kein Stimmprofil vorhanden. Erst Kennenlernen starten."
 NO_MATCH = "Stimme keinem bekannten Profil zuzuordnen. Für eine neue Person Kennenlernen starten."
 REFINE_MATCH = 0.4      # lower than for recognition: we already expect a known voice
+# Problems that keep an enrollment clip out of the voiceprint.
+VOICE_PROBLEMS = {'too_short', 'clipping', 'too_quiet', 'noisy', 'pauses'}
+WAKE_PROBLEMS = {'too_short', 'clipping', 'too_quiet', 'noisy'}
+WAKE_SPEECH_MIN = 0.3   # one "Proximus"
 _REFINE = re.compile(r'\b(stimm(e|profil) (nachtrainieren|nach trainieren|verbessern|verfeinern|'
                      r'trainieren)|nachtrainieren|stimmtraining)\b')
 _COMMAND = re.compile(r'\b(lerne? mich kennen|kennenlernen|kennen lernen|trainingsmodus|'
@@ -113,8 +127,31 @@ def beep_wav(path, freq=880.0, seconds=0.15, rate=16000):
 
 
 def pcm_of(path):
-    with wave.open(str(path), 'rb') as clip:
-        return clip.readframes(clip.getnframes())
+    """Mono 16 kHz int16 PCM of a WAV clip (voice_quality.read_wav: format
+    checked, stereo mixed, other rates resampled); AudioFormatError if not."""
+    return voice_quality.read_wav(path)
+
+
+def clip_check(pcm, kind, index, allowed=VOICE_PROBLEMS,
+               speech_min=voice_quality.SPEECH_MIN, speech_max=voice_quality.SPEECH_MAX):
+    """(quality numbers, problems that keep the clip out of the voiceprint).
+    Logged as numbers and codes only."""
+    quality = voice_quality.analyze(pcm)
+    codes = voice_quality.problems(quality, speech_min, speech_max)
+    print(json.dumps(dict(version=1, event='enroll_clip', kind=kind, index=index,
+                          problems=codes, **quality)), flush=True)
+    return quality, [code for code in codes if code in allowed]
+
+
+def _read(path, kind, index):
+    """PCM of a recorded clip, or None (bad format: logged, clip deleted)."""
+    try:
+        return pcm_of(path)
+    except (voice_quality.AudioFormatError, OSError) as exc:
+        print(json.dumps(dict(version=1, event='enroll_clip', kind=kind, index=index,
+                              problems=['format'], error=type(exc).__name__)), flush=True)
+        Path(path).unlink(missing_ok=True)
+        return None
 
 
 class Session:
@@ -197,7 +234,13 @@ class Session:
                 raise RuntimeError('microphone unavailable')
             self.io.publish(stage='ask', step=number, total=len(QUESTIONS), rec=False)
             self._check()
-            pcm = pcm_of(path)
+            pcm = _read(path, 'answer', number)
+            if pcm is None:
+                continue
+            quality, rejected = clip_check(pcm, 'answer', number)
+            if not quality['speech_seconds']:
+                path.unlink(missing_ok=True)   # nothing said: nothing to keep
+                continue
             answer = self.io.transcribe(pcm)
             if answer:
                 if key == 'name':
@@ -205,7 +248,7 @@ class Session:
                     answer = name
                 if self.core.add(kind, template.format(answer)):
                     stored += 1
-            print_ = self.io.voiceprint(pcm)
+            print_ = self.io.voiceprint(pcm) if not rejected else None
             if print_:
                 prints.append(print_)
         self.io.publish(stage='process')
@@ -232,8 +275,16 @@ class Session:
         for start in range(0, len(takes), 5):
             # Each 2 s take holds ~0.7 s of "Proximus"; without its pauses the
             # five words are speech only, like the server's trimmed turns.
-            pcm = b''.join(trim_silence(pcm_of(path), min_seconds=0.3)
-                           for path in takes[start:start + 5] if path.is_file())
+            parts = []
+            for index, path in enumerate(takes[start:start + 5], start):
+                pcm = _read(path, 'wake', index) if path.is_file() else None
+                if pcm is None:
+                    continue
+                _, rejected = clip_check(pcm, 'wake', index, WAKE_PROBLEMS,
+                                         WAKE_SPEECH_MIN, voice_quality.SPEECH_MAX)
+                if not rejected:
+                    parts.append(trim_silence(pcm))
+            pcm = b''.join(parts)
             print_ = self.io.voiceprint(pcm) if pcm else None
             if print_:
                 prints.append(print_)

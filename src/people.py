@@ -206,11 +206,15 @@ class Flow:
         if ok is False or self.cancelled.is_set() or not Path(path).is_file():
             return None
         from enroll import pcm_of
-        return pcm_of(path)
+        from voice_quality import AudioFormatError
+        try:
+            return pcm_of(path)
+        except AudioFormatError:
+            return b''        # unusable take: counts as a failed attempt
 
     def authenticate(self):
         """'ok', 'weak' (refused: passphrase right, voice too weak) or None."""
-        from speaker import THRESHOLD, cosine, decode, trim_silence
+        from speaker import MIN_SECONDS, THRESHOLD, cosine, decode, speech_seconds
         person = self.core.profile(self.name)
         if person is None:
             return None
@@ -223,7 +227,15 @@ class Flow:
             Path(path).unlink(missing_ok=True)   # nothing of the passphrase stays on disk
             if pcm is None:
                 return None
-            pcm = trim_silence(pcm)
+            if speech_seconds(pcm) < MIN_SECONDS:
+                # Too little speech for a voice decision: a failed attempt, not
+                # "no server". The server trims the take itself (shared path).
+                print(json.dumps(dict(version=1, event='auth', attempt=attempt,
+                                      result='too_short')), flush=True)
+                state = None
+                if attempt < ATTEMPTS:
+                    prompt = AUTH_RETRY
+                continue
             print_ = self.io.voiceprint(pcm)
             if print_ is None:
                 self.io.say(NO_SERVER)
@@ -247,7 +259,8 @@ class Flow:
                 break
             if attempt < ATTEMPTS:
                 prompt = AUTH_RETRY
-        self.core.update_profile(self.name, last_score=round(best, 3))
+        if best is not None:
+            self.core.update_profile(self.name, last_score=round(best, 3))
         self.io.say({'ok': AUTH_OK, 'weak': AUTH_WEAK}.get(state, AUTH_FAILED))
         return state
 

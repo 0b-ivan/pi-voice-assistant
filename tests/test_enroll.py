@@ -13,13 +13,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import enroll  # noqa: E402
 import memory  # noqa: E402
 import speaker  # noqa: E402
+import voice_quality  # noqa: E402
+
+
+def tone(*parts):
+    """(seconds, amplitude) pieces -> 16 kHz int16 PCM (a 440 Hz tone or silence)."""
+    import math
+    from array import array
+    samples = array("h")
+    for seconds, amplitude in parts:
+        samples.extend(int(amplitude * math.sin(2 * math.pi * 440 * i / 16000))
+                       for i in range(int(seconds * 16000)))
+    return samples.tobytes()
+
+
+def speech_take(seconds):
+    """A clip like a real take: quiet after the beep, speech, quiet."""
+    spoken = min(3.0, seconds / 2)
+    return tone((0.5, 0), (spoken, 8000), (seconds - 0.5 - spoken, 0))
 
 
 class FakeIO:
-    def __init__(self, answers, cancel_after=None):
+    def __init__(self, answers, cancel_after=None, take=None):
         self.answers, self.said, self.recorded = list(answers), [], []
         self.cancel_after, self.session = cancel_after, None
         self.states = []
+        self.take = take        # PCM for every recording (default: speech_take)
+        self.printed = []
 
     def say(self, text):
         self.said.append(text)
@@ -32,7 +52,7 @@ class FakeIO:
             out.setnchannels(1)
             out.setsampwidth(2)
             out.setframerate(16000)
-            out.writeframes(bytes(16000 * 2 * seconds))
+            out.writeframes(self.take if self.take is not None else speech_take(seconds))
         self.recorded.append(Path(path))
         if self.cancel_after is not None and len(self.recorded) >= self.cancel_after:
             self.session.cancel()
@@ -41,6 +61,7 @@ class FakeIO:
         return self.answers.pop(0) if self.answers else None
 
     def voiceprint(self, pcm):
+        self.printed.append(len(pcm))
         return speaker.encode([1.0, 0.5, 0.0, 0.2] * 4)
 
     def publish(self, **state):
@@ -103,6 +124,39 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(context["voiceprints"][0]["name"], "Ivan")
         self.assertIn("Stimmprofil gespeichert", io.said[-1])
         self.assertEqual(io.states[-1], dict(stage=None))
+
+    def run_quiet(self, session):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            result = session.run()
+        return result, [json.loads(l) for l in out.getvalue().splitlines() if l.startswith("{")]
+
+    def test_bad_clips_give_no_voiceprint_but_numbers_in_the_log(self):
+        clipped = tone((0.5, 0), (3.0, 32767), (2.5, 0))
+        io_ = FakeIO(["nenn mich ivan"] + ["x"] * 6, take=clipped)
+        result, logged = self.run_quiet(enroll.Session(self.core, io_))
+        self.assertFalse(result["voiceprint"])
+        self.assertEqual(io_.printed, [])
+        self.assertIn("Name des Bedieners: Ivan", self.core.context()["facts"])
+        answers = [e for e in logged if e.get("event") == "enroll_clip" and e["kind"] == "answer"]
+        self.assertEqual(len(answers), len(enroll.QUESTIONS))
+        self.assertEqual(answers[0]["problems"][0], "clipping")
+        self.assertNotIn("ivan", json.dumps(logged).lower())       # numbers, no content
+
+    def test_silent_and_broken_clips_are_deleted(self):
+        io_ = FakeIO(["nenn mich ivan"] * 7, take=bytes(16000 * 2 * 6))
+        result, _ = self.run_quiet(enroll.Session(self.core, io_))
+        self.assertEqual(result["facts"], 0)                      # nothing transcribed
+        self.assertEqual(list((self.core.voice_dir / "answers").glob("*.wav")), [])
+        path = Path(self.tmp.name) / "eight-bit.wav"
+        with wave.open(str(path), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(1)
+            out.setframerate(16000)
+            out.writeframes(bytes(16000))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(enroll._read(path, "answer", 0))
+        self.assertFalse(path.exists())
 
     def test_cancel_stops_the_session(self):
         io = FakeIO([], cancel_after=3)
@@ -242,9 +296,11 @@ class ServerSpeakerTests(unittest.TestCase):
             available = True
             vector = self.voice
             error = None
+            inputs = []
 
             def embed(inner, pcm):
                 inner.seen = len(pcm)
+                inner.inputs.append(bytes(pcm))
                 if inner.error is not None:
                     raise inner.error
                 return inner.vector if len(pcm) >= 32000 else None
@@ -338,7 +394,36 @@ class ServerSpeakerTests(unittest.TestCase):
             "X-Servitor-Memory": memory.encode_header(copy)})
         conn.getresponse().read()
         conn.close()
-        self.assertAlmostEqual(self.service.embedder.seen / 32000, 2.0 + 2 * 0.2, delta=0.1)
+        self.assertAlmostEqual(self.service.embedder.seen / 32000, 2.0 + 2 * 0.15, delta=0.05)
+
+    def voiceprint(self, body):
+        conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)
+        conn.request("POST", "/v1/voiceprint", body=body,
+                     headers={"Authorization": f"Bearer {self.token}"})
+        response = conn.getresponse()
+        reply = json.loads(response.read())
+        conn.close()
+        return response.status, reply
+
+    def test_turn_and_enrollment_take_the_same_path(self):
+        # The same PCM through a turn's voice check and through /v1/voiceprint:
+        # the same speech measure, the same cut, the same bytes for the model.
+        take = b"\0\0" * 12000 + self.SPEECH + b"\0\0" * 20000
+        self.turn(take)
+        status, reply = self.voiceprint(take)
+        self.assertEqual(status, 200)
+        turn_input, enroll_input = self.service.embedder.inputs[-2:]
+        self.assertEqual(turn_input, enroll_input)
+        self.assertEqual(reply["quality"]["speech_seconds"], speaker.speech_seconds(take))
+        self.assertEqual(reply["quality"], voice_quality.analyze(take))
+
+    def test_rejected_voice_leaves_no_files_on_the_server(self):
+        status, reply = self.voiceprint(b"\0\0" * 64000)
+        self.assertEqual(status, 400)
+        self.assertEqual(reply["quality"]["speech_seconds"], 0.0)
+        self.turn(b"\0\0" * 64000)
+        self.turn()
+        self.assertEqual(list(Path(self.tmp.name).iterdir()), [])
 
     def test_voiceprint_endpoint_and_transcribe_mode(self):
         conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)

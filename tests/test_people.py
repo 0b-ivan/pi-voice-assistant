@@ -21,8 +21,9 @@ CLOSE = speaker.normalize([1.0, 0.5, 0.0, 0.2] * 64 + [-0.3, 0.9, 0.4, -0.6] * 6
 
 
 class IO:
-    def __init__(self, voice, words):
+    def __init__(self, voice, words, take=None):
         self.voice, self.words, self.said = voice, list(words), []
+        self.take = take        # PCM of every recording; default: 2 s of speech
 
     def say(self, text):
         self.said.append(text)
@@ -35,7 +36,8 @@ class IO:
             out.setnchannels(1)
             out.setsampwidth(2)
             out.setframerate(16000)
-            out.writeframes(bytes(16000 * 2))
+            out.writeframes(self.take if self.take is not None
+                            else pcm((0.5, 0), (2.0, 8000), (0.5, 0)))
 
     def transcribe(self, pcm):
         return self.words.pop(0) if self.words else None
@@ -71,18 +73,20 @@ class MatchingTests(unittest.TestCase):
     def test_trim_silence_keeps_speech_only(self):
         take = pcm((2.0, 0), (1.5, 8000), (2.5, 30))
         trimmed = speaker.trim_silence(take)
-        self.assertAlmostEqual(len(trimmed) / 32000, 1.5 + 2 * 0.2, delta=0.1)
+        self.assertAlmostEqual(len(trimmed) / 32000, 1.5 + 2 * 0.15, delta=0.05)
 
-    def test_trim_silence_never_goes_below_a_second(self):
+    def test_trim_silence_without_speech_is_empty(self):
+        # A short take is cut to its speech (the caller decides whether that
+        # is enough); a silent one gives nothing instead of the silence.
         take = pcm((2.0, 0), (0.3, 8000), (2.0, 0))
-        self.assertEqual(speaker.trim_silence(take), take)
-        silent = pcm((4.0, 0))
-        self.assertEqual(speaker.trim_silence(silent), silent)
+        self.assertAlmostEqual(len(speaker.trim_silence(take)) / 32000, 0.3 + 2 * 0.15,
+                               delta=0.05)
+        self.assertEqual(speaker.trim_silence(pcm((4.0, 0))), b"")
 
-    def test_trim_silence_short_takes_with_lower_minimum(self):
+    def test_trim_silence_short_takes(self):
         take = pcm((0.6, 0), (0.7, 8000), (0.7, 0))      # one 2 s "Proximus" take
-        trimmed = speaker.trim_silence(take, min_seconds=0.3)
-        self.assertAlmostEqual(len(trimmed) / 32000, 0.7 + 2 * 0.2, delta=0.1)
+        trimmed = speaker.trim_silence(take)
+        self.assertAlmostEqual(len(trimmed) / 32000, 0.7 + 2 * 0.15, delta=0.05)
 
 
 class FlowTests(unittest.TestCase):
@@ -153,6 +157,16 @@ class FlowTests(unittest.TestCase):
                          (False, True, None))
         self.assertEqual(io.said[-1], people.AUTH_WEAK)
         self.assertEqual([e["result"] for e in self.events()], ["weak"] * people.ATTEMPTS)
+
+    def test_too_little_speech_is_a_failed_attempt_not_a_server_error(self):
+        self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
+        io = IO(IVAN, ["omnissiah segne diese maschine"] * 2,
+                take=pcm((1.0, 0), (0.5, 8000), (1.0, 0)))
+        result, io = self.flow(None, None, "details", io)
+        self.assertFalse(result["auth"])
+        self.assertNotIn(people.NO_SERVER, io.said)
+        self.assertEqual(io.said[-1], people.AUTH_FAILED)
+        self.assertEqual([e["result"] for e in self.events()], ["too_short"] * people.ATTEMPTS)
 
     def test_auth_log_and_details_carry_no_name_and_no_percent(self):
         self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")

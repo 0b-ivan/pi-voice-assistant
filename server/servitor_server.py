@@ -63,6 +63,7 @@ import maintenance  # noqa: E402
 import memory  # noqa: E402
 import protocol  # noqa: E402
 import speaker  # noqa: E402
+import voice_quality  # noqa: E402
 import story as stories  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from mood import emergency, split_tag  # noqa: E402
@@ -783,14 +784,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not 0 < length <= PCM_RATE * 2 * 30:
             return self._json(413, dict(error='1 to 30 s of audio'))
         pcm = self.rfile.read(length)
-        # Speech, not file length: a mostly silent take gives no voiceprint.
-        if speaker.speech_seconds(pcm) < speaker.MIN_SECONDS:
-            return self._json(400, dict(error='less than 1 s of speech'))
+        # The same path as a turn's voice check (_identify): speech, not file
+        # length, then the same trim. The numbers go back, never the audio.
+        quality = voice_quality.analyze(pcm)
+        if quality['speech_seconds'] < speaker.MIN_SECONDS:
+            return self._json(400, dict(error='less than 1 s of speech', quality=quality))
         embedding = self.service.embedder.embed(speaker.trim_silence(pcm))
         if embedding is None:
-            return self._json(400, dict(error='less than 1 s of speech'))
+            return self._json(400, dict(error='less than 1 s of speech', quality=quality))
         return self._json(200, {'print': speaker.encode(embedding),
-                                'seconds': round(len(pcm) / (PCM_RATE * 2), 1)})
+                                'seconds': round(len(pcm) / (PCM_RATE * 2), 1),
+                                'quality': quality})
 
     def _maintenance(self):
         """Update or reboot CT 107 on request of the Pi (button-confirmed there)."""

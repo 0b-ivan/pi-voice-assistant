@@ -194,6 +194,9 @@ def llm_kind(model):
     return 'offline' if model.startswith('local/') else 'openrouter'
 
 
+BEEP_SETTLE = 0.3   # start value (concept stimm-einlernen, section 3); longer with echo
+
+
 class EnrollIO:
     """Hardware side of enroll.Session: clips through aplay, arecord, server."""
 
@@ -241,7 +244,10 @@ class EnrollIO:
         self._play(path)
 
     def beep(self):
+        """The beep, then BEEP_SETTLE of silence: the recording starts only
+        once the beep has died away (no beep or echo in the clip)."""
         self._play(self.beep_path, 5)
+        time.sleep(BEEP_SETTLE)
 
     def record(self, path, seconds, attempts=6):
         """Record; while the capture device is still busy (e.g. the wake-word

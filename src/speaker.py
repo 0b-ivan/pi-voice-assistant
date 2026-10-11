@@ -16,8 +16,9 @@ guest view. Scores are cosine similarities, not probabilities.
 import base64
 import math
 import os
-import sys
 from pathlib import Path
+
+import voice_quality
 
 MODEL = Path(os.environ.get('SERVITOR_SPEAKER_MODEL',
                             '/opt/servitor-voice/models/speaker/campplus.onnx'))
@@ -68,54 +69,17 @@ def average(vectors):
     return normalize([sum(v[i] for v in vectors) / len(vectors) for i in range(dim)])
 
 
-def _levels(pcm, rate, frame_seconds):
-    """(samples, frame size, RMS per frame) of 16 kHz mono int16 PCM."""
-    from array import array
-    samples = array('h', pcm[:len(pcm) - len(pcm) % 2])
-    if sys.byteorder == 'big':
-        samples.byteswap()
-    size = max(1, int(rate * frame_seconds))
-    levels = [math.sqrt(sum(s * s for s in samples[i:i + size]) / size)
-              for i in range(0, len(samples) - size + 1, size)]
-    return samples, size, levels
-
-
-SPEECH_FLOOR = 200.0    # RMS (~ -44 dBFS): below this a frame is never speech
-NOISE_CAP = 600.0       # a "noise floor" above this is taken to be continuous speech
-
-
-def speech_seconds(pcm, rate=16000, frame_seconds=0.03):
+def speech_seconds(pcm, rate=16000):
     """Seconds of speech frames, not the length of the recording: a long,
-    mostly silent take is still too short. A frame counts when it is twice
-    (6 dB) as loud as the quiet tenth of the take; the cap keeps a take
-    spoken without pauses from measuring itself as noise. An energy
-    estimate until the shared VAD path of the concept replaces it."""
-    _, _, levels = _levels(pcm, rate, frame_seconds)
-    if not levels:
-        return 0.0
-    floor = min(sorted(levels)[len(levels) // 10], NOISE_CAP)
-    limit = max(SPEECH_FLOOR, floor * 2)
-    return sum(level >= limit for level in levels) * frame_seconds
+    mostly silent take is still too short (voice_quality, shared path)."""
+    return voice_quality.speech_seconds(pcm, rate)
 
 
-def trim_silence(pcm, rate=16000, frame_seconds=0.03, pad_seconds=0.2, min_seconds=MIN_SECONDS):
+def trim_silence(pcm, rate=16000):
     """16 kHz mono int16 PCM without the quiet start and end (beep echo, waiting
-    for the speaker); silence dilutes the embedding of a short take. Returns
-    the input unchanged when too little speech (< min_seconds) would remain."""
-    samples, size, levels = _levels(pcm, rate, frame_seconds)
-    if not levels:
-        return pcm
-    floor = sorted(levels)[len(levels) // 5]
-    limit = max(200.0, floor * 3, max(levels) * 0.05)
-    loud = [i for i, level in enumerate(levels) if level >= limit]
-    if not loud:
-        return pcm
-    pad = int(pad_seconds / frame_seconds)
-    start = max(0, loud[0] - pad) * size
-    end = min(len(samples), (loud[-1] + 1 + pad) * size)
-    if end - start < min_seconds * rate:
-        return pcm
-    return pcm[start * 2:end * 2]
+    for the speaker); silence dilutes the embedding of a short take. b''
+    without speech. The same cut for enrollment clips and turns."""
+    return voice_quality.trim(pcm, rate)
 
 
 def identify(embedding, voiceprints, threshold=THRESHOLD):
