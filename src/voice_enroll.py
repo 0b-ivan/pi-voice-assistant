@@ -4,7 +4,7 @@ Concept stimm-einlernen v2, sections 3-6 (Etappe 4). One session runs in its
 own thread and talks to the hardware through ``io`` (say, beep, record,
 abort, clip, transcribe, publish), so it can be tested with a fake clock:
 
-1. Introduction and technical check: one second of room noise (the SNR of
+1. Introduction and technical check: three seconds of room noise (the SNR of
    every take is measured against it).
 2. Voice part: 24 sentences from enroll_phrases.plan(), eight per condition
    (near, far, quiet); 18 anchors build the three centers, 6 held-out
@@ -43,7 +43,7 @@ DEADLINE = 420.0
 MIN_SPEECH = 90.0
 EXTRA_ATTEMPTS = 3
 CONFIRM_SECONDS = 30.0
-NOISE_SECONDS = 1
+NOISE_SECONDS = 3
 BASELINE_SECONDS = 4
 ANSWER_SECONDS = 6
 BASELINE_BUDGET = 65.0
@@ -247,6 +247,16 @@ class VoiceSession:
             self._say(NOISE_PROMPT)
             noise = self._record(self.draft / 'noise.wav', NOISE_SECONDS)
             (self.draft / 'noise.wav').unlink(missing_ok=True)
+            if noise is None:
+                raise _Stop('noise_invalid', UNSUITABLE)
+            room = voice_quality.noise_profile(noise)
+            # Only technical metrics, never raw audio or spoken content.
+            log(event='enroll_noise', seconds=NOISE_SECONDS,
+                usable_seconds=room['noise_seconds'], noise_dbfs=room['noise_dbfs'],
+                peak_dbfs=room['noise_peak_dbfs'], spikes=room['noise_spikes'],
+                valid=room['valid'])
+            if not room['valid']:
+                raise _Stop('noise_invalid', UNSUITABLE)
             accepted = self._voice_part(noise)
             if self.baseline and self.remaining() > (BASELINE_BUDGET + CLOSE_BUDGET
                                                      + (FACTS_BUDGET if self.facts else 0)):
