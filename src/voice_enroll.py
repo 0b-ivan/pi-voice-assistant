@@ -10,10 +10,10 @@ abort, clip, transcribe, publish), so it can be tested with a fake clock:
    (near, far, quiet); 18 anchors build the three centers, 6 held-out
    checks (the last two are challenges) stay outside. Every take is judged
    at once: voice_quality limits, then the server's transcript against the
-   sentence (WER), then the embedding. A failed take is deleted and repeated
-   with a new sentence: at most one repeat per sentence, three in total.
-   At least MIN_SPEECH seconds of speech in all; too little replaces the
-   shortest anchors by long sentences while repeats are left.
+   sentence (WER) only for held-out checks, then the embedding. Technical
+   quality protects every clip. Every failed check may be repeated twice;
+   a third failure pauses without throwing away previous accepted samples.
+   At least MIN_SPEECH seconds of speech in all.
 3. Optional baseline (twelve call-and-answer pairs): numbers only, never in
    the profile.
 4. Optional facts (the seven questions): kept as a draft.
@@ -21,11 +21,11 @@ abort, clip, transcribe, publish), so it can be tested with a fake clock:
    (voice_profile.calibrate) against the reference samples on the stick, if
    any; without them the profile stays 'provisional'.
 6. Confirmation: button E stores the draft (v2 profile, compatibility v1
-   print, facts, accepted audio); B, the deadline or anything else discards
-   it and the previous profile stays.
+   print, facts, accepted audio); B or the deadline pauses the draft for up
+   to 24 hours; the previous profile stays until final E.
 
-Hard limit DEADLINE seconds including the confirmation; optional parts are
-not started when the rest would not fit. B cancels in every phase, also
+Hard limit DEADLINE seconds *per session* including the confirmation;
+optional parts are not started when the rest would not fit. B cancels in every phase, also
 while a server call is running (calls run in a helper thread, a late answer
 is dropped). Logs carry numbers and codes only, never text or names.
 """
@@ -435,7 +435,7 @@ class VoiceSession:
         if pcm is None:
             return self._reject(item, path, 'format', None)
         quality = voice_quality.analyze(pcm, noise=noise)
-        problems = voice_quality.problems(quality)
+        problems = voice_quality.problems(quality, speech_ratio_min=0.50)
         if problems:
             return self._reject(item, path, problems[0], quality)
         self._publish(stage='voice', step=index + 1, total=total, condition=item['condition'],
