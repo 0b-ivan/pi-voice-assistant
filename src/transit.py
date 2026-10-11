@@ -443,6 +443,8 @@ def matches_mode(item, mode):
     kinds = [leg['kind'] for leg in item.get('vehicles') or [item]]
     if mode == 'tram':
         return all(kind == 'tram' for kind in kinds)
+    if mode == 'bus':
+        return all(kind == 'bus' for kind in kinds)
     if mode == 'train':
         return any(kind in RAIL for kind in kinds)
     if mode == 'regional':
@@ -534,7 +536,7 @@ class Client:
                                       stopfinder_params(self.config, name)))
         if not stops:
             return None
-        wanted = {'tram': {4}, 'train': {0, 1, 13, 16}, 'regional': {0, 1, 13},
+        wanted = {'tram': {4}, 'bus': {5, 6, 7, 10, 11}, 'train': {0, 1, 13, 16}, 'regional': {0, 1, 13},
                   'long': {0, 16}}.get(mode)
 
         def rank(stop):
