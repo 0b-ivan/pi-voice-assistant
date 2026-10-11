@@ -53,6 +53,33 @@ Bekannte Grenzen:
 - Eine eigene Raumgeräusch-Messung fehlt im alten Ablauf; fehlende SNR wird protokolliert, hält einen Clip aber erst ab Etappe 4 zurück.
 - Der Modell-Selbstvergleich läuft nur, wo das CAM++-Modell installiert ist (CT 107), nicht in CI.
 
-## Etappen 3–7: offen
+## Etappe 3 — Profile und Kalibrierung: umgesetzt (ohne Laufzeit-Anbindung)
+
+Iststand: v1-Profile liegen als `voice/profiles/<namens-slug>.json` (plus erste Fassung `voice/voiceprint.json`), adressiert über den Namen, ohne ID, mit int8-Mittelwert und Lebenszeit-Zähler `count`. Verschiedene Namen mit gleichem Slug landen in derselben Datei.
+
+| Änderung | Datei |
+|---|---|
+| V2-Schema (`schema_version` 2, stabile `profile_id` als UUID, Anzeigename, Modell + SHA-256, Vorverarbeitungs-Version, Dimension, Codec `f32le-b64`, Status `legacy/provisional/calibrated/validated`, drei Zentren `near/far/quiet`, ≤ 18 Anker, 6 zurückgehaltene Prüfproben, ≤ 24 Ergänzungen, Kalibrierungsergebnis, Revision) mit strikter Validierung (NaN, Nullnorm, Dimension, Größenlimits) | `src/voice_profile.py` |
+| Vergleich `s_p(x) = max` über die Zentren; `decide()` liefert `matched/unknown/ambiguous/unverified/unavailable`, nur für kalibrierte Profile mit eigener Schwelle, `delta` 0,05, kein Ausweichen auf das zweitbeste Profil, inkompatible Modelle/Vorverarbeitung/Dimension werden übersprungen | `src/voice_profile.py` |
+| `loo_scores()`: jeder Anker gegen Zentren aus allen *anderen* Ankern, mit dem vollständigen Vergleich | `src/voice_profile.py` |
+| `calibrate()`: auf gespeicherten und wieder geladenen Vektoren; `tau = max(Fremd) + 0,03`; `calibrated` nur mit ≥ 20 Fremdproben von ≥ 5 Quellen, ≥ 95 % LOO-Treffern (bei 18 = 18/18) und allen 6 Prüfproben ≥ `tau` ohne Nachstellen; sonst `provisional` mit Grund (`too_few_impostors`, `not_separable`, `impostor_too_close`, `checks_failed`, `checks_missing`) | `src/voice_profile.py` |
+| `cross_check()`: ganzer Entscheidungsweg über mehrere Personen (richtig, falscher Name, abgewiesen, Fremder angenommen) | `src/voice_profile.py` |
+| `ProfileStore`: eine Datei je `profile_id` unter `voice/profiles-v2/`, atomares Schreiben mit fsync, vorige Revision als `<id>.prev.json`, Rückfall darauf bei beschädigter Datei, Umbenennen ohne ID-Wechsel, Löschen inkl. Vorrevision | `src/voice_profile.py` |
+| Migration v1 → v2 nur in eine Kopie: alter Print wird **ein** Legacy-Zentrum (keine drei Kopien), v1-Daten bleiben unverändert, vorhandene ID bleibt, fehlende ID wird einmalig vergeben und vor dem Profil atomar in `voice/profile-ids.json` gesichert; Bericht ohne Namen, mit Slug-Kollisionen. Status `legacy`: ohne bekanntes Modell nie automatisch verglichen | `scripts/voice-profile-migrate.py` |
+
+Die laufenden v1-Profile und `MemoryCore.save_voiceprint()` bleiben unverändert; V2-Dateien liegen in einem eigenen Verzeichnis, der v1-Lebenszeit-Mittelwert kann sie nicht verändern. Server und Pi nutzen V2 noch nicht: Übertragung und Anbindung folgen mit dem Core-Body-Pfad (Etappe 4).
+
+Migration ausprobieren (Kopie des Sticks, nie der Stick selbst):
+
+```bash
+cp -a /mnt/proximus-memory/proximus /tmp/stick-kopie
+python3 scripts/voice-profile-migrate.py /tmp/stick-kopie /tmp/stick-v2
+```
+
+Tests: `tests/test_voice_profile.py` (Codec und Ablehnungen, LOO schließt den Prüfclip aus und baut Zentren neu, getrennte/überlappende/vertauschte Verteilungen, fehlende oder zu wenige Fremdquellen, Prüfproben ohne Nachstellen, Kalibrierung auf gespeicherten Vektoren, `score == tau`, kein Ausweichen auf niedrigere Zweitschwelle, nahe Profile uneindeutig, Modell-/Vorverarbeitungs-/Dimensionsfehler und Nullnorm, Mehrpersonen-Prüfung, doppelte Anzeigenamen, Umbenennen, unterbrochener und beschädigter Schreibvorgang, Limits, Legacy-Rundlauf, Migrationsskript lässt die Quelle byte-gleich und hält IDs stabil). Gesamtlauf: 915 Tests grün, 1 übersprungen.
+
+Befund aus den Tests: Mit synthetischen Stimmen nahm ein Profil, das gegen 20 Fremdproben kalibriert war, einen neuen Fremden an. Das bestätigt Abschnitt 9: 20 Fremdproben garantieren nichts für neue Stimmen; `cross_check()` macht solche Fälle nur sichtbar.
+
+## Etappen 4–7: offen
 
 Hardwareabnahme offen. Keine Messwerte am echten Gerät erhoben.

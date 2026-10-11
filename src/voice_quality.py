@@ -27,6 +27,7 @@ import sys
 import wave
 from array import array
 
+VERSION = 1              # preprocessing version stored with V2 profiles
 RATE = 16000
 FRAME_SECONDS = 0.02
 MARGIN_SECONDS = 0.15
