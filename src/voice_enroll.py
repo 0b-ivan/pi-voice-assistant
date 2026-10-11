@@ -30,6 +30,7 @@ while a server call is running (calls run in a helper thread, a late answer
 is dropped). Logs carry numbers and codes only, never text or names.
 """
 import json
+import os
 import shutil
 import threading
 import time
@@ -40,8 +41,9 @@ import voice_profile
 import voice_quality
 
 DEADLINE = 420.0
-MIN_SPEECH = 90.0
-EXTRA_ATTEMPTS = 3
+MIN_SPEECH = 45.0  # 24 short samples, >=2 s speech each
+RETRIES_PER_SENTENCE = 2  # retries are local to a single task, never global
+RESUME_SECONDS = 24 * 60 * 60
 CONFIRM_SECONDS = 30.0
 NOISE_SECONDS = 3
 BASELINE_SECONDS = 4
@@ -53,7 +55,7 @@ TAKE_OVERHEAD = 4.0          # beep, prompt, server per take (budget, not measur
 AUDIO_LIMIT = 20 * 1024 * 1024
 REFERENCE_FILE = 'reference-v2.json'
 
-INTRO = "Diese Einheit lernt deine Stimme. Sprich wie im Alltag. Taste B beendet den Vorgang."
+INTRO = "Diese Einheit lernt deine Stimme. Sprich wie im Alltag. Taste B pausiert das Kennenlernen."
 NOISE_PROMPT = "Bitte kurz still sein. Die Einheit misst den Raum."
 BASELINE_INTRO = ("Rhythmusprüfung. Höre zu. Wiederhole die angezeigte Antwort. "
                   "Deine gewöhnliche Stimme genügt.")
@@ -70,13 +72,14 @@ TOO_LITTLE = "Zu wenig Sprache erfasst. Das bisherige Profil bleibt erhalten."
 TIMEOUT = "Zeit abgelaufen. Das bisherige Profil bleibt erhalten."
 NO_SERVER = "Server nicht erreichbar. Das bisherige Profil bleibt erhalten."
 CONTENT_HINT = "Die Wörter wurden nicht sicher verstanden. Lies den neuen Satz vollständig."
+PAUSED = "Kennenlernen pausiert. Deine Aufnahmen bleiben einen Tag gespeichert."
 
 
 def phrases():
     """Fixed sentences, for prerecorded clips."""
     return [INTRO, NOISE_PROMPT, BASELINE_INTRO, FACTS_INTRO, CHECKING, CONFIRM, CONFIRM_FACTS,
             EXTRA_CONFIRMATION, DONE, DONE_FACTS, CANCELLED, UNSUITABLE, TOO_LITTLE, TIMEOUT,
-            NO_SERVER, CONTENT_HINT, *voice_quality.HINTS.values(),
+            NO_SERVER, CONTENT_HINT, PAUSED, *voice_quality.HINTS.values(),
             *enroll_phrases.CONDITION_HINTS.values()]
 
 
@@ -116,6 +119,9 @@ class VoiceSession:
         self.thread = None
         self.result = None
         self.started = None
+        self._resume_state = None
+        self._complete = False
+        self._draft_created = None
 
     # --- control from the controller thread ---------------------------------
 
@@ -201,6 +207,87 @@ class VoiceSession:
             Path(path).unlink(missing_ok=True)
             return None
 
+    # --- draft checkpoint / restart (USB stick, no server-side identity) ----
+
+    def _prepare_draft(self, stamp):
+        """Find an unexpired draft for the selected mode and profile.
+        Expired drafts are removed without touching committed profiles."""
+        base = self.core.voice_dir / 'drafts'
+        base.mkdir(parents=True, exist_ok=True)
+        now = self.wall()
+        if self.voice:
+            for folder in sorted(base.iterdir(), reverse=True):
+                if not folder.is_dir():
+                    continue
+                path = folder / 'progress.json'
+                try:
+                    state = json.loads(path.read_text(encoding='utf-8'))
+                    created = float(state['created'])
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+                if now - created > RESUME_SECONDS or created > now + 60:
+                    shutil.rmtree(folder, ignore_errors=True)
+                    continue
+                if (state.get('version') != 1 or state.get('mode') != self.mode
+                        or state.get('target_id') != self.target.get('profile_id')
+                        or not isinstance(state.get('tasks'), list)
+                        or len(state['tasks']) != 24
+                        or not isinstance(state.get('accepted'), list)):
+                    continue
+                self._resume_state = state
+                self._draft_created = created
+                self.draft = folder
+                log(event='voice_enroll', result='resumed',
+                    accepted=len(state['accepted']))
+                return folder.name
+        self._draft_created = now
+        self.draft = base / stamp
+        self.draft.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return stamp
+
+    def _save_progress(self, tasks, accepted):
+        """Atomic private USB checkpoint; profile still requires button E."""
+        state = dict(version=1, mode=self.mode,
+                     target_id=self.target.get('profile_id'),
+                     created=self._draft_created, tasks=tasks,
+                     model=self.model,
+                     accepted=[dict(index=a['index'], vector=a['vector'],
+                                    quality=a['quality'], wer=a.get('wer'))
+                               for a in accepted])
+        target = self.draft / 'progress.json'
+        temporary = target.with_suffix('.tmp')
+        with open(temporary, 'w', encoding='utf-8') as output:
+            json.dump(state, output, ensure_ascii=False)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(target)
+
+    def _restore_accepted(self, tasks):
+        accepted = []
+        state = self._resume_state
+        if not state:
+            return accepted
+        try:
+            self.model = tuple(state['model']) if state['model'] else None
+            for data in state['accepted']:
+                index = data['index']
+                if not isinstance(index, int) or not 0 <= index < len(tasks):
+                    continue
+                item = tasks[index]
+                # Never trust persisted paths; reconstruct from the plan.
+                path = self.draft / (
+                    f"{index + 1:02d}-{item['condition']}-{item['role']}.wav")
+                if not path.is_file() or any(a['index'] == index for a in accepted):
+                    continue
+                if not isinstance(data['quality'], dict) or not data['vector']:
+                    continue
+                accepted.append(dict(item, vector=data['vector'],
+                                     quality=data['quality'], path=path,
+                                     wer=data.get('wer')))
+        except (KeyError, ValueError, TypeError, IndexError):
+            return []
+        return accepted
+
     # --- run ------------------------------------------------------------------
 
     def _run(self):
@@ -214,13 +301,16 @@ class VoiceSession:
     def run(self):
         self.started = self.clock()
         stamp = time.strftime('%Y%m%d-%H%M%S', time.localtime(self.wall()))
-        self.draft = self.core.voice_dir / 'drafts' / stamp
-        self.draft.mkdir(parents=True, exist_ok=True)
+        stamp = self._prepare_draft(stamp)
         try:
             return self._session(stamp)
         except _Cancelled:
             self.io.publish(stage=None)
-            self._quiet_say(CANCELLED)
+            if self.voice and (self.draft / 'progress.json').is_file():
+                log(event='voice_enroll', result='paused')
+                self._quiet_say(PAUSED)
+            else:
+                self._quiet_say(CANCELLED)
             return dict(cancelled=True)
         except _Stop as stop:
             self.io.publish(stage=None)
@@ -229,7 +319,8 @@ class VoiceSession:
             return dict(stored=False, reason=stop.code)
         finally:
             # Kept takes were moved out on commit; everything else goes.
-            shutil.rmtree(self.draft, ignore_errors=True)
+            if self._complete or not (self.draft / 'progress.json').is_file():
+                shutil.rmtree(self.draft, ignore_errors=True)
             self.io.publish(stage=None)
 
     def _quiet_say(self, text):
@@ -277,6 +368,7 @@ class VoiceSession:
         self._say(text + (" " + EXTRA_CONFIRMATION if provisional else ""))
         self._wait_confirm()
         stored = self._commit(stamp, accepted, profile, drafts)
+        self._complete = True
         self._publish(stage='done')
         self._say(DONE if self.voice else DONE_FACTS)
         result = dict(stored=True, facts=stored['facts'], profile_id=stored.get('profile_id'),
@@ -293,11 +385,13 @@ class VoiceSession:
     # --- voice part --------------------------------------------------------------
 
     def _voice_part(self, noise):
-        tasks = enroll_phrases.plan(self.rng)
+        tasks = (self._resume_state['tasks'] if self._resume_state
+                 else enroll_phrases.plan(self.rng))
         used = {t['text'] for t in tasks}
-        self.extra = EXTRA_ATTEMPTS
         self.model = None
-        accepted = []
+        accepted = self._restore_accepted(tasks)
+        recorded = {item['index'] for item in accepted}
+        self._save_progress(tasks, accepted)
         condition = None
         for item in tasks:
             if item['condition'] != condition:
@@ -305,22 +399,28 @@ class VoiceSession:
                 self._publish(stage='voice', step=item['index'] + 1, total=len(tasks),
                               condition=condition, text=None)
                 self._say(enroll_phrases.CONDITION_HINTS[condition])
-            accepted.append(self._take_with_repeat(item, len(tasks), noise, used))
-        accepted = self._enough_speech(accepted, len(tasks), noise, used)
+            if item['index'] in recorded:
+                continue
+            take = self._take_with_repeat(item, len(tasks), noise, used)
+            accepted.append(take)
+            recorded.add(take['index'])
+            tasks[take['index']] = {
+                k: take[k] for k in ('index', 'condition', 'role',
+                                    'length', 'pattern', 'text', 'words')}
+            self._save_progress(tasks, accepted)
+        if sum(a['quality']['speech_seconds'] for a in accepted) < MIN_SPEECH:
+            raise _Stop('paused', TOO_LITTLE)
         return accepted
 
     def _take_with_repeat(self, item, total, noise, used):
-        repeated = False
-        while True:
+        for attempt in range(RETRIES_PER_SENTENCE + 1):
             self._fits(enroll_phrases.RECORD_SECONDS[item['length']] + TAKE_OVERHEAD
                        + CLOSE_BUDGET)
             take, problem = self._take(item, total, noise)
             if take is not None:
                 return take
-            if repeated or self.extra <= 0:
-                raise _Stop('unsuitable', UNSUITABLE)
-            repeated = True
-            self.extra -= 1
+            if attempt >= RETRIES_PER_SENTENCE:
+                raise _Stop('paused', PAUSED)
             self._say(voice_quality.HINTS.get(problem, CONTENT_HINT))
             item = enroll_phrases.replacement(item, self.rng, used)
             used.add(item['text'])
@@ -344,7 +444,10 @@ class VoiceSession:
         if not isinstance(reply, dict):
             raise _Stop('server', NO_SERVER)
         content = enroll_phrases.check(item, reply.get('transcript'))
-        if not content['ok']:
+        # Anchors learn vocal characteristics, not transcripts: tolerate
+        # Vosk word errors when audio quality and the embedding are valid.
+        # Held-out checks and challenge words remain strictly verified.
+        if not content['ok'] and item['role'] == 'check':
             return self._reject(item, path, 'content', quality, content['wer'])
         try:
             vector = voice_profile.decode(reply.get('vector') or '')
@@ -356,7 +459,8 @@ class VoiceSession:
         elif model != self.model:
             raise _Stop('model_changed', NO_SERVER)   # never mix models in one profile
         log(event='enroll_clip', kind='voice', index=index, condition=item['condition'],
-            role=item['role'], result='accepted', wer=content['wer'], **quality)
+            role=item['role'], result='accepted', text_ok=content['ok'],
+            wer=content['wer'], **quality)
         return dict(item, vector=vector, quality=quality, path=path, wer=content['wer']), None
 
     def _reject(self, item, path, problem, quality, wer=None):
@@ -364,32 +468,6 @@ class VoiceSession:
         log(event='enroll_clip', kind='voice', index=item['index'], condition=item['condition'],
             role=item['role'], result=problem, wer=wer, **(quality or {}))
         return None, problem
-
-    def _enough_speech(self, accepted, total, noise, used):
-        """Below MIN_SPEECH: replace the shortest anchors by long sentences
-        while repeats and time are left; else stop without a profile."""
-        def speech():
-            return sum(a['quality']['speech_seconds'] for a in accepted)
-
-        while speech() < MIN_SPEECH:
-            if self.extra <= 0:
-                raise _Stop('too_little_speech', TOO_LITTLE)
-            anchors = [a for a in accepted if a['role'] == 'anchor' and a['length'] != 'long']
-            if not anchors:
-                raise _Stop('too_little_speech', TOO_LITTLE)
-            shortest = min(anchors, key=lambda a: a['quality']['speech_seconds'])
-            self.extra -= 1
-            pattern = self.rng.choice(('L1', 'L2'))
-            item = enroll_phrases.task(shortest['condition'], 'anchor', 'long', pattern, self.rng,
-                                       used)
-            item['index'] = shortest['index']
-            used.add(item['text'])
-            self._fits(enroll_phrases.RECORD_SECONDS['long'] + TAKE_OVERHEAD + CLOSE_BUDGET)
-            take, _ = self._take(item, total, noise)
-            if take is not None:
-                Path(shortest['path']).unlink(missing_ok=True)
-                accepted[accepted.index(shortest)] = take
-        return accepted
 
     # --- baseline and facts ---------------------------------------------------
 
