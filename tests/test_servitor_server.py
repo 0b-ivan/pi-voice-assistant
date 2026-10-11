@@ -253,6 +253,42 @@ class ServerTest(unittest.TestCase):
                          ['synthesize', 'render'])
         self.assertEqual(self.pipeline.accepted, 0)
 
+
+    def test_chat_uses_same_answer_pipeline_as_voice_without_recognizing(self):
+        response, data = self.request('/v1/chat', json.dumps(
+            {'text': 'wie hoch ist der eiffelturm'}).encode())
+        self.assertEqual(response.status, 200)
+        events = self.events(data)
+        self.assertEqual(self.pipeline.accepted, 0)  # typed text needs no Vosk
+        self.assertEqual([e['event'] for e in events if e['event'] in
+                          ('transcript', 'reply', 'audio', 'done')],
+                         ['transcript', 'reply', 'audio', 'done'])
+        self.assertEqual([e['stage'] for e in events if e['event'] == 'stage'],
+                         ['think', 'synthesize', 'render'])
+        self.assertEqual(next(e['text'] for e in events if e['event'] == 'reply'),
+                         'Antwort auf wie hoch ist der eiffelturm')
+        self.assertTrue(base64.b64decode(next(
+            e['data'] for e in events if e['event'] == 'audio')).startswith(b'RIFF'))
+
+    def test_chat_direct_intent_uses_shared_rules_without_llm(self):
+        self.pipeline.fail_llm = True
+        response, data = self.request('/v1/chat', json.dumps({'text': 'Wie spät ist es?'}).encode())
+        self.assertEqual(response.status, 200)
+        events = self.events(data)
+        self.assertEqual(next(e['model'] for e in events if e['event'] == 'reply'),
+                         'local/intent')
+        self.assertEqual([e['stage'] for e in events if e['event'] == 'stage'],
+                         ['synthesize', 'render'])
+
+    def test_chat_requires_auth_and_valid_text(self):
+        body = json.dumps({'text': 'Hallo'}).encode()
+        self.assertEqual(self.request('/v1/chat', body, token=None)[0].status, 401)
+        for payload in (b'bad json', b'{}', b'{"text":42}', b'{"text":"   "}'):
+            response, _ = self.request('/v1/chat', payload)
+            self.assertEqual(response.status, 400)
+        response, _ = self.request('/v1/chat', json.dumps({'text': 'x' * 1201}).encode())
+        self.assertEqual(response.status, 413)
+
     def test_second_turn_waits_for_a_short_busy_server(self):
         self.pipeline.block = threading.Event()
         threading.Timer(0.3, self.pipeline.block.set).start()
