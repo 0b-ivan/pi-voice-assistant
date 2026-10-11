@@ -325,7 +325,22 @@ class MemoryCoreControllerTests(ControllerAlarmTests):
             self.c._remote_progress(dict(event='speaker', known=False, score=0.412))
         logged = [json.loads(line) for line in out.getvalue().splitlines()
                   if line.startswith('{')]
-        self.assertIn(dict(version=1, event='speaker', known=False, score=0.412), logged)
+        self.assertIn(dict(version=1, event='speaker', known=False, score=0.412, carried=False),
+                      logged)
+
+    def test_sure_voice_is_vouched_for_on_the_next_short_turns(self):
+        self.device.touch()
+        self.c.memory.save_voiceprint('Ivan', 'AAAA', 3)
+        self.assertNotIn('trusted', self.c.memory_context())
+        with redirect_stdout(StringIO()):
+            self.c._remote_progress(dict(event='speaker', known=True, name='Ivan', score=0.6))
+        self.assertEqual(self.c.memory_context()['trusted'], 'Ivan')
+        with redirect_stdout(StringIO()):
+            self.c._remote_progress(dict(event='speaker', known=False, carried=True, score=0.3))
+        self.assertEqual(self.c.memory_context()['trusted'], 'Ivan')
+        with redirect_stdout(StringIO()):    # an unknown voice without the Pi's vouching
+            self.c._remote_progress(dict(event='speaker', known=False, carried=False, score=0.2))
+        self.assertNotIn('trusted', self.c.memory_context())
 
     def test_local_fallback_handles_memory_commands(self):
         self.device.touch()

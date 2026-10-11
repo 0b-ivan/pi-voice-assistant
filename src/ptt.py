@@ -731,6 +731,7 @@ class VoiceController:
         self.maint = maintenance.Mode()
         self.enroll = None                 # running enroll.Session or people.Flow
         self.people = people.Browser()
+        self.trust = memory_core.Trust()   # operator status between sure identifications
         self.board_leds = boardled.BoardLeds()
         self.bt = None                     # bluetooth.Bluetooth, started by main()
         self.bt_wanted = True              # reconnect the paired speaker automatically
@@ -795,6 +796,15 @@ class VoiceController:
             return {}
         emotion, level = self.mood.current(time.time())
         return dict(mood=emotion, mood_level=round(level * 100))
+
+    def memory_context(self):
+        """Memory copy for the server, with the person the Pi still vouches
+        for (memory.Trust); None without the stick."""
+        context = self.memory.context()
+        trusted = self.trust.current()
+        if context is not None and trusted and context.get('voiceprints'):
+            context = dict(context, trusted=trusted)
+        return context
 
     def turn_snapshot(self, text=None):
         """Status for one LLM turn: the snapshot plus whether Proximus may refuse."""
@@ -1970,7 +1980,14 @@ class VoiceController:
             self._selftest_requested(text)
         elif kind == 'speaker':
             # The server's voice check, for tuning the threshold with real voices.
-            event('speaker', known=bool(item.get('known')), score=item.get('score'))
+            if item.get('known') and isinstance(item.get('name'), str):
+                self.trust.confirm(item['name'])
+            elif item.get('carried'):
+                self.trust.extend()
+            else:
+                self.trust.clear()
+            event('speaker', known=bool(item.get('known')), score=item.get('score'),
+                  carried=bool(item.get('carried')))
         elif kind == 'enroll':
             # after the server's announcement
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
@@ -2244,6 +2261,12 @@ class VoiceController:
             finished, self.enroll = self.enroll, None
             result = finished.result or {}
             event('enroll', **{k: v for k, v in result.items() if k != 'details'})
+            if isinstance(finished, people.Flow) and result.get('auth'):
+                self.trust.confirm(finished.name)       # passphrase and voice checked
+            elif result.get('voiceprint'):
+                # just enrolled; the same name the profile was stored under
+                self.trust.confirm(memory_core.clean_text(result.get('name') or '')[:40]
+                                   or 'Bediener')
             if isinstance(finished, people.Flow):
                 self._people_flow_done(finished, result, now)
             self.ptt.resync(held, now)
@@ -2548,7 +2571,7 @@ def main():
                 controller = controller_ref[0] if controller_ref else None
                 status = controller.turn_snapshot() if controller else None
                 memory_copy = (memory_core.encode_header(
-                    session.memory_payload(controller.memory.context())) if controller else None)
+                    session.memory_payload(controller.memory_context())) if controller else None)
                 appointments = (agenda_feed.encode_header(controller.agenda.today())
                                 if controller else None)
                 tomorrow = (agenda_feed.encode_header(controller.agenda.tomorrow())

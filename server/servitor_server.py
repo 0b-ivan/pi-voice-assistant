@@ -386,8 +386,14 @@ class Service:
         if embedding is None:  # very short: no reliable decision, treat as operator
             return memory_copy
         name, score = speaker.identify(embedding, prints)
-        emit(dict(event='speaker', known=name is not None,
-                  score=None if score is None else round(score, 3)))
+        trusted = memory_copy.get('trusted')
+        carried = name is None and trusted in [p['name'] for p in prints]
+        emit(dict(event='speaker', known=name is not None, name=name or None,
+                  carried=carried, score=None if score is None else round(score, 3)))
+        if carried:
+            # Short questions are no reliable voice proof; the Pi vouches for a
+            # person it identified surely a few minutes ago (memory.Trust).
+            return dict(memory_copy, speaker=trusted)
         if name is None:
             return memory.guest_view(memory_copy)
         return dict(memory_copy, speaker=name)
