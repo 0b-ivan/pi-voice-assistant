@@ -26,7 +26,11 @@
           <textarea id="prompt" rows="2" maxlength="1200" placeholder="Gib deinen Befehl ein …" required></textarea>
           <button id="send" type="submit">SENDEN <span aria-hidden="true">↗</span></button>
         </div>
-        <p class="hint">Eingabe: Enter zum Senden · Umschalt+Enter für Zeilenumbruch · Sprache folgt in der nächsten Etappe.</p>
+        <div class="voice-controls">
+          <button id="microphone" type="button" aria-pressed="false">◉ SPRACHE AUFNEHMEN</button>
+          <span id="recording-hint" role="status">Mikrofon starten, sprechen, erneut drücken zum Senden (max. 28 s).</span>
+        </div>
+        <p class="hint">Text: Enter zum Senden · Umschalt+Enter für Zeilenumbruch. Audio benötigt HTTPS oder localhost; keine Audiodaten werden im Browser gespeichert.</p>
       </form>
     </main>
     <footer><span>Gemeinsamer Servitor-Core auf CT 107</span><span>Pi · Web · eine Codebasis</span></footer>
