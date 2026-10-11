@@ -328,15 +328,22 @@ Servitor-Intents, LLM-Persona oder TTS-Effekte:
   **und** Text-`/v1/chat`. Beides durchläuft denselben Intent-/LLM-/TTS-Abschnitt;
   der Textweg überspringt ausschließlich STT und Sprecheridentifikation.
   `/v1/speak` bleibt unverändert (reiner TTS-Aufruf).
-- `web/gateway.py`: kleiner **serverseitiger** Same-Origin-Proxy für `/api/chat`,
+- `web/gateway.py`: kleiner **serverseitiger** Same-Origin-Proxy für `/api/chat`
+  (Text) und `/api/voice` (PCM16),
   der das vorhandene Bearer-Token nur auf dem Server hält.
-- `web/index.html`, `app.js`, `styles.css`: austauschbarer Browser-Client.
+- `web/index.html`, `app.js`, `recorder-worklet.js`, `styles.css`:
+  austauschbarer Browser-Client; Mikrofonaufnahme und Resampling laufen lokal im Browser.
 - `src/ptt.py`: weiterhin GPIO/WM8960/SHIM/PiTFT sowie lokaler Fallback.
   Weder Webserver noch Browser-Abhängigkeiten werden auf dem Pi installiert.
 
-**Absichtliche Grenzen:** Web v1 hat Textchat und Browser-Wiedergabe derselben
-Servitor-Audioantwort, aber noch **keine Browser-Aufnahme**, keine gemeinsame
-Sprecherverifikation und kein gemeinsames Gesprächsgedächtnis. Private
+**Absichtliche Grenzen:** Web v1 hat Textchat, Browser-Aufnahme und
+Browser-Wiedergabe derselben Servitor-Audioantwort, aber noch **kein Live-Streaming
+während der Aufnahme**, keine gemeinsame Sprecherverifikation und kein gemeinsames
+Gesprächsgedächtnis. Der Aufnahme-Button startet eine bis zu 28 Sekunden lange
+Aufnahme; beim zweiten Klick wird sie per OfflineAudioContext auf 16 kHz mono
+PCM16 resampelt und an denselben `/v1/turn`-Endpunkt wie vom Pi geschickt.
+Die Audioverarbeitung ist nur in einem sicheren Browserkontext möglich
+(HTTPS oder `localhost`). Private
 Pi-Funktionen (Kalender, Status, Gerät neustarten, individuelle Erinnerungen)
 werden nicht automatisch dem Browser freigegeben. Sie benötigen später
 explizite Client-Fähigkeiten und Autorisierung; die aktuelle Implementierung
@@ -345,7 +352,9 @@ der Pi-spezifischen Aktionen bleibt auf dem Pi.
 **Drift vermeiden:** Neue sprachunabhängige Fachlogik gehört nach `src/`, nicht
 in `web/app.js` oder einen zweiten API-Handler. Regressionstests prüfen,
 dass Text-`/v1/chat` und Sprach-`/v1/turn` dieselben Antwortregeln nutzen;
-`tests/test_web.py` prüft die Weiterleitung über den Proxy. Beide Clients
+`tests/test_web.py` prüft die Weiterleitung von Text **und Audio** über den
+Proxy und den gemeinsamen Antwortpfad. Die CI prüft zusätzlich die Syntax
+von Browser-JavaScript und AudioWorklet. Beide Clients
 werden aus **demselben Commit** ausgerollt. Beim späteren Ausbau sollen
 Pi- und Server-Orchestrierung in einen gemeinsamen `turn_core`-Adapter
 gezogen werden, um auch den Fallback vollständig gleichzuhalten.
@@ -366,7 +375,12 @@ sudo systemctl status proximus-web.service --no-pager
 
 Standardbindung: `127.0.0.1:8780`. Test vom Mac mittels
 `ssh -L 8780:127.0.0.1:8780 <ct-host>`, dann
-`http://localhost:8780` aufrufen. Das Gateway fragt intern
+`http://localhost:8780` aufrufen. Mikrofonberechtigung im Browser erlauben,
+Aufnahme starten, einen Satz sprechen, erneut auf den Aufnahme-Button klicken:
+Transkript, Antwort und abspielbares WAV sollen erscheinen. Danach Textchat
+mit derselben Frage vergleichen. Weitere manuelle Tests: Mikrofon verweigern,
+Browser-Tab schließen während der Aufnahme, ca. 28 Sekunden aufnehmen.
+Das Gateway fragt intern
 `127.0.0.1:8765` ab. Konfigurierbar über
 `PROXIMUS_WEB_BIND`, `PROXIMUS_WEB_PORT`,
 `PROXIMUS_WEB_HOSTS`, `PROXIMUS_UPSTREAM_HOST` und
