@@ -105,4 +105,6 @@ Bekannte Grenzen:
 
 ## Etappen 5–7: offen
 
+Übergeben an GPT: [GPT_AUFTRAG.md](GPT_AUFTRAG.md).
+
 Hardwareabnahme offen. Keine Messwerte am echten Gerät erhoben.
