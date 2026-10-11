@@ -115,7 +115,17 @@ def _destination(text):
     return dict(name=name) if name else None
 
 
+# Vosk hears "nach Nürnberg" as "noch nürnberg"; only a place-like word follows.
+_NOCH = re.compile(r'\bnoch (?!(?:ein|eine|einen|einer|heute|mal|was|etwas|so|bis|zum|zur|in|'
+                   r'nach|ab|von|vom|die|der|das|den|dem|später|früher|da|frei|offen|fahren|'
+                   r'fährt|gehen|geht|los|kommen|komme|jetzt|immer|nicht|nie|schnell)\b)(?=[a-zäöü])')
+_NONE = re.compile(r'^(?:nein,? )?keine?(?: davon| von (?:denen|beiden|den dreien))?'
+                   r'(?:$| (?:ich|danke|bitte)\b)')
+
+
 def _query(text):
+    if _DESTINATION.search(text) is None and not _CITY.search(text):
+        text = _NOCH.sub('nach ', text, count=1)
     is_query = bool(_HOW.search(text)) or (
         re.search(rf'\b{_VEHICLE}\b', text) is not None and _ASKS.search(text) is not None)
     if not is_query:
@@ -166,7 +176,7 @@ def parse(text, state=None):
     text = normalize(text)
     if not text:
         return None
-    if state != 'on' and device_control.answer(text) == 'cancel':
+    if state != 'on' and (device_control.answer(text) == 'cancel' or _NONE.search(text)):
         return dict(type='cancel')
     if state == 'ask':
         answer = device_control.answer(text)
@@ -291,7 +301,8 @@ def _delay(leg):
 
 
 def _platform(leg, key='platform_dep'):
-    return f', Gleis {leg[key]}' if leg.get(key) else ''
+    word = 'Gleis' if leg.get('kind') in transit.RAIL else 'Steig'
+    return f', {word} {leg[key]}' if leg.get(key) else ''
 
 
 def _toward(leg):
@@ -331,6 +342,21 @@ def option_text(number, option, now):
     return ' '.join(part for part in parts if part)
 
 
+def short_text(number, option, now):
+    """'2. ICE 827, 1 Umstieg, an 6 Uhr 58, losgehen 5 Uhr 22.'"""
+    main = next((leg for leg in option['vehicles'] if leg['kind'] in ('long', 'regional')),
+                option['vehicles'][0])
+    parts = [f"{number}. {main['label']}"]
+    if main is option['vehicles'][0]:
+        stop = f" {main['origin']}" if main.get('origin') else ''
+        parts.append(f"ab{stop} {clock(main['dep'], now)}{_delay(main)}")
+    parts.append('direkt' if not option['transfers'] else _count(option['transfers']))
+    parts.append(f"an {clock(option['arr'], now)}" if option['arr'] else 'Ankunft unbekannt')
+    if option['leave'] is not None:
+        parts.append(f"losgehen {clock(option['leave'], now)}")
+    return ', '.join(parts) + '.'
+
+
 def _count(changes):
     return '1 Umstieg' if changes == 1 else f'{changes} Umstiege'
 
@@ -353,8 +379,14 @@ def offers_text(options, query, now):
         head = (f"{len(options)} Verbindungen nach {target}." if len(options) > 1
                 else f"Eine Verbindung nach {target}.")
     lines = [head]
-    for number, option in enumerate(options, 1):
-        lines.append(option_text(number if len(options) > 1 else None, option, now))
+    if len(options) == 1 or query['kind'] == 'departures':
+        lines += [option_text(number if len(options) > 1 else None, option, now)
+                  for number, option in enumerate(options, 1)]
+    else:
+        # Several trips: one short sentence each; the details follow the choice.
+        lines += [short_text(number, option, now) for number, option in enumerate(options, 1)]
+        if not all(option['realtime'] for option in options):
+            lines.append('Zeiten teils laut Fahrplan.')
     if len(options) > 1:
         lines.append('Welche? Die erste' + (', zweite oder dritte?' if len(options) == 3
                                             else ' oder zweite?'))
