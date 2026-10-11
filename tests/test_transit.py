@@ -177,6 +177,8 @@ class ParseTests(unittest.TestCase):
         tram = tram_journey(utc(12, 40))
         self.assertEqual([o['vehicles'][0]['label'] for o in options(bus, tram, mode='tram')],
                          ['Straßenbahn 4'])
+        self.assertEqual([o['vehicles'][0]['label'] for o in options(bus, tram, mode='bus')],
+                         ['Bus 14'])
         regional = dict(legs=[ride(utc(12, 30), 60, line='4612', cls=13, product='Regionalzug',
                                    train='RE', number='4612', origin='Würzburg Hbf',
                                    to='Nürnberg Hbf')])
