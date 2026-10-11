@@ -18,7 +18,8 @@ clips and turns are measured and trimmed the same way:
 
 The limits are the concept's start values for enrollment clips, to be
 checked at the real microphone. SNR is an estimate for steady noise from
-the quiet frames before the speech; without enough of them it is missing,
+the quiet frames before speech or a robust separate room sample;
+ without enough of them it is missing,
 and missing is not passed.
 """
 import math
@@ -34,7 +35,8 @@ MARGIN_SECONDS = 0.15
 FULL_SCALE = 32768.0
 SPEECH_FLOOR = 200.0     # RMS (~ -44 dBFS): below this a frame is never speech
 NOISE_CAP = 600.0        # a "noise floor" above this is taken to be continuous speech
-NOISE_MIN_SECONDS = 0.2  # quiet before the speech needed for an SNR estimate
+NOISE_MIN_SECONDS = 0.2  # minimum usable calibration audio
+NOISE_WARMUP_SECONDS = 0.3  # drop startup/ALSA transients from room recording
 
 # Start values for enrollment clips (concept, section 5).
 SPEECH_MIN, SPEECH_MAX = 2.0, 8.0
@@ -218,6 +220,28 @@ def _dbfs(power):
     return round(10 * math.log10(power / FULL_SCALE ** 2), 1) if power > 0 else None
 
 
+def noise_profile(pcm, rate=RATE):
+    """Median 20-ms frame power after a 300-ms startup guard.
+
+    A click can dominate an arithmetic mean, but not the median of a
+    three-second quiet recording. Report the peak (including startup)
+    separately for diagnosis; do not retain the audio.
+    """
+    frame_levels = levels(pcm, rate)
+    skip = min(len(frame_levels), int(round(NOISE_WARMUP_SECONDS / FRAME_SECONDS)))
+    usable = frame_levels[skip:]
+    valid = len(usable) * FRAME_SECONDS >= NOISE_MIN_SECONDS
+    powers = sorted(level * level for level in usable)
+    power = powers[len(powers) // 2] if valid else None
+    spikes = (sum(level * level > max(power * 16.0, SPEECH_FLOOR ** 2)
+                  for level in usable) if power is not None else 0)
+    return dict(power=power, valid=valid,
+                noise_seconds=round(len(usable) * FRAME_SECONDS, 3),
+                noise_dbfs=_dbfs(power) if power is not None else None,
+                noise_peak_dbfs=_dbfs(max(frame_levels, default=0.0) ** 2),
+                noise_spikes=spikes)
+
+
 def analyze(pcm, rate=RATE, noise=None, vad=None):
     """Numbers of one recording (no content). ``noise``: separate PCM of the
     room right before, else the quiet frames before the first speech."""
@@ -231,7 +255,8 @@ def analyze(pcm, rate=RATE, noise=None, vad=None):
                   speech_seconds=round(speech_frames * FRAME_SECONDS, 3),
                   trimmed_seconds=0.0, speech_ratio=0.0, longest_pause=0.0,
                   clipping_ratio=0.0, clipped_run_ms=0.0, rms_dbfs=None,
-                  snr_db=None, snr_valid=False)
+                  snr_db=None, snr_valid=False, noise_dbfs=None,
+                  noise_peak_dbfs=None, noise_seconds=0.0, noise_spikes=0)
     if values:
         clipped = run = longest = 0
         for value in values:
@@ -256,17 +281,28 @@ def analyze(pcm, rate=RATE, noise=None, vad=None):
     speech_power = (sum(frame_levels[i] ** 2 for i, flag in enumerate(mask) if flag)
                     / speech_frames)
     result['rms_dbfs'] = _dbfs(speech_power)
+    noise_power = None
     if noise is not None:
-        quiet = levels(noise, rate)
+        profile = noise_profile(noise, rate)
+        for key in ('noise_dbfs', 'noise_peak_dbfs', 'noise_seconds', 'noise_spikes'):
+            result[key] = profile[key]
+        noise_power = profile['power']
     else:
         first = next(i for i, flag in enumerate(mask) if flag)
-        # Leave a frame of margin before the speech: onset is not noise.
+        # Leave a frame of margin before speech: onset is not background noise.
         quiet = frame_levels[:max(0, first - 1)]
-    if len(quiet) * FRAME_SECONDS >= NOISE_MIN_SECONDS:
-        noise_power = sum(level ** 2 for level in quiet) / len(quiet)
-        epsilon = 1.0
-        result['snr_db'] = round(10 * math.log10(max(speech_power - noise_power, epsilon)
-                                                 / max(noise_power, epsilon)), 1)
+        if len(quiet) * FRAME_SECONDS >= NOISE_MIN_SECONDS:
+            powers = sorted(level ** 2 for level in quiet)
+            noise_power = powers[len(powers) // 2]
+            result['noise_dbfs'] = _dbfs(noise_power)
+            result['noise_peak_dbfs'] = _dbfs(max(quiet) ** 2)
+            result['noise_seconds'] = round(len(quiet) * FRAME_SECONDS, 3)
+    if noise_power is not None:
+        signal_power = max(0.0, speech_power - noise_power)
+        # Below 0 dB of measurable SNR is rejected as 0 dB, rather than an
+        # arbitrary -72 dB artifact from dividing epsilon by a loud impulse.
+        result['snr_db'] = (round(10 * math.log10(signal_power / max(noise_power, 1.0)), 1)
+                            if signal_power > noise_power else 0.0)
         result['snr_valid'] = True
     return result
 

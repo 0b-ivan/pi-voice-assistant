@@ -163,6 +163,33 @@ class QualityTests(unittest.TestCase):
         self.assertLess(quality["snr_db"], vq.SNR_MIN_DB)
         self.assertIn("noisy", problems)
 
+    def test_room_calibration_ignores_startup_click_and_later_bump(self):
+        # 3s of a quiet room with a loud microphone startup transient and a
+        # second short handling noise must not poison the SNR of clear speech.
+        room = tone((0.04, 32000), (0.96, 30), (0.04, 32000), (1.96, 30))
+        speech = tone((0.4, 30), (3.0, 8000), (0.6, 30))
+        quality, problems = self.analyze(speech, noise=room)
+        self.assertEqual(problems, [])
+        self.assertGreater(quality["snr_db"], 25)
+        self.assertLess(quality["noise_dbfs"], -55)
+        self.assertGreater(quality["noise_peak_dbfs"], -5)
+        self.assertGreater(quality["noise_spikes"], 0)
+        self.assertAlmostEqual(quality["noise_seconds"], 2.7, delta=0.02)
+
+    def test_noise_louder_than_speech_has_bounded_snr_and_stays_rejected(self):
+        room = tone((3.0, 22000))
+        quality, problems = self.analyze(tone((0.4, 30), (3.0, 8000), (0.6, 30)),
+                                         noise=room)
+        self.assertTrue(quality["snr_valid"])
+        self.assertEqual(quality["snr_db"], 0.0)
+        self.assertIn("noisy", problems)
+
+    def test_room_recording_with_only_startup_guard_is_not_accepted(self):
+        room = tone((0.35, 30))
+        quality, problems = self.analyze(tone((0.4, 30), (3.0, 8000)), noise=room)
+        self.assertFalse(quality["snr_valid"])
+        self.assertIn("snr_missing", problems)
+
     def test_every_problem_has_a_hint(self):
         self.assertEqual(set(vq.ORDER), set(vq.HINTS))
 

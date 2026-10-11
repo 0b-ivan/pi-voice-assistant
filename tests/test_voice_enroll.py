@@ -270,6 +270,12 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(len(kept), 24)
         self.assertTrue(self.drafts_empty())
         self.assertIn(ve.EXTRA_CONFIRMATION, " ".join(io_.said))
+        rooms = [e for e in logged if e.get("event") == "enroll_noise"]
+        self.assertEqual(len(rooms), 1)
+        self.assertEqual(rooms[0]["seconds"], 3)
+        self.assertTrue(rooms[0]["valid"])
+        self.assertGreater(rooms[0]["usable_seconds"], 2.5)
+        self.assertLess(rooms[0]["noise_dbfs"], -40)
         # Logs: numbers and codes, no sentence, no transcript, no name.
         text = json.dumps(logged).lower()
         for secret in ("ivan", "würzburg", "prüfe bitte", "katze"):
