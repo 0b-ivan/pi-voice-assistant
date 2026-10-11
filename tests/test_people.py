@@ -141,13 +141,25 @@ class FlowTests(unittest.TestCase):
         result, io = self.flow(OTHER, ["omnissiah segne diese maschine"], "details")
         self.assertFalse(result["auth"])
 
-    def test_weak_voice_with_right_phrase_suggests_retraining(self):
+    def test_weak_voice_with_right_phrase_is_refused(self):
+        # A spoken passphrase is heard by anyone nearby: with a voice between
+        # WEAK_VOICE and the threshold it only earns the hint to retrain.
         self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
         score = speaker.cosine(CLOSE, IVAN)
         self.assertTrue(people.WEAK_VOICE <= score < speaker.THRESHOLD, score)
-        result, io = self.flow(CLOSE, ["omnissiah segne diese maschine"], "refine")
-        self.assertEqual((result["auth"], result["weak"], result.get("refine")), (True, True, True))
-        self.assertIn(people.AUTH_WEAK, io.said)
+        result, io = self.flow(CLOSE, ["omnissiah segne diese maschine"] * people.ATTEMPTS,
+                               "refine")
+        self.assertEqual((result["auth"], result["weak"], result.get("refine")),
+                         (False, True, None))
+        self.assertEqual(io.said[-1], people.AUTH_WEAK)
+        self.assertEqual([e["result"] for e in self.events()], ["weak"] * people.ATTEMPTS)
+
+    def test_auth_log_and_details_carry_no_name_and_no_percent(self):
+        self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
+        result, io = self.flow(IVAN, ["omnissiah segne diese maschine"], "details")
+        self.assertTrue(result["auth"])
+        self.assertNotIn("Ivan", self.log.getvalue())
+        self.assertNotIn("Prozent", io.said[-1])
 
     def test_browser_navigation(self):
         browser = people.Browser()

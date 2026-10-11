@@ -42,6 +42,8 @@ Vertiefung: [Architektur](docs/architecture.md), [Hardware](docs/hardware.md), [
 
 Charakter und Lore: [Proximus/Billy – ausgearbeitete Geschichte und Sprachvorgaben](docs/concepts/proximus-billy-lore/LORE_PROXIMUS_BILLY.md) mit 33 Episoden, sechs Doom-/Wolfenstein-Sagen und dem Konzept für ausdrücklich lange Geschichten (10–20 Minuten). [Claude-Auftrag zur Implementierung](docs/concepts/proximus-billy-lore/CLAUDE_AUFTRAG.md). Status: ausgearbeitet, Laufzeitintegration noch umzusetzen.
 
+Stimm-Einlernen und Sprecherzuordnung v2: [Konzept](docs/concepts/proximus-stimm-einlernen/KONZEPT.md) mit [Umsetzungsstand](docs/concepts/proximus-stimm-einlernen/UMSETZUNG.md). Status: Etappe 1 (Fehlerwege ergeben nie eine erkannte Person, lokaler Rückfall als Gast) umgesetzt; Etappen 2–7 offen.
+
 Gesprächsgedächtnis: [Konzept für Kontext zwischen Anfragen auf dem Erinnerungskern](docs/concepts/proximus-context/KONZEPT.md) mit [Claude-Auftrag](docs/concepts/proximus-context/CLAUDE_AUFTRAG.md), [Recherche und begründeten Entscheidungen](docs/concepts/proximus-context/RECHERCHE_UND_ENTSCHEIDUNGEN.md) und [zusätzlichen Dialogfunktionen](docs/concepts/proximus-context/DIALOGFUNKTIONEN.md) sowie getesteter Offline-Referenz. Status: Konzept; Runtime-Integration noch offen.
 
 Geheimnisse (OpenRouter-Key, Server-Token) stehen nur in `/etc/pi-voice-assistant.env` (Pi) bzw. `/etc/servitor-voice.env` (CT 107), nie im Repository. Die Proxmox-Firewall bleibt aus (Docker auf dem Host); Port 8765 ist im LAN offen und nur mit Token nutzbar.

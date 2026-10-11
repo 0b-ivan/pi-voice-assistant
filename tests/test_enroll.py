@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -170,13 +172,50 @@ class SpeakerTests(unittest.TestCase):
         self.assertIsNone(speaker.decode("not base64!"))
         self.assertLess(len(speaker.encode(a)), 1500)
 
+    def test_decide_names_a_person_only_for_a_clear_match(self):
+        a = speaker.normalize([1.0, 0.2, -0.3, 0.0] * 128)
+        b = speaker.normalize([-0.5, 1.0, 0.1, 0.4] * 128)
+        result = speaker.decide(a, [dict(name="Ivan", vector=a), dict(name="Anna", vector=b)])
+        self.assertEqual((result["status"], result["name"]), (speaker.MATCHED, "Ivan"))
+        self.assertIsNotNone(result["second"])
+        result = speaker.decide(b, [dict(name="Ivan", vector=a)])
+        self.assertEqual((result["status"], result["name"]), (speaker.UNKNOWN, None))
+        # Two profiles above the threshold and too close to each other: nobody.
+        near = speaker.normalize([1.0, 0.21, -0.3, 0.0] * 128)
+        result = speaker.decide(a, [dict(name="Ivan", vector=a), dict(name="Anna", vector=near)])
+        self.assertEqual((result["status"], result["name"]), (speaker.AMBIGUOUS, None))
+        self.assertEqual(speaker.decide(None, [dict(name="Ivan", vector=a)])["status"],
+                         speaker.UNAVAILABLE)
+        self.assertEqual(speaker.decide(a, [])["status"], speaker.UNAVAILABLE)
+        # Exactly at the threshold counts (score >= threshold).
+        exact = speaker.cosine(a, a)
+        self.assertEqual(speaker.decide(a, [dict(name="Ivan", vector=a)], threshold=exact)["status"],
+                         speaker.MATCHED)
+
+    def test_speech_seconds_counts_speech_not_file_length(self):
+        quiet, loud = b"\0\0" * 16000, b"\x40\x1f\xc0\xe0" * 8000   # 1 s silence, 1 s tone
+        self.assertEqual(speaker.speech_seconds(b""), 0.0)
+        self.assertEqual(speaker.speech_seconds(quiet * 10), 0.0)
+        self.assertEqual(speaker.speech_seconds(b"\1\1" * 160000), 0.0)    # constant hum, 10 s
+        # 0.6 s of speech inside 10 s of PCM stays far below one second.
+        short = quiet * 5 + loud[:int(len(loud) * 0.6) // 4 * 4] + quiet * 5
+        self.assertLess(speaker.speech_seconds(short), speaker.MIN_SECONDS)
+        self.assertAlmostEqual(speaker.speech_seconds(quiet + loud * 2 + quiet), 2.0, delta=0.1)
+        # Spoken without pauses: no quiet tenth, still speech.
+        self.assertAlmostEqual(speaker.speech_seconds(loud * 3), 3.0, delta=0.1)
+
     def test_guest_gets_no_personal_memory(self):
-        copy = dict(facts=["Name des Bedieners: Ivan"], directives=["Städte heißen Makropolen"],
+        copy = dict(facts=["Name des Bedieners: Ivan"],
+                    directives=["Städte heißen Makropolen", "Humor-Erweiterung installiert",
+                                "Nenne mich Meister Ivan"],
                     history=[dict(q="q", a="a")], total_facts=1)
         guest = memory.guest_view(copy)
         prompt = memory.prompt_section(guest)
         self.assertNotIn("Ivan", prompt)
-        self.assertIn("Makropolen", prompt)
+        # Only installed persona modules are public; other directives may be personal.
+        self.assertEqual(guest["directives"], ["Humor-Erweiterung installiert"])
+        self.assertNotIn("Makropolen", prompt)
+        self.assertEqual(memory.guest_view(copy, "insufficient")["identity"], "insufficient")
         self.assertEqual(memory.history_messages(guest), [])
         self.assertEqual(memory.reply("recall", "", guest), memory.GUEST_TEXT)
         self.assertIn("erkannt als Ivan", memory.prompt_section(dict(copy, speaker="Ivan")))
@@ -202,9 +241,12 @@ class ServerSpeakerTests(unittest.TestCase):
         class Embedder:
             available = True
             vector = self.voice
+            error = None
 
             def embed(inner, pcm):
                 inner.seen = len(pcm)
+                if inner.error is not None:
+                    raise inner.error
                 return inner.vector if len(pcm) >= 32000 else None
 
         self.service.embedder = Embedder()
@@ -214,11 +256,15 @@ class ServerSpeakerTests(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
-    def turn(self):
-        copy = dict(facts=["Name des Bedieners: Ivan"], directives=[], history=[],
-                    total_facts=1, voiceprints=[dict(name="Ivan", print=speaker.encode(self.voice))])
+    SPEECH = b"\x40\x1f\xc0\xe0" * 16000          # 2 s at amplitude 8000
+
+    def turn(self, body=SPEECH, copy=None):
+        if copy is None:
+            copy = dict(facts=["Name des Bedieners: Ivan"], directives=[], history=[],
+                        total_facts=1,
+                        voiceprints=[dict(name="Ivan", print=speaker.encode(self.voice))])
         conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)
-        conn.request("POST", "/v1/turn", body=b"\1" * 64000, headers={
+        conn.request("POST", "/v1/turn", body=body, headers={
             "Authorization": f"Bearer {self.token}", "X-Servitor-Status": json.dumps({"memory": "on"}),
             "X-Servitor-Memory": memory.encode_header(copy)})
         data = conn.getresponse().read()
@@ -236,6 +282,52 @@ class ServerSpeakerTests(unittest.TestCase):
         self.assertTrue(any(e["event"] == "speaker" and not e["known"] for e in events))
         self.assertEqual(self.pipeline.memory["facts"], [])
 
+    def assert_guest(self, events, status):
+        heard = next(e for e in events if e["event"] == "speaker")
+        self.assertEqual((heard["status"], heard["known"]), (status, False))
+        self.assertEqual(self.pipeline.memory["speaker"], "unknown")
+        self.assertEqual(self.pipeline.memory["facts"], [])
+        self.assertEqual(self.pipeline.memory["identity"], status)
+
+    def test_too_little_speech_is_no_operator(self):
+        # 0.6 s of speech in 4 s of PCM: formally long enough, still a guest.
+        quiet = b"\0\0" * 16000
+        self.assert_guest(self.turn(quiet * 2 + self.SPEECH[:19200] + quiet * 2), "insufficient")
+        self.assert_guest(self.turn(b"\0\0" * 64000), "insufficient")      # 4 s of silence
+        self.assert_guest(self.turn(b"\1" * 64000), "insufficient")        # constant hum
+
+    def test_missing_model_error_and_broken_profile_are_no_operator(self):
+        self.service.embedder.available = False
+        self.assert_guest(self.turn(), "unavailable")
+        self.service.embedder.available = True
+        self.service.embedder.error = RuntimeError("onnx /secret/path broke")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assert_guest(self.turn(), "unavailable")
+        self.assertNotIn("/secret/path", out.getvalue())     # no free error text in the log
+        self.service.embedder.error = None
+        broken = dict(facts=["Name des Bedieners: Ivan"], directives=[], history=[],
+                      total_facts=1, voiceprints=[dict(name="Ivan", print="kaputt!")])
+        self.assert_guest(self.turn(copy=broken), "unavailable")
+
+    def test_enrolled_without_a_usable_print_is_no_operator(self):
+        copy = dict(facts=["Name des Bedieners: Ivan"], directives=[], history=[],
+                    total_facts=1, enrolled=1)
+        self.assert_guest(self.turn(copy=copy), "unavailable")
+
+    def test_two_close_profiles_are_ambiguous(self):
+        near = speaker.normalize([1.0, 0.02, 0.5, 0.25] * 128)
+        copy = dict(facts=["Name des Bedieners: Ivan"], directives=[], history=[],
+                    total_facts=1, voiceprints=[dict(name="Ivan", print=speaker.encode(self.voice)),
+                                                dict(name="Anna", print=speaker.encode(near))])
+        self.assert_guest(self.turn(copy=copy), "ambiguous")
+
+    def test_without_enrollment_nothing_changes(self):
+        copy = dict(facts=["Name des Bedieners: Ivan"], directives=[], history=[], total_facts=1)
+        events = self.turn(body=b"\0\0" * 64000, copy=copy)
+        self.assertFalse(any(e["event"] == "speaker" for e in events))
+        self.assertEqual(self.pipeline.memory["facts"], ["Name des Bedieners: Ivan"])
+
     def test_turn_voice_is_compared_without_the_silence_around_it(self):
         quiet, loud = b"\0\0" * 32000, (b"\x40\x1f" * 32000)   # 2 s silence, 2 s at 8000
         copy = dict(facts=[], directives=[], history=[], total_facts=0,
@@ -250,11 +342,18 @@ class ServerSpeakerTests(unittest.TestCase):
 
     def test_voiceprint_endpoint_and_transcribe_mode(self):
         conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)
-        conn.request("POST", "/v1/voiceprint", body=b"\0" * 64000,
+        conn.request("POST", "/v1/voiceprint", body=self.SPEECH,
                      headers={"Authorization": f"Bearer {self.token}"})
         reply = json.loads(conn.getresponse().read())
         conn.close()
         self.assertGreater(speaker.cosine(speaker.decode(reply["print"]), self.voice), 0.999)
+        conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)
+        conn.request("POST", "/v1/voiceprint", body=b"\0" * 64000,
+                     headers={"Authorization": f"Bearer {self.token}"})
+        response = conn.getresponse()
+        response.read()
+        conn.close()
+        self.assertEqual(response.status, 400)     # silence gives no voiceprint
         conn = self.http.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)
         conn.request("POST", "/v1/turn?mode=transcribe", body=b"\1" * 64000,
                      headers={"Authorization": f"Bearer {self.token}"})

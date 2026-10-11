@@ -206,6 +206,9 @@ class MemoryCore:
         prints = self.voiceprints()
         if prints:
             context['voiceprints'] = prints
+            # How many people are enrolled, so the server stays strict even if
+            # it cannot use a single one of the prints (dropped, damaged).
+            context['enrolled'] = len(prints)
         return context
 
     # --- Voiceprint (written by the enrollment session) -------------------
@@ -356,7 +359,17 @@ def sanitize(data):
                   total_facts=total if isinstance(total, int) and total >= 0 else 0)
     if prints:
         result['voiceprints'] = prints
+    enrolled = data.get('enrolled')
+    if isinstance(enrolled, int) and not isinstance(enrolled, bool) and 0 < enrolled <= 100:
+        result['enrolled'] = enrolled
+    elif prints:
+        result['enrolled'] = len(prints)
     return result
+
+
+def enrolled(context):
+    """Someone is enrolled: an unchecked voice is then a guest."""
+    return isinstance(context, dict) and bool(context.get('voiceprints') or context.get('enrolled'))
 
 
 def unknown_speaker(context):
@@ -364,10 +377,20 @@ def unknown_speaker(context):
     return bool(context) and context.get('speaker') == 'unknown'
 
 
-def guest_view(context):
-    """What an unrecognized voice may use: directives only, nothing personal."""
-    return dict(facts=[], directives=context.get('directives', []), history=[],
-                total_facts=0, speaker='unknown')
+_PUBLIC_DIRECTIVE = re.compile(r'^[\wäöüßÄÖÜ ]{1,40}-(?:Erweiterung|Modul|Protokoll) installiert$')
+
+
+def public_directive(text):
+    """Installed persona modules ("Humor-Erweiterung installiert") are public;
+    every other directive may be personal ("nenne mich Meister")."""
+    return bool(_PUBLIC_DIRECTIVE.match(str(text)))
+
+
+def guest_view(context, status='unknown'):
+    """What an unrecognized voice may use: public persona modules only,
+    nothing personal. ``status`` says why (speaker.decide outcome)."""
+    return dict(facts=[], history=[], total_facts=0, speaker='unknown', identity=status,
+                directives=[d for d in context.get('directives', []) if public_directive(d)])
 
 
 # --- Commands (LLM-free; run on the server and in the Pi's local fallback) ---

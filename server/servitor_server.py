@@ -369,28 +369,38 @@ class Service:
         return device_control.reply(op, device.get('wlan'), style)
 
     def _identify(self, audio, memory_copy, emit):
-        """Compare the turn's voice with the enrolled voiceprint; returns the
-        memory copy the turn may use (guest view for an unknown voice)."""
-        prints = [dict(name=p['name'], vector=speaker.decode(p['print']))
-                  for p in memory_copy.get('voiceprints', [])]
+        """Compare the turn's voice with the enrolled voiceprints; returns the
+        memory copy the turn may use. Only a clear match names a person; too
+        little speech, no model, a broken profile, an error or two profiles
+        too close all give the guest view (concept stimm-einlernen, section 2)."""
+        if not memory.enrolled(memory_copy):
+            return memory_copy      # nobody enrolled: nothing to protect
+        listed = memory_copy.get('voiceprints') or []
+        prints = [dict(name=p['name'], vector=speaker.decode(p['print'])) for p in listed]
         prints = [p for p in prints if p['vector']]
-        if not prints or not self.embedder.available:
-            return memory_copy
-        try:
-            # Without the pauses before and after the words: the enrolled
-            # voiceprint is built from trimmed speech too.
-            embedding = self.embedder.embed(speaker.trim_silence(bytes(audio)))
-        except Exception as exc:  # never fail a turn over speaker recognition
-            print(json.dumps(dict(event='speaker_error', message=str(exc))), flush=True)
-            return memory_copy
-        if embedding is None:  # very short: no reliable decision, treat as operator
-            return memory_copy
-        name, score = speaker.identify(embedding, prints)
-        emit(dict(event='speaker', known=name is not None,
-                  score=None if score is None else round(score, 3)))
-        if name is None:
-            return memory.guest_view(memory_copy)
-        return dict(memory_copy, speaker=name)
+        result = dict(status=speaker.UNAVAILABLE, best=None)
+        if prints and self.embedder.available:
+            try:
+                pcm = bytes(audio)
+                if speaker.speech_seconds(pcm) < speaker.MIN_SECONDS:
+                    result = dict(status=speaker.INSUFFICIENT, best=None)
+                else:
+                    # Without the pauses before and after the words: the
+                    # enrolled voiceprint is built from trimmed speech too.
+                    embedding = self.embedder.embed(speaker.trim_silence(pcm))
+                    result = (speaker.decide(embedding, prints) if embedding is not None
+                              else dict(status=speaker.INSUFFICIENT, best=None))
+            except Exception as exc:  # never fail a turn over speaker recognition
+                print(json.dumps(dict(event='speaker_error', error=type(exc).__name__)),
+                      flush=True)
+                result = dict(status=speaker.UNAVAILABLE, best=None)
+        best = result.get('best')
+        emit(dict(event='speaker', status=result['status'],
+                  known=result['status'] == speaker.MATCHED,
+                  score=None if best is None else round(best, 3)))
+        if result['status'] != speaker.MATCHED:
+            return memory.guest_view(memory_copy, result['status'])
+        return dict(memory_copy, speaker=result['name'])
 
     def _story_start(self, text, emit, fmt, device, timings):
         """An explicitly long story: plan it and tell its first, short section."""
@@ -488,7 +498,7 @@ class Service:
                 pending = b''
                 received = 0
                 # Keep the audio only when a voice must be recognized.
-                keep = isinstance(memory_copy, dict) and bool(memory_copy.get('voiceprints'))
+                keep = memory.enrolled(memory_copy)
                 audio = bytearray()
                 for chunk in pcm_chunks:
                     received += len(chunk)
@@ -773,9 +783,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not 0 < length <= PCM_RATE * 2 * 30:
             return self._json(413, dict(error='1 to 30 s of audio'))
         pcm = self.rfile.read(length)
+        # Speech, not file length: a mostly silent take gives no voiceprint.
+        if speaker.speech_seconds(pcm) < speaker.MIN_SECONDS:
+            return self._json(400, dict(error='less than 1 s of speech'))
         embedding = self.service.embedder.embed(speaker.trim_silence(pcm))
         if embedding is None:
-            return self._json(400, dict(error='audio shorter than 1 s'))
+            return self._json(400, dict(error='less than 1 s of speech'))
         return self._json(200, {'print': speaker.encode(embedding),
                                 'seconds': round(len(pcm) / (PCM_RATE * 2), 1)})
 

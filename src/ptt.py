@@ -722,6 +722,7 @@ class VoiceController:
         except (OSError, ValueError, AttributeError):
             pass
         self.turn_transcript = None
+        self.turn_guest = False            # voice not recognized as an enrolled person
         # A running long story (story.StoryRun, RAM only) and, with a server,
         # how to ask it for the next section (set by main()).
         self.story = None
@@ -914,6 +915,7 @@ class VoiceController:
             event('cue')
         self.turn_released_at = time.monotonic()
         self.turn_llm = None
+        self.turn_guest = False
         if uplink is not None:
             if uplink.error is None:
                 self.remote_capture = capture
@@ -1574,15 +1576,30 @@ class VoiceController:
             return []  # plugged but not readable yet: next check
         return [memory_phrase(present, (counts or {}).get('facts'), self.style)]
 
+    def _voice_unchecked(self):
+        """Local fallback with someone enrolled: no server checks the voice,
+        so the turn counts as a guest's (no personal data, no changes)."""
+        try:
+            return self.memory.present() and bool(self.memory.people())
+        except OSError:
+            return True
+
+    def _turn_memory(self):
+        context = self.memory.context()
+        if self.turn_guest and context is not None:
+            return memory_core.guest_view(context, 'unverified')
+        return context
+
     def _memory_command(self, text):
         """Local fallback: memory commands answered and applied on the Pi."""
         command = memory_core.command(intents.normalize(text))
         if command is None:
             return None
         op, argument = command
-        context = self.memory.context()
+        context = self._turn_memory()
         reply = memory_core.reply(op, argument, context, self.style)
-        if context is not None and op in ('add_fact', 'add_directive', 'forget'):
+        if (context is not None and op in ('add_fact', 'add_directive', 'forget')
+                and not self.turn_guest):
             self.memory.apply(dict(op=op, text=argument))
             event('memory', op=op)
         return reply
@@ -1590,6 +1607,8 @@ class VoiceController:
     def _learn(self, reply):
         """Strip MERKE/DIREKTIVE lines from an LLM reply and store them."""
         spoken, learned = memory_core.split_learned(reply)
+        if self.turn_guest:
+            return spoken
         for op, value in learned:
             if self.memory.apply(dict(op=op, text=value)):
                 event('memory', op=op, learned=True)
@@ -1807,6 +1826,7 @@ class VoiceController:
 
     def _start_llm(self, text):
         self.turn_transcript = text
+        self.turn_guest = self._voice_unchecked()
         self.mood.hear(text, time.time())
         pending, self.turn_device_pending = self.turn_device_pending, None
         trip, self.turn_trip = self.turn_trip, None
@@ -1816,7 +1836,7 @@ class VoiceController:
             # Before stop words, the calendar intent and the LLM; no word limit.
             request = self.journeys.parse(text, trip)
             if request is not None:
-                self._journey_turn(request, trip)
+                self._journey_turn(request, trip, guest=self.turn_guest)
                 return
         if reply is None and intents.is_stop(text):
             self.stop_by_voice()
@@ -1826,6 +1846,11 @@ class VoiceController:
         if reply is not None:
             event('llm_response', text=reply, model='local/device')
             self._start_speech(reply, source='assistant', model='local/device')
+            return
+        if enroll.command(intents.normalize(text)) and self.turn_guest:
+            # Nobody checked the voice: the menu "Kennenlernen" still works.
+            event('llm_response', text=memory_core.GUEST_TEXT, model='local/enroll')
+            self._start_speech(memory_core.GUEST_TEXT, source='assistant', model='local/enroll')
             return
         if enroll.command(intents.normalize(text)):
             self.enroll_after_speech = enroll.command(intents.normalize(text))
@@ -1881,7 +1906,11 @@ class VoiceController:
             if intent in ('calendar', 'briefing'):
                 calendar_day = intents.calendar_day(text, datetime.date.today()) if intent == 'calendar' else 0
                 snapshot['agenda_day'] = calendar_day
-                snapshot['agenda'] = self.agenda.tomorrow() if calendar_day == 1 else self.agenda.today()
+                if self.turn_guest:
+                    snapshot['agenda'] = agenda_feed.DENIED
+                else:
+                    snapshot['agenda'] = (self.agenda.tomorrow() if calendar_day == 1
+                                          else self.agenda.today())
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'
             event('llm_response', text=reply, model='local/intent')
@@ -1898,7 +1927,7 @@ class VoiceController:
             self._story_state(state, remote=False)
             event('story_start', minutes=state['minutes'], ids=state['ids'], route='pi')
             return
-        context = self.memory.context()
+        context = self._turn_memory()
         model = free_model() if self.llm_mode == 'free' else None
         reply_function = functools.partial(generate_reply, lore=self.lore,
                                            memory=context, model=model,
@@ -1970,7 +1999,10 @@ class VoiceController:
             self._selftest_requested(text)
         elif kind == 'speaker':
             # The server's voice check, for tuning the threshold with real voices.
-            event('speaker', known=bool(item.get('known')), score=item.get('score'))
+            status = item.get('status')
+            event('speaker', known=bool(item.get('known')), score=item.get('score'),
+                  **({'status': status} if isinstance(status, str) else {}))
+            self.turn_guest = not item.get('known')
         elif kind == 'enroll':
             # after the server's announcement
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
@@ -1992,7 +2024,8 @@ class VoiceController:
                 event('memory', op=item.get('op'), learned=bool(item.get('learned')))
         elif kind == 'reply':
             text = str(item.get('text', ''))
-            if self.turn_transcript and not intents.is_stop(self.turn_transcript):
+            if (self.turn_transcript and not intents.is_stop(self.turn_transcript)
+                    and not self.turn_guest):
                 self.memory.remember_turn(self.turn_transcript, text,
                                           mood=self.mood.label(time.time()),
                                           persona=self.persona)
@@ -2382,9 +2415,10 @@ class VoiceController:
                 self.mood.react(feeling, time.time())
                 self._publish_mood()
                 reply = self._learn(reply)
-                self.memory.remember_turn(self.turn_transcript or '', reply,
-                                          mood=self.mood.label(time.time()),
-                                          persona=self.persona)
+                if not self.turn_guest:
+                    self.memory.remember_turn(self.turn_transcript or '', reply,
+                                              mood=self.mood.label(time.time()),
+                                              persona=self.persona)
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)

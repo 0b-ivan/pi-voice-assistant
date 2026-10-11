@@ -7,13 +7,15 @@ opens ACTIONS; every action first authenticates that person:
   around it is cut off, then the server returns a voiceprint and a
   transcript of the same take.
 - Not recognized: one more try (ATTEMPTS). Every try is logged as an
-  'auth' event (scores only, never the passphrase) for the journal.
+  'auth' event (scores only, never the passphrase or the name) for the
+  journal.
 - The voice must match the selected profile (cosine >= speaker.THRESHOLD)
   and the transcript the stored passphrase (fuzzy, Vosk spells differently
   and splits or joins words; extra words around the phrase are ignored).
 - Passphrase right but the voice only weakly recognized (>= WEAK_VOICE):
-  accepted, with the advice to retrain; the action list then offers
-  "Nachtrainieren" first.
+  refused all the same (a spoken passphrase is heard by anyone nearby), with
+  the advice to add voice samples in the menu "Kennenlernen"; the action
+  list then shows "Nachtrainieren!" as the hint.
 - Without a passphrase yet the voice alone counts once; the person is asked
   to set one.
 
@@ -34,14 +36,15 @@ ACTION_LABELS = {'refine': 'Nachtrainieren', 'details': 'Details anzeigen',
 PHRASE_SECONDS = 6
 ATTEMPTS = 2
 PHRASE_MATCH = 0.75     # difflib ratio between spoken and stored passphrase
-WEAK_VOICE = 0.3        # below speaker.THRESHOLD but still plausibly the same person
+WEAK_VOICE = 0.3        # below speaker.THRESHOLD: only the hint to retrain, never access
 DELETE_CONFIRM_SECONDS = 20.0
 
 AUTH_PROMPT = "Authentifizierung. Nach dem Signalton die Passphrase sprechen."
 AUTH_VOICE_ONLY = "Authentifizierung. Nach dem Signalton einen Satz sprechen."
 AUTH_FAILED = "Authentifizierung fehlgeschlagen."
 AUTH_RETRY = "Nicht erkannt. Nach dem Signalton noch einmal."
-AUTH_WEAK = "Passphrase korrekt. Stimme nur unsicher erkannt. Nachtrainieren empfohlen."
+AUTH_WEAK = ("Passphrase korrekt, Stimme nicht sicher erkannt. Kein Zugriff. "
+             "Stimme im Menü Kennenlernen ergänzen.")
 AUTH_OK = "Authentifiziert."
 SET_PHRASE_FIRST = "Bitte Passphrase festlegen."
 PHRASE_PROMPT = "Neue Passphrase nach dem Signalton sprechen."
@@ -82,10 +85,9 @@ def phrases():
 def details_text(person):
     when = time.strftime('%d.%m.%Y', time.localtime(person.get('at') or 0))
     phrase = 'gesetzt' if person.get('passphrase') else 'nicht gesetzt'
-    score = person.get('last_score')
-    voice = f" Stimme zuletzt mit {round(score * 100)} Prozent erkannt." if score else ""
+    # No "recognized with N percent": a cosine score is no probability.
     return (f"{person['name']}: {person.get('count', 0)} Aufnahmen, zuletzt geändert am "
-            f"{when}. Passphrase {phrase}.{voice}")
+            f"{when}. Passphrase {phrase}.")
 
 
 class Browser:
@@ -207,7 +209,7 @@ class Flow:
         return pcm_of(path)
 
     def authenticate(self):
-        """'ok', 'weak' or None (failed)."""
+        """'ok', 'weak' (refused: passphrase right, voice too weak) or None."""
         from speaker import THRESHOLD, cosine, decode, trim_silence
         person = self.core.profile(self.name)
         if person is None:
@@ -236,12 +238,12 @@ class Flow:
                 state = 'weak'
             else:
                 state = None
-            print(json.dumps(dict(version=1, event='auth', person=self.name, attempt=attempt,
+            print(json.dumps(dict(version=1, event='auth', attempt=attempt,
                                   voice=round(score, 3), threshold=THRESHOLD,
                                   phrase=None if phrase is None else round(phrase, 2),
                                   seconds=round(len(pcm) / 32000, 1), result=state or 'failed')),
                   flush=True)
-            if state is not None or self.cancelled.is_set():
+            if state == 'ok' or self.cancelled.is_set():
                 break
             if attempt < ATTEMPTS:
                 prompt = AUTH_RETRY
@@ -252,9 +254,9 @@ class Flow:
     def run(self):
         self.io.publish(stage='auth', rec=False)
         state = self.authenticate()
-        if state is None:
-            return dict(auth=False)
-        result = dict(auth=True, weak=state == 'weak')
+        if state != 'ok':
+            return dict(auth=False, weak=state == 'weak')
+        result = dict(auth=True, weak=False)
         person = self.core.profile(self.name)
         if not person.get('passphrase') and self.action != 'passphrase':
             self.io.say(SET_PHRASE_FIRST)
