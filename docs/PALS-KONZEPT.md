@@ -6,13 +6,56 @@
 |---|---|
 | Projekt | [0b-ivan/pi-voice-assistant](https://github.com/0b-ivan/pi-voice-assistant) |
 | Dokument | `docs/PALS-KONZEPT.md` |
-| Version | 1.0, Entwurf vom 10.10.2026 |
+| Version | **1.1, Architekturreview vom 11.10.2026** |
 | Implementierungsstand | **Nicht implementiert**; dieses Dokument beschreibt Zielarchitektur und Abnahmekriterien |
 | Zielgruppe | Projektentwickler, Claude Code, Reviewer und Betreiber |
 | Charakter | Proximus / Servitor bzw. Billy |
 | Priorität | Bestehende Sprach-/Abbruchfunktionen dürfen nicht regressieren |
 
 > **Definition:** „Agonie“, „Bestrafung“ und „Schmerz“ sind in PALS **fiktive, simulierte Zustände** eines Sprachassistenten. Ein LLM leidet dadurch nicht. Eine negative Rückmeldung kann die künftigen Antworten durch Gedächtnisregeln beeinflussen oder später als Trainingsbeispiel dienen. **Ein Tastendruck ist kein Fine-Tuning und verändert keine Modellgewichte.**
+
+## Architekturreview vom 11.10.2026: Was ist die beste Lösung?
+
+**Status:** Recherche und Repository-Review, **keine** Implementierung. Dieses Review hat Vorrang bei Widersprüchen zu älteren Beispielen.
+
+**Neue Repo-Lage:**
+- [PR #92](https://github.com/0b-ivan/pi-voice-assistant/pull/92) **gemergt**: Gesprächs-/Gedächtniskonzept mit stabiler Besitzertrennung und Quellbelegen.
+- [PR #97](https://github.com/0b-ivan/pi-voice-assistant/pull/97) **offen**: `src/conversation.py` implementiert einen noch **nicht eingebundenen** Personen-/Threadspeicher im bestehenden `memory.json`. Enthalten sind `turn_id`, Snapshot-/Stick-Generation, `delivery`-Status (`pending/played/interrupted/failed`), Quoten und Löschen. **Diese Basis erst integrieren/abnehmen und danach PALS darauf aufbauen**, keine parallelen inkompatiblen Turn-IDs oder Ablagestrukturen.
+- [PR #98](https://github.com/0b-ivan/pi-voice-assistant/pull/98) **offen**: Nightwatch für Software-/Sicherheitsprüfungen. Dessen Befunde sind **keine Nutzerpräferenzen**, und sein Modellpfad muss vom Feedback-/Training-Pfad getrennt bleiben.
+- Neue gemergte Intents und Fahrtenfehlerkorrekturen (u. a. #90, #94, #96): Einige schädliche Antworten stammen aus dem **Intent-/Daten-/STT-Routing**, nicht aus schlechter Modellpersonalisierung. Das PALS-Signal muss darum die Antwortquelle enthalten.
+
+**Fundamentale Korrektur am ursprünglichen Konzept:** `„Wie spät ist es?“` kann bereits **deterministisch** beantwortet werden. Eine reine LLM-Bewertung würde gerade solche Antworten nicht erfassen. Feedback erfassen wir daher für **eindeutig identifizierte, nichtkritische Antworten aller Quellen**, leiten die **Abhilfe aber getrennt** weiter:
+
+| Quellenklasse | Erste Reaktion auf negatives Feedback | Dauerhafte Änderung |
+|---|---|---|
+| `llm` | Frage/Antwort/Modell-ID speichern, Korrektur erfragen | Scoped Präferenz oder freigegebenes Trainingsbeispiel |
+| `intent` | `intent_name` und betroffene Regel kennzeichnen | Konfigurations-/Codeänderung nach Test, nicht LoRA |
+| `stt` / erkennbarer Verhörer | Transkript mit Einwilligung diagnostizieren | STT-Vokabular/Erkennungslogik testen, nicht Modellgewichte |
+| `journey` / externe Daten | Provider-/Zeit-/Routenfehler markieren | Datenquelle oder Parser korrigieren; nicht erfundene Fakten trainieren |
+| `tts` | synthetisierten Text, Wiedergabestatus und Audiofehlercode markieren | Aussprache-/Stimmenregel korrigieren |
+| Kritische Alarme/Gerätebestätigungen | B **nur abbrechen**, keine Agonie-Regel | separate Wartungs-/Sicherheitsdiagnostik, keine Benutzerpräferenz |
+
+**Genaue Turn-Zuordnung:** In PR #97 ist `last_answer()` für „Was hast du gesagt?“ optimiert und bevorzugt **played**-Turns; für negatives Feedback zur aktuell abgebrochenen Antwort wäre das falsch. Das B-Ereignis muss stattdessen die `turn_id` **vor** `cancel()` vom aktuellen Playback-Slot erhalten. Mehrteilige Geschichten brauchen denselben Turn-Bezug mit zusätzlicher Segmentkennung, ohne Wiederholungsbewertungen. Verspätete Antwort-/Playback-Ereignisse müssen gegen Snapshot/Owner/Stick-Generation validiert werden.
+
+**Storageentscheidung:** Ein gemeinsamer `MemoryCore`-Writer mit referenzierter Feedback-Historie und aktivem Regelbestand ist vorzuziehen; **keine** unkoordinierten separaten Dateien mit denselben persönlichen Dialogtexten. `memory.json` hat in PR #97 ein 1-MiB-Limit und Besitzerquoten: für PALS vor Integration Last-/Dateigrößenmessung und Schema-Erweiterung durchführen. Große, **explizit freigegebene** Trainingsbeispiele nicht unbesehen in jeden SPX-Memory-Header übertragen; separates privates Exportartefakt ist sinnvoll.
+
+**Training nach Evidenz wählen, nicht nach Schlagwort:**
+
+| Technik | Eignung | Entscheidung |
+|---|---|---|
+| Explizite Regeln + relevanter Gedächtnisabruf | Höchster unmittelbarer Nutzen auf vorhandener Hardware | **Als erstes implementieren und gegen Baseline testen** |
+| SFT + LoRA | Hochwertige `prompt/completion`-Korrekturen zum Trainieren kleiner Modelle | **Erster CPU-Trainingspilot** |
+| KTO | `prompt/completion/label` aus positiven/negativen Tastensignalen, keine Paare nötig | **Später testen**, benötigt genug gemischte Daten; KL-Variante mit Batch > 1 erschwert alten i5 |
+| DPO | Präzise `chosen/rejected`-Paare für denselben Kontext | **Später**, erst nach qualitativ gutem Präferenzdatensatz |
+| Vollständiges RLHF | Für dieses Projekt hoher Ressourcen-/Evaluationsaufwand | **Nicht planen** |
+
+Vor Fine-Tuning **drei Baselines** auf demselben Holdout vergleichen: (A) bisherige Persona ohne Regel, (B) bestätigte scoped Regel im Prompt, (C) Beispiel-/Erfahrungsabruf aus dem Gedächtnis. Erst wenn B/C nicht ausreichend helfen oder eine systematische, messbare Stilabweichung bleibt, trainieren. Keine „Faktenkorrektur“ in Modellgewichte verlagern, wenn ein deterministischer Intent oder echte Datenquelle richtiger ist.
+
+**Hardware-Fazit:** i5 Gen7 + 32 GB ist als Datenaufbereitungs-/Evaluationsnode gut. Die aktuelle bitsandbytes-CPU-Unterstützung erfordert auf Linux/x86-64 mindestens AVX2, was erst am realen Host zu bestätigen ist. Unterstützung bedeutet **nicht** akzeptable 4B-Trainingzeiten. Erst kleinen LoRA-SFT-Lauf mit 20 Schritten messen. Apple-Silicon-Mac mit MLX ist optional eine bessere Trainingsmaschine, wenn verfügbar. Kein neues Framework wie LangGraph/Mem0 als Laufzeitpflicht: deren **Speichermuster** (Personen-Scopes, getrennte episodische/prozedurale Fakten, gezielte CRUD) in vorhandene Architektur übernehmen.
+
+**Verifikation:** Kein PALS-Code im aktuellen `main` bestätigt; keine echten Pi-/i5-Benchmarks ausgeführt. Die PR-Zustände gelten für die Prüfung vom 11.10.2026 und sind vor Claude-Implementierung erneut abzufragen.
+
+---
 
 ## 0. Nutzung durch Claude
 
@@ -22,7 +65,7 @@ Die Schritte in **Abschnitt 16** sind als einzeln reviewbare Pull Requests gedac
 
 ### Begriffe
 
-- **Feedback:** Bewertung einer einzelnen LLM-Antwort (positiv/negativ); zunächst keine Verhaltensregel.
+- **Feedback:** Bewertung einer eindeutig zugeordneten Antwort (LLM oder geeignetes nichtkritisches Intent); zunächst keine Verhaltensregel. Die Antwortquelle bestimmt den Korrekturpfad.
 - **Korrektur:** Erklärung, was konkret falsch und was stattdessen gewünscht war.
 - **Lernregel:** Vom berechtigten Bediener bestätigte, kontextabhängige Präferenz im Gedächtnis.
 - **Agonie:** Simulierter, vorübergehender visueller/akustischer/emotionaler Zustand als Reaktion auf negatives Feedback.
@@ -38,7 +81,7 @@ Proximus soll seine Rolle und seine Fähigkeiten behalten, sich aber nach und na
 **MUSS-Anforderungen:**
 
 1. **B stoppt sofort** – auch bei langem Drücken. Vorhandene Funktionen in Menü, Personenregistrierung, Wartung, Aufnahme, Sicherheitsrückfragen und Audio bleiben erhalten.
-2. Jede Bewertung ist genau **einem** geeigneten Turn und einer tatsächlich generierten LLM-Antwort zugeordnet; keine Bewertung von STT, Alarmen, Status, Geräteaktionen oder noch nicht erzeugten Antworten.
+2. Jede Bewertung ist genau **einem** ausgegebenen, identifizierbaren Turn zugeordnet und enthält den tatsächlichen Antwortweg (`llm`, `intent`, `journey`, `tts` usw.). **Kein** Feedback zu noch nicht existierenden Antworten oder kritischen Alarmen. Nicht-LLM-Feedback dient zunächst der Diagnose bzw. Intent-/STT-/TTS-Korrektur, nicht dem LLM-Training.
 3. Ein reines „schlecht“ erzeugt **keine erfundene globale Regel**. Neue Regeln brauchen eine konkrete, bestätigte Korrektur.
 4. Speicherung folgt dem bestehenden Prinzip: **nur der Pi schreibt den USB-Gedächtnis-Stick** `PROXIMUS`; ohne Stick kein dauerhaftes Lernen.
 5. Der zweite Proxmox ist **keine Laufzeitabhängigkeit**. Training ist auslagerbar, stoppbar und optional.
@@ -125,8 +168,9 @@ Die Belegung wird **nicht ersetzt**, sondern erweitert.
 
 | Kontext **beim Press-Edge** | Kurzer Druck | Langer Druck (≥ 800 ms) |
 |---|---|---|
-| Eigene **LLM**-Antwort spielt | sofort stoppen | sofort stoppen; diese Antwort **einmal** negativ bewerten |
-| Leerlauf, letzte bewertbare LLM-Antwort ≤ 60 s | heutige Abbruch-/Leerlauffunktion | letzte Antwort **einmal** bewerten |
+| Eigene, eindeutig identifizierte **LLM**-Antwort spielt | sofort stoppen | sofort stoppen; diese Antwort **einmal** negativ bewerten |
+| Nichtkritische, eindeutig identifizierte **Intent-/Fahrten-/TTS-Antwort** spielt | sofort stoppen | sofort stoppen; einmaligen **diagnostischen** Feedbackfall mit Quelltyp speichern, **kein automatisches LLM-Training** |
+| Leerlauf, letzte **bewertbare** Antwort ≤ 60 s und kein neuer Turn | heutige Abbruch-/Leerlauffunktion | exakt referenzierten Turn einmal bewerten (LLM = Präferenz, Intent = Diagnose) |
 | Aufnahme, STT, LLM denkt ohne fertige Antwort | abbrechen/verwerfen | abbrechen/verwerfen, **kein** Feedback |
 | Menü/Picker/Enrolment/Wartung/offene Bestätigung | heutige Zurück-/Cancel-Semantik | **kein** Feedback |
 | Alarm, E-Status, fixe Intent-Antwort, kritische Geräteansage | stoppen wie bisher | **kein** LLM-Feedback |
@@ -136,7 +180,7 @@ Die Belegung wird **nicht ersetzt**, sondern erweitert.
 
 ### 4.1 Press/Hold/Release-Zustandsautomat
 
-1. **Press:** Genau einmal bestehende Cancel-Aktion sofort ausführen. **Vor** dem Cancel gegebenenfalls einen unveränderlichen `feedback_candidate` aus dem aktuellen LLM-Turn übernehmen. Falls im Leerlauf: nur unbewerteten Kandidaten innerhalb des Zeitfensters übernehmen.
+1. **Press:** Genau einmal bestehende Cancel-Aktion sofort ausführen. **Vor** dem Cancel gegebenenfalls einen unveränderlichen `feedback_candidate` aus dem **konkret ausgegebenen Turn** (Quelle, ID, aktuelle Antwort, Wiedergabestatus) übernehmen. Falls im Leerlauf: nur unbewerteten Kandidaten innerhalb des Zeitfensters übernehmen. **Nicht** `conversation.last_answer()` als B-Kandidat verwenden: Diese Funktion kann den letzten `played`-Turn statt der gerade abgebrochenen `interrupted`-Antwort liefern.
 2. **Hold:** Entprellte Tastensituation mit `time.monotonic()` prüfen. Beim Erreichen von 800 ms genau ein `feedback_recorded` an einen **nicht blockierenden Worker** melden, sofern Kandidat gültig und Fingerabdruck nicht schon verwendet.
 3. **Release:** Tastenstatus zurücksetzen, kein zweites Event, keine erneute Cancel-Aktion.
 4. **Neuer Turn beginnt:** Alten Leerlauf-Kandidaten invalidieren. Frühere Turn-Antwort nicht irrtümlich bewerten.
@@ -203,7 +247,7 @@ Kein neues umfangreiches Untermenü im MVP zwingend, sofern Sprachbefehle und ei
 
 ## 6. Datenmodell und Persistenz
 
-**Source of Truth:** USB-Stick mit Label `PROXIMUS`, Pfad unter `/mnt/proximus-memory/proximus/` (wie bestehendes `memory.json`). Neue Datei **`feedback.json`**, kein direktes Vermischen mit historischen Fakten/alten Direktiven. Versionierte Schemas, beschränkte Größen, atomare Aktualisierung (temp-Datei + `fsync` + Rename + `fsync` des Ordners) analog `src/memory.py`.
+**Source of Truth:** USB-Stick mit Label `PROXIMUS`, Pfad unter `/mnt/proximus-memory/proximus/` (wie bestehendes `memory.json`). **Nach PR #97 bevorzugt ein `feedback`-Unterbereich im selben `memory.json` mit stabiler Owner-/Thread-/Turn-ID**, solange Größe und Pi-Schreiblast dies zulassen. Dadurch sind Turn, Bewertung, Löschung und Source-Referenzen in einer atomaren `MemoryCore`-Transaktion möglich. Eine separate `feedback.json` ist **nur eine Alternative nach Kapazitäts-/Performance-Messung** und benötigt dann konsistente Cross-File-Lösch-/Recovery-Regeln. Kein zweiter Writer und keine zweite Kopie kompletter Gesprächsverläufe. Versionierte Schemas, beschränkte Größen, atomare Aktualisierung (temp-Datei + `fsync` + Rename + `fsync` des Ordners) analog `src/memory.py`.
 
 ### 6.1 Feedback-Record – Beispiel
 
@@ -329,7 +373,7 @@ Nur **ausdrücklich freigegebene** Beispiele werden exportiert. Kriterien:
 - Unveränderlicher Holdout-Testsatz; kein gleicher oder nahezu identischer Beispielsatz gleichzeitig in Train und Test.
 - Ergebnisse nach ursprünglicher Modellversion und Datensatzversion dokumentieren.
 
-Ein unkorrigiertes `rating=negative` ist **kein DPO-Datensatz**.
+Ein unkorrigiertes `rating=negative` ist **kein DPO-Datensatz**. Für binäre positive/negative Labels **ohne** Antwortpaare kann später **KTO** (Hugging Face `KTOTrainer`) evaluiert werden: Datenschema `prompt`, `completion`, `label`. KTO schätzt bei seiner Standard-Loss eine KL-Komponente und verlangt dafür **Batch > 1**; Hugging Face empfiehlt sogar größere Batches. Der i5 ohne dedizierte GPU ist deshalb für KTO **kein** bevorzugtes erstes Experiment. Negatives Feedback allein liefert ohne Vergleich/Korrektur zudem nur ein schwaches, kontextabhängiges Signal.
 
 ### 9.2 SFT-Format
 
@@ -352,6 +396,8 @@ Erst bei echten Präferenzpaaren:
 ```
 
 DPO optimiert das Modell zugunsten der bevorzugten Antwort gegenüber der abgelehnten Antwort. **Es setzt ein sauber zugeordnetes Paar voraus.** Optionales DPO erst nach einem stabilen SFT/LoRA-Basispfad.
+
+**KTO-Alternative für die Taste (spätere Stufe):** `{"prompt": "...", "completion": "...", "label": false}` für abgelehnte Antworten und entsprechend `true` für positiv bewertete. **Nicht aus einem Klick ohne eindeutige Antwortzuordnung ein Trainingsbeispiel erzeugen.** Bei älterer CPU bevorzugt mit kleinen Modellen und tatsächlich gemessenen Batch-/RAM-Grenzen testen.
 
 ### 9.4 Qualitätsindikatoren
 
@@ -498,7 +544,7 @@ Geplante Diagnosefragen: „Wie viele Korrekturen hast du gelernt?“, „Welche
 |---|---|---|
 | **P0 – Baseline** | Repos/Branchzustand prüfen, Tests für B-Abbruch, Menü, STT/LLM/Status und SHIM-Simulation sichern | bestehende Tests grün, Regression reproduzierbar |
 | **P1 – Feedback Capture** | Turn-IDs/Kandidaten und B-Long-Press-Logik, Feature-Flag, strukturiertes Event | B stoppt sofort; exakt eine richtige Bewertung |
-| **P2 – Persistenz** | Versioniertes `feedback.json`, CRUD/Undo, Stick-Ausfälle, Limits | über Neustart stabil; fehlender Stick ist ehrlich sichtbar |
+| **P2 – Persistenz** | Versioniertes Feedback im gemeinsamen `MemoryCore`/`conversation`-Owner-Namespace (separate Datei nur nach Messung), CRUD/Undo, Stick-Ausfälle, Limits | Turn- und Feedbacklöschung konsistent; über Neustart stabil |
 | **P3 – Korrektur & Regeln** | Erklärung, Regelvorschlag, Bestätigung, Scoped-Regeln, Prompt-Anwendung, Widerruf | nächster passender Turn reagiert; kein Lernen ohne Bestätigung |
 | **P4 – Agonie-UX** | `Mood`-Integration, PiTFT/LED, optionaler Sound, Menü-Schalter | Effekt ist abschaltbar, bricht Cancel nicht |
 | **P5 – Dataset** | Positiv-/Negativpaare, Freigabe/Redaktion/Export, Testdataset | keine unfreigegebenen Privatdaten im Export |
@@ -509,7 +555,7 @@ Geplante Diagnosefragen: „Wie viele Korrekturen hast du gelernt?“, „Welche
 
 ### 16.1 Vorschlag für neue/angepasste Dateien
 
-**Bestehende Dateien gezielt ändern:** `src/ptt.py`, `src/memory.py`, `src/mood.py`, `src/llm.py` sowie passende vorhandene Tests. Die genaue Einbindung von Statusdisplay/LED anhand aktueller Implementierung überprüfen.
+**Bestehende Dateien gezielt ändern:** `src/ptt.py`, `src/memory.py`, nach Integration von PR #97 ggf. `src/conversation.py`, `src/mood.py`, `src/llm.py` sowie passende vorhandene Tests. Die genaue Einbindung von Statusdisplay/LED anhand aktueller Implementierung überprüfen.
 
 **Neu, nur wenn sinnvoll:**
 - `src/feedback.py`: schlanke testbare Kernlogik für Kandidat, Langdruck, Feedback-Record, Regeln.
@@ -533,7 +579,7 @@ Diese Startwerte sind **Vorschläge**, keine vorausgesetzten Nutzerentscheidunge
 
 ## 18. Claude-Startauftrag (kopierfertig)
 
-> Du arbeitest am Repository `0b-ivan/pi-voice-assistant`. Lies zuerst die aktuelle README, die tatsächlichen Python-Dateien, Tests und dieses Konzept `docs/PALS-KONZEPT.md`. Beachte, dass PR #81 die Dokumentation konsolidiert; ändere niemals blind veraltete Pfade oder die produktive Installation. Implementiere **ausschließlich P0 und P1** aus Abschnitt 16: sichere zunächst die bisherige B-Abbruch- und Menüfunktion durch Tests ab und ergänze einen konfigurierbaren B-Langdruck ab 800 ms, der nach sofortigem Cancel eine zuvor eindeutig identifizierte LLM-Antwort höchstens einmal negativ bewertet. Füge nötige Turn-IDs und Fake-Clock-Tests hinzu, aber **noch keine Trainingspipeline, keine neuen Netzwerkendpunkte, keine automatische Lernregel, keine Persona-Animation**. Sei bei Menü, Wartung, Enrollment, Sicherheitsbestätigung, STT ohne Ergebnis und Status/Alarm strikt rückwärtskompatibel. Erstelle einen kleinen Pull Request mit Testnachweisen, überprüften Dateiänderungen, dokumentierten Risiken und Hardware-Abnahmeplan. Kein automatischer Merge/Deploy.
+> Du arbeitest am Repository `0b-ivan/pi-voice-assistant`. Lies zuerst die aktuelle README, die tatsächlichen Python-Dateien, Tests und dieses Konzept `docs/PALS-KONZEPT.md`. Beachte, dass PR #81 die Dokumentation konsolidiert; ändere niemals blind veraltete Pfade oder die produktive Installation. Implementiere **ausschließlich P0 und einen kleinen P1-Entwurf** aus Abschnitt 16: prüfe zuerst den Merge-/Runtime-Status von PR #97 (Conversation-IDs und Delivery-Status), PR #98 (Nightwatch) und die neuen Intent-/Fahrtenrouten. Sichere die bisherige B-Abbruch- und Menüfunktion durch Tests ab und ergänze konfigurierbaren B-Langdruck ab 800 ms, der nach sofortigem Cancel den **tatsächlich gespielten** Turn per stabiler ID höchstens einmal negativ bewertet. Erhalte den Quelltyp: LLM-Feedback als Präferenzfall, nichtkritisches Intent-/Fahrtenfeedback zunächst als Diagnosedatensatz; Alarme sind ausgenommen. Nutze vorhandene Turn-IDs soweit verfügbar, **nicht** `last_answer()` zur Zuordnung unterbrochener Antworten. Ergänze Fake-Clock-Tests, aber **noch keine Trainingspipeline, keine neuen Netzwerkendpunkte, keine automatische Lernregel, keine Persona-Animation**. Sei bei Menü, Wartung, Enrollment, Sicherheitsbestätigung, STT ohne Ergebnis und Status/Alarm strikt rückwärtskompatibel. Erstelle einen kleinen Pull Request mit Testnachweisen, überprüften Dateiänderungen, dokumentierten Risiken und Hardware-Abnahmeplan. Kein automatischer Merge/Deploy.
 
 ## 19. Technische Referenzen
 
@@ -544,6 +590,10 @@ Diese Startwerte sind **Vorschläge**, keine vorausgesetzten Nutzerentscheidunge
 - Hugging Face Transformers/PEFT: https://huggingface.co/docs/transformers/peft
 - TRL SFT/DPO-Datenformate: https://huggingface.co/docs/trl/dataset_formats
 - TRL DPO: https://huggingface.co/docs/trl/dpo_trainer
+- TRL KTO (binäre Labels, Batch-Anforderungen): https://huggingface.co/docs/trl/main/kto_trainer
+- LangGraph Memory-Konzept: https://docs.langchain.com/oss/python/concepts/memory
+- Mem0 Memory-Operationen: https://github.com/mem0ai/mem0/blob/main/docs/core-concepts/how-it-works.mdx
+- Bitsandbytes CPU-Unterstützung (AVX2): https://huggingface.co/docs/bitsandbytes/installation
 - llama.cpp Modelle und GGUF: https://github.com/ggml-org/llama.cpp/blob/master/docs/models.md
 
 ---
