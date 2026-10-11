@@ -33,7 +33,7 @@ CONDITION_HINTS = {
 }
 CONDITION_LABELS = {'near': 'nah', 'far': 'fern', 'quiet': 'leise'}
 # Recording length per sentence class (arecord takes whole seconds).
-RECORD_SECONDS = {'short': 5, 'mid': 6, 'long': 7, 'challenge': 6}
+RECORD_SECONDS = {'short': 6, 'mid': 6, 'long': 7, 'challenge': 6}
 WER_MAX, CHALLENGE_WER_MAX, EXACT_WORDS = 0.20, 0.15, 5
 
 # Sound classes (Standard German inventory, fixed in advance).
