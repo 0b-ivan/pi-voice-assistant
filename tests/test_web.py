@@ -76,7 +76,7 @@ class WebGatewayTest(unittest.TestCase):
 
     def test_voice_uses_existing_recognition_and_same_answer_as_text(self):
         # Audio is already resampled to 16 kHz mono PCM16 by the web client.
-        audio = b'\\x01\\x00' * 16000
+        audio = b'\x01\x00' * 16000
         status, raw = self.call('/api/voice', audio)
         self.assertEqual(status, 200)
         voice_events = self.parse_events(raw)
@@ -96,12 +96,12 @@ class WebGatewayTest(unittest.TestCase):
                          next(e['model'] for e in voice_events if e['event'] == 'reply'))
 
     def test_voice_size_type_and_origin_are_checked(self):
-        audio = b'\\x01\\x00' * 16000
+        audio = b'\x01\x00' * 16000
         self.assertEqual(self.call('/api/voice', audio, origin='https://evil.example')[0], 403)
         self.assertEqual(self.call('/api/voice', audio, origin=None)[0], 403)
         self.assertEqual(self.call('/api/voice', audio, content_type='text/plain')[0], 415)
-        self.assertEqual(self.call('/api/voice', b'\\x01\\x00' * 100)[0], 400)
-        self.assertEqual(self.call('/api/voice', audio + b'\\x01')[0], 400)
+        self.assertEqual(self.call('/api/voice', b'\x01\x00' * 100)[0], 400)
+        self.assertEqual(self.call('/api/voice', audio + b'\x01')[0], 400)
         self.assertEqual(self.call('/api/chat', {'text': 'Hallo'}, origin=None)[0], 403)
 
     def test_audio_worklet_is_served_without_exposing_credentials(self):
