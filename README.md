@@ -32,6 +32,13 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | Status-LED | Farben passend zum Display, schreibt in eigenem Thread. [Button-Bedienung](docs/button-controls.md#status-led) |
 | Hardware | WM8960, SHIM, PiTFT und PiSugar 3 laufen; Akkulaufzeit/Abschaltung und Kamera offen. [Hardware](docs/hardware.md) |
 
+
+**Web-Erweiterung (Feature-Branch):** Ein Browser-Client über denselben
+Servitor-Core auf CT 107, zunächst mit Textchat und Servitor-Audiowiedergabe.
+Keine zweite LLM-/Intent-/TTS-Implementierung und keine Web-Abhängigkeit auf
+dem Pi. Hinweise zu Testbetrieb, Sicherheitsgrenzen und Ausbaustufen:
+[Proximus Web in der Architektur](docs/architecture.md#proximus-web--dieselbe-codebasis-erste-etappe).
+
 ## Einrichten und betreiben
 
 1. [Setup](docs/setup.md): OS, WM8960-Audio, Dienst und Offline-STT auf dem Pi.
