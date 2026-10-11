@@ -1,0 +1,22 @@
+[Unit]
+Description=Proximus web gateway (shared Servitor core)
+After=network-online.target servitor-voice.service
+Wants=network-online.target
+Requires=servitor-voice.service
+
+[Service]
+Type=simple
+User=servitor
+Group=servitor
+EnvironmentFile=/etc/servitor-voice.env
+ExecStart=/opt/servitor-voice/.venv/bin/python /opt/servitor-voice/repo/web/gateway.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
