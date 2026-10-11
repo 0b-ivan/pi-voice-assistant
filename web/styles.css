@@ -34,3 +34,12 @@ button:disabled{cursor:not-allowed;opacity:.55}
 .hint{margin-bottom:0}
 footer{display:flex;justify-content:space-between;gap:8px;margin-top:auto}
 @media(max-width:650px){.shell{padding:16px;gap:13px}.top{gap:13px;flex-wrap:wrap}.sigil{width:48px;height:48px;font-size:31px}.branding{min-width:calc(100% - 70px)}.status{max-width:none;text-align:left;width:100%}.panel{min-height:65vh}.panel-header,.messages,.composer{padding:15px}.messages{max-height:60vh}.entry{max-width:95%;padding:13px}button[type=submit]{min-width:94px}h1{letter-spacing:.11em}.hint{font-size:10px}footer{flex-direction:column}}
+
+.voice-controls{display:flex;align-items:center;gap:15px;margin-top:14px;flex-wrap:wrap}
+#microphone{border:1px solid #a77e58;background:#2b3438;color:#f2d6ab;padding:13px 17px;letter-spacing:.08em;font:700 12px ui-monospace,monospace;cursor:pointer}
+#microphone:hover,#microphone:focus-visible{background:#485057}
+#microphone.recording{background:#8e332b;color:#fff;border-color:#ec8a75;animation:record-pulse 1.2s ease-in-out infinite}
+#microphone:disabled{cursor:not-allowed;opacity:.55}
+#recording-hint{font-size:11px;color:#c5ad90;line-height:1.5;flex:1;min-width:220px}
+@keyframes record-pulse{50%{box-shadow:0 0 0 3px #8e332b88}}
+@media(prefers-reduced-motion:reduce){#microphone.recording{animation:none}}
