@@ -29,6 +29,24 @@ class ParseTests(unittest.TestCase):
                               mode=None))
         self.assertIsNone(journeys.parse('was kostet die stadt', 'on'))
 
+    def test_bus_and_generic_bahn_follow_actual_spoken_requests(self):
+        cases = (
+            ('wann fährt die nächste bus vom hauptbahnhof', 'departures', 'bus'),
+            ('wann fährt der nächste bus ab würzburg hbf', 'departures', 'bus'),
+            ('wann fährt die nächste bus zum hauptbahnhof', 'trip', 'bus'),
+            ('wann fährt die nächste bahn von zu hause in die stadt', 'trip', None),
+            ('wann fährt die nächste bahn ab würzburg hauptbahnhof', 'departures', None),
+            ('wann fährt die nächste s bahn ab hauptbahnhof', 'departures', 'train'),
+            ('wann fährt die nächste straßenbahn ab hauptbahnhof', 'departures', 'tram'),
+        )
+        for utterance, kind, mode in cases:
+            with self.subTest(utterance=utterance):
+                parsed = journeys.parse(utterance, 'on')
+                self.assertIsNotNone(parsed)
+                self.assertEqual((parsed['kind'], parsed['mode']), (kind, mode))
+        self.assertEqual(journeys.parse('nur bus', 'offers'),
+                         dict(type='filter', mode='bus'))
+
     def test_examples_from_the_assignment(self):
         cases = [
             ('Wann fährt die nächste Straßenbahn in die Stadt?', 'on',
@@ -236,6 +254,21 @@ class ControllerTests(unittest.TestCase):
         text = rig.say('nur regionalzüge')
         self.assertNotIn('ICE', text)
         self.assertIn('RE 4612', text)
+
+    def test_bus_departures_are_not_discarded_as_trains(self):
+        board = [departure(utc(12, 10), '623', 'ICE', 16, 'München Hbf', '4'),
+                 departure(utc(12, 12), '14', 'Bus', 5, 'Lengfeld', 'B'),
+                 departure(utc(12, 15), '4', 'Straßenbahn', 4, 'Zellerau', 'A')]
+        rig = Rig(departures=board)
+        response = rig.say('wann fährt der nächste bus ab würzburg hbf')
+        self.assertIn('Bus 14', response)
+        self.assertNotIn('ICE', response)
+        self.assertNotIn('Straßenbahn', response)
+        self.assertIn('Steig', response)
+        mixed = rig.say('wann fährt die nächste bahn ab würzburg hbf')
+        self.assertIn('Bus 14', mixed)
+        self.assertIn('ICE', mixed)
+        self.assertIn('Straßenbahn', mixed)
 
     def test_reminder_needs_consent_and_runs_exactly_once(self):
         rig = Rig([tram_journey(utc(12, 32)), tram_journey(utc(12, 47))])
