@@ -16,7 +16,8 @@ stored as a fact and never dispatched as a command.
 
 Content check: WER = (substitutions + deletions + insertions) / words of the
 target, after Unicode, case, punctuation and number normalization. Normal
-sentences pass with WER <= 0.20; challenges need WER <= 0.15 and every drawn
+sentences pass with WER <= 0.20; long anchors with WER <= 0.30; challenges
+need WER <= 0.15 and every drawn
 word in order, answers of up to five words an exact match. WER checks the
 content, it does not detect synthetic speech.
 """
@@ -33,7 +34,7 @@ CONDITION_HINTS = {
 CONDITION_LABELS = {'near': 'nah', 'far': 'fern', 'quiet': 'leise'}
 # Recording length per sentence class (arecord takes whole seconds).
 RECORD_SECONDS = {'short': 5, 'mid': 7, 'long': 10, 'challenge': 7}
-WER_MAX, CHALLENGE_WER_MAX, EXACT_WORDS = 0.20, 0.15, 5
+WER_MAX, LONG_ANCHOR_WER_MAX, CHALLENGE_WER_MAX, EXACT_WORDS = 0.20, 0.30, 0.15, 5
 
 # Sound classes (Standard German inventory, fixed in advance).
 INVENTORY = {
@@ -451,6 +452,13 @@ def check(item, heard):
     if strict and len(normalize(item['text']).split()) <= EXACT_WORDS:
         ok = normalize(item['text']) == normalize(heard)
     else:
-        ok = value <= (CHALLENGE_WER_MAX if strict else WER_MAX)
+        # Long anchor sentences are for voice characteristics, not for
+        # validating a secret. Small German ASR mistakes must not discard
+        # good, long speech recordings. All held-out checks retain 0.20;
+        # freshly drawn challenge words still require 0.15 + exact order.
+        limit = (CHALLENGE_WER_MAX if strict else
+                 LONG_ANCHOR_WER_MAX if item.get('role') == 'anchor'
+                 and item.get('length') == 'long' else WER_MAX)
+        ok = value <= limit
     words_ok = in_order(words, heard) if words else True
     return dict(wer=round(value, 3), ok=ok and words_ok, words_ok=words_ok)
