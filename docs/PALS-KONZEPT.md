@@ -173,7 +173,7 @@ Die Belegung wird **nicht ersetzt**, sondern erweitert.
 | Leerlauf, letzte **bewertbare** Antwort ≤ 60 s und kein neuer Turn | heutige Abbruch-/Leerlauffunktion | exakt referenzierten Turn einmal bewerten (LLM = Präferenz, Intent = Diagnose) |
 | Aufnahme, STT, LLM denkt ohne fertige Antwort | abbrechen/verwerfen | abbrechen/verwerfen, **kein** Feedback |
 | Menü/Picker/Enrolment/Wartung/offene Bestätigung | heutige Zurück-/Cancel-Semantik | **kein** Feedback |
-| Alarm, E-Status, fixe Intent-Antwort, kritische Geräteansage | stoppen wie bisher | **kein** LLM-Feedback |
+| Kritischer Alarm, E-Status, Sicherheits-/Geräteansage | stoppen wie bisher | **kein** PALS-Feedback; bestehende sicherheitsrelevante Abläufe haben Vorrang |
 | Boot mit gedrücktem B oder I²C-Ausfall | sichere bestehende Behandlung | **kein** Feedback |
 
 **Priorität:** Sicherheit / Gerätebestätigung > Registrierung und Wartung > Menü > Abbruch des laufenden Vorgangs > Feedback. **B + E gleichzeitig** darf weder bestätigen noch eine Lernregel aktivieren.
