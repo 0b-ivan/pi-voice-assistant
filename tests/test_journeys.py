@@ -156,14 +156,39 @@ class ControllerTests(unittest.TestCase):
                    tram_journey(utc(12, 8))])
         text = self.offers(rig)
         self.assertIn('2 Verbindungen nach Nürnberg', text)
-        self.assertIn('1. Straßenbahn 4 Richtung Sanderau, ab DJK-Sportzentrum 14 Uhr 32', text)
-        self.assertIn('10 Minuten Fußweg, losgehen 14 Uhr 20.', text)
-        self.assertIn('Laut Fahrplan.', text)          # the second has no realtime
-        self.assertEqual(text.count('Laut Fahrplan.'), 1)
+        # Several options: one short sentence each, details after the choice.
+        self.assertIn('1. Straßenbahn 4, ab DJK-Sportzentrum 14 Uhr 32, direkt, an 14 Uhr 45, '
+                      'losgehen 14 Uhr 20.', text)
+        self.assertIn('Zeiten teils laut Fahrplan.', text)   # the second has no realtime
+        self.assertNotIn('Richtung', text)
         self.assertEqual(rig.client.calls[-1][1], ('coord',) + HOME)
         self.assertEqual(rig.c.state(), 'offers')
         self.assertEqual(rig.puts, [])
         self.assertEqual(rig.c.reminders, [])        # a question never writes
+
+    def test_choice_gives_the_details_and_none_of_them_cancels(self):
+        rig = Rig([tram_journey(utc(12, 32)), tram_journey(utc(12, 47))])
+        self.offers(rig)
+        text = rig.say('die erste')
+        self.assertIn('Straßenbahn 4 Richtung Sanderau, ab DJK-Sportzentrum 14 Uhr 32', text)
+        self.assertIn('10 Minuten Fußweg, losgehen 14 Uhr 20.', text)
+        rig = Rig([tram_journey(utc(12, 32)), tram_journey(utc(12, 47))])
+        self.offers(rig)
+        self.assertEqual(rig.c.parse('keine davon ich bleib zu hause', rig.c.state()),
+                         dict(type='cancel'))
+        self.assertIsNone(journeys.parse('keine ahnung', 'on'))
+
+    def test_vosk_noch_for_nach(self):
+        self.assertEqual(journeys.parse('wie komme ich noch nürnberg', 'on')['destination'],
+                         dict(name='nürnberg'))
+        self.assertEqual(journeys.parse('wann fährt heute noch eine bahn in die stadt',
+                                        'on')['destination'], 'city')
+        self.assertIsNone(journeys.parse('wann fährt noch eine straßenbahn', 'on')['destination'])
+
+    def test_bus_stops_have_a_steig_not_a_gleis(self):
+        leg = dict(kind='bus', platform_dep='B')
+        self.assertEqual(journeys._platform(leg), ', Steig B')
+        self.assertEqual(journeys._platform(dict(kind='long', platform_dep='5')), ', Gleis 5')
 
     def test_rail_answer_names_changes_and_platforms(self):
         rig = Rig([rail_journey(utc(12, 32), utc(12, 50), delay=4)])

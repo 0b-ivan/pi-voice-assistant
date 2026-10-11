@@ -254,5 +254,18 @@ class SpelledLetterTests(unittest.TestCase):
         self.assertEqual(transit.normalize_place('D J K Sportzentrum'), 'djk sportzentrum')
 
 
+
+class StopNameTests(unittest.TestCase):
+    def test_platform_points_name_their_stop(self):
+        parent = dict(name='Würzburg Hbf', disassembledName='Hauptbahnhof', type='stop')
+        self.assertEqual(transit._stop_name(dict(disassembledName='5', type='platform',
+                                                 parent=parent)), 'Hauptbahnhof')
+        self.assertEqual(transit._stop_name(dict(disassembledName='Bstg. B', parent=parent)),
+                         'Hauptbahnhof')
+        self.assertEqual(transit._stop_name(dict(disassembledName='Sedanstraße', parent=parent)),
+                         'Sedanstraße')
+        self.assertEqual(transit._stop_name(dict(name='Juliuspromenade')), 'Juliuspromenade')
+
+
 if __name__ == '__main__':
     unittest.main()
