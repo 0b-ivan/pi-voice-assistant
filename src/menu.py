@@ -13,7 +13,7 @@ GROUPS = {
     'people': ('people', 'enroll', 'refine', 'facts', 'wake_rec', 'back'),
     'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
     'device': ('alarms', 'led', 'screen', 'back'),
-    'network': ('wifi_scan', 'wifi_saved', 'hotspot', 'wlan', 'back'),
+    'network': ('net_info', 'wifi_scan', 'wifi_saved', 'hotspot', 'wlan', 'back'),
     'hotspot': ('wifi_hotspot_start', 'wifi_hotspot_show',
                 'wifi_hotspot_clients', 'wifi_hotspot_rotate',
                 'wifi_hotspot_stop', 'back'),
@@ -35,7 +35,7 @@ LABELS = {
     'emotions': 'Gefühle',
     'voice_fx': 'Stimmeffekt', 'enroll': 'Stimme kennenlernen', 'refine': 'Stimme ergänzen',
     'facts': 'Fakten kennenlernen', 'wake_rec': 'Wakeword aufnehmen',
-    'wlan': 'WLAN', 'wifi_scan': 'WLAN suchen',
+    'wlan': 'WLAN', 'net_info': 'Netzwerkinfos', 'wifi_scan': 'WLAN suchen',
     'wifi_saved': 'Gespeicherte WLANs',
     'wifi_hotspot_start': 'AP starten', 'wifi_hotspot_show': 'Passwort anzeigen',
     'wifi_hotspot_rotate': 'Passwort erneuern', 'wifi_hotspot_stop': 'AP beenden',
@@ -49,7 +49,7 @@ LABELS_IN_GROUP = {'people': 'Bekannte Personen', 'persona': 'Sprechstil'}
 # Selecting these leaves the menu (another screen or an action takes over).
 CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'facts', 'wake_rec',
            'people', 'bt_scan',
-           'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved',
+           'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved', 'net_info',
            'wifi_hotspot_start', 'wifi_hotspot_show',
            'wifi_hotspot_rotate', 'wifi_hotspot_stop',
            'wifi_hotspot_clients')
