@@ -135,7 +135,7 @@ class Menu:
             self.page = 'list'
             return None
         item = self.items[self.index]
-        if item in GROUPS and (self.group is None or item in self.items):
+        if item in GROUPS and (self.group is None or PARENTS.get(item) == self.group):
             self.group, self.index = item, 0
             return None
         if item == 'back':
