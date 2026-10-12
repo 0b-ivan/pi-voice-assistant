@@ -1140,7 +1140,7 @@ def wifi_qr_payload(ssid, password):
     return 'WIFI:T:WPA;S:' + escaped(ssid) + ';P:' + escaped(password) + ';;'
 
 
-def render_wifi_qr(display, ssid, password):
+def render_wifi_qr(display, ssid, password, info=None):
     """High contrast pixel-perfect QR for the 240x240 ST7789 display."""
     from PIL import Image, ImageDraw
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
@@ -1176,15 +1176,23 @@ def render_wifi_qr(display, ssid, password):
         draw.text((15, 116), 'E: Passwort anzeigen', font=font(12),
                   fill=(185, 195, 200))
     draw.line((12, 213, 228, 213), fill=(65, 65, 65))
-    draw.text((12, 218), 'E: Code  ·  B: zurueck', font=font(11),
-              fill=(145, 155, 165))
+    ap = (info or {}).get('ap')
+    if ap and ap['joined']:
+        draw.text((12, 218), 'NEUER CLIENT VERBUNDEN', font=font(11),
+                  fill=(180, 130, 255))
+    elif ap is not None:
+        draw.text((12, 218), f"{ap['count']} verb.  ·  E: Code  B: zurueck",
+                  font=font(10), fill=(145, 155, 165))
+    else:
+        draw.text((12, 218), 'E: Code  ·  B: zurueck', font=font(11),
+                  fill=(145, 155, 165))
     display.image(image, 180)
 
 
 def render_people(display, view, info=None):
     """Known people, a person's actions, their details, or setup QR."""
     if view.get('page') == 'wifi_qr':
-        render_wifi_qr(display, view['ssid'], view['password'])
+        render_wifi_qr(display, view['ssid'], view['password'], info)
         return
     from PIL import Image, ImageDraw
     info = info or {}
@@ -1653,9 +1661,10 @@ def main():
                 previous_screen = screen
         elif status.get('people') == 'on' and read_people() is not None:
             view = read_people()
-            screen = ('people', json.dumps(view, sort_keys=True), battery_view(battery))
+            screen = ('people', json.dumps(view, sort_keys=True), battery_view(battery),
+                      None if ap is None else (ap['count'], ap['joined']))
             if screen != previous_screen:
-                render_people(display, view, dict(battery=battery))
+                render_people(display, view, dict(battery=battery, ap=ap))
                 previous_screen = screen
         elif status.get('maint') == 'on':  # takes the screen even over a stale menu
             screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
