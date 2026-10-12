@@ -13,6 +13,9 @@ ADDRESS = "192.168.77.1"
 PORTAL_URL = "http://" + ADDRESS + "/"
 SESSION_SECONDS = 15 * 60
 INFO_FILE = Path("/run/proximus-setup/info")
+CLIENTS_FILE = Path("/run/proximus-setup/clients.json")
+CLIENT_REFRESH_SECONDS = 2
+CLIENT_FRESH_SECONDS = 8
 DISPLAY_VIEW_FILE = Path("/run/pi-ptt/display-people.json")
 
 
