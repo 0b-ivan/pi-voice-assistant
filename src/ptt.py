@@ -1595,6 +1595,9 @@ class VoiceController:
                     ('pw', 'Code: ' + info['password']),
                     ('url', 'Web: 192.168.77.1')]
                 picker['index'] = 1
+                picker['page'] = 'wifi_qr'
+                picker['ssid'] = info['ssid']
+                picker['password'] = info['password']
                 event('wifi', result='setup_ready', existing=was_active, rotated=rotates)
             else:
                 picker['title'] = 'HOTSPOT FEHLER'
@@ -1692,9 +1695,15 @@ class VoiceController:
         path = self.config.runtime_dir / 'display-people.json'
         if self.picker:
             items = [name[:24] for _, name in self.picker['items']] + ['Zurück']
+            if self.picker.get('page') == 'wifi_qr':
+                view = dict(page='wifi_qr', title='WLAN VERBINDEN',
+                            ssid=self.picker['ssid'], password=self.picker['password'],
+                            index=0, person='', items=[])
+            else:
+                view = dict(page='list', index=self.picker['index'], items=items,
+                            person='', title=self.picker['title'])
             try:
-                people.write_view(path, dict(page='list', index=self.picker['index'], items=items,
-                                             person='', title=self.picker['title']))
+                people.write_view(path, view)
             except OSError:
                 pass
         elif not self.people.active:
@@ -1708,7 +1717,16 @@ class VoiceController:
         publish_display_status(people='on' if self.picker else 'off', people_rev=self.people_rev)
 
     def _picker_buttons(self, confirm):
-        picker, self.picker = self.picker, None
+        picker = self.picker
+        if (picker['action'] == 'wifi_setup' and confirm
+                and picker.get('page') in ('wifi_qr', 'list')
+                and 'password' in picker):
+            # E toggles QR scan and the manual text credentials. B closes.
+            picker['page'] = ('list' if picker['page'] == 'wifi_qr'
+                              else 'wifi_qr')
+            self._publish_picker()
+            return
+        self.picker = None
         index = picker['index']
         if picker['action'] == 'wifi_pick':
             self._wifi_pick(picker, confirm)
