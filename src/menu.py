@@ -2,7 +2,7 @@
 
 GPIO23 (upper PiTFT button) and GPIO24 (lower) open the menu and move the
 selection; SHIM E confirms; SHIM B goes one level up and closes at the top.
-The top level holds groups (Sprache, Persönlichkeit, Personen, Audio, Gerät, System); each group
+The top level holds groups (Sprache, Persönlichkeit, Personen, Audio, Gerät, Netzwerk, System); each group
 ends with "Zurück". No hardware or display code in here: VoiceController
 owns a Menu and publishes its state for display.py, which shares LABELS.
 """
@@ -12,15 +12,16 @@ GROUPS = {
     'persona': ('human', 'persona', 'voice_fx', 'lore', 'emotions', 'back'),
     'people': ('people', 'enroll', 'refine', 'facts', 'wake_rec', 'back'),
     'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
-    'device': ('wlan', 'alarms', 'led', 'screen', 'back'),
+    'device': ('alarms', 'led', 'screen', 'back'),
+    'network': ('wifi_scan', 'wifi_saved', 'wlan', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
-TOP = ('voice', 'persona', 'people', 'audio', 'device', 'system', 'close')
+TOP = ('voice', 'persona', 'people', 'audio', 'device', 'network', 'system', 'close')
 # Every selectable action (for publishing and tests).
 ITEMS = tuple(item for group in GROUPS.values() for item in group if item != 'back') + ('close',)
 LABELS = {
     'voice': 'Sprache', 'persona': 'Persönlichkeit', 'people': 'Personen', 'audio': 'Audio',
-    'device': 'Gerät',
+    'device': 'Gerät', 'network': 'Netzwerk',
     'system': 'System', 'bt_speaker': 'BT-Lautsprecher', 'bt_scan': 'Lautsprecher suchen',
     'bt_forget': 'Lautsprecher entfernen', 'bt_connect': 'Lautsprecher verbinden',
     'close': 'Schließen', 'back': 'Zurück',
@@ -29,7 +30,8 @@ LABELS = {
     'emotions': 'Gefühle',
     'voice_fx': 'Stimmeffekt', 'enroll': 'Stimme kennenlernen', 'refine': 'Stimme ergänzen',
     'facts': 'Fakten kennenlernen', 'wake_rec': 'Wakeword aufnehmen',
-    'wlan': 'WLAN', 'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
+    'wlan': 'WLAN', 'wifi_scan': 'WLAN suchen',
+    'wifi_saved': 'Gespeicherte WLANs', 'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
 }
 # "people" is both a group and the person list inside it, "persona" both a
@@ -38,7 +40,7 @@ LABELS_IN_GROUP = {'people': 'Bekannte Personen', 'persona': 'Sprechstil'}
 # Selecting these leaves the menu (another screen or an action takes over).
 CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'facts', 'wake_rec',
            'people', 'bt_scan',
-           'bt_forget', 'bt_connect')
+           'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved')
 TIMEOUT_SECONDS = 15.0
 
 

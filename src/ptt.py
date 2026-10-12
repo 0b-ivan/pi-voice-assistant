@@ -40,6 +40,7 @@ from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
 import weather
 import wlan as wlan_radio
+import network_control
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, RemoteTurnUplink,
                          load_remote_config, story_timeout)
@@ -783,6 +784,9 @@ class VoiceController:
         self.bt_wanted = True              # reconnect the paired speaker automatically
         self.bt_busy = False               # scan/pair running in a thread
         self.bt_notes = []                 # sentences from the Bluetooth thread
+        self.wifi = network_control.Wifi()
+        self.wifi_busy = False
+        self.wifi_notes = []               # sentences from the NetworkManager worker
         self.picker = None                 # dict(title, items=[(mac, name)], index, action)
         self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
@@ -1043,6 +1047,10 @@ class VoiceController:
             self._bluetooth_item(item)
             self._publish_menu()
             return
+        if item in ('wifi_scan', 'wifi_saved'):
+            self._wifi_item(item)
+            self._publish_menu()
+            return
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
             return
@@ -1151,6 +1159,8 @@ class VoiceController:
         texts += self._check_memory()
         notes, self.bt_notes = self.bt_notes, []
         texts += notes
+        wifi_notes, self.wifi_notes = self.wifi_notes, []
+        texts += wifi_notes
         maintenance_texts = self._check_maintenance()  # spoken even with alarms muted
         if self.power != 'sleep':  # maintenance can wait until someone is around
             # Wall clock: the last announcement survives service restarts.
@@ -1504,6 +1514,88 @@ class VoiceController:
             self.picker = dict(title='ENTFERNEN', items=paired, index=0, action='forget')
             self._publish_picker()
 
+    def _wifi_job(self, work):
+        """Keep nmcli/DBus and radio scans out of the 10-ms button loop."""
+        if self.wifi_busy:
+            return False
+        self.wifi_busy = True
+
+        def run():
+            try:
+                work()
+            except (network_control.WifiError, OSError, ValueError) as exc:
+                event('wifi', result='error', reason=str(exc))
+                self.wifi_notes.append(network_control.FAILED)
+            finally:
+                self.wifi_busy = False
+
+        threading.Thread(target=run, name='wifi-job', daemon=True).start()
+        return True
+
+    def _wifi_item(self, item):
+        if not self.wifi.available():
+            self.wifi_notes.append(network_control.UNAVAILABLE)
+            return
+        if self.wifi_busy:
+            self.wifi_notes.append(network_control.BUSY)
+            return
+        if not self.wlan_on:
+            self.wifi_notes.append(network_control.RADIO_OFF)
+            return
+        picker = dict(title='WLAN SUCHEN' if item == 'wifi_scan' else 'WLAN GESPEICHERT',
+                      action='wifi_pick', items=[], index=0, profiles={})
+        self.picker = picker
+        self._publish_picker()
+
+        def work():
+            profiles = self.wifi.saved()
+            if item == 'wifi_scan':
+                aps = self.wifi.scan()
+                names = {p['ssid']: p['uuid'] for p in profiles}
+                items = [(ssid, f"{ssid} {signal}%{' ✓' if ssid in names else ''}")
+                         for ssid, signal in aps]
+            else:
+                # Several saved profiles may share an SSID (guest/priority/etc.).
+                # Address them by UUID so the selected row is unambiguous.
+                names = {p['uuid']: p['uuid'] for p in profiles}
+                items = [(p['uuid'], p['name'] + ' ✓') for p in profiles]
+            if self.picker is not picker:
+                return
+            picker['items'] = items
+            picker['profiles'] = names
+            picker['title'] = 'WLAN-NETZE' if item == 'wifi_scan' else 'WLAN GESPEICHERT'
+            picker['index'] = min(picker['index'], len(items))
+            self._publish_picker()
+            if not items:
+                self.wifi_notes.append(network_control.NO_NETWORKS)
+
+        self._wifi_job(work)
+
+    def _wifi_pick(self, picker, confirm):
+        if not confirm or picker['index'] >= len(picker['items']):
+            return
+        ssid, _label = picker['items'][picker['index']]
+        uuid = picker['profiles'].get(ssid)
+        if not uuid:
+            self.wifi_notes.append(network_control.NOT_SAVED)
+            event('wifi', result='not_saved')
+            return
+        if self.wifi_busy:
+            self.wifi_notes.append(network_control.BUSY)
+            return
+
+        # The connection may change our SSH route. Roll back on activation
+        # failure; hotspot provisioning and more advanced checkpoints follow
+        # in the next PR. No new password is accepted by the voice service.
+        self.link_grace_until = time.monotonic() + WLAN_GRACE_SECONDS
+
+        def work():
+            connected = self.wifi.connect(uuid)
+            event('wifi', result='connected' if connected else 'already_connected')
+            self.wifi_notes.append(network_control.CONNECTED if connected
+                                   else network_control.ALREADY_CONNECTED)
+        self._wifi_job(work)
+
     def _publish_picker(self):
         path = self.config.runtime_dir / 'display-people.json'
         if self.picker:
@@ -1519,6 +1611,10 @@ class VoiceController:
     def _picker_buttons(self, confirm):
         picker, self.picker = self.picker, None
         index = picker['index']
+        if picker['action'] == 'wifi_pick':
+            self._wifi_pick(picker, confirm)
+            self._publish_picker()
+            return
         if confirm and index < len(picker['items']):
             mac, name = picker['items'][index]
             if picker['action'] == 'pair':
