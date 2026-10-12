@@ -1,0 +1,3 @@
+# PiTFT uses only these two root actions; it cannot modify NM profiles as root.
+# Only the trusted, root-owned on-demand service touches NetworkManager profiles.
+obivan ALL=(root) NOPASSWD: /usr/bin/systemctl start proximus-setup.service, /usr/bin/systemctl stop proximus-setup.service
