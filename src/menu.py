@@ -13,7 +13,8 @@ GROUPS = {
     'people': ('people', 'enroll', 'refine', 'facts', 'wake_rec', 'back'),
     'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
     'device': ('alarms', 'led', 'screen', 'back'),
-    'network': ('wifi_scan', 'wifi_saved', 'wlan', 'back'),
+    'network': ('wifi_scan', 'wifi_saved', 'wifi_hotspot_start',
+                'wifi_hotspot_stop', 'wlan', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
 TOP = ('voice', 'persona', 'people', 'audio', 'device', 'network', 'system', 'close')
@@ -31,7 +32,9 @@ LABELS = {
     'voice_fx': 'Stimmeffekt', 'enroll': 'Stimme kennenlernen', 'refine': 'Stimme ergänzen',
     'facts': 'Fakten kennenlernen', 'wake_rec': 'Wakeword aufnehmen',
     'wlan': 'WLAN', 'wifi_scan': 'WLAN suchen',
-    'wifi_saved': 'Gespeicherte WLANs', 'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
+    'wifi_saved': 'Gespeicherte WLANs',
+    'wifi_hotspot_start': 'Hotspot starten', 'wifi_hotspot_stop': 'Hotspot beenden',
+    'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
 }
 # "people" is both a group and the person list inside it, "persona" both a
@@ -40,7 +43,8 @@ LABELS_IN_GROUP = {'people': 'Bekannte Personen', 'persona': 'Sprechstil'}
 # Selecting these leaves the menu (another screen or an action takes over).
 CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'facts', 'wake_rec',
            'people', 'bt_scan',
-           'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved')
+           'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved',
+           'wifi_hotspot_start', 'wifi_hotspot_stop')
 TIMEOUT_SECONDS = 15.0
 
 
