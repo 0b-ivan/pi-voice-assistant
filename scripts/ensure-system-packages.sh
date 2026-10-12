@@ -11,7 +11,7 @@ missing=()
 for package in "$@"; do
   # Fixed allowlist: this helper must never become a shell/apt injection path.
   case "$package" in
-    python3-qrcode|iw|python3-venv|python3-pil) ;;
+    python3-qrcode|iw|python3-venv|python3-pil|alsa-utils) ;;
     *) echo "Unsupported runtime package: $package" >&2; exit 2 ;;
   esac
   if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then

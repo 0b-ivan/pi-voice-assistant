@@ -641,11 +641,16 @@ class IntentServerTest(ServerTest):
         self.assertEqual(events[-1]['event'], 'done')
 
     def test_briefing_fetches_weather_on_the_server(self):
+        import datetime
+        import zoneinfo
         self.pipeline.transcript = 'guten morgen'
         self.pipeline.fail_llm = True
         self.service.weather = unittest.mock.Mock()
         self.service.weather.get.return_value = dict(now=12, code=3, high=14, low=6, rain=10)
-        _, data = self.request('/v1/turn', b'\1' * 16000)
+        fixed = datetime.datetime(2026, 10, 8, 8, 0,
+                                  tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            _, data = self.request('/v1/turn', b'\1' * 16000)
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertEqual(reply['model'], 'local/intent')
         self.assertIn('Außentemperatur 12 Grad, bedeckt.', reply['text'])
