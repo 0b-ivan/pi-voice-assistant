@@ -29,6 +29,7 @@ fi
 
 install -d -m 0755 /opt/pi-voice-assistant/src
 install -m 0644   "${repo_root}/src/display.py"   /opt/pi-voice-assistant/src/display.py
+install -m 0644   "${repo_root}/src/hotspot_config.py" /opt/pi-voice-assistant/src/hotspot_config.py
 
 if [[ ! -x /opt/pi-voice-assistant/.venv-display/bin/python ]]; then
   python3 -m venv     --system-site-packages     /opt/pi-voice-assistant/.venv-display
