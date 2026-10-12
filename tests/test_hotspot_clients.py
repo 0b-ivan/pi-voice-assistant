@@ -55,6 +55,21 @@ Station 12:34:56:78:9A:BC (on wlan0)
             path.write_text(json.dumps(payload))
             self.assertEqual(ctl.read_clients(path, now=now+1)["clients"], [])
 
+    def test_dependency_bootstrap_is_bounded_and_used_by_both_installers(self):
+        import subprocess
+        root = Path(__file__).resolve().parents[1]
+        helper = root / "scripts/ensure-system-packages.sh"
+        result = subprocess.run(["bash", "-n", str(helper)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("scripts/install-voice-service.sh", "scripts/install-display.sh"):
+            script = (root / name).read_text()
+            self.assertIn('scripts/ensure-system-packages.sh', script)
+            self.assertIn('python3-qrcode iw', script)
+        contents = helper.read_text()
+        self.assertIn("--no-install-recommends", contents)
+        self.assertIn("if (( ${#missing[@]} ))", contents)
+        self.assertNotIn("apt-get upgrade", contents)
+
     def test_signal_levels_offline_lan_and_ap_have_distinct_pictograms(self):
         self.assertEqual(display.network_view(True, {"wifi_dbm": -54})[0:2], ("wifi", ""))
         self.assertEqual(display.network_view(True, {"wifi_dbm": -54})[3], 4)
