@@ -23,6 +23,7 @@ Unter **Netzwerk → Access Point** liegen folgende Aktionen:
 |---|---|
 | AP starten | Startet den Setup-AP bei Bedarf. Wenn er schon läuft, bleibt das bisherige Passwort gültig. Es erscheint der WLAN-QR-Code. |
 | Passwort anzeigen | Zeigt die Zugangsdaten eines **laufenden** APs, ohne ihn einzuschalten. |
+| Verbundene Geräte | Zeigt die **aktuell mit dem AP assoziierten Clients**, MAC-Adresse und WLAN-Signal in dBm; ▲/▼ scrollen, B zurück. |
 | Passwort erneuern | Stoppt und startet den AP mit **neuem** zufälligen WPA2-Code. Bereits verbundene Handys werden getrennt und müssen den **neuen** QR-Code scannen. |
 | AP beenden | Beendet Portal/AP und entfernt nur deren temporäre Konfiguration. |
 | Zurück | Zurück zum Netzwerkmenü; ein aktiver AP läuft weiter. |
@@ -48,21 +49,32 @@ die temporäre Displaydatei entfernt. Es gehört **nicht** ins öffentliche
 
 ## Voraussetzung und Installation
 
-Der schon geprüfte Stack benötigt NetworkManager, nftables und dnsmasq.
-Der QR-Encoder `python3-qrcode` ist ein kleines reines Python-Paket aus
-Debian Trixie; das venv `/opt/pi-voice-assistant/.venv-display` verwendet
-`--system-site-packages`. **Bei einer bereits eingerichteten Anzeige**
-einmalig vor dem PR-Deployment über Ethernet ausführen:
+Der Stack benötigt NetworkManager, nftables und dnsmasq. Für
+QR-Code und die **echte Client-Liste** werden `python3-qrcode` und `iw`
+genutzt. **Beide Pakete installiert jetzt der normale Git-Commit-Installer
+automatisch**, sofern sie fehlen – ebenso der Display-Erstinstaller.
+Das gemeinsame `scripts/ensure-system-packages.sh` prüft den Paketstatus
+und führt `apt-get update`/`apt-get install` nur für fehlende Pakete aus.
+`iw` liest mit `iw dev wlan0 station dump` die vom Treiber tatsächlich
+assoziierten Geräte statt unzuverlässiger DHCP-/ARP-Altlasten. Der Root-AP-
+Dienst schreibt alle zwei Sekunden ausschließlich die MAC-Adressen und
+Signalwerte in eine private RAM-Datei `/run/proximus-setup/clients.json`.
+Beim Stoppen wird sie gelöscht, stale Snapshots werden ignoriert.
+**Keine dauerhafte Speicherung oder LLM-/Serverübertragung.**
 
-```bash
-sudo apt-get update
-sudo apt-get install -y python3-qrcode
-/opt/pi-voice-assistant/.venv-display/bin/python -c 'import qrcode; print("QR bereit")'
-```
+Der Sprachdienst und das PiTFT lesen diese Datei ausschließlich lokal.
+Der normale Statusbildschirm zeigt WLAN-Signalbalken bzw. ein deutliches
+**AP-Symbol mit Clientzahl** in Violett. **Neue Verbindungen** lösen eine
+**acht Sekunden sichtbare Display-Benachrichtigung** aus (`AP + NEU`).
+Im Access-Point-Menü erscheint stattdessen `AP: NEUER CLIENT`. Dies ist eine
+**Bildschirmmeldung**, keine Cloud-Push-Nachricht oder Sprachausgabe.
+Sie funktioniert offline, auch ohne Ethernet.
 
-Bei Neuinstallation erledigt `scripts/install-display.sh` dies automatisch.
-Fehlt `qrcode`, zeigt die Ansicht einen Fehlertext und man kann mit E
-immer noch das Passwort als Text anzeigen; der Displaydienst stürzt nicht ab.
+Das Display-venv nutzt `--system-site-packages`. Die Installer überprüfen
+den QR-Import im System-Python und – sofern das Display-venv bereits existiert –
+auch dort, bevor sie laufende Dienste ersetzen. Ist das bestehende venv
+inkompatibel, stoppt der Installer mit einer gezielten Fehlermeldung statt
+einen halbfertigen Zustand zu hinterlassen.
 
 Außerdem prüfen:
 
