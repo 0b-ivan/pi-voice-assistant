@@ -1555,8 +1555,10 @@ class VoiceController:
                 items = [(ssid, f"{ssid} {signal}%{' ✓' if ssid in names else ''}")
                          for ssid, signal in aps]
             else:
-                names = {p['ssid']: p['uuid'] for p in profiles}
-                items = [(p['ssid'], p['name'] + ' ✓') for p in profiles]
+                # Several saved profiles may share an SSID (guest/priority/etc.).
+                # Address them by UUID so the selected row is unambiguous.
+                names = {p['uuid']: p['uuid'] for p in profiles}
+                items = [(p['uuid'], p['name'] + ' ✓') for p in profiles]
             if self.picker is not picker:
                 return
             picker['items'] = items
