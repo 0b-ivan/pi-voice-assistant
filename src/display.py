@@ -13,6 +13,7 @@ import time
 from alarms import ALARMS
 import menu
 import hotspot_config as ap_config
+import hotspot_control
 from mood import EMOTIONS as MOODS
 from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
@@ -1399,21 +1400,63 @@ def render_info(display, rows):
     display.image(image, 180)
 
 
+def ap_screen_info(snapshot, now=None):
+    """Private local station snapshot -> tiny display-only status, no MAC logs."""
+    t = time.time() if now is None else now
+    if snapshot is None:
+        return None
+    joined = snapshot.get('last_joined_at')
+    return dict(count=len(snapshot['clients']),
+                joined=(isinstance(joined, (float, int)) and 0 <= t - joined < 8))
+
+
+def _network_pictogram(draw, x, y, kind, strength, color):
+    """Four miniature signal bars or a radiating AP glyph in the UI palette."""
+    if kind == 'ap':
+        draw.ellipse((x+6, y+6, x+10, y+10), fill=color)
+        draw.arc((x+1, y+1, x+15, y+15), 210, 330, fill=color, width=2)
+        draw.arc((x-2, y-2, x+18, y+18), 210, 330, fill=color, width=1)
+    elif kind == 'wifi':
+        for n in range(4):
+            xx = x + 3 + 4*n
+            top = y + 12 - 3*n
+            draw.rectangle((xx, top, xx+2, y+12),
+                           fill=color if n < strength else (50, 55, 58))
+    elif kind == 'lan':
+        draw.rectangle((x+2, y+4, x+16, y+12), outline=color, width=1)
+        for xx in (6, 10, 14):
+            draw.line((x+xx, y+4, x+xx, y+7), fill=color)
+    else:
+        draw.line((x+2, y+3, x+16, y+13), fill=color, width=2)
+        draw.arc((x+1, y, x+17, y+17), 220, 320, fill=color, width=1)
+
+
+def network_view(network, info):
+    """Single selection point for WLAN strength / isolated AP / LAN / offline."""
+    ap = info.get('ap')
+    if ap is not None:
+        return ('ap', ('AP + NEU' if ap['joined'] else f"AP {ap['count']}"),
+                (180, 130, 255), 4)
+    if info.get('wlan') == 'off':
+        return ('off', 'WLAN AUS', (140, 145, 150), 0)
+    if info.get('wifi_dbm') is not None and network:
+        level = info['wifi_dbm']
+        bars = 4 if level >= -55 else 3 if level >= -67 else 2 if level >= -78 else 1
+        color = (120, 220, 160) if bars >= 3 else (255, 180, 0) if bars == 2 else (255, 90, 90)
+        return ('wifi', '', color, bars)
+    if network:
+        return ('lan', 'LAN', (120, 220, 160), 0)
+    return ('off', 'OFFLINE', (170, 175, 180), 0)
+
+
 def _draw_footer(draw, network, info):
     draw.line((12,197,228,197), fill=(65,65,65))
     server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
     draw.text((12, 209), server_text, font=font(13), fill=server_color)
-    if info.get('wlan') == 'off':
-        link, link_color = 'WLAN AUS', (150, 150, 150)
-    elif not network:
-        link, link_color = 'OFFLINE', (180, 180, 180)
-    elif info.get('wifi_dbm') is not None:
-        dbm = info['wifi_dbm']
-        link = f'WLAN {dbm}'
-        link_color = (120,220,160) if dbm >= -67 else (255,180,0) if dbm >= -78 else (255,90,90)
-    else:
-        link, link_color = 'NET OK', (120, 220, 160)
-    draw.text((100, 209), link, font=font(13), fill=link_color)
+    kind, text, color, bars = network_view(network, info)
+    _network_pictogram(draw, 100, 207, kind, bars, color)
+    if text:
+        draw.text((121, 209), text, font=font(11), fill=color)
     if info.get('clock'):
         _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
 
