@@ -1,0 +1,10 @@
+// The physical PiTFT menu may scan Wi-Fi and activate EXISTING profiles.
+// No permission to create, edit or delete system-wide connections (hotspot
+// provisioning must use a separately scoped helper in the next phase).
+polkit.addRule(function(action, subject) {
+    if (subject.user == "obivan" &&
+        (action.id == "org.freedesktop.NetworkManager.network-control" ||
+         action.id == "org.freedesktop.NetworkManager.wifi.scan")) {
+        return polkit.Result.YES;
+    }
+});
