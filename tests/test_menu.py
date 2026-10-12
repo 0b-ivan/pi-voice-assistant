@@ -177,7 +177,8 @@ class ControllerMenuTests(unittest.TestCase):
         with patch('ptt.hotspot_control.is_active', return_value=True), \
              patch('ptt.hotspot_control.read_info', return_value={
                  'ssid': 'Proximus-Setup', 'password': 'random-setup-1234',
-                 'url': 'http://192.168.77.1/'}), \
+                 'url': 'http://192.168.77.1/',
+                 'expires_at': time.time() + 900}), \
              patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()) as work, \
              patch('ptt.people.write_view') as show:
             self.press(down='E')
@@ -199,7 +200,8 @@ class ControllerMenuTests(unittest.TestCase):
         with patch('ptt.hotspot_control.is_active', return_value=True), \
              patch('ptt.hotspot_control.read_info', return_value={
                  'ssid': 'Proximus-Setup', 'password': 'testPassword12345',
-                 'url': 'http://192.168.77.1/'}), \
+                 'url': 'http://192.168.77.1/',
+                 'expires_at': time.time() + 900}), \
              patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
             self.press(down='E')
         self.assertEqual(self.c.picker['page'], 'wifi_qr')
@@ -231,7 +233,8 @@ class ControllerMenuTests(unittest.TestCase):
              patch('ptt.hotspot_control.control', return_value=True) as ctl, \
              patch('ptt.hotspot_control.read_info', return_value={
                  'ssid': 'Proximus-Setup', 'password': 'new-password123',
-                 'url': 'http://192.168.77.1/'}), \
+                 'url': 'http://192.168.77.1/',
+                 'expires_at': time.time() + 900}), \
              patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
             self.press(down='E')
         self.assertEqual([x.args[0] for x in ctl.call_args_list], ['stop', 'start'])
@@ -246,6 +249,38 @@ class ControllerMenuTests(unittest.TestCase):
              patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
             self.press(down='E')
         private.assert_not_called()
+
+    def test_setup_screen_expiration_unlinks_secret_when_ap_times_out(self):
+        from dataclasses import replace
+        self.c.config = replace(self.c.config, runtime_dir=Path(self.tmp.name))
+        self.c.picker = dict(action='wifi_setup', title='HOTSPOT BEREIT',
+                             page='wifi_qr', ssid='Proximus-Setup',
+                             password='ExpiredCode1234', expires_at=time.time() + 10,
+                             index=0, items=[('pw', 'Code: ExpiredCode1234')])
+        self.c._publish_picker()
+        private = self.c.config.runtime_dir / 'display-people.json'
+        self.assertTrue(private.exists())
+        with patch('ptt.hotspot_control.read_info', return_value=None):
+            self.c._check_hotspot_picker(10.0)
+        self.assertIsNone(self.c.picker)
+        self.assertFalse(private.exists())
+        self.assertNotIn('ExpiredCode1234', self.status_path.read_text())
+        self.assertNotIn('ExpiredCode1234', self.output.getvalue())
+
+    def test_setup_screen_checks_live_password_only_once_per_second(self):
+        self.c.picker = dict(action='wifi_setup', title='HOTSPOT BEREIT',
+                             page='wifi_qr', ssid='Proximus-Setup',
+                             password='LiveCode1234567', expires_at=1234,
+                             index=0, items=[])
+        with patch('ptt.hotspot_control.read_info', return_value={
+                'password': 'LiveCode1234567', 'expires_at': 1234}) as read:
+            self.c._check_hotspot_picker(2.0)
+            self.c._check_hotspot_picker(2.2)
+            self.c._check_hotspot_picker(2.99)
+            read.assert_called_once()
+            self.c._check_hotspot_picker(3.0)
+            self.assertEqual(read.call_count, 2)
+        self.assertIsNotNone(self.c.picker)
 
     def test_hotspot_menu_refuses_start_if_wlan_disabled(self):
         self.c.wlan_on = False
