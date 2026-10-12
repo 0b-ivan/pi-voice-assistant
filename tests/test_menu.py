@@ -123,6 +123,26 @@ class ControllerMenuTests(unittest.TestCase):
         self.c.menu.back(self.now)
         self.assertEqual(self.c.menu.group, None)
 
+    def test_access_point_submenu_navigation_and_back(self):
+        menu = Menu()
+        menu.select('hotspot')
+        self.assertEqual(menu.group, 'network')
+        self.assertEqual(menu.confirm(1), None)
+        self.assertEqual((menu.group, menu.items[menu.index]), ('hotspot', 'wifi_hotspot_start'))
+        menu.back(2)
+        self.assertEqual((menu.group, menu.items[menu.index]), ('network', 'hotspot'))
+        self.assertEqual(menu.confirm(3), None)
+        self.assertEqual(menu.group, 'hotspot')
+        menu.index = len(menu.items) - 1
+        self.assertIsNone(menu.confirm(4))
+        self.assertEqual(menu.group, 'network')
+        menu.back(5)
+        self.assertIsNone(menu.group)
+        self.assertEqual(menu.items[menu.index], 'network')
+        for name in ('people', 'persona'):
+            menu.select(name)
+            self.assertEqual(menu.confirm(6), name)  # group also names an action
+
     def test_wifi_scan_does_not_block_and_only_saved_can_connect(self):
         with patch.object(self.c.wifi, 'available', return_value=True), \
              patch.object(self.c.wifi, 'saved', return_value=[
@@ -151,6 +171,56 @@ class ControllerMenuTests(unittest.TestCase):
         work.assert_called_once()
         self.assertEqual(self.c.picker['action'], 'wifi_setup')
         self.assertNotIn('menu_index', self.status())
+
+    def test_show_running_hotspot_displays_password_without_logging(self):
+        self.c.menu.select('wifi_hotspot_show')
+        with patch('ptt.hotspot_control.is_active', return_value=True), \
+             patch('ptt.hotspot_control.read_info', return_value={
+                 'ssid': 'Proximus-Setup', 'password': 'random-setup-1234',
+                 'url': 'http://192.168.77.1/'}), \
+             patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()) as work, \
+             patch('ptt.people.write_view') as show:
+            self.press(down='E')
+        work.assert_called_once()
+        self.assertEqual(self.c.picker['title'], 'HOTSPOT BEREIT')
+        self.assertEqual(self.c.picker['index'], 1)
+        self.assertIn('random-setup-1234', self.c.picker['items'][1][1])
+        self.assertIn('Code: random-setup-1234',
+                      show.call_args.args[1]['items'][1])
+        self.assertNotIn('random-setup-1234', self.status_path.read_text())
+        self.assertNotIn('random-setup-1234', self.output.getvalue())
+
+    def test_show_off_hotspot_does_not_start_unit(self):
+        self.c.menu.select('wifi_hotspot_show')
+        with patch('ptt.hotspot_control.is_active', return_value=False), \
+             patch('ptt.hotspot_control.control') as ctl, \
+             patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
+            self.press(down='E')
+        ctl.assert_not_called()
+        self.assertEqual(self.c.picker['title'], 'ACCESS POINT AUS')
+        self.assertIn('Erst AP starten', self.c.picker['items'][0][1])
+
+    def test_rotate_hotspot_stops_then_starts_before_showing_code(self):
+        self.c.menu.select('wifi_hotspot_rotate')
+        with patch('ptt.hotspot_control.is_active', return_value=True), \
+             patch('ptt.hotspot_control.control', return_value=True) as ctl, \
+             patch('ptt.hotspot_control.read_info', return_value={
+                 'ssid': 'Proximus-Setup', 'password': 'new-password123',
+                 'url': 'http://192.168.77.1/'}), \
+             patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
+            self.press(down='E')
+        self.assertEqual([x.args[0] for x in ctl.call_args_list], ['stop', 'start'])
+        self.assertEqual(self.c.picker['index'], 1)
+        self.assertIn('new-password123', self.c.picker['items'][1][1])
+        self.assertNotIn('new-password123', self.output.getvalue())
+
+    def test_show_only_rejects_stopped_service_and_does_not_reuse_old_key(self):
+        self.c.menu.select('wifi_hotspot_show')
+        with patch('ptt.hotspot_control.is_active', return_value=False), \
+             patch('ptt.hotspot_control.read_info') as private, \
+             patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
+            self.press(down='E')
+        private.assert_not_called()
 
     def test_hotspot_menu_refuses_start_if_wlan_disabled(self):
         self.c.wlan_on = False
