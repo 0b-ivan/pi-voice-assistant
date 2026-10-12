@@ -15,7 +15,8 @@ GROUPS = {
     'device': ('alarms', 'led', 'screen', 'back'),
     'network': ('wifi_scan', 'wifi_saved', 'hotspot', 'wlan', 'back'),
     'hotspot': ('wifi_hotspot_start', 'wifi_hotspot_show',
-                'wifi_hotspot_rotate', 'wifi_hotspot_stop', 'back'),
+                'wifi_hotspot_clients', 'wifi_hotspot_rotate',
+                'wifi_hotspot_stop', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
 TOP = ('voice', 'persona', 'people', 'audio', 'device', 'network', 'system', 'close')
@@ -38,6 +39,7 @@ LABELS = {
     'wifi_saved': 'Gespeicherte WLANs',
     'wifi_hotspot_start': 'AP starten', 'wifi_hotspot_show': 'Passwort anzeigen',
     'wifi_hotspot_rotate': 'Passwort erneuern', 'wifi_hotspot_stop': 'AP beenden',
+    'wifi_hotspot_clients': 'Verbundene Geräte',
     'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
 }
@@ -49,7 +51,8 @@ CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'fact
            'people', 'bt_scan',
            'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved',
            'wifi_hotspot_start', 'wifi_hotspot_show',
-           'wifi_hotspot_rotate', 'wifi_hotspot_stop')
+           'wifi_hotspot_rotate', 'wifi_hotspot_stop',
+           'wifi_hotspot_clients')
 TIMEOUT_SECONDS = 15.0
 
 
