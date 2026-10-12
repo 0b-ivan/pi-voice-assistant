@@ -154,10 +154,6 @@ class Provisioning:
         for tool in ("nmcli", "nft", "dnsmasq"):
             if shutil.which(tool) is None:
                 raise SetupError("Missing dependency: " + tool)
-        if self.directory != KEY_DIR:
-            # Tests can provide a temporary target directory; production uses
-            # the NetworkManager system-connections keyfile directory.
-            pass
         if not self.directory.is_dir():
             raise SetupError("NetworkManager profile directory missing")
         # The PiTFT control explicitly starts this service; do not enable the
@@ -260,10 +256,10 @@ button{background:#24666b;cursor:pointer}small{color:#9bb9be}
 <p role="status">""" + html.escape(status) + """</p>
 <form method="post" action="/connect">
 <input type="hidden" name="token" value='""" + html.escape(self.csrf, quote=True) + """'>
-<label>Gefundenes Netzwerk<select id="list" onchange="document.getElementById('ssid').value=this.value">
+<label>Gefundenes Netzwerk<select name="ssid">
 <option value="">Netzwerk auswählen</option>""" + options + """</select></label>
-<label>SSID (auch versteckte Netze)<input name="ssid" id="ssid" autocomplete="off"
-required maxlength="32"></label>
+<label>SSID manuell (optional)<input name="manual_ssid" autocomplete="off"
+maxlength="32" placeholder="Nur für versteckte Netze"></label>
 <label>WLAN-Passwort<input type="password" name="password"
 autocomplete="new-password" required minlength="8" maxlength="63"></label>
 <button """ + disabled + """>Verbinden</button></form>
@@ -324,12 +320,17 @@ Bei Erfolg wird der Hotspot beendet. Bei Fehler erscheint er erneut.</small>
                     fields = urllib.parse.parse_qs(
                         self.rfile.read(size).decode("utf-8"), strict_parsing=True)
                     if not all(len(fields.get(key, [])) == 1
-                               for key in ("ssid", "password", "token")):
+                               for key in ("password", "token")):
+                        raise ValueError()
+                    if any(len(fields.get(key, [])) > 1
+                           for key in ("ssid", "manual_ssid")):
                         raise ValueError()
                 except (ValueError, UnicodeDecodeError):
                     self.response(400, "Ungültige Anfrage")
                     return
-                if not app.try_connect(fields["ssid"][0], fields["password"][0],
+                ssid = (fields.get("manual_ssid", [""])[0]
+                        or fields.get("ssid", [""])[0])
+                if not app.try_connect(ssid, fields["password"][0],
                                        fields["token"][0]):
                     self.response(403, "Ungültige Auswahl oder Sitzungsfreigabe")
                     return
