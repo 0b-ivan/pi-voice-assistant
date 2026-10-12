@@ -9,6 +9,13 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class InstallerTests(unittest.TestCase):
+    def test_aux_setup_runs_before_voice_stop_and_is_installed_for_manual_use(self):
+        installer = (ROOT / 'scripts' / 'install-voice-service.sh').read_text()
+        helper = '/usr/bin/python3 "${repo_root}/scripts/configure-wm8960.py" --if-present'
+        self.assertLess(installer.index(helper), installer.index('systemctl stop pi-ptt.service'))
+        self.assertIn('/opt/pi-voice-assistant/scripts/configure-wm8960.py', installer)
+        self.assertIn('python3-qrcode iw alsa-utils', installer)
+
     def test_voice_service_installs_every_imported_local_module(self):
         """A module missing from the installer breaks ptt.py at import time."""
         installer = (ROOT / 'scripts' / 'install-voice-service.sh').read_text()

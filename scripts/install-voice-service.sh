@@ -21,7 +21,7 @@ if ! getent group i2c >/dev/null || ! /usr/bin/python3 -c 'import smbus'; then
 fi
 # Required for the physical AP QR screen and associated-client monitor.
 # Perform apt only for missing packages, before stopping a healthy service.
-bash "${repo_root}/scripts/ensure-system-packages.sh" python3-qrcode iw
+bash "${repo_root}/scripts/ensure-system-packages.sh" python3-qrcode iw alsa-utils
 if ! /usr/bin/python3 -c 'import qrcode' >/dev/null 2>&1; then
   echo "QR module unavailable to system Python despite Debian package." >&2
   exit 1
@@ -31,6 +31,10 @@ if [[ -x /opt/pi-voice-assistant/.venv-display/bin/python ]] &&
   echo "Display venv cannot import qrcode. Reinstall display venv with --system-site-packages." >&2
   exit 1
 fi
+
+# Enable the analog jack and persist its mixer state before stopping a healthy
+# service. Preserve existing speaker, capture and digital playback levels.
+/usr/bin/python3 "${repo_root}/scripts/configure-wm8960.py" --if-present
 
 service_was_active=0
 if systemctl is-active --quiet pi-ptt.service; then
@@ -110,6 +114,7 @@ install -m 0644 "${repo_root}/src/journeys.py" /opt/pi-voice-assistant/src/journ
 install -m 0644 "${repo_root}/src/transit.py" /opt/pi-voice-assistant/src/transit.py
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
+install -m 0755 "${repo_root}/scripts/configure-wm8960.py" /opt/pi-voice-assistant/scripts/configure-wm8960.py
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
 # On-demand only: never enable or start the provisioning AP at install time.
 install -m 0644 "${repo_root}/deploy/proximus-setup.service" /etc/systemd/system/proximus-setup.service
