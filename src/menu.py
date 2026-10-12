@@ -13,16 +13,19 @@ GROUPS = {
     'people': ('people', 'enroll', 'refine', 'facts', 'wake_rec', 'back'),
     'audio': ('bt_speaker', 'bt_connect', 'bt_scan', 'bt_forget', 'back'),
     'device': ('alarms', 'led', 'screen', 'back'),
-    'network': ('wifi_scan', 'wifi_saved', 'wifi_hotspot_start',
-                'wifi_hotspot_stop', 'wlan', 'back'),
+    'network': ('wifi_scan', 'wifi_saved', 'hotspot', 'wlan', 'back'),
+    'hotspot': ('wifi_hotspot_start', 'wifi_hotspot_show',
+                'wifi_hotspot_rotate', 'wifi_hotspot_stop', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
 TOP = ('voice', 'persona', 'people', 'audio', 'device', 'network', 'system', 'close')
+# A single nested sub-menu keeps AP functions separate from normal Wi-Fi.
+PARENTS = {'hotspot': 'network'}
 # Every selectable action (for publishing and tests).
 ITEMS = tuple(item for group in GROUPS.values() for item in group if item != 'back') + ('close',)
 LABELS = {
     'voice': 'Sprache', 'persona': 'Persönlichkeit', 'people': 'Personen', 'audio': 'Audio',
-    'device': 'Gerät', 'network': 'Netzwerk',
+    'device': 'Gerät', 'network': 'Netzwerk', 'hotspot': 'Access Point',
     'system': 'System', 'bt_speaker': 'BT-Lautsprecher', 'bt_scan': 'Lautsprecher suchen',
     'bt_forget': 'Lautsprecher entfernen', 'bt_connect': 'Lautsprecher verbinden',
     'close': 'Schließen', 'back': 'Zurück',
@@ -33,7 +36,8 @@ LABELS = {
     'facts': 'Fakten kennenlernen', 'wake_rec': 'Wakeword aufnehmen',
     'wlan': 'WLAN', 'wifi_scan': 'WLAN suchen',
     'wifi_saved': 'Gespeicherte WLANs',
-    'wifi_hotspot_start': 'Hotspot / Passwort', 'wifi_hotspot_stop': 'Hotspot beenden',
+    'wifi_hotspot_start': 'AP starten', 'wifi_hotspot_show': 'Passwort anzeigen',
+    'wifi_hotspot_rotate': 'Passwort erneuern', 'wifi_hotspot_stop': 'AP beenden',
     'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
 }
@@ -44,7 +48,8 @@ LABELS_IN_GROUP = {'people': 'Bekannte Personen', 'persona': 'Sprechstil'}
 CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'facts', 'wake_rec',
            'people', 'bt_scan',
            'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved',
-           'wifi_hotspot_start', 'wifi_hotspot_stop')
+           'wifi_hotspot_start', 'wifi_hotspot_show',
+           'wifi_hotspot_rotate', 'wifi_hotspot_stop')
 TIMEOUT_SECONDS = 15.0
 
 
@@ -107,11 +112,13 @@ class Menu:
         self._touch(now)
 
     def back(self, now=0.0):
-        """B: info page -> list, group -> top level, top level -> closed.
-        Returns True when the menu closed."""
+        """B: info -> list, sub-menu -> parent, group -> top, top -> closed."""
         self._touch(now)
         if self.page == 'info':
             self.page = 'list'
+        elif self.group in PARENTS:
+            parent = PARENTS[self.group]
+            self.group, self.index = parent, GROUPS[parent].index(self.group)
         elif self.group is not None:
             self.index, self.group = TOP.index(self.group), None
         else:
@@ -128,11 +135,11 @@ class Menu:
             self.page = 'list'
             return None
         item = self.items[self.index]
-        if self.group is None and item in GROUPS:
+        if item in GROUPS and (self.group is None or item in self.items):
             self.group, self.index = item, 0
             return None
         if item == 'back':
-            self.index, self.group = TOP.index(self.group), None
+            self.back(now)
             return None
         if item == 'info':
             self.page = 'info'
