@@ -24,16 +24,17 @@ import urllib.parse
 import uuid
 
 from network_control import Wifi, WifiError
+import hotspot_config as ap_config
 
-IFACE = "wlan0"
-AP_NAME = "Proximus-Setup"
-AP_IP = "192.168.77.1"
-AP_URL = "http://" + AP_IP + "/"
-MAX_AGE = 15 * 60
+IFACE = ap_config.IFACE
+AP_NAME = ap_config.SSID
+AP_IP = ap_config.ADDRESS
+AP_URL = ap_config.PORTAL_URL
+MAX_AGE = ap_config.SESSION_SECONDS
 MAX_ATTEMPTS = 5
 MARKER = "# Created by Proximus setup; root-managed, do not edit.\n"
 KEY_DIR = Path("/etc/NetworkManager/system-connections")
-INFO_FILE = Path("/run/proximus-setup/info")
+INFO_FILE = ap_config.INFO_FILE
 TABLE = "proximus_setup"
 NFT_RULES = """table inet proximus_setup {
  chain input {
@@ -47,7 +48,7 @@ NFT_RULES = """table inet proximus_setup {
   iifname "wlan0" drop
  }
 }
-"""
+""".replace('iifname "wlan0"', 'iifname "' + IFACE + '"')
 
 
 class SetupError(RuntimeError):
@@ -76,7 +77,7 @@ def keyfile_text(ssid, password, identity, ap=False):
     return (MARKER + "[connection]\n"
             + "id=" + ("proximus-setup" if ap else "Proximus: " + escape(ssid))
             + "\nuuid=" + str(identity)
-            + "\ntype=wifi\ninterface-name=wlan0\nautoconnect=false\n"
+            + "\ntype=wifi\ninterface-name=" + IFACE + "\nautoconnect=false\n"
             + "\n[wifi]\nmode=" + mode + "\nssid=" + escape(ssid)
             + "\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=" + escape(password)
             + "\n\n[ipv4]\n" + ipv4 + "\n[ipv6]\nmethod=" + ipv6 + "\n")
@@ -149,6 +150,7 @@ class Provisioning:
         self.previous = None
         self.server = None
         self.pending = None
+        self.expires_at = None
         self.lock = threading.Lock()
 
     def setup(self):
@@ -171,8 +173,11 @@ class Provisioning:
             self.run(["nmcli", "connection", "load", str(self.ap_path)])
             self.run(["nmcli", "--wait", "20", "connection", "up", "uuid", self.ap_uuid,
                       "ifname", IFACE], timeout=25)
+            issued_at = time.time()
+            self.expires_at = issued_at + MAX_AGE
             private_write(self.info_path, json.dumps(
-                dict(ssid=AP_NAME, password=self.psk, url=AP_URL)), owner="obivan")
+                dict(ssid=AP_NAME, password=self.psk, url=AP_URL,
+                     issued_at=issued_at, expires_at=self.expires_at)), owner="obivan")
         except Exception:
             self.cleanup()
             raise
@@ -227,6 +232,7 @@ class Provisioning:
     def try_connect(self, ssid, password, token):
         with self.lock:
             if (self.busy or self.done or self.attempts >= MAX_ATTEMPTS
+                    or (self.expires_at is not None and time.time() >= self.expires_at)
                     or not hmac.compare_digest(token, self.csrf)):
                 return False
             if not network_name(ssid) or not password_ok(password):
@@ -346,7 +352,9 @@ Bei Erfolg wird der Hotspot beendet. Bei Fehler erscheint er erneut.</small>
 
         self.server = ThreadingHTTPServer((AP_IP, 80), Portal)
         self.server.daemon_threads = True
-        timer = threading.Timer(MAX_AGE, self.server.shutdown)
+        # The displayed expiry and real session timer use the same clock.
+        remaining = max(0.0, (self.expires_at or time.time()) - time.time())
+        timer = threading.Timer(remaining, self.server.shutdown)
         timer.daemon = True
         timer.start()
         try:
