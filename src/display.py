@@ -1108,6 +1108,16 @@ def read_people(path=None):
     items = [str(i)[:28] for i in data.get('items', []) if isinstance(i, str)][:14]
     details = data.get('details') if isinstance(data.get('details'), dict) else {}
     index = data.get('index') if isinstance(data.get('index'), int) else 0
+    if data.get('page') == 'wifi_qr':
+        # The QR payload is secret. Accept it only from the private local
+        # picker file, with the fixed setup SSID and a valid ASCII WPA2 key.
+        ssid, password = data.get('ssid'), data.get('password')
+        if (ssid != 'Proximus-Setup' or not isinstance(password, str)
+                or not 8 <= len(password) <= 63
+                or any(not (33 <= ord(ch) <= 126) for ch in password)):
+            return None
+        return dict(page='wifi_qr', ssid=ssid, password=password,
+                    title='WLAN VERBINDEN')
     return dict(page=data.get('page') if data.get('page') in ('list', 'actions', 'details')
                 else 'list', index=index, items=items,
                 person=str(data.get('person') or '')[:28], details=details,
@@ -1115,8 +1125,59 @@ def read_people(path=None):
                 title=str(data.get('title') or '')[:16])
 
 
+def wifi_qr_payload(ssid, password):
+    """Standard Wi-Fi QR code: scan with Android/iOS camera to join the AP."""
+    def escaped(value):
+        return ''.join('\\' + ch if ch in '\\;,:"' else ch for ch in value)
+    return 'WIFI:T:WPA;S:' + escaped(ssid) + ';P:' + escaped(password) + ';;'
+
+
+def render_wifi_qr(display, ssid, password):
+    """High contrast pixel-perfect QR for the 240x240 ST7789 display."""
+    from PIL import Image, ImageDraw
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    draw.text((12, 7), 'PROXIMUS · WLAN', font=font(16), fill=(150, 240, 230))
+    draw.text((12, 26), ssid, font=font(12), fill=(215, 225, 225))
+    try:
+        import qrcode  # Debian python3-qrcode; optional, no network required
+        code = qrcode.QRCode(
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=1, border=4,
+        )
+        code.add_data(wifi_qr_payload(ssid, password), optimize=0)
+        code.make(fit=True)
+        matrix = code.get_matrix()  # includes the 4-module white quiet zone
+        modules = len(matrix)
+        scale = min(220 // modules, 165 // modules)
+        if scale < 2:
+            raise ValueError('Setup QR exceeds PiTFT resolution')
+        side = modules * scale
+        left = (WIDTH - side) // 2
+        top = 44 + (165 - side) // 2
+        draw.rectangle((left, top, left + side - 1, top + side - 1),
+                       fill='white')
+        for row, values in enumerate(matrix):
+            for col, dark in enumerate(values):
+                if dark:
+                    x, y = left + col * scale, top + row * scale
+                    draw.rectangle((x, y, x + scale - 1, y + scale - 1),
+                                   fill='black')
+    except (ImportError, AttributeError, ValueError):
+        draw.text((15, 94), 'QR nicht verfuegbar', font=font(15), fill='white')
+        draw.text((15, 116), 'E: Passwort anzeigen', font=font(12),
+                  fill=(185, 195, 200))
+    draw.line((12, 213, 228, 213), fill=(65, 65, 65))
+    draw.text((12, 218), 'E: Code  ·  B: zurueck', font=font(11),
+              fill=(145, 155, 165))
+    display.image(image, 180)
+
+
 def render_people(display, view, info=None):
-    """Known people, a person's actions, or their details."""
+    """Known people, a person's actions, their details, or setup QR."""
+    if view.get('page') == 'wifi_qr':
+        render_wifi_qr(display, view['ssid'], view['password'])
+        return
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
