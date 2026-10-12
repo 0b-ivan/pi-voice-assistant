@@ -1654,6 +1654,9 @@ class VoiceController:
     def _network_info_refresh(self, picker):
         """E refreshes in the NM worker, leaving GPIO/PTT responsive."""
         if self.wifi_busy:
+            picker['items'] = [('busy', 'Netzwerk belegt – E: neu')]
+            picker['index'] = 0
+            self._publish_picker()
             return
         picker['items'] = [('loading', 'Lade Netzwerkdaten...')]
         picker['index'] = 0
