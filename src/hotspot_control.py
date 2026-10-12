@@ -10,12 +10,13 @@ import stat
 from pathlib import Path
 import subprocess
 import time
+import hotspot_config as ap_config
 
-UNIT = "proximus-setup.service"
-INFO_FILE = Path("/run/proximus-setup/info")
-SSID = "Proximus-Setup"
-PORTAL = "http://192.168.77.1/"
-MAX_INFO_AGE = 15 * 60 + 30
+UNIT = ap_config.UNIT
+INFO_FILE = ap_config.INFO_FILE
+SSID = ap_config.SSID
+PORTAL = ap_config.PORTAL_URL
+MAX_INFO_AGE = ap_config.SESSION_SECONDS + 30
 
 
 class HotspotError(RuntimeError):
@@ -68,8 +69,16 @@ def read_info(path=INFO_FILE, now=None):
     if not isinstance(info, dict):
         return None
     ssid, password, portal = info.get("ssid"), info.get("password"), info.get("url")
+    issued_at, expires_at = info.get("issued_at"), info.get("expires_at")
+    timestamp = time.time() if now is None else now
     if ssid != SSID or portal != PORTAL or not isinstance(password, str):
         return None
     if not 8 <= len(password) <= 63 or any(not (33 <= ord(c) <= 126) for c in password):
         return None
-    return {"ssid": ssid, "password": password, "url": portal}
+    if (type(issued_at) not in (int, float) or
+            issued_at > timestamp + 60 or issued_at < timestamp - MAX_INFO_AGE or
+            not ap_config.live_expiration(expires_at, timestamp) or
+            not 0 < expires_at - issued_at <= ap_config.SESSION_SECONDS + 1):
+        return None
+    return {"ssid": ssid, "password": password, "url": portal,
+            "issued_at": issued_at, "expires_at": expires_at}
