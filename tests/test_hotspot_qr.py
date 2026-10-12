@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -20,7 +21,8 @@ class QRDisplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             p = Path(temp) / "view.json"
             valid = dict(page="wifi_qr", ssid="Proximus-Setup",
-                         password="TestPassword1234", title="WLAN VERBINDEN")
+                         password="TestPassword1234", title="WLAN VERBINDEN",
+                         expires_at=time.time() + 850)
             p.write_text(json.dumps(valid))
             self.assertEqual(display.read_people(p)['password'], "TestPassword1234")
             self.assertNotIn("TestPassword1234", display.read_status.__doc__ or "")
@@ -35,6 +37,21 @@ class QRDisplayTests(unittest.TestCase):
                 self.assertIsNone(display.read_people(p), (name, value))
             p.write_text("{broken")
             self.assertIsNone(display.read_people(p))
+
+    def test_both_qr_and_manual_views_expire_without_a_live_controller(self):
+        with tempfile.TemporaryDirectory() as temp:
+            p = Path(temp) / "view.json"
+            future = time.time() + 15
+            for page in ("wifi_qr", "list"):
+                view = {"page": page, "ssid": "Proximus-Setup",
+                        "password": "testPass12345678", "expires_at": future,
+                        "title": "HOTSPOT BEREIT",
+                        "items": ["Code: testPass12345678"], "index": 0}
+                p.write_text(json.dumps(view))
+                self.assertIsNotNone(display.read_people(p))
+                from unittest.mock import patch
+                with patch("display.time.time", return_value=future + 0.1):
+                    self.assertIsNone(display.read_people(p), page)
 
     def test_qr_renders_on_240px_display_without_remote_service(self):
         import qrcode
