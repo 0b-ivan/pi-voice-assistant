@@ -33,7 +33,7 @@ LABELS = {
     'facts': 'Fakten kennenlernen', 'wake_rec': 'Wakeword aufnehmen',
     'wlan': 'WLAN', 'wifi_scan': 'WLAN suchen',
     'wifi_saved': 'Gespeicherte WLANs',
-    'wifi_hotspot_start': 'Hotspot starten', 'wifi_hotspot_stop': 'Hotspot beenden',
+    'wifi_hotspot_start': 'Hotspot / Passwort', 'wifi_hotspot_stop': 'Hotspot beenden',
     'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
 }
