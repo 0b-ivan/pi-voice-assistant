@@ -33,7 +33,7 @@ MAX_AGE = 15 * 60
 MAX_ATTEMPTS = 5
 MARKER = "# Created by Proximus setup; root-managed, do not edit.\n"
 KEY_DIR = Path("/etc/NetworkManager/system-connections")
-INFO_FILE = Path("/run/pi-ptt/proximus-setup-info")
+INFO_FILE = Path("/run/proximus-setup/info")
 TABLE = "proximus_setup"
 NFT_RULES = """table inet proximus_setup {
  chain input {
