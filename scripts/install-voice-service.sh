@@ -50,6 +50,7 @@ install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
 install -m 0644 "${repo_root}/src/network_control.py" /opt/pi-voice-assistant/src/network_control.py
 install -m 0644 "${repo_root}/src/proximus_setup.py" /opt/pi-voice-assistant/src/proximus_setup.py
+install -m 0644 "${repo_root}/src/hotspot_control.py" /opt/pi-voice-assistant/src/hotspot_control.py
 install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
 install -m 0644 "${repo_root}/src/device_control.py" /opt/pi-voice-assistant/src/device_control.py
 install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
@@ -92,16 +93,17 @@ install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
 # On-demand only: never enable or start the provisioning AP at install time.
 install -m 0644 "${repo_root}/deploy/proximus-setup.service" /etc/systemd/system/proximus-setup.service
-install -o root -g root -m 0440 "${repo_root}/deploy/proximus-setup.sudoers" /etc/sudoers.d/proximus-setup
-if command -v visudo >/dev/null; then
-  visudo -cf /etc/sudoers.d/proximus-setup
-fi
+# Remove the obsolete sudo rule from pre-fix PR #110. The PTT unit retains
+# NoNewPrivileges=yes and now uses a narrowly scoped systemd D-Bus Polkit rule.
+rm -f /etc/sudoers.d/proximus-setup
 # Power off / reboot for the service user (empty battery, confirmed voice command).
 if [[ -d /etc/polkit-1/rules.d ]]; then
   install -m 0644 "${repo_root}/deploy/50-pi-voice-poweroff.rules" \
     /etc/polkit-1/rules.d/50-pi-voice-poweroff.rules
   install -m 0644 "${repo_root}/deploy/51-pi-voice-network.rules" \
     /etc/polkit-1/rules.d/51-pi-voice-network.rules
+  install -m 0644 "${repo_root}/deploy/52-pi-voice-hotspot.rules" \
+    /etc/polkit-1/rules.d/52-pi-voice-hotspot.rules
 fi
 
 if [[ ! -e /etc/pi-ptt.env ]]; then
