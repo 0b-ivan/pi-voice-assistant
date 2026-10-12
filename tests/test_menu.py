@@ -144,6 +144,31 @@ class ControllerMenuTests(unittest.TestCase):
                 connect.assert_not_called()
                 self.assertIn('Hotspot', self.c.wifi_notes[-1])
 
+    def test_hotspot_menu_starts_worker_without_root_in_voice_loop(self):
+        self.c.menu.select('wifi_hotspot_start')
+        with patch.object(self.c, '_wifi_job', return_value=True) as work:
+            self.press(down='E')
+        work.assert_called_once()
+        self.assertEqual(self.c.picker['action'], 'wifi_setup')
+        self.assertNotIn('menu_index', self.status())
+
+    def test_hotspot_menu_refuses_start_if_wlan_disabled(self):
+        self.c.wlan_on = False
+        self.c.menu.select('wifi_hotspot_start')
+        with patch.object(self.c, '_wifi_job') as work:
+            self.press(down='E')
+        work.assert_not_called()
+        self.assertIn('WLAN', self.c.wifi_notes[-1])
+
+    def test_hotspot_display_can_be_closed_without_stopping_service(self):
+        self.c.picker = dict(title='HOTSPOT BEREIT', action='wifi_setup',
+                             items=[('pw', 'Code: fake-only-test')], index=0)
+        self.c._publish_picker()
+        with patch.object(self.c, '_wifi_hotspot_item') as work:
+            self.press(down='B')
+        work.assert_not_called()
+        self.assertIsNone(self.c.picker)
+
     def test_b_closes_menu_without_cancelling(self):
         self.press(pitft='U')
         self.press(down='B')
