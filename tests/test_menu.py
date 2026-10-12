@@ -192,6 +192,8 @@ class ControllerMenuTests(unittest.TestCase):
         self.assertNotIn('random-setup-1234', self.output.getvalue())
 
     def test_hotspot_e_toggles_wifi_qr_and_text_b_clears_private_file(self):
+        from dataclasses import replace
+        self.c.config = replace(self.c.config, runtime_dir=Path(self.tmp.name))
         self.c.menu.select('wifi_hotspot_show')
         viewpath = self.c.config.runtime_dir / 'display-people.json'
         with patch('ptt.hotspot_control.is_active', return_value=True), \
