@@ -19,6 +19,19 @@ if ! getent group i2c >/dev/null || ! /usr/bin/python3 -c 'import smbus'; then
   echo "Install hardware dependency first: sudo apt install python3-smbus i2c-tools" >&2
   exit 1
 fi
+# Required for the physical AP QR screen and associated-client monitor.
+# Perform apt only for missing packages, before stopping a healthy service.
+bash "${repo_root}/scripts/ensure-system-packages.sh" python3-qrcode iw
+if ! /usr/bin/python3 -c 'import qrcode' >/dev/null 2>&1; then
+  echo "QR module unavailable to system Python despite Debian package." >&2
+  exit 1
+fi
+if [[ -x /opt/pi-voice-assistant/.venv-display/bin/python ]] &&
+   ! /opt/pi-voice-assistant/.venv-display/bin/python -c 'import qrcode' >/dev/null 2>&1; then
+  echo "Display venv cannot import qrcode. Reinstall display venv with --system-site-packages." >&2
+  exit 1
+fi
+
 service_was_active=0
 if systemctl is-active --quiet pi-ptt.service; then
   service_was_active=1
@@ -127,14 +140,6 @@ fi
 
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/pi-ptt.service /etc/systemd/system/proximus-setup.service
-
-# The normal commit installer updates existing display code but deliberately
-# does not apt install packages. Make a missing optional QR dependency visible.
-# The text-password screen remains available as an offline fallback.
-if [[ -x /opt/pi-voice-assistant/.venv-display/bin/python ]] && \
-   ! /opt/pi-voice-assistant/.venv-display/bin/python -c 'import qrcode' >/dev/null 2>&1; then
-  echo "WARNING: AP WLAN-QR cannot render yet. Install: sudo apt-get install python3-qrcode" >&2
-fi
 
 if [[ ${created_voice_env} -eq 1 ]]; then
   echo "Service left stopped until /etc/pi-voice-assistant.env is reviewed."
