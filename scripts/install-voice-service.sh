@@ -48,6 +48,7 @@ install -m 0644 "${repo_root}/src/enroll_phrases.py" /opt/pi-voice-assistant/src
 install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/alarm_audio.py
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
+install -m 0644 "${repo_root}/src/network_control.py" /opt/pi-voice-assistant/src/network_control.py
 install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
 install -m 0644 "${repo_root}/src/device_control.py" /opt/pi-voice-assistant/src/device_control.py
 install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
@@ -92,6 +93,8 @@ install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.
 if [[ -d /etc/polkit-1/rules.d ]]; then
   install -m 0644 "${repo_root}/deploy/50-pi-voice-poweroff.rules" \
     /etc/polkit-1/rules.d/50-pi-voice-poweroff.rules
+  install -m 0644 "${repo_root}/deploy/51-pi-voice-network.rules" \
+    /etc/polkit-1/rules.d/51-pi-voice-network.rules
 fi
 
 if [[ ! -e /etc/pi-ptt.env ]]; then
