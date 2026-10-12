@@ -66,7 +66,7 @@ def associated_stations(output):
                             if k in ("mac", "signal_dbm") and v is not None})
 
     for line in output.splitlines():
-        match = re.match(r"^Station ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})(?:\\s|$)", line)
+        match = re.match(r"^Station ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})(?:\s|$)", line)
         if match:
             finish()
             entry = {"mac": match.group(1).lower(), "authorized": None,
@@ -76,7 +76,7 @@ def associated_stations(output):
             if stripped.startswith("authorized:"):
                 entry["authorized"] = stripped.partition(":")[2].strip() == "yes"
             elif stripped.startswith("signal:"):
-                value = re.search(r"(-?\\d+)\\s*dBm", stripped)
+                value = re.search(r"(-?\d+)\s*dBm", stripped)
                 if value:
                     level = int(value.group(1))
                     if -110 <= level <= 0:
