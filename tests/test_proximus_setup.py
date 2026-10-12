@@ -145,6 +145,15 @@ class ProvisioningTests(unittest.TestCase):
             self.assertFalse(app.try_connect("hi\nthere", "validpassword", app.csrf))
         self.assertEqual(app.attempts, 0)
 
+    def test_expired_setup_rejects_new_requests_without_disrupting_radio(self):
+        self.app.expires_at = 1
+        with patch.object(self.app, "connect") as connect:
+            self.assertFalse(self.app.try_connect("Home", "valid-password-123",
+                                                  self.app.csrf))
+        connect.assert_not_called()
+        self.assertEqual(self.app.attempts, 0)
+        self.assertFalse(self.app.busy)
+
     def test_html_escapes_discovered_ssids_and_does_not_show_wpa_key(self):
         self.app.found = ['<img src=x onerror=evil()>', 'Würzburg']
         markup = self.app.page()
