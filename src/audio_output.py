@@ -1,9 +1,11 @@
-"""Where Proximus' voice goes: the WM8960 speaker or a Bluetooth speaker.
+"""Where Proximus' voice goes: WM8960 speaker/headphone or a Bluetooth speaker.
 
 pi-ptt sets the Bluetooth sink when a speaker connects (bluetooth.py); every
 playback asks current() at play time, so switching needs no restart. The
 ALSA device of a Bluetooth speaker comes from bluez-alsa
 (libasound2-plugin-bluez).
+The WM8960 speaker and analog jack share the same PCM device. The installer
+enables the Headphone mixer separately; no second ALSA device is needed.
 """
 import threading
 

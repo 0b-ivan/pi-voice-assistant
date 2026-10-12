@@ -80,6 +80,33 @@ sudo alsactl store wm8960soundcard  # erst nach erfolgreicher Hörprüfung
 
 Aufnahme und Wiedergabe sind nach Neustart bestätigt. Bei fehlendem Ton siehe [Troubleshooting](troubleshooting.md#audio).
 
+### Klinkenausgang / AUX
+
+Die 3,5-mm-Buchse des WM8960-HAT ist ein Kopfhörerausgang und kann einen
+AUX-Eingang speisen. Sie verwendet dasselbe PCM-Gerät wie die Lautsprecher,
+aber den eigenen analogen Regler `Headphone`. Der Dienstinstaller aktiviert
+beide PCM-Mixerwege und setzt stumme Headphone-Kanäle (Rohwert 0) auf einen
+leisen Startpegel von 89/127 (−32 dB). Bereits gesetzte Pegel bleiben erhalten.
+`alsactl store wm8960soundcard` speichert das Ergebnis für den nächsten Boot.
+Speaker-, Mikrofon- und digitale Playback-Pegel bleiben erhalten.
+
+Manuell einrichten und prüfen, bei leise eingestelltem angeschlossenem Gerät:
+
+```bash
+sudo systemctl stop pi-ptt.service
+sudo python3 scripts/configure-wm8960.py
+amixer -c wm8960soundcard sget Headphone
+speaker-test -D plughw:CARD=wm8960soundcard,DEV=0 -c 2 -t wav -l 1
+sudo systemctl start pi-ptt.service
+```
+
+Bei zu leisem AUX-Signal den analogen Pegel schrittweise in `alsamixer -c
+wm8960soundcard` erhöhen und nach der Hörprüfung erneut speichern.
+Die Lautstärketasten verändern `Playback` und wirken damit auf Lautsprecher
+und Klinke gemeinsam. Beide Ausgänge können parallel spielen; automatisches
+Stummschalten der Lautsprecher beim Einstecken ist hier nicht eingerichtet.
+Ein verbundener Bluetooth-Lautsprecher hat für Proximus weiterhin Vorrang.
+
 ## 4. Repository und Dienst installieren
 
 Falls noch kein Checkout vorhanden ist:
