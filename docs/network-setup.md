@@ -36,6 +36,10 @@ QR-Code und Textansicht (SSID, vollständiges Passwort, Portal-IP).
 Das Standardformat im QR-Code ist `WIFI:T:WPA;S:…;P:…;;`.
 Er wird **auf dem Pi lokal** als kontrastreicher QR-Code berechnet
 (4 Module weißer Rand); keine Netzwerkverbindung und kein Online-Dienst.
+Bei Ablauf der 15 Minuten oder manuellem/externem AP-Stopp wird die Anzeige
+automatisch entfernt: `pi-ptt` überprüft die private Sitzung höchstens
+einmal pro Sekunde, und das Display überprüft den Ablaufzeitpunkt unabhängig
+vom Sprachdienst (auch nach dessen Absturz).
 Das temporäre Passwort bleibt in einer nur für den lokalen Dienstbenutzer
 lesbaren Datei unter `/run/proximus-setup/info` (RAM) und beim aktiven
 PiTFT-Dialog unter `/run/pi-ptt/display-people.json`. Beim Schließen wird
@@ -74,6 +78,11 @@ als `obivan`. Der Root-Setup-Dienst wird über `systemctl`/Systemd-DBus
 mit einer **auf `start`/`stop` von `proximus-setup.service`
 begrenzten Polkit-Regel** (`deploy/52-pi-voice-hotspot.rules`) gestartet.
 Die alte `sudoers`-Freigabe wird vom Installer entfernt.
+Die gemeinsamen Konstanten (SSID, IP, Interface, Laufzeitpfad, Dauer)
+stehen ausschließlich in `src/hotspot_config.py`. Beide Installer nehmen
+das Modul mit. Der Root-Setup-Dienst veröffentlicht einen unveränderlichen
+Sitzungsablaufzeitpunkt (`issued_at`/`expires_at`) in der privaten
+Laufzeitdatei.
 Ein Aufruf von `sudo` aus dem Sprachdienst funktioniert nicht und wird
 deshalb nicht mehr verwendet.
 
