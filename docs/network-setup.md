@@ -16,16 +16,16 @@ nach Passwort gefragt: Die Eingabe findet nur auf der lokalen Setup-Seite statt.
 
 Auf dem Pi (mit funktionierendem Ethernet/SSH) prüfen:
 
-\`\`\`bash
+```bash
 systemctl is-active NetworkManager
 nmcli device status
 command -v nmcli nft dnsmasq
 sudo visudo -cf /etc/sudoers.d/proximus-setup
 systemd-analyze verify /etc/systemd/system/proximus-setup.service
-\`\`\`
+```
 
-Wenn \`nft\` oder \`dnsmasq\` fehlen, müssen zunächst die passenden Debian-Pakete
-(\`nftables\`, \`dnsmasq-base\`) installiert werden. Die Voice-Installation
+Wenn `nft` oder `dnsmasq` fehlen, müssen zunächst die passenden Debian-Pakete
+(`nftables`, `dnsmasq-base`) installiert werden. Die Voice-Installation
 führt absichtlich kein automatisches apt-Upgrade und keine Paketinstallation
 durch. Vor dem ersten Hotspot-Test physischer Zugang zum Pi empfohlen.
 
@@ -54,40 +54,40 @@ getrennt. Es gibt maximal fünf Einrichtungsversuche pro Sitzung.
 
 - Die Setup-Unit wird **nicht** automatisch aktiviert. Nur physische
   Menübedienung oder ein expliziter \`systemctl start\` kann sie starten.
-- \`proximus-setup.service\` erhält nur die benötigten Linux-Capabilities.
-  Der Sprachdienst bleibt Benutzer \`obivan\`, kein Root.
+- `proximus-setup.service` erhält nur die benötigten Linux-Capabilities.
+  Der Sprachdienst bleibt Benutzer `obivan`, kein Root.
 - Ein eigenes, zufälliges WPA2-Kennwort wird auf dem PiTFT angezeigt und
-  höchstens während der Sitzung in \`/run/pi-ptt/\` gespeichert.
-- Die lokale Webseite bindet ausschließlich an \`192.168.77.1:80\`.
+  höchstens während der Sitzung in `/run/pi-ptt/` gespeichert.
+- Die lokale Webseite bindet ausschließlich an `192.168.77.1:80`.
   Sie wird **nicht** über \`proximus.obivan.org\` geroutet.
 - nftables blockiert sämtliches Forwarding **vom WLAN** und erlaubt vom
   Setup-WLAN zum Pi ausschließlich DHCP, DNS und HTTP Port 80. Dadurch
-  wird NetworkManagers sonst standardmäßiges NAT zu \`eth0\` blockiert.
-- WPA-Zugangsdaten des Zielnetzes werden weder im \`nmcli\`-Argumentvektor
+  wird NetworkManagers sonst standardmäßiges NAT zu `eth0` blockiert.
+- WPA-Zugangsdaten des Zielnetzes werden weder im `nmcli`-Argumentvektor
   noch im Journal ausgegeben. Sie werden in einer Root-only-NM-Keyfile-Datei
   gespeichert; diese bleibt nur nach erfolgreicher Verbindung bestehen.
 - Header- und CSRF-Validierung, Eingabegrenzen, 15-Minuten-Ablaufzeit und
   max. fünf Versuche. Kein externer Webzugang während des Setup-Modus.
 
-Der durch \`sudo /usr/local/sbin/pi-voice-install <commit>\` installierte Stand
+Der durch `sudo /usr/local/sbin/pi-voice-install <commit>` installierte Stand
 legt **nur** Unit, sudoers und Skript ab; er startet den Hotspot nicht.
 Der echte Übergang AP↔STA sowie Firewallregeln müssen auf der Hardware
 abgenommen werden. Nach dem Start prüfen:
 
-\`\`\`bash
+```bash
 systemctl status proximus-setup.service --no-pager
 sudo nft list table inet proximus_setup
 nmcli -f GENERAL.STATE,GENERAL.CONNECTION device show wlan0
 journalctl -u proximus-setup.service -n 40 --no-pager
-\`\`\`
+```
 
 Rücknahme: PiTFT Hotspot beenden oder
-\`sudo systemctl stop proximus-setup.service\`. Die Unit räumt das
+`sudo systemctl stop proximus-setup.service`. Die Unit räumt das
 Setup-Profil und die Firewallregeln auf. Ein bei Erfolg gespeichertes
 WLAN-Profil wird dabei **nicht** gelöscht.
 
 Bei beschädigter Verbindung (nur am Pi/über eth0):
-\`sudo /usr/bin/python3 /opt/pi-voice-assistant/src/proximus_setup.py --cleanup\`.
+`sudo /usr/bin/python3 /opt/pi-voice-assistant/src/proximus_setup.py --cleanup`.
 
 ## Quellen
 
