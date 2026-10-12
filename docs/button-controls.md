@@ -48,6 +48,7 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | | Gespeicherte WLANs | Bekannte Profile auswählen und verbinden; der Netzwerkwechsel kann die SSH-Verbindung unterbrechen |
 | | Access Point → AP starten | Startet `Proximus-Setup` (ohne LAN/Internet) und zeigt den **WLAN-QR-Code** |
 | | Access Point → Passwort anzeigen | Zeigt QR-Code für das **aktive** Setup-WLAN; E schaltet auf Passwort im Klartext um |
+| | Access Point → Verbundene Geräte | Zeigt live assoziierte WLAN-Geräte mit MAC und Signalstärke; PiTFT ▲/▼ blättert, B schließt. Neue Verbindungen erscheinen als lokale Bildschirmmeldung `AP + NEU`. |
 | | Access Point → Passwort erneuern | Generiert per AP-Neustart ein neues 16-stelliges Zufallspasswort; vorhandene Clients verlieren ihre Verbindung |
 | | Access Point → AP beenden | Stoppt den Setup-AP, entfernt dessen temporäre Konfiguration |
 | | Access Point → Zurück | Zurück zum Netzwerkmenü, ohne den AP zu stoppen ([Anleitung](network-setup.md)) |
