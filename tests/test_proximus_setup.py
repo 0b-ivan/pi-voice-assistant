@@ -86,9 +86,9 @@ class ProvisioningTests(unittest.TestCase):
         self.fail_candidate = False
         self.app = ps.Provisioning(
             directory=self.root, info_path=self.root / "physical-info",
-            run=self.run, wifi=FakeWifi())
+            run=self.fake_run, wifi=FakeWifi())
 
-    def run(self, args, **kwargs):
+    def fake_run(self, args, **kwargs):
         self.calls.append((args, kwargs))
         if self.fail_candidate and len(args) > 5 and "up" in args and "uuid" in args:
             identity = args[args.index("uuid") + 1]
