@@ -27,22 +27,23 @@ class HotspotControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hotspot_control.control("enable")
 
+    def _payload(self, password="validSetupPass123", ssid=hotspot_control.SSID,
+                 issued_at=None, expires_at=None):
+        t = time.time() if issued_at is None else issued_at
+        return {"ssid": ssid, "password": password, "url": hotspot_control.PORTAL,
+                "issued_at": t, "expires_at": t + 900 if expires_at is None else expires_at}
+
     def test_read_info_returns_only_live_valid_credentials(self):
         with tempfile.TemporaryDirectory() as temp:
             target = Path(temp) / "secret"
-            target.write_text(json.dumps({
-                "ssid": hotspot_control.SSID,
-                "password": "validSetupPass123",
-                "url": hotspot_control.PORTAL
-            }), encoding="utf-8")
+            target.write_text(json.dumps(self._payload()), encoding="utf-8")
             target.chmod(0o600)
-            self.assertEqual(hotspot_control.read_info(target)["password"],
-                             "validSetupPass123")
-            target.write_text('{"ssid": "Other", "password": "not-authorized", '
-                              '"url": "http://192.168.77.1/"}')
+            valid = hotspot_control.read_info(target)
+            self.assertEqual(valid["password"], "validSetupPass123")
+            self.assertGreater(valid["expires_at"], time.time())
+            target.write_text(json.dumps(self._payload(ssid="Other")))
             self.assertIsNone(hotspot_control.read_info(target))
-            target.write_text('{"ssid": "Proximus-Setup", "password": "wrong", '
-                              '"url": "http://192.168.77.1/"}')
+            target.write_text(json.dumps(self._payload(password="wrong")))
             self.assertIsNone(hotspot_control.read_info(target))
 
     def test_rejects_missing_symlink_stale_and_malformed_file(self):
@@ -52,11 +53,7 @@ class HotspotControlTests(unittest.TestCase):
             self.assertIsNone(hotspot_control.read_info(target))
             target.write_text("{}")
             self.assertIsNone(hotspot_control.read_info(target))
-            target.write_text(json.dumps({
-                "ssid": hotspot_control.SSID,
-                "password": "correctPassword123",
-                "url": hotspot_control.PORTAL
-            }))
+            target.write_text(json.dumps(self._payload(password="correctPassword123")))
             link = root / "link"
             link.symlink_to(target)
             self.assertIsNone(hotspot_control.read_info(link))
@@ -65,6 +62,21 @@ class HotspotControlTests(unittest.TestCase):
                 self.assertIsNone(hotspot_control.read_info(target))
             target.write_text("A" * 1025)
             self.assertIsNone(hotspot_control.read_info(target))
+
+    def test_expired_forged_and_legacy_session_info_is_never_shown(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "secret"
+            t = time.time()
+            variants = [
+                {k: v for k, v in self._payload(issued_at=t).items()
+                 if k != "expires_at"},
+                self._payload(issued_at=t - 901, expires_at=t - 1),
+                self._payload(issued_at=t, expires_at=t + 1000),
+                self._payload(issued_at=t + 180, expires_at=t + 500),
+            ]
+            for value in variants:
+                target.write_text(json.dumps(value))
+                self.assertIsNone(hotspot_control.read_info(target), value)
 
     def test_polkit_is_narrow_and_sudo_is_not_used(self):
         root = Path(__file__).resolve().parents[1]
