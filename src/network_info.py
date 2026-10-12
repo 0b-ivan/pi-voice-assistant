@@ -54,9 +54,9 @@ def _state(device):
     code = (device.get("GENERAL.STATE") or "").split(" ", 1)[0]
     if code == "100":
         return "verbunden"
-    if code in ("30", "40", "50", "60", "70", "80", "90"):
+    if code in ("40", "50", "60", "70", "80", "90"):
         return "verbinde..."
-    if code in ("10", "20"):
+    if code in ("10", "20", "30"):
         return "getrennt"
     return "unbekannt"
 
@@ -135,4 +135,4 @@ def rows(wifi=None, *, ap_active=None, clients=None, station=None):
             count = len(clients.get("clients", []))
             output.append("AP-Clients: " + str(count))
         output.append("Portal: " + ap_config.ADDRESS)
-    return output[:14]
+    return output[:12]
