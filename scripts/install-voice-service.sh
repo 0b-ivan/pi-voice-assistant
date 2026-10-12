@@ -57,6 +57,7 @@ install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
 install -m 0644 "${repo_root}/src/network_control.py" /opt/pi-voice-assistant/src/network_control.py
 install -m 0644 "${repo_root}/src/proximus_setup.py" /opt/pi-voice-assistant/src/proximus_setup.py
 install -m 0644 "${repo_root}/src/hotspot_control.py" /opt/pi-voice-assistant/src/hotspot_control.py
+install -m 0644 "${repo_root}/src/hotspot_config.py" /opt/pi-voice-assistant/src/hotspot_config.py
 install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
 install -m 0644 "${repo_root}/src/device_control.py" /opt/pi-voice-assistant/src/device_control.py
 install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
