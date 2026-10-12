@@ -97,9 +97,9 @@ class ProvisioningTests(unittest.TestCase):
         return ""
 
     def test_setup_scans_before_ap_and_installs_nft_first(self):
-        with patch("proximus_setup.shutil.which", return_value="/usr/bin/mock"), \\
-             patch("proximus_setup.pwd.getpwnam",
-                   return_value=SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())):
+        with (patch("proximus_setup.shutil.which", return_value="/usr/bin/mock"),
+              patch("proximus_setup.pwd.getpwnam",
+                    return_value=SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()))):
             self.app.setup()
         self.assertEqual(self.app.found, ["Home", "Guest"])
         self.assertTrue(self.app.ap_path.is_file())
