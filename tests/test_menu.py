@@ -185,10 +185,33 @@ class ControllerMenuTests(unittest.TestCase):
         self.assertEqual(self.c.picker['title'], 'HOTSPOT BEREIT')
         self.assertEqual(self.c.picker['index'], 1)
         self.assertIn('random-setup-1234', self.c.picker['items'][1][1])
-        self.assertIn('Code: random-setup-1234',
-                      show.call_args.args[1]['items'][1])
+        self.assertEqual(show.call_args.args[1]['page'], 'wifi_qr')
+        self.assertEqual(show.call_args.args[1]['ssid'], 'Proximus-Setup')
+        self.assertEqual(show.call_args.args[1]['password'], 'random-setup-1234')
         self.assertNotIn('random-setup-1234', self.status_path.read_text())
         self.assertNotIn('random-setup-1234', self.output.getvalue())
+
+    def test_hotspot_e_toggles_wifi_qr_and_text_b_clears_private_file(self):
+        self.c.menu.select('wifi_hotspot_show')
+        viewpath = self.c.config.runtime_dir / 'display-people.json'
+        with patch('ptt.hotspot_control.is_active', return_value=True), \
+             patch('ptt.hotspot_control.read_info', return_value={
+                 'ssid': 'Proximus-Setup', 'password': 'testPassword12345',
+                 'url': 'http://192.168.77.1/'}), \
+             patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
+            self.press(down='E')
+        self.assertEqual(self.c.picker['page'], 'wifi_qr')
+        self.assertEqual(json.loads(viewpath.read_text())['page'], 'wifi_qr')
+        self.press(down='E')
+        self.assertEqual(self.c.picker['page'], 'list')
+        self.assertIn('Code: testPassword12345', viewpath.read_text())
+        self.press(down='E')
+        self.assertEqual(self.c.picker['page'], 'wifi_qr')
+        self.press(down='B')
+        self.assertIsNone(self.c.picker)
+        self.assertFalse(viewpath.exists())
+        self.assertNotIn('testPassword12345', self.status_path.read_text())
+        self.assertNotIn('testPassword12345', self.output.getvalue())
 
     def test_show_off_hotspot_does_not_start_unit(self):
         self.c.menu.select('wifi_hotspot_show')
