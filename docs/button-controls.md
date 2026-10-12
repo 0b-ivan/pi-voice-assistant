@@ -46,8 +46,11 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | | Lautsprecher entfernen | Gekoppelten Lautsprecher vergessen |
 | Netzwerk | WLAN suchen | Liste der erreichbaren SSIDs; gespeicherte WLANs sind markiert; unbekannte WLANs werden in der nächsten Ausbaustufe über einen Setup-Hotspot eingerichtet |
 | | Gespeicherte WLANs | Bekannte Profile auswählen und verbinden; der Netzwerkwechsel kann die SSH-Verbindung unterbrechen |
-| | Hotspot starten | Eigenes `Proximus-Setup`-WLAN mit einmaligem WPA2-Schlüssel; Anzeige von Passwort und `http://192.168.77.1/` auf dem PiTFT. Einrichtung unbekannter WLANs über die lokale Landingpage. [Anleitung](network-setup.md) |
-| | Hotspot beenden | Setup-AP sofort schließen, vorherige Clientverbindung nach Möglichkeit wiederherstellen |
+| | Access Point → AP starten | Startet `Proximus-Setup` (ohne LAN/Internet) und zeigt den **WLAN-QR-Code** |
+| | Access Point → Passwort anzeigen | Zeigt QR-Code für das **aktive** Setup-WLAN; E schaltet auf Passwort im Klartext um |
+| | Access Point → Passwort erneuern | Generiert per AP-Neustart ein neues 16-stelliges Zufallspasswort; vorhandene Clients verlieren ihre Verbindung |
+| | Access Point → AP beenden | Stoppt den Setup-AP, entfernt dessen temporäre Konfiguration |
+| | Access Point → Zurück | Zurück zum Netzwerkmenü, ohne den AP zu stoppen ([Anleitung](network-setup.md)) |
 | | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
 | | Alarme AN/AUS | Ansagen stumm; Herunterfahren bei leerem Akku bleibt aktiv |
 | | Status-LED AN/AUS | SHIM-LED aus; Aufnahme und Fehler zeigt sie trotzdem |
