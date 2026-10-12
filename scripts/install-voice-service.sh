@@ -49,6 +49,7 @@ install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/al
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
 install -m 0644 "${repo_root}/src/network_control.py" /opt/pi-voice-assistant/src/network_control.py
+install -m 0644 "${repo_root}/src/proximus_setup.py" /opt/pi-voice-assistant/src/proximus_setup.py
 install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
 install -m 0644 "${repo_root}/src/device_control.py" /opt/pi-voice-assistant/src/device_control.py
 install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
@@ -89,6 +90,12 @@ install -m 0644 "${repo_root}/src/transit.py" /opt/pi-voice-assistant/src/transi
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
+# On-demand only: never enable or start the provisioning AP at install time.
+install -m 0644 "${repo_root}/deploy/proximus-setup.service" /etc/systemd/system/proximus-setup.service
+install -o root -g root -m 0440 "${repo_root}/deploy/proximus-setup.sudoers" /etc/sudoers.d/proximus-setup
+if command -v visudo >/dev/null; then
+  visudo -cf /etc/sudoers.d/proximus-setup
+fi
 # Power off / reboot for the service user (empty battery, confirmed voice command).
 if [[ -d /etc/polkit-1/rules.d ]]; then
   install -m 0644 "${repo_root}/deploy/50-pi-voice-poweroff.rules" \
@@ -110,7 +117,7 @@ if [[ ! -e /etc/pi-voice-assistant.env ]]; then
 fi
 
 systemctl daemon-reload
-systemd-analyze verify /etc/systemd/system/pi-ptt.service
+systemd-analyze verify /etc/systemd/system/pi-ptt.service /etc/systemd/system/proximus-setup.service
 
 if [[ ${created_voice_env} -eq 1 ]]; then
   echo "Service left stopped until /etc/pi-voice-assistant.env is reviewed."
