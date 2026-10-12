@@ -41,6 +41,7 @@ from netprobe import InternetProbe, network_up
 import weather
 import wlan as wlan_radio
 import network_control
+import hotspot_control
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, RemoteTurnUplink,
                          load_remote_config, story_timeout)
@@ -1519,78 +1520,74 @@ class VoiceController:
             self._publish_picker()
 
     def _wifi_hotspot_item(self, item):
-        """Physical-menu-only start/stop; all privileged work is in the unit."""
+        """Show active setup credentials or start/stop the isolated root unit."""
         if self.wifi_busy:
             self.wifi_notes.append(network_control.BUSY)
             return
-        if item == 'wifi_hotspot_start' and not self.wlan_on:
+        starting = item == 'wifi_hotspot_start'
+        # An already running hotspot may be inspected even if the user-facing
+        # WLAN toggle disagrees with the actual NetworkManager radio state.
+        if starting and not self.wlan_on and not hotspot_control.is_active():
             self.wifi_notes.append(network_control.RADIO_OFF)
             return
 
+        picker = None
+        if starting:
+            picker = dict(title='HOTSPOT START', action='wifi_setup',
+                          items=[('loading', 'Bitte warten')], index=0)
+        self.picker = picker
+        self._publish_picker()
+
         def work():
-            from pathlib import Path
-            import json
-            import subprocess
-            action = 'start' if item == 'wifi_hotspot_start' else 'stop'
-            cmd = ['/usr/bin/sudo', '-n', '/usr/bin/systemctl',
-                   action, 'proximus-setup.service']
-            try:
-                done = subprocess.run(cmd, stdin=subprocess.DEVNULL,
-                                      capture_output=True, text=True,
-                                      timeout=30, check=False)
-            except (OSError, subprocess.SubprocessError):
-                done = None
-            if done is None or done.returncode != 0:
+            if not starting:
+                stopped = hotspot_control.control('stop')
+                if not stopped or hotspot_control.is_active():
+                    event('wifi', result='setup_stop_failed')
+                    self.wifi_notes.append('Setup-Hotspot konnte nicht beendet werden.')
+                else:
+                    event('wifi', result='setup_stopped')
+                    self.wifi_notes.append('Setup-Hotspot beendet.')
+                return
+
+            # systemctl communicates with systemd using its D-Bus Polkit rule.
+            # No sudo/setuid (NoNewPrivileges=yes remains in pi-ptt.service).
+            already_running = hotspot_control.is_active()
+            if not already_running and not hotspot_control.control('start'):
                 event('wifi', result='setup_failed')
-                self.wifi_notes.append('Setup-Hotspot konnte nicht gestartet werden.'
-                                       if action == 'start' else
-                                       'Setup-Hotspot konnte nicht beendet werden.')
-                if action == 'start' and self.picker is picker:
+                self.wifi_notes.append('Setup-Hotspot konnte nicht gestartet werden.')
+                if self.picker is picker:
                     self.picker = None
                     self._publish_picker()
                 return
-            if action == 'stop':
-                event('wifi', result='setup_stopped')
-                self.wifi_notes.append('Setup-Hotspot beendet.')
-                return
-            # The root-owned setup service writes a short-lived info file
-            # readable only by the local voice user. No password in journal
-            # or display-status.json. PiTFT list is physically visible only.
-            path = Path('/run/pi-ptt/proximus-setup-info')
+
             info = None
             for _ in range(100):
                 if self.picker is not picker:
                     return
-                try:
-                    value = json.loads(path.read_text())
-                    if value.get('ssid') == 'Proximus-Setup' and isinstance(value.get('password'), str):
-                        info = value
+                if hotspot_control.is_active():
+                    info = hotspot_control.read_info()
+                    if info:
                         break
-                except (OSError, ValueError, AttributeError):
-                    pass
                 time.sleep(.2)
-            if self.picker is picker:
-                if info:
-                    picker['title'] = 'HOTSPOT BEREIT'
-                    picker['items'] = [
-                        ('ssid', 'SSID: Proximus-Setup'),
-                        ('pw', 'Code: ' + info['password']),
-                        ('url', 'Web: 192.168.77.1')]
-                    picker['index'] = 0
-                    event('wifi', result='setup_ready')  # no secret in logs
-                else:
-                    picker['title'] = 'HOTSPOT FEHLER'
-                    picker['items'] = [('error', 'Einrichtung fehlgeschlagen')]
-                    event('wifi', result='setup_unavailable')
-                self._publish_picker()
-
-        picker = None
-        if item == 'wifi_hotspot_start':
-            picker = dict(title='HOTSPOT START',
-                          action='wifi_setup', items=[('loading', 'Bitte warten')],
-                          index=0)
-            self.picker = picker
+            if self.picker is not picker:
+                return
+            if info:
+                picker['title'] = 'HOTSPOT BEREIT'
+                picker['items'] = [
+                    ('ssid', 'SSID: ' + info['ssid']),
+                    ('pw', 'Code: ' + info['password']),
+                    ('url', 'Web: 192.168.77.1')]
+                picker['index'] = 1  # highlight the password on the PiTFT
+                event('wifi', result='setup_ready', existing=already_running)
+            else:
+                picker['title'] = 'HOTSPOT FEHLER'
+                picker['items'] = [('error', 'Keine Zugangsdaten')]
+                picker['index'] = 0
+                event('wifi', result='setup_unavailable')
+            # display-people.json is private to obivan, never the public
+            # display-status.json or journald.
             self._publish_picker()
+
         self._wifi_job(work)
 
     def _wifi_job(self, work):
@@ -1682,6 +1679,13 @@ class VoiceController:
             try:
                 people.write_view(path, dict(page='list', index=self.picker['index'], items=items,
                                              person='', title=self.picker['title']))
+            except OSError:
+                pass
+        elif not self.people.active:
+            # The shared picker file may contain a session WPA2 key. Destroy
+            # it as soon as the view is closed (B/E), not just at reboot.
+            try:
+                path.unlink(missing_ok=True)
             except OSError:
                 pass
         self.people_rev = (self.people_rev + 1) % 10000
