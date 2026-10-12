@@ -26,7 +26,7 @@ class QRDisplayTests(unittest.TestCase):
             self.assertNotIn("TestPassword1234", display.read_status.__doc__ or "")
             for name, value in [
                 ("ssid", "Other-AP"), ("password", "short"),
-                ("password", "a" * 64), ("password", "line\\nbreak"),
+                ("password", "a" * 64), ("password", "line\nbreak"),
                 ("password", None),
             ]:
                 edited = dict(valid)
