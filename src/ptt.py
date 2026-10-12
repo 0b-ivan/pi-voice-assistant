@@ -41,6 +41,7 @@ from netprobe import InternetProbe, network_up
 import weather
 import wlan as wlan_radio
 import network_control
+import network_info
 import hotspot_control
 import hotspot_config as ap_config
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
@@ -1050,6 +1051,10 @@ class VoiceController:
             self._bluetooth_item(item)
             self._publish_menu()
             return
+        if item == 'net_info':
+            self._network_info_item()
+            self._publish_menu()
+            return
         if item in ('wifi_scan', 'wifi_saved'):
             self._wifi_item(item)
             self._publish_menu()
@@ -1638,6 +1643,31 @@ class VoiceController:
         threading.Thread(target=run, name='wifi-job', daemon=True).start()
         return True
 
+    def _network_info_item(self):
+        """Open local on-demand network diagnostics; no active scan or polling."""
+        picker = dict(title='NETZWERKINFO', action='network_info',
+                      items=[('loading', 'Lade Netzwerkdaten...')], index=0)
+        self.picker = picker
+        self._publish_picker()
+        self._network_info_refresh(picker)
+
+    def _network_info_refresh(self, picker):
+        """E refreshes in the NM worker, leaving GPIO/PTT responsive."""
+        if self.wifi_busy:
+            return
+        picker['items'] = [('loading', 'Lade Netzwerkdaten...')]
+        picker['index'] = 0
+        self._publish_picker()
+
+        def work():
+            labels = network_info.rows(self.wifi)
+            if self.picker is not picker:
+                return
+            picker['items'] = [(str(n), label) for n, label in enumerate(labels)]
+            picker['index'] = 0
+            self._publish_picker()
+        self._wifi_job(work)
+
     def _wifi_item(self, item):
         if not self.wifi.available():
             self.wifi_notes.append(network_control.UNAVAILABLE)
@@ -1766,6 +1796,13 @@ class VoiceController:
 
     def _picker_buttons(self, confirm):
         picker = self.picker
+        if picker['action'] == 'network_info':
+            if confirm and picker['index'] < len(picker['items']):
+                self._network_info_refresh(picker)
+            else:
+                self.picker = None
+                self._publish_picker()
+            return
         if (picker['action'] == 'wifi_setup' and confirm
                 and picker.get('page') in ('wifi_qr', 'list')
                 and 'password' in picker):
