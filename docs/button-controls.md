@@ -44,7 +44,9 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | | Lautsprecher verbinden | Liste der gekoppelten Lautsprecher, E verbindet den gewählten |
 | | Lautsprecher suchen | Liste erscheint sofort und wächst während der 12 s Suche (nur Audiogeräte, gekoppelte mit ✓); E auf einen Eintrag koppelt (falls nötig) und verbindet |
 | | Lautsprecher entfernen | Gekoppelten Lautsprecher vergessen |
-| Gerät | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
+| Netzwerk | WLAN suchen | Liste der erreichbaren SSIDs; gespeicherte WLANs sind markiert; unbekannte WLANs werden in der nächsten Ausbaustufe über einen Setup-Hotspot eingerichtet |
+| | Gespeicherte WLANs | Bekannte Profile auswählen und verbinden; der Netzwerkwechsel kann die SSH-Verbindung unterbrechen |
+| | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
 | | Alarme AN/AUS | Ansagen stumm; Herunterfahren bei leerem Akku bleibt aktiv |
 | | Status-LED AN/AUS | SHIM-LED aus; Aufnahme und Fehler zeigt sie trotzdem |
 | | Display aus | Hintergrundbeleuchtung aus; die nächste PiTFT-Taste weckt nur |
