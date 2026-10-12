@@ -7,12 +7,31 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Do not replace a running root-owned provisioning service's script while it
+# owns wlan0, nftables rules, and an active WPA2 key/portal session.
+if systemctl is-active --quiet proximus-setup.service; then
+  echo "Stop the active setup AP first: sudo systemctl stop proximus-setup.service" >&2
+  exit 1
+fi
 # The service needs this group even when the optional SHIM is disabled.
 # Validate dependencies before stopping an already working voice service.
 if ! getent group i2c >/dev/null || ! /usr/bin/python3 -c 'import smbus'; then
   echo "Install hardware dependency first: sudo apt install python3-smbus i2c-tools" >&2
   exit 1
 fi
+# Required for the physical AP QR screen and associated-client monitor.
+# Perform apt only for missing packages, before stopping a healthy service.
+bash "${repo_root}/scripts/ensure-system-packages.sh" python3-qrcode iw
+if ! /usr/bin/python3 -c 'import qrcode' >/dev/null 2>&1; then
+  echo "QR module unavailable to system Python despite Debian package." >&2
+  exit 1
+fi
+if [[ -x /opt/pi-voice-assistant/.venv-display/bin/python ]] &&
+   ! /opt/pi-voice-assistant/.venv-display/bin/python -c 'import qrcode' >/dev/null 2>&1; then
+  echo "Display venv cannot import qrcode. Reinstall display venv with --system-site-packages." >&2
+  exit 1
+fi
+
 service_was_active=0
 if systemctl is-active --quiet pi-ptt.service; then
   service_was_active=1
@@ -49,6 +68,9 @@ install -m 0644 "${repo_root}/src/alarm_audio.py" /opt/pi-voice-assistant/src/al
 install -m 0644 "${repo_root}/src/alarms.py" /opt/pi-voice-assistant/src/alarms.py
 install -m 0644 "${repo_root}/src/wlan.py" /opt/pi-voice-assistant/src/wlan.py
 install -m 0644 "${repo_root}/src/network_control.py" /opt/pi-voice-assistant/src/network_control.py
+install -m 0644 "${repo_root}/src/proximus_setup.py" /opt/pi-voice-assistant/src/proximus_setup.py
+install -m 0644 "${repo_root}/src/hotspot_control.py" /opt/pi-voice-assistant/src/hotspot_control.py
+install -m 0644 "${repo_root}/src/hotspot_config.py" /opt/pi-voice-assistant/src/hotspot_config.py
 install -m 0644 "${repo_root}/src/cue.py" /opt/pi-voice-assistant/src/cue.py
 install -m 0644 "${repo_root}/src/device_control.py" /opt/pi-voice-assistant/src/device_control.py
 install -m 0644 "${repo_root}/src/weather.py" /opt/pi-voice-assistant/src/weather.py
@@ -89,12 +111,19 @@ install -m 0644 "${repo_root}/src/transit.py" /opt/pi-voice-assistant/src/transi
 install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/scripts/install-vosk.sh
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
+# On-demand only: never enable or start the provisioning AP at install time.
+install -m 0644 "${repo_root}/deploy/proximus-setup.service" /etc/systemd/system/proximus-setup.service
+# Remove the obsolete sudo rule from pre-fix PR #110. The PTT unit retains
+# NoNewPrivileges=yes and now uses a narrowly scoped systemd D-Bus Polkit rule.
+rm -f /etc/sudoers.d/proximus-setup
 # Power off / reboot for the service user (empty battery, confirmed voice command).
 if [[ -d /etc/polkit-1/rules.d ]]; then
   install -m 0644 "${repo_root}/deploy/50-pi-voice-poweroff.rules" \
     /etc/polkit-1/rules.d/50-pi-voice-poweroff.rules
   install -m 0644 "${repo_root}/deploy/51-pi-voice-network.rules" \
     /etc/polkit-1/rules.d/51-pi-voice-network.rules
+  install -m 0644 "${repo_root}/deploy/52-pi-voice-hotspot.rules" \
+    /etc/polkit-1/rules.d/52-pi-voice-hotspot.rules
 fi
 
 if [[ ! -e /etc/pi-ptt.env ]]; then
@@ -110,7 +139,7 @@ if [[ ! -e /etc/pi-voice-assistant.env ]]; then
 fi
 
 systemctl daemon-reload
-systemd-analyze verify /etc/systemd/system/pi-ptt.service
+systemd-analyze verify /etc/systemd/system/pi-ptt.service /etc/systemd/system/proximus-setup.service
 
 if [[ ${created_voice_env} -eq 1 ]]; then
   echo "Service left stopped until /etc/pi-voice-assistant.env is reviewed."

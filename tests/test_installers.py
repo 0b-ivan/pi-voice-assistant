@@ -33,5 +33,17 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('systemctl restart pi-display.service', installer)
 
 
+    def test_hotspot_deploy_checks_running_ap_and_qr_dependency(self):
+        installer = (ROOT / 'scripts' / 'install-voice-service.sh').read_text()
+        self.assertIn('systemctl is-active --quiet proximus-setup.service', installer)
+        self.assertIn('sudo systemctl stop proximus-setup.service', installer)
+        self.assertIn("import qrcode", installer)
+        self.assertIn("python3-qrcode", installer)
+        display_setup = (ROOT / 'scripts' / 'install-display.sh').read_text()
+        self.assertIn("python3-qrcode", display_setup)
+        self.assertIn('install -m 0644 "${repo_root}/src/display.py"', installer)
+
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -12,25 +12,19 @@ if systemctl is-active --quiet pi-display.service; then
   service_was_active=1
 fi
 
-missing_packages=()
-dpkg-query -W -f='${Status}' python3-venv 2>/dev/null | grep -q 'ok installed' \
-  || missing_packages+=(python3-venv)
-dpkg-query -W -f='${Status}' python3-pil 2>/dev/null | grep -q 'ok installed' \
-  || missing_packages+=(python3-pil)
-
-if (( ${#missing_packages[@]} > 0 )); then
-  apt-get update
-  apt-get install -y "${missing_packages[@]}"
-fi
+# Use the same package preflight as the regular git update installer.
+bash "${repo_root}/scripts/ensure-system-packages.sh" \
+  python3-venv python3-pil python3-qrcode iw
 
 install -d -m 0755 /opt/pi-voice-assistant/src
 install -m 0644   "${repo_root}/src/display.py"   /opt/pi-voice-assistant/src/display.py
+install -m 0644   "${repo_root}/src/hotspot_config.py" /opt/pi-voice-assistant/src/hotspot_config.py
 
 if [[ ! -x /opt/pi-voice-assistant/.venv-display/bin/python ]]; then
   python3 -m venv     --system-site-packages     /opt/pi-voice-assistant/.venv-display
 fi
 
-/opt/pi-voice-assistant/.venv-display/bin/python -m pip install   --upgrade pip
+/opt/pi-voice-assistant/.venv-display/bin/python -c 'import qrcode; print("QR bereit")'
 
 /opt/pi-voice-assistant/.venv-display/bin/python -m pip install   adafruit-blinka   adafruit-circuitpython-rgb-display
 

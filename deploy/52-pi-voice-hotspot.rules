@@ -1,0 +1,14 @@
+// pi-ptt runs as obivan with NoNewPrivileges=yes. systemctl talks to
+// systemd over D-Bus: polkit authorizes ONLY start and stop of this unit.
+// Do not grant org.freedesktop.systemd1.manage-unit-files/reload-daemon,
+// any wildcard unit names, or restart/reload actions.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "obivan" &&
+        action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "proximus-setup.service") {
+        var verb = action.lookup("verb");
+        if (verb === "start" || verb === "stop") {
+            return polkit.Result.YES;
+        }
+    }
+});

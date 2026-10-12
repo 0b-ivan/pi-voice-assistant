@@ -1,0 +1,28 @@
+[Unit]
+Description=Proximus on-demand WLAN setup hotspot and local portal
+Documentation=https://github.com/0b-ivan/pi-voice-assistant/blob/main/docs/network-setup.md
+After=NetworkManager.service pi-ptt.service
+Requires=NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+Group=obivan
+ExecStart=/usr/bin/python3 /opt/pi-voice-assistant/src/proximus_setup.py
+# Also recover from SIGKILL: remove only our marked AP keyfile + nft rules.
+ExecStopPost=/usr/bin/python3 /opt/pi-voice-assistant/src/proximus_setup.py --cleanup
+Restart=no
+TimeoutStartSec=40
+TimeoutStopSec=10
+RuntimeDirectory=proximus-setup
+RuntimeDirectoryMode=0750
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/etc/NetworkManager/system-connections /run/proximus-setup
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+StandardOutput=journal
+StandardError=journal
+# Deliberately NO [Install] section: never enable at boot.

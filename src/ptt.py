@@ -41,6 +41,8 @@ from netprobe import InternetProbe, network_up
 import weather
 import wlan as wlan_radio
 import network_control
+import hotspot_control
+import hotspot_config as ap_config
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, RemoteTurnUplink,
                          load_remote_config, story_timeout)
@@ -788,6 +790,7 @@ class VoiceController:
         self.wifi_busy = False
         self.wifi_notes = []               # sentences from the NetworkManager worker
         self.picker = None                 # dict(title, items=[(mac, name)], index, action)
+        self.hotspot_next_check = 0.0     # private file liveness, once per second
         self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
         # Spoken device commands (device_control): a reboot/shutdown waiting for
@@ -1049,6 +1052,12 @@ class VoiceController:
             return
         if item in ('wifi_scan', 'wifi_saved'):
             self._wifi_item(item)
+            self._publish_menu()
+            return
+        if item in ('wifi_hotspot_start', 'wifi_hotspot_show',
+                    'wifi_hotspot_rotate', 'wifi_hotspot_stop',
+                    'wifi_hotspot_clients'):
+            self._wifi_hotspot_item(item)
             self._publish_menu()
             return
         if item == 'maintenance':
@@ -1514,6 +1523,103 @@ class VoiceController:
             self.picker = dict(title='ENTFERNEN', items=paired, index=0, action='forget')
             self._publish_picker()
 
+    def _wifi_hotspot_item(self, item):
+        """The Access Point sub-menu: local controls, no credentials in logs."""
+        if item == 'wifi_hotspot_clients':
+            self.picker = dict(title='AP CLIENTS', action='wifi_clients',
+                               items=[('empty', 'Suche ...')], index=0)
+            self.hotspot_next_check = 0
+            self._check_hotspot_picker(time.monotonic())
+            self._publish_picker()
+            return
+        if self.wifi_busy:
+            self.wifi_notes.append(network_control.BUSY)
+            return
+        showing = item != 'wifi_hotspot_stop'
+        starts = item in ('wifi_hotspot_start', 'wifi_hotspot_rotate')
+        rotates = item == 'wifi_hotspot_rotate'
+        if starts and not self.wlan_on and not hotspot_control.is_active():
+            self.wifi_notes.append(network_control.RADIO_OFF)
+            return
+
+        picker = None
+        if showing:
+            picker = dict(title='ACCESS POINT', action='wifi_setup',
+                          items=[('loading', 'Bitte warten')], index=0)
+        self.picker = picker
+        self._publish_picker()
+
+        def work():
+            if item == 'wifi_hotspot_stop':
+                stopped = hotspot_control.control('stop')
+                if not stopped or hotspot_control.is_active():
+                    event('wifi', result='setup_stop_failed')
+                    self.wifi_notes.append('Access Point konnte nicht beendet werden.')
+                else:
+                    event('wifi', result='setup_stopped')
+                    self.wifi_notes.append('Access Point beendet.')
+                return
+
+            was_active = hotspot_control.is_active()
+            if rotates and was_active and not hotspot_control.control('stop'):
+                event('wifi', result='setup_rotate_failed')
+                self.wifi_notes.append('Passwort konnte nicht erneuert werden.')
+                if self.picker is picker:
+                    picker['items'] = [('error', 'Passwort nicht erneuert')]
+                    self._publish_picker()
+                return
+
+            # Showing credentials never starts a stopped hotspot; starting and
+            # rotating may start only the approved systemd unit via Polkit.
+            if item == 'wifi_hotspot_show' and not was_active:
+                if self.picker is picker:
+                    picker['title'] = 'ACCESS POINT AUS'
+                    picker['items'] = [('off', 'Erst AP starten')]
+                    self._publish_picker()
+                return
+            if starts and (rotates or not was_active) and not hotspot_control.control('start'):
+                event('wifi', result='setup_failed')
+                if self.picker is picker:
+                    picker['title'] = 'HOTSPOT FEHLER'
+                    picker['items'] = [('error', 'AP-Start fehlgeschlagen')]
+                    self._publish_picker()
+                return
+
+            info = None
+            # Starting the service is asynchronous. Poll its private info file;
+            # don't expose old data if the service has stopped.
+            for _ in range(100):
+                if self.picker is not picker:
+                    return
+                if hotspot_control.is_active():
+                    info = hotspot_control.read_info()
+                    if info:
+                        break
+                time.sleep(.2)
+            if self.picker is not picker:
+                return
+            if info:
+                picker['title'] = 'HOTSPOT BEREIT'
+                picker['items'] = [
+                    ('ssid', 'SSID: ' + info['ssid']),
+                    ('pw', 'Code: ' + info['password']),
+                    ('url', 'Web: ' + ap_config.ADDRESS)]
+                picker['index'] = 1
+                picker['page'] = 'wifi_qr'
+                picker['ssid'] = info['ssid']
+                picker['password'] = info['password']
+                picker['expires_at'] = info['expires_at']
+                event('wifi', result='setup_ready', existing=was_active, rotated=rotates)
+            else:
+                picker['title'] = 'HOTSPOT FEHLER'
+                picker['items'] = [('error', 'Keine Zugangsdaten')]
+                picker['index'] = 0
+                event('wifi', result='setup_unavailable')
+            # Secret only in the owner-readable display-people.json file.
+            self._publish_picker()
+
+        self._wifi_job(work)
+
     def _wifi_job(self, work):
         """Keep nmcli/DBus and radio scans out of the 10-ms button loop."""
         if self.wifi_busy:
@@ -1600,19 +1706,81 @@ class VoiceController:
         path = self.config.runtime_dir / 'display-people.json'
         if self.picker:
             items = [name[:24] for _, name in self.picker['items']] + ['Zurück']
+            if self.picker.get('page') == 'wifi_qr':
+                view = dict(page='wifi_qr', title='WLAN VERBINDEN',
+                            ssid=self.picker['ssid'], password=self.picker['password'],
+                            expires_at=self.picker['expires_at'],
+                            index=0, person='', items=[])
+            else:
+                view = dict(page='list', index=self.picker['index'], items=items,
+                            person='', title=self.picker['title'])
+                if self.picker.get('password'):
+                    view['expires_at'] = self.picker['expires_at']
             try:
-                people.write_view(path, dict(page='list', index=self.picker['index'], items=items,
-                                             person='', title=self.picker['title']))
+                people.write_view(path, view)
+            except OSError:
+                pass
+        elif not self.people.active:
+            # The shared picker file may contain a session WPA2 key. Destroy
+            # it as soon as the view is closed (B/E), not just at reboot.
+            try:
+                path.unlink(missing_ok=True)
             except OSError:
                 pass
         self.people_rev = (self.people_rev + 1) % 10000
         publish_display_status(people='on' if self.picker else 'off', people_rev=self.people_rev)
 
+    def _check_hotspot_picker(self, now):
+        """Clear expired or externally stopped AP keys, without blocking GPIO.
+
+        The setup unit removes its RAM info file on exit. Poll the private
+        file only once a second while credentials are actually displayed.
+        The display also validates the expiry independently on every redraw.
+        """
+        picker = self.picker
+        if not picker or now < self.hotspot_next_check:
+            return
+        if picker.get('action') == 'wifi_clients':
+            self.hotspot_next_check = now + 2.0
+            snapshot = hotspot_control.read_clients()
+            entries = ([] if snapshot is None else snapshot['clients'])
+            items = [(x['mac'],
+                      x['mac'] + (' ' + str(x['signal_dbm']) if x['signal_dbm'] is not None else ''))
+                     for x in entries]
+            if not items:
+                items = [('empty', 'Keine verbundenen Geräte' if snapshot else 'AP aus')]
+            if picker.get('items') != items:
+                picker['items'] = items
+                picker['index'] = min(picker['index'], len(items))
+                self._publish_picker()
+            return
+        if picker.get('action') != 'wifi_setup' or not picker.get('password'):
+            return
+        self.hotspot_next_check = now + 1.0
+        fresh = hotspot_control.read_info()
+        if (fresh is None or fresh['password'] != picker['password']
+                or fresh['expires_at'] != picker['expires_at']):
+            self.picker = None
+            self._publish_picker()
+            event('wifi', result='setup_view_expired')
+
     def _picker_buttons(self, confirm):
-        picker, self.picker = self.picker, None
+        picker = self.picker
+        if (picker['action'] == 'wifi_setup' and confirm
+                and picker.get('page') in ('wifi_qr', 'list')
+                and 'password' in picker):
+            # E toggles QR scan and the manual text credentials. B closes.
+            picker['page'] = ('list' if picker['page'] == 'wifi_qr'
+                              else 'wifi_qr')
+            self._publish_picker()
+            return
+        self.picker = None
         index = picker['index']
         if picker['action'] == 'wifi_pick':
             self._wifi_pick(picker, confirm)
+            self._publish_picker()
+            return
+        if picker['action'] == 'wifi_setup':
             self._publish_picker()
             return
         if confirm and index < len(picker['items']):
@@ -2500,6 +2668,7 @@ class VoiceController:
             event('stt_error', message=job.error)
 
     def tick(self, gpio_pressed, shim_pressed, now, pitft_pressed=(False, False)):
+        self._check_hotspot_picker(now)
         held = gpio_pressed or shim_pressed[0]
         action = self.ptt.update(held, now)
         commands = [name for i, name in enumerate('BCDE', 1)

@@ -12,6 +12,8 @@ import time
 
 from alarms import ALARMS
 import menu
+import hotspot_config as ap_config
+import hotspot_control
 from mood import EMOTIONS as MOODS
 from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
@@ -1082,7 +1084,7 @@ def render_enroll(display, status, info=None):
     display.image(image, 180)
 
 
-PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', '/run/pi-ptt/display-people.json'))
+PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', str(ap_config.DISPLAY_VIEW_FILE)))
 ENROLL_FILE = Path(os.environ.get('PI_DISPLAY_ENROLL_FILE', '/run/pi-ptt/display-enroll.json'))
 ENROLL_CONDITIONS = {'near': 'nah', 'far': 'fern', 'quiet': 'leise'}
 
@@ -1108,6 +1110,22 @@ def read_people(path=None):
     items = [str(i)[:28] for i in data.get('items', []) if isinstance(i, str)][:14]
     details = data.get('details') if isinstance(data.get('details'), dict) else {}
     index = data.get('index') if isinstance(data.get('index'), int) else 0
+    expires_at = data.get('expires_at')
+    if data.get('page') == 'wifi_qr':
+        # Never keep an expired QR on screen, even if pi-ptt has died or lost
+        # its runtime state. This check is independent of its 1-second watch.
+        ssid, password = data.get('ssid'), data.get('password')
+        if (ssid != ap_config.SSID or not isinstance(password, str)
+                or not 8 <= len(password) <= 63
+                or any(not (33 <= ord(ch) <= 126) for ch in password)
+                or not ap_config.live_expiration(expires_at, time.time())):
+            return None
+        return dict(page='wifi_qr', ssid=ssid, password=password,
+                    title='WLAN VERBINDEN')
+    if (data.get('title') == 'HOTSPOT BEREIT'
+            and not ap_config.live_expiration(expires_at, time.time())):
+        # The manual text view must expire as strictly as the QR view.
+        return None
     return dict(page=data.get('page') if data.get('page') in ('list', 'actions', 'details')
                 else 'list', index=index, items=items,
                 person=str(data.get('person') or '')[:28], details=details,
@@ -1115,8 +1133,67 @@ def read_people(path=None):
                 title=str(data.get('title') or '')[:16])
 
 
+def wifi_qr_payload(ssid, password):
+    """Standard Wi-Fi QR code: scan with Android/iOS camera to join the AP."""
+    def escaped(value):
+        return ''.join('\\' + ch if ch in '\\;,:"' else ch for ch in value)
+    return 'WIFI:T:WPA;S:' + escaped(ssid) + ';P:' + escaped(password) + ';;'
+
+
+def render_wifi_qr(display, ssid, password, info=None):
+    """High contrast pixel-perfect QR for the 240x240 ST7789 display."""
+    from PIL import Image, ImageDraw
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    draw.text((12, 7), 'PROXIMUS · WLAN', font=font(16), fill=(150, 240, 230))
+    draw.text((12, 26), ssid, font=font(12), fill=(215, 225, 225))
+    try:
+        import qrcode  # Debian python3-qrcode; optional, no network required
+        code = qrcode.QRCode(
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=1, border=4,
+        )
+        code.add_data(wifi_qr_payload(ssid, password), optimize=0)
+        code.make(fit=True)
+        matrix = code.get_matrix()  # includes the 4-module white quiet zone
+        modules = len(matrix)
+        scale = min(220 // modules, 165 // modules)
+        if scale < 2:
+            raise ValueError('Setup QR exceeds PiTFT resolution')
+        side = modules * scale
+        left = (WIDTH - side) // 2
+        top = 44 + (165 - side) // 2
+        draw.rectangle((left, top, left + side - 1, top + side - 1),
+                       fill='white')
+        for row, values in enumerate(matrix):
+            for col, dark in enumerate(values):
+                if dark:
+                    x, y = left + col * scale, top + row * scale
+                    draw.rectangle((x, y, x + scale - 1, y + scale - 1),
+                                   fill='black')
+    except (ImportError, AttributeError, ValueError):
+        draw.text((15, 94), 'QR nicht verfuegbar', font=font(15), fill='white')
+        draw.text((15, 116), 'E: Passwort anzeigen', font=font(12),
+                  fill=(185, 195, 200))
+    draw.line((12, 213, 228, 213), fill=(65, 65, 65))
+    ap = (info or {}).get('ap')
+    if ap and ap['joined']:
+        draw.text((12, 218), 'NEUER CLIENT VERBUNDEN', font=font(11),
+                  fill=(180, 130, 255))
+    elif ap is not None:
+        draw.text((12, 218), f"{ap['count']} verb.  ·  E: Code  B: zurueck",
+                  font=font(10), fill=(145, 155, 165))
+    else:
+        draw.text((12, 218), 'E: Code  ·  B: zurueck', font=font(11),
+                  fill=(145, 155, 165))
+    display.image(image, 180)
+
+
 def render_people(display, view, info=None):
-    """Known people, a person's actions, or their details."""
+    """Known people, a person's actions, their details, or setup QR."""
+    if view.get('page') == 'wifi_qr':
+        render_wifi_qr(display, view['ssid'], view['password'], info)
+        return
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
@@ -1149,7 +1226,13 @@ def render_people(display, view, info=None):
             if row == view['index']:
                 draw.rectangle((10, y - 1, 230, y + 18), fill=(0, 60, 52))
                 draw.text((14, y), '›', font=font(15), fill=accent)
-            draw.text((28, y), label, font=font(15),
+            # Full AP station MACs and WPA2 passwords must fit in 240px.
+            size = 15
+            if ((title == 'HOTSPOT BEREIT' and label.startswith('Code: '))
+                    or title == 'AP CLIENTS'):
+                size = next((v for v in (15, 14, 13, 12, 11, 10)
+                             if draw.textlength(label, font=font(v)) <= 197), 10)
+            draw.text((28, y), label, font=font(size),
                       fill=accent if row == view['index'] else (215, 220, 225))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
     if view['confirm_delete']:
@@ -1233,7 +1316,7 @@ def render_menu(display, status, info=None):
             draw.rectangle((10, y - 1, 230, y + 18), fill=(40, 32, 70))
             draw.text((14, y), '›', font=font(15), fill=accent)
         color = accent if row == selected else (215, 220, 225)
-        if group is None and item in menu.GROUPS:
+        if item in menu.GROUPS and (group is None or menu.PARENTS.get(item) == group):
             label += ' ›'
         draw.text((28, y), label, font=font(15), fill=color)
         value = _menu_value(item, status)
@@ -1241,7 +1324,12 @@ def render_menu(display, status, info=None):
             value_color = (120, 220, 160) if value == 'AN' else (170, 170, 170)
             _right(draw, 226, y + 1, value, 13, value_color)
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
-    draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+    if info.get('ap') is not None:
+        ap = info['ap']
+        label = 'AP: NEUER CLIENT' if ap['joined'] else f"AP AKTIV · {ap['count']} CLIENTS"
+        draw.text((12, 209), label, font=font(11), fill=(180, 130, 255))
+    else:
+        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
     display.image(image, 180)
 
 
@@ -1325,21 +1413,63 @@ def render_info(display, rows):
     display.image(image, 180)
 
 
+def ap_screen_info(snapshot, now=None):
+    """Private local station snapshot -> tiny display-only status, no MAC logs."""
+    t = time.time() if now is None else now
+    if snapshot is None:
+        return None
+    joined = snapshot.get('last_joined_at')
+    return dict(count=len(snapshot['clients']),
+                joined=(isinstance(joined, (float, int)) and 0 <= t - joined < 8))
+
+
+def _network_pictogram(draw, x, y, kind, strength, color):
+    """Four miniature signal bars or a radiating AP glyph in the UI palette."""
+    if kind == 'ap':
+        draw.ellipse((x+6, y+6, x+10, y+10), fill=color)
+        draw.arc((x+1, y+1, x+15, y+15), 210, 330, fill=color, width=2)
+        draw.arc((x-2, y-2, x+18, y+18), 210, 330, fill=color, width=1)
+    elif kind == 'wifi':
+        for n in range(4):
+            xx = x + 3 + 4*n
+            top = y + 12 - 3*n
+            draw.rectangle((xx, top, xx+2, y+12),
+                           fill=color if n < strength else (50, 55, 58))
+    elif kind == 'lan':
+        draw.rectangle((x+2, y+4, x+16, y+12), outline=color, width=1)
+        for xx in (6, 10, 14):
+            draw.line((x+xx, y+4, x+xx, y+7), fill=color)
+    else:
+        draw.line((x+2, y+3, x+16, y+13), fill=color, width=2)
+        draw.arc((x+1, y, x+17, y+17), 220, 320, fill=color, width=1)
+
+
+def network_view(network, info):
+    """Single selection point for WLAN strength / isolated AP / LAN / offline."""
+    ap = info.get('ap')
+    if ap is not None:
+        return ('ap', ('AP + NEU' if ap['joined'] else f"AP {ap['count']}"),
+                (180, 130, 255), 4)
+    if info.get('wlan') == 'off':
+        return ('off', 'WLAN AUS', (140, 145, 150), 0)
+    if info.get('wifi_dbm') is not None and network:
+        level = info['wifi_dbm']
+        bars = 4 if level >= -55 else 3 if level >= -67 else 2 if level >= -78 else 1
+        color = (120, 220, 160) if bars >= 3 else (255, 180, 0) if bars == 2 else (255, 90, 90)
+        return ('wifi', '', color, bars)
+    if network:
+        return ('lan', 'LAN', (120, 220, 160), 0)
+    return ('off', 'OFFLINE', (170, 175, 180), 0)
+
+
 def _draw_footer(draw, network, info):
     draw.line((12,197,228,197), fill=(65,65,65))
     server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
     draw.text((12, 209), server_text, font=font(13), fill=server_color)
-    if info.get('wlan') == 'off':
-        link, link_color = 'WLAN AUS', (150, 150, 150)
-    elif not network:
-        link, link_color = 'OFFLINE', (180, 180, 180)
-    elif info.get('wifi_dbm') is not None:
-        dbm = info['wifi_dbm']
-        link = f'WLAN {dbm}'
-        link_color = (120,220,160) if dbm >= -67 else (255,180,0) if dbm >= -78 else (255,90,90)
-    else:
-        link, link_color = 'NET OK', (120, 220, 160)
-    draw.text((100, 209), link, font=font(13), fill=link_color)
+    kind, text, color, bars = network_view(network, info)
+    _network_pictogram(draw, 100, 207, kind, bars, color)
+    if text:
+        draw.text((121, 209), text, font=font(11), fill=color)
     if info.get('clock'):
         _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
 
@@ -1450,6 +1580,8 @@ def main():
     last_event = None
     error_until = None
     next_probe = 0.0
+    next_ap_probe = 0.0
+    ap_snapshot = None
     previous_screen = None
 
     while True:
@@ -1506,6 +1638,11 @@ def main():
             )
             error_until = None
 
+        if now >= next_ap_probe:
+            # Private local RAM file, never published to display status/LLM.
+            ap_snapshot = hotspot_control.read_clients()
+            next_ap_probe = now + 2.0
+        ap = ap_screen_info(ap_snapshot)
         status = read_status()
         # Menu "Display aus" or the idle sleep stage: backlight off, no rendering.
         lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
@@ -1524,9 +1661,10 @@ def main():
                 previous_screen = screen
         elif status.get('people') == 'on' and read_people() is not None:
             view = read_people()
-            screen = ('people', json.dumps(view, sort_keys=True), battery_view(battery))
+            screen = ('people', json.dumps(view, sort_keys=True), battery_view(battery),
+                      None if ap is None else (ap['count'], ap['joined']))
             if screen != previous_screen:
-                render_people(display, view, dict(battery=battery))
+                render_people(display, view, dict(battery=battery, ap=ap))
                 previous_screen = screen
         elif status.get('maint') == 'on':  # takes the screen even over a stale menu
             screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
@@ -1544,9 +1682,10 @@ def main():
                     render_info(display, info_rows)
                     previous_screen = screen
             else:
-                screen = ('menu', tuple(sorted(status.items())), battery_view(battery))
+                screen = ('menu', tuple(sorted(status.items())), battery_view(battery),
+                          None if ap is None else (ap['count'], ap['joined']))
                 if screen != previous_screen:
-                    render_menu(display, status, dict(battery=battery))
+                    render_menu(display, status, dict(battery=battery, ap=ap))
                     previous_screen = screen
         elif states is None or not is_ready(states) or voice_state is None:
             screen = ("boot", tuple(sorted((states or {}).items())))
@@ -1565,7 +1704,7 @@ def main():
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery, volume=volume_overlay(status),
                         alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
-                        memory=status.get('memory'),
+                        memory=status.get('memory'), ap=ap,
                         wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
                               if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
@@ -1616,7 +1755,7 @@ def main():
             elif billy and resting and info.get('volume') is None:
                 screen = ('rest-face', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info,
                                 picture=face.frame(face_resting(battery)))
@@ -1652,7 +1791,7 @@ def main():
                 # lag up to a minute, so the screen is redrawn about once a minute.
                 screen = ('rest', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info)
                     previous_screen = screen
