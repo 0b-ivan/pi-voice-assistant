@@ -95,7 +95,28 @@ Vosk/Piper nicht bei jedem Codeupdate neu installieren. **Nach erstmaligem Wechs
 
 ### Aus einem Git-Commit einspielen (aktuelle Praxis)
 
-Auf dem Pi ist `/opt/pi-voice-assistant` kein Git-Checkout. Eingespielt wird ein gepushter Commit mit dem root-eigenen Wrapper [`deploy/pi-voice-install`](../deploy/pi-voice-install): Er nimmt nur einen vollständigen 40-stelligen Commit-Hash, lädt genau diesen Commit von GitHub, führt dessen `scripts/install-voice-service.sh` aus (Module, Unit, Neustart von `pi-ptt` und `pi-display`) und schreibt den Kurz-Hash nach `/opt/pi-voice-assistant/src/DEPLOYED`. Die sudo-Regel erlaubt `obivan` nur diesen Wrapper, nichts für `obivan` Beschreibbares läuft als root.
+Auf dem Pi ist `/opt/pi-voice-assistant` kein Git-Checkout. Eingespielt wird ein gepushter Commit mit dem root-eigenen Wrapper [`deploy/pi-voice-install`](../deploy/pi-voice-install): Er nimmt nur einen vollständigen 40-stelligen Commit-Hash, extrahiert **ausschließlich diesen unveränderlichen Git-Commit** in ein root-eigenes Verzeichnis, führt dessen `scripts/install-voice-service.sh` aus (Module, Unit, Neustart von `pi-ptt` und `pi-display`) und schreibt den Kurz-Hash nach `/opt/pi-voice-assistant/src/DEPLOYED`. Ein geänderter, nicht committeter Arbeitsbaum wird dabei niemals als root ausgeführt.
+
+**Privates GitHub-Repository:** Anonymer Download über `codeload.github.com` endet mit HTTP 404, selbst wenn der SHA existiert. Deshalb muss der bereits eingerichtete Benutzer-Checkout `/home/obivan/pi-voice-assistant` den Commit kennen. Einmal vor dem Update **als `obivan`, nicht mit `sudo`**, abrufen:
+
+```bash
+cd ~/pi-voice-assistant
+git fetch origin main
+git cat-file -t <vollständiger-40-stelliger-commit-sha>  # erwartet: commit
+sudo /usr/local/sbin/pi-voice-install <vollständiger-40-stelliger-commit-sha>
+```
+
+Der Installer benötigt selbst **keinen GitHub-Token** und liest aus dem Checkout nur das Git-Objekt mit exakt dem angegebenen SHA. Ist der Commit noch nicht lokal vorhanden, versucht der Wrapper für öffentliche Repositories den anonymen Download; bei einem privaten Repository gibt er eine klare Anweisung zum vorherigen `git fetch` aus. Die sudo-Regel erlaubt `obivan` nur den Wrapper, keine unkontrollierte privilegierte Shell.
+
+**Einmaliges Upgrade von einem alten Wrapper mit `curl`-404:** Nach einem erfolgreichen `git fetch origin main` den geprüften neuen Wrapper aus dem festen Commit installieren und anschließend erneut ausführen (die Datei wird root-eigen/0755):
+
+```bash
+cd ~/pi-voice-assistant
+git show origin/main:deploy/pi-voice-install | sudo tee /usr/local/sbin/pi-voice-install >/dev/null
+sudo chmod 0755 /usr/local/sbin/pi-voice-install
+```
+
+Beim ersten Update sollte der Zugriff über eine funktionierende Ethernet-/SSH-Verbindung erfolgen.
 
 ```bash
 C=$(git rev-parse origin/main)          # vollständiger Hash, nicht abgekürzt
