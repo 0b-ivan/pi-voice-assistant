@@ -1,7 +1,9 @@
 #!/bin/sh
-# Install a pi-voice-assistant commit from GitHub as root (sudo rule for obivan,
-# deploy/pi-voice-install.sudoers). Takes only a full commit hash and fetches
-# the code itself, so nothing writable by obivan is executed as root.
+# Install an immutable pinned GitHub commit as root (sudo rule for obivan).
+# Private repositories cannot be downloaded from codeload anonymously.
+# A previously authenticated, UNPRIVILEGED git fetch populates the local
+# checkout; only the exact content-addressed Git commit is archived, NEVER
+# files from obivan's writable working tree.
 set -eu
 commit="${1:-}"
 case "$commit" in
@@ -10,9 +12,34 @@ case "$commit" in
 esac
 [ "${#commit}" -eq 40 ] || { echo "need the full 40-character commit hash" >&2; exit 2; }
 echo "$commit" | grep -qE '^[0-9a-f]{40}$' || exit 2
+
 work="$(mktemp -d /var/tmp/pi-voice-install.XXXXXX)"
-trap 'rm -rf "$work"' EXIT
-curl -fsSL "https://codeload.github.com/0b-ivan/pi-voice-assistant/tar.gz/$commit" \
-  | tar -xz -C "$work" --strip-components=1
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+# Root does not need a GitHub token or SSH key. The normal (obivan) user
+# authenticates git fetch on the Pi; root reads its verified SHA object only.
+checkout="/home/obivan/pi-voice-assistant"
+if [ -e "$checkout/.git" ] &&
+   /usr/bin/git -c "safe.directory=$checkout" -C "$checkout" \
+     cat-file -e "$commit^{commit}" 2>/dev/null; then
+  /usr/bin/git -c "safe.directory=$checkout" -C "$checkout" \
+    archive --format=tar --output="$work/repo.tar" "$commit"
+  /usr/bin/tar -xf "$work/repo.tar" -C "$work"
+else
+  # Public repository compatibility only. For private repos GitHub returns
+  # 404 without credentials, so show the local git fetch instructions.
+  if ! curl -fsSL --retry 2 \
+       -o "$work/repo.tar.gz" \
+       "https://codeload.github.com/0b-ivan/pi-voice-assistant/tar.gz/$commit"; then
+    echo "Cannot fetch commit $commit from public GitHub (private repo: HTTP 404)." >&2
+    echo "As obivan run: cd ~/pi-voice-assistant && git fetch origin main" >&2
+    echo "Verify the commit exists there, then rerun pi-voice-install." >&2
+    exit 1
+  fi
+  /usr/bin/tar -xzf "$work/repo.tar.gz" -C "$work" --strip-components=1
+fi
+
+# Both paths extract into a root-owned temporary directory. Never execute
+# anything from the user's writable checkout or trust its working tree.
 bash "$work/scripts/install-voice-service.sh"
 echo "$commit" | cut -c1-7 > /opt/pi-voice-assistant/src/DEPLOYED
