@@ -12,6 +12,7 @@ import time
 
 from alarms import ALARMS
 import menu
+import hotspot_config as ap_config
 from mood import EMOTIONS as MOODS
 from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
@@ -1082,7 +1083,7 @@ def render_enroll(display, status, info=None):
     display.image(image, 180)
 
 
-PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', '/run/pi-ptt/display-people.json'))
+PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', str(ap_config.DISPLAY_VIEW_FILE)))
 ENROLL_FILE = Path(os.environ.get('PI_DISPLAY_ENROLL_FILE', '/run/pi-ptt/display-enroll.json'))
 ENROLL_CONDITIONS = {'near': 'nah', 'far': 'fern', 'quiet': 'leise'}
 
@@ -1108,16 +1109,22 @@ def read_people(path=None):
     items = [str(i)[:28] for i in data.get('items', []) if isinstance(i, str)][:14]
     details = data.get('details') if isinstance(data.get('details'), dict) else {}
     index = data.get('index') if isinstance(data.get('index'), int) else 0
+    expires_at = data.get('expires_at')
     if data.get('page') == 'wifi_qr':
-        # The QR payload is secret. Accept it only from the private local
-        # picker file, with the fixed setup SSID and a valid ASCII WPA2 key.
+        # Never keep an expired QR on screen, even if pi-ptt has died or lost
+        # its runtime state. This check is independent of its 1-second watch.
         ssid, password = data.get('ssid'), data.get('password')
-        if (ssid != 'Proximus-Setup' or not isinstance(password, str)
+        if (ssid != ap_config.SSID or not isinstance(password, str)
                 or not 8 <= len(password) <= 63
-                or any(not (33 <= ord(ch) <= 126) for ch in password)):
+                or any(not (33 <= ord(ch) <= 126) for ch in password)
+                or not ap_config.live_expiration(expires_at, time.time())):
             return None
         return dict(page='wifi_qr', ssid=ssid, password=password,
                     title='WLAN VERBINDEN')
+    if (data.get('title') == 'HOTSPOT BEREIT'
+            and not ap_config.live_expiration(expires_at, time.time())):
+        # The manual text view must expire as strictly as the QR view.
+        return None
     return dict(page=data.get('page') if data.get('page') in ('list', 'actions', 'details')
                 else 'list', index=index, items=items,
                 person=str(data.get('person') or '')[:28], details=details,
