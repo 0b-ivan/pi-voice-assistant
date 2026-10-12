@@ -1051,6 +1051,10 @@ class VoiceController:
             self._wifi_item(item)
             self._publish_menu()
             return
+        if item in ('wifi_hotspot_start', 'wifi_hotspot_stop'):
+            self._wifi_hotspot_item(item)
+            self._publish_menu()
+            return
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
             return
@@ -1514,6 +1518,81 @@ class VoiceController:
             self.picker = dict(title='ENTFERNEN', items=paired, index=0, action='forget')
             self._publish_picker()
 
+    def _wifi_hotspot_item(self, item):
+        """Physical-menu-only start/stop; all privileged work is in the unit."""
+        if self.wifi_busy:
+            self.wifi_notes.append(network_control.BUSY)
+            return
+        if item == 'wifi_hotspot_start' and not self.wlan_on:
+            self.wifi_notes.append(network_control.RADIO_OFF)
+            return
+
+        def work():
+            from pathlib import Path
+            import json
+            import subprocess
+            action = 'start' if item == 'wifi_hotspot_start' else 'stop'
+            cmd = ['/usr/bin/sudo', '-n', '/usr/bin/systemctl',
+                   action, 'proximus-setup.service']
+            try:
+                done = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                                      capture_output=True, text=True,
+                                      timeout=30, check=False)
+            except (OSError, subprocess.SubprocessError):
+                done = None
+            if done is None or done.returncode != 0:
+                event('wifi', result='setup_failed')
+                self.wifi_notes.append('Setup-Hotspot konnte nicht gestartet werden.'
+                                       if action == 'start' else
+                                       'Setup-Hotspot konnte nicht beendet werden.')
+                if action == 'start' and self.picker is picker:
+                    self.picker = None
+                    self._publish_picker()
+                return
+            if action == 'stop':
+                event('wifi', result='setup_stopped')
+                self.wifi_notes.append('Setup-Hotspot beendet.')
+                return
+            # The root-owned setup service writes a short-lived info file
+            # readable only by the local voice user. No password in journal
+            # or display-status.json. PiTFT list is physically visible only.
+            path = Path('/run/pi-ptt/proximus-setup-info')
+            info = None
+            for _ in range(100):
+                if self.picker is not picker:
+                    return
+                try:
+                    value = json.loads(path.read_text())
+                    if value.get('ssid') == 'Proximus-Setup' and isinstance(value.get('password'), str):
+                        info = value
+                        break
+                except (OSError, ValueError, AttributeError):
+                    pass
+                time.sleep(.2)
+            if self.picker is picker:
+                if info:
+                    picker['title'] = 'HOTSPOT BEREIT'
+                    picker['items'] = [
+                        ('ssid', 'SSID: Proximus-Setup'),
+                        ('pw', 'Code: ' + info['password']),
+                        ('url', 'Web: 192.168.77.1')]
+                    picker['index'] = 0
+                    event('wifi', result='setup_ready')  # no secret in logs
+                else:
+                    picker['title'] = 'HOTSPOT FEHLER'
+                    picker['items'] = [('error', 'Einrichtung fehlgeschlagen')]
+                    event('wifi', result='setup_unavailable')
+                self._publish_picker()
+
+        picker = None
+        if item == 'wifi_hotspot_start':
+            picker = dict(title='HOTSPOT START',
+                          action='wifi_setup', items=[('loading', 'Bitte warten')],
+                          index=0)
+            self.picker = picker
+            self._publish_picker()
+        self._wifi_job(work)
+
     def _wifi_job(self, work):
         """Keep nmcli/DBus and radio scans out of the 10-ms button loop."""
         if self.wifi_busy:
@@ -1613,6 +1692,9 @@ class VoiceController:
         index = picker['index']
         if picker['action'] == 'wifi_pick':
             self._wifi_pick(picker, confirm)
+            self._publish_picker()
+            return
+        if picker['action'] == 'wifi_setup':
             self._publish_picker()
             return
         if confirm and index < len(picker['items']):
