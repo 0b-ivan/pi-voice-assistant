@@ -1052,7 +1052,8 @@ class VoiceController:
             self._wifi_item(item)
             self._publish_menu()
             return
-        if item in ('wifi_hotspot_start', 'wifi_hotspot_stop'):
+        if item in ('wifi_hotspot_start', 'wifi_hotspot_show',
+                    'wifi_hotspot_rotate', 'wifi_hotspot_stop'):
             self._wifi_hotspot_item(item)
             self._publish_menu()
             return
@@ -1520,47 +1521,63 @@ class VoiceController:
             self._publish_picker()
 
     def _wifi_hotspot_item(self, item):
-        """Show active setup credentials or start/stop the isolated root unit."""
+        """The Access Point sub-menu: local controls, no credentials in logs."""
         if self.wifi_busy:
             self.wifi_notes.append(network_control.BUSY)
             return
-        starting = item == 'wifi_hotspot_start'
-        # An already running hotspot may be inspected even if the user-facing
-        # WLAN toggle disagrees with the actual NetworkManager radio state.
-        if starting and not self.wlan_on and not hotspot_control.is_active():
+        showing = item != 'wifi_hotspot_stop'
+        starts = item in ('wifi_hotspot_start', 'wifi_hotspot_rotate')
+        rotates = item == 'wifi_hotspot_rotate'
+        if starts and not self.wlan_on and not hotspot_control.is_active():
             self.wifi_notes.append(network_control.RADIO_OFF)
             return
 
         picker = None
-        if starting:
-            picker = dict(title='HOTSPOT START', action='wifi_setup',
+        if showing:
+            picker = dict(title='ACCESS POINT', action='wifi_setup',
                           items=[('loading', 'Bitte warten')], index=0)
         self.picker = picker
         self._publish_picker()
 
         def work():
-            if not starting:
+            if item == 'wifi_hotspot_stop':
                 stopped = hotspot_control.control('stop')
                 if not stopped or hotspot_control.is_active():
                     event('wifi', result='setup_stop_failed')
-                    self.wifi_notes.append('Setup-Hotspot konnte nicht beendet werden.')
+                    self.wifi_notes.append('Access Point konnte nicht beendet werden.')
                 else:
                     event('wifi', result='setup_stopped')
-                    self.wifi_notes.append('Setup-Hotspot beendet.')
+                    self.wifi_notes.append('Access Point beendet.')
                 return
 
-            # systemctl communicates with systemd using its D-Bus Polkit rule.
-            # No sudo/setuid (NoNewPrivileges=yes remains in pi-ptt.service).
-            already_running = hotspot_control.is_active()
-            if not already_running and not hotspot_control.control('start'):
-                event('wifi', result='setup_failed')
-                self.wifi_notes.append('Setup-Hotspot konnte nicht gestartet werden.')
+            was_active = hotspot_control.is_active()
+            if rotates and was_active and not hotspot_control.control('stop'):
+                event('wifi', result='setup_rotate_failed')
+                self.wifi_notes.append('Passwort konnte nicht erneuert werden.')
                 if self.picker is picker:
-                    self.picker = None
+                    picker['items'] = [('error', 'Passwort nicht erneuert')]
+                    self._publish_picker()
+                return
+
+            # Showing credentials never starts a stopped hotspot; starting and
+            # rotating may start only the approved systemd unit via Polkit.
+            if item == 'wifi_hotspot_show' and not was_active:
+                if self.picker is picker:
+                    picker['title'] = 'ACCESS POINT AUS'
+                    picker['items'] = [('off', 'Erst AP starten')]
+                    self._publish_picker()
+                return
+            if starts and (rotates or not was_active) and not hotspot_control.control('start'):
+                event('wifi', result='setup_failed')
+                if self.picker is picker:
+                    picker['title'] = 'HOTSPOT FEHLER'
+                    picker['items'] = [('error', 'AP-Start fehlgeschlagen')]
                     self._publish_picker()
                 return
 
             info = None
+            # Starting the service is asynchronous. Poll its private info file;
+            # don't expose old data if the service has stopped.
             for _ in range(100):
                 if self.picker is not picker:
                     return
@@ -1577,15 +1594,14 @@ class VoiceController:
                     ('ssid', 'SSID: ' + info['ssid']),
                     ('pw', 'Code: ' + info['password']),
                     ('url', 'Web: 192.168.77.1')]
-                picker['index'] = 1  # highlight the password on the PiTFT
-                event('wifi', result='setup_ready', existing=already_running)
+                picker['index'] = 1
+                event('wifi', result='setup_ready', existing=was_active, rotated=rotates)
             else:
                 picker['title'] = 'HOTSPOT FEHLER'
                 picker['items'] = [('error', 'Keine Zugangsdaten')]
                 picker['index'] = 0
                 event('wifi', result='setup_unavailable')
-            # display-people.json is private to obivan, never the public
-            # display-status.json or journald.
+            # Secret only in the owner-readable display-people.json file.
             self._publish_picker()
 
         self._wifi_job(work)
