@@ -17,6 +17,10 @@ dpkg-query -W -f='${Status}' python3-venv 2>/dev/null | grep -q 'ok installed' \
   || missing_packages+=(python3-venv)
 dpkg-query -W -f='${Status}' python3-pil 2>/dev/null | grep -q 'ok installed' \
   || missing_packages+=(python3-pil)
+# Used only when the Access Point QR screen is open. Pure-Python encoder:
+# no cloud access, no new background process and no camera dependency.
+dpkg-query -W -f='${Status}' python3-qrcode 2>/dev/null | grep -q 'ok installed' \
+  || missing_packages+=(python3-qrcode)
 
 if (( ${#missing_packages[@]} > 0 )); then
   apt-get update
