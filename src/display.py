@@ -1316,7 +1316,12 @@ def render_menu(display, status, info=None):
             value_color = (120, 220, 160) if value == 'AN' else (170, 170, 170)
             _right(draw, 226, y + 1, value, 13, value_color)
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
-    draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+    if info.get('ap') is not None:
+        ap = info['ap']
+        label = 'AP: NEUER CLIENT' if ap['joined'] else f"AP AKTIV · {ap['count']} CLIENTS"
+        draw.text((12, 209), label, font=font(11), fill=(180, 130, 255))
+    else:
+        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
     display.image(image, 180)
 
 
@@ -1567,6 +1572,8 @@ def main():
     last_event = None
     error_until = None
     next_probe = 0.0
+    next_ap_probe = 0.0
+    ap_snapshot = None
     previous_screen = None
 
     while True:
@@ -1623,6 +1630,11 @@ def main():
             )
             error_until = None
 
+        if now >= next_ap_probe:
+            # Private local RAM file, never published to display status/LLM.
+            ap_snapshot = hotspot_control.read_clients()
+            next_ap_probe = now + 2.0
+        ap = ap_screen_info(ap_snapshot)
         status = read_status()
         # Menu "Display aus" or the idle sleep stage: backlight off, no rendering.
         lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
@@ -1661,9 +1673,10 @@ def main():
                     render_info(display, info_rows)
                     previous_screen = screen
             else:
-                screen = ('menu', tuple(sorted(status.items())), battery_view(battery))
+                screen = ('menu', tuple(sorted(status.items())), battery_view(battery),
+                          None if ap is None else (ap['count'], ap['joined']))
                 if screen != previous_screen:
-                    render_menu(display, status, dict(battery=battery))
+                    render_menu(display, status, dict(battery=battery, ap=ap))
                     previous_screen = screen
         elif states is None or not is_ready(states) or voice_state is None:
             screen = ("boot", tuple(sorted((states or {}).items())))
@@ -1682,7 +1695,7 @@ def main():
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery, volume=volume_overlay(status),
                         alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
-                        memory=status.get('memory'),
+                        memory=status.get('memory'), ap=ap,
                         wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
                               if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
