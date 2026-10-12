@@ -7,6 +7,12 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Do not replace a running root-owned provisioning service's script while it
+# owns wlan0, nftables rules, and an active WPA2 key/portal session.
+if systemctl is-active --quiet proximus-setup.service; then
+  echo "Stop the active setup AP first: sudo systemctl stop proximus-setup.service" >&2
+  exit 1
+fi
 # The service needs this group even when the optional SHIM is disabled.
 # Validate dependencies before stopping an already working voice service.
 if ! getent group i2c >/dev/null || ! /usr/bin/python3 -c 'import smbus'; then
@@ -120,6 +126,14 @@ fi
 
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/pi-ptt.service /etc/systemd/system/proximus-setup.service
+
+# The normal commit installer updates existing display code but deliberately
+# does not apt install packages. Make a missing optional QR dependency visible.
+# The text-password screen remains available as an offline fallback.
+if [[ -x /opt/pi-voice-assistant/.venv-display/bin/python ]] && \
+   ! /opt/pi-voice-assistant/.venv-display/bin/python -c 'import qrcode' >/dev/null 2>&1; then
+  echo "WARNING: AP WLAN-QR cannot render yet. Install: sudo apt-get install python3-qrcode" >&2
+fi
 
 if [[ ${created_voice_env} -eq 1 ]]; then
   echo "Service left stopped until /etc/pi-voice-assistant.env is reviewed."
