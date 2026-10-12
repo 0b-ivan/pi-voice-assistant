@@ -1149,7 +1149,13 @@ def render_people(display, view, info=None):
             if row == view['index']:
                 draw.rectangle((10, y - 1, 230, y + 18), fill=(0, 60, 52))
                 draw.text((14, y), '›', font=font(15), fill=accent)
-            draw.text((28, y), label, font=font(15),
+            # WPA2 setup keys have 16 printable characters. Scale the full
+            # key to the 240px screen; never silently truncate a password.
+            size = 15
+            if title == 'HOTSPOT BEREIT' and label.startswith('Code: '):
+                size = next((n for n in (15, 14, 13, 12, 11)
+                             if draw.textlength(label, font=font(n)) <= 197), 11)
+            draw.text((28, y), label, font=font(size),
                       fill=accent if row == view['index'] else (215, 220, 225))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
     if view['confirm_delete']:
@@ -1233,7 +1239,7 @@ def render_menu(display, status, info=None):
             draw.rectangle((10, y - 1, 230, y + 18), fill=(40, 32, 70))
             draw.text((14, y), '›', font=font(15), fill=accent)
         color = accent if row == selected else (215, 220, 225)
-        if group is None and item in menu.GROUPS:
+        if item in menu.GROUPS and (group is None or menu.PARENTS.get(item) == group):
             label += ' ›'
         draw.text((28, y), label, font=font(15), fill=color)
         value = _menu_value(item, status)
