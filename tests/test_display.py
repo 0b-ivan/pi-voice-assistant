@@ -340,7 +340,9 @@ class StatusInfoTests(unittest.TestCase):
         self.assertEqual(display.server_state({}), "off")
         with patch("urllib.request.urlopen", return_value=Response(b'{"ready": true}')) as get:
             self.assertEqual(display.server_state(env), "ok")
-        self.assertEqual(get.call_args.args[0], "http://172.22.9.107:8765/health")
+        self.assertEqual(get.call_args.args[0].full_url, "http://172.22.9.107:8765/health")
+        self.assertEqual(get.call_args.args[0].get_header("User-agent"),
+                         "pi-voice-assistant/1")
         with patch("urllib.request.urlopen", return_value=Response(b'{"ready": false}')):
             self.assertEqual(display.server_state(env), "down")
         with patch("urllib.request.urlopen", side_effect=OSError("refused")):
