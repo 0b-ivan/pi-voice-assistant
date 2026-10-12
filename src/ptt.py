@@ -1055,7 +1055,8 @@ class VoiceController:
             self._publish_menu()
             return
         if item in ('wifi_hotspot_start', 'wifi_hotspot_show',
-                    'wifi_hotspot_rotate', 'wifi_hotspot_stop'):
+                    'wifi_hotspot_rotate', 'wifi_hotspot_stop',
+                    'wifi_hotspot_clients'):
             self._wifi_hotspot_item(item)
             self._publish_menu()
             return
@@ -1524,6 +1525,13 @@ class VoiceController:
 
     def _wifi_hotspot_item(self, item):
         """The Access Point sub-menu: local controls, no credentials in logs."""
+        if item == 'wifi_hotspot_clients':
+            self.picker = dict(title='AP CLIENTS', action='wifi_clients',
+                               items=[('empty', 'Suche ...')], index=0)
+            self.hotspot_next_check = 0
+            self._check_hotspot_picker(time.monotonic())
+            self._publish_picker()
+            return
         if self.wifi_busy:
             self.wifi_notes.append(network_control.BUSY)
             return
@@ -1730,8 +1738,23 @@ class VoiceController:
         The display also validates the expiry independently on every redraw.
         """
         picker = self.picker
-        if (not picker or picker.get('action') != 'wifi_setup'
-                or not picker.get('password') or now < self.hotspot_next_check):
+        if not picker or now < self.hotspot_next_check:
+            return
+        if picker.get('action') == 'wifi_clients':
+            self.hotspot_next_check = now + 2.0
+            snapshot = hotspot_control.read_clients()
+            entries = ([] if snapshot is None else snapshot['clients'])
+            items = [(x['mac'],
+                      x['mac'] + (' ' + str(x['signal_dbm']) if x['signal_dbm'] is not None else ''))
+                     for x in entries]
+            if not items:
+                items = [('empty', 'Keine verbundenen Geräte' if snapshot else 'AP aus')]
+            if picker.get('items') != items:
+                picker['items'] = items
+                picker['index'] = min(picker['index'], len(items))
+                self._publish_picker()
+            return
+        if picker.get('action') != 'wifi_setup' or not picker.get('password'):
             return
         self.hotspot_next_check = now + 1.0
         fresh = hotspot_control.read_info()
