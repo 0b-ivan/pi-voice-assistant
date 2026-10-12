@@ -7,7 +7,7 @@ Requires=NetworkManager.service
 [Service]
 Type=simple
 User=root
-Group=root
+Group=obivan
 ExecStart=/usr/bin/python3 /opt/pi-voice-assistant/src/proximus_setup.py
 # Also recover from SIGKILL: remove only our marked AP keyfile + nft rules.
 ExecStopPost=/usr/bin/python3 /opt/pi-voice-assistant/src/proximus_setup.py --cleanup
@@ -15,10 +15,10 @@ Restart=no
 TimeoutStartSec=40
 TimeoutStopSec=10
 RuntimeDirectory=proximus-setup
-RuntimeDirectoryMode=0700
+RuntimeDirectoryMode=0750
 UMask=0077
 ProtectSystem=strict
-ReadWritePaths=/etc/NetworkManager/system-connections /run/proximus-setup /run/pi-ptt
+ReadWritePaths=/etc/NetworkManager/system-connections /run/proximus-setup
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
