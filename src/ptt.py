@@ -42,6 +42,7 @@ import weather
 import wlan as wlan_radio
 import network_control
 import hotspot_control
+import hotspot_config as ap_config
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
 from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, RemoteTurnUplink,
                          load_remote_config, story_timeout)
@@ -1594,7 +1595,7 @@ class VoiceController:
                 picker['items'] = [
                     ('ssid', 'SSID: ' + info['ssid']),
                     ('pw', 'Code: ' + info['password']),
-                    ('url', 'Web: 192.168.77.1')]
+                    ('url', 'Web: ' + ap_config.ADDRESS)]
                 picker['index'] = 1
                 picker['page'] = 'wifi_qr'
                 picker['ssid'] = info['ssid']
