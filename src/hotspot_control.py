@@ -6,6 +6,7 @@ private info file is logged, passed on argv or put into display-status.json.
 """
 import json
 import os
+import stat
 from pathlib import Path
 import subprocess
 import time
@@ -51,10 +52,10 @@ def read_info(path=INFO_FILE, now=None):
     """
     path = Path(path)
     try:
-        stat = path.stat()
-        if not stat.st_mode & 0o170000 == 0o100000:  # regular file
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
             return None
-        age = (time.time() if now is None else now) - stat.st_mtime
+        age = (time.time() if now is None else now) - metadata.st_mtime
         if age < -60 or age > MAX_INFO_AGE:
             return None
         with path.open(encoding="utf-8") as fd:
