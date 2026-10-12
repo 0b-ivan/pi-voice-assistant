@@ -789,6 +789,7 @@ class VoiceController:
         self.wifi_busy = False
         self.wifi_notes = []               # sentences from the NetworkManager worker
         self.picker = None                 # dict(title, items=[(mac, name)], index, action)
+        self.hotspot_next_check = 0.0     # private file liveness, once per second
         self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
         # Spoken device commands (device_control): a reboot/shutdown waiting for
@@ -1598,6 +1599,7 @@ class VoiceController:
                 picker['page'] = 'wifi_qr'
                 picker['ssid'] = info['ssid']
                 picker['password'] = info['password']
+                picker['expires_at'] = info['expires_at']
                 event('wifi', result='setup_ready', existing=was_active, rotated=rotates)
             else:
                 picker['title'] = 'HOTSPOT FEHLER'
@@ -1698,10 +1700,13 @@ class VoiceController:
             if self.picker.get('page') == 'wifi_qr':
                 view = dict(page='wifi_qr', title='WLAN VERBINDEN',
                             ssid=self.picker['ssid'], password=self.picker['password'],
+                            expires_at=self.picker['expires_at'],
                             index=0, person='', items=[])
             else:
                 view = dict(page='list', index=self.picker['index'], items=items,
                             person='', title=self.picker['title'])
+                if self.picker.get('password'):
+                    view['expires_at'] = self.picker['expires_at']
             try:
                 people.write_view(path, view)
             except OSError:
@@ -1715,6 +1720,25 @@ class VoiceController:
                 pass
         self.people_rev = (self.people_rev + 1) % 10000
         publish_display_status(people='on' if self.picker else 'off', people_rev=self.people_rev)
+
+    def _check_hotspot_picker(self, now):
+        """Clear expired or externally stopped AP keys, without blocking GPIO.
+
+        The setup unit removes its RAM info file on exit. Poll the private
+        file only once a second while credentials are actually displayed.
+        The display also validates the expiry independently on every redraw.
+        """
+        picker = self.picker
+        if (not picker or picker.get('action') != 'wifi_setup'
+                or not picker.get('password') or now < self.hotspot_next_check):
+            return
+        self.hotspot_next_check = now + 1.0
+        fresh = hotspot_control.read_info()
+        if (fresh is None or fresh['password'] != picker['password']
+                or fresh['expires_at'] != picker['expires_at']):
+            self.picker = None
+            self._publish_picker()
+            event('wifi', result='setup_view_expired')
 
     def _picker_buttons(self, confirm):
         picker = self.picker
@@ -2620,6 +2644,7 @@ class VoiceController:
             event('stt_error', message=job.error)
 
     def tick(self, gpio_pressed, shim_pressed, now, pitft_pressed=(False, False)):
+        self._check_hotspot_picker(now)
         held = gpio_pressed or shim_pressed[0]
         action = self.ptt.update(held, now)
         commands = [name for i, name in enumerate('BCDE', 1)
