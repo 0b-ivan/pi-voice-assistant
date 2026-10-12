@@ -148,6 +148,7 @@ class Provisioning:
         self.done = False
         self.previous = None
         self.server = None
+        self.pending = None
         self.lock = threading.Lock()
 
     def setup(self):
@@ -182,6 +183,8 @@ class Provisioning:
         Path(path).unlink(missing_ok=True)
 
     def cleanup(self):
+        if self.pending is not None:
+            self.pending.cancel()
         self.info_path.unlink(missing_ok=True)
         self._drop_profile(self.ap_uuid, self.ap_path)
         self.run(["nft", "delete", "table", "inet", TABLE], timeout=5, check=False)
@@ -231,8 +234,11 @@ class Provisioning:
             self.attempts += 1
             self.error = ""
             self.busy = True
-        threading.Thread(target=self.connect, args=(ssid, password),
-                         name="wifi-provision", daemon=True).start()
+        # Let HTTP 202 reach the phone before taking down its hotspot link.
+        self.pending = threading.Timer(1.0, self.connect, args=(ssid, password))
+        self.pending.name = "wifi-provision"
+        self.pending.daemon = True
+        self.pending.start()
         return True
 
     def page(self):
