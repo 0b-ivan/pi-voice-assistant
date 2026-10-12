@@ -1218,12 +1218,12 @@ def render_people(display, view, info=None):
             if row == view['index']:
                 draw.rectangle((10, y - 1, 230, y + 18), fill=(0, 60, 52))
                 draw.text((14, y), '›', font=font(15), fill=accent)
-            # WPA2 setup keys have 16 printable characters. Scale the full
-            # key to the 240px screen; never silently truncate a password.
+            # Full AP station MACs and WPA2 passwords must fit in 240px.
             size = 15
-            if title == 'HOTSPOT BEREIT' and label.startswith('Code: '):
-                size = next((n for n in (15, 14, 13, 12, 11)
-                             if draw.textlength(label, font=font(n)) <= 197), 11)
+            if ((title == 'HOTSPOT BEREIT' and label.startswith('Code: '))
+                    or title == 'AP CLIENTS'):
+                size = next((v for v in (15, 14, 13, 12, 11, 10)
+                             if draw.textlength(label, font=font(v)) <= 197), 10)
             draw.text((28, y), label, font=font(size),
                       fill=accent if row == view['index'] else (215, 220, 225))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
@@ -1746,7 +1746,7 @@ def main():
             elif billy and resting and info.get('volume') is None:
                 screen = ('rest-face', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info,
                                 picture=face.frame(face_resting(battery)))
@@ -1782,7 +1782,7 @@ def main():
                 # lag up to a minute, so the screen is redrawn about once a minute.
                 screen = ('rest', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info)
                     previous_screen = screen
