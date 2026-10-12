@@ -115,6 +115,35 @@ class ControllerMenuTests(unittest.TestCase):
         self.press(down='E')
         self.assertTrue(self.recorder.uplink_enabled)
 
+    def test_network_group_navigation(self):
+        self.c.menu.select('wifi_scan')
+        self.assertEqual(self.c.menu.group, 'network')
+        self.assertEqual(self.c.menu.items[self.c.menu.index], 'wifi_scan')
+        self.assertTrue('wifi_saved' in self.c.menu.items)
+        self.c.menu.back(self.now)
+        self.assertEqual(self.c.menu.group, None)
+
+    def test_wifi_scan_does_not_block_and_only_saved_can_connect(self):
+        with patch.object(self.c.wifi, 'available', return_value=True), \
+             patch.object(self.c.wifi, 'saved', return_value=[
+                dict(uuid='11111111-2222-3333-4444-555555555555',
+                     ssid='Home', name='Home')]), \
+             patch.object(self.c.wifi, 'scan', return_value=[
+                ('Home', 88), ('Unknown', 50)]):
+            self.c.menu.select('wifi_scan')
+            self.press(down='E')
+            import time
+            deadline = time.monotonic() + 2
+            while self.c.wifi_busy and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(self.c.picker['items'][0][0], 'Home')
+            self.assertIn('Unknown', [x[0] for x in self.c.picker['items']])
+            self.c.picker['index'] = 1
+            with patch.object(self.c.wifi, 'connect') as connect:
+                self.press(down='E')
+                connect.assert_not_called()
+                self.assertIn('Hotspot', self.c.wifi_notes[-1])
+
     def test_b_closes_menu_without_cancelling(self):
         self.press(pitft='U')
         self.press(down='B')
