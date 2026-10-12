@@ -51,6 +51,40 @@ NFT_RULES = """table inet proximus_setup {
 """.replace('iifname "wlan0"', 'iifname "' + IFACE + '"')
 
 
+def associated_stations(output):
+    """Parse iw's associated/authorized AP stations, never DHCP/ARP leftovers.
+
+    Return at most 24 current clients. Only the root AP service runs iw:
+    nl80211 reads are not delegated to the unprivileged GUI.
+    """
+    results = []
+    entry = None
+
+    def finish():
+        if entry and entry["authorized"] is not False:
+            results.append({k: v for k, v in entry.items()
+                            if k in ("mac", "signal_dbm") and v is not None})
+
+    for line in output.splitlines():
+        match = re.match(r"^Station ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})(?:\\s|$)", line)
+        if match:
+            finish()
+            entry = {"mac": match.group(1).lower(), "authorized": None,
+                     "signal_dbm": None}
+        elif entry:
+            stripped = line.strip()
+            if stripped.startswith("authorized:"):
+                entry["authorized"] = stripped.partition(":")[2].strip() == "yes"
+            elif stripped.startswith("signal:"):
+                value = re.search(r"(-?\\d+)\\s*dBm", stripped)
+                if value:
+                    level = int(value.group(1))
+                    if -110 <= level <= 0:
+                        entry["signal_dbm"] = level
+    finish()
+    return results[:24]
+
+
 class SetupError(RuntimeError):
     pass
 
@@ -129,6 +163,7 @@ def clean_stale():
                     timeout=8, check=False)
         path.unlink(missing_ok=True)
     INFO_FILE.unlink(missing_ok=True)
+    ap_config.CLIENTS_FILE.unlink(missing_ok=True)
     command(["nft", "delete", "table", "inet", TABLE], timeout=5, check=False)
 
 
@@ -151,10 +186,12 @@ class Provisioning:
         self.server = None
         self.pending = None
         self.expires_at = None
+        self.clients_stop = threading.Event()
+        self.clients_thread = None
         self.lock = threading.Lock()
 
     def setup(self):
-        for tool in ("nmcli", "nft", "dnsmasq"):
+        for tool in ("nmcli", "nft", "dnsmasq", "iw"):
             if shutil.which(tool) is None:
                 raise SetupError("Missing dependency: " + tool)
         if not self.directory.is_dir():
@@ -178,9 +215,39 @@ class Provisioning:
             private_write(self.info_path, json.dumps(
                 dict(ssid=AP_NAME, password=self.psk, url=AP_URL,
                      issued_at=issued_at, expires_at=self.expires_at)), owner="obivan")
+            self.clients_thread = threading.Thread(target=self._monitor_clients,
+                                                   name="ap-stations", daemon=True)
+            self.clients_thread.start()
         except Exception:
             self.cleanup()
             raise
+
+    def _monitor_clients(self):
+        """2-second, AP-only station polling with a private RAM snapshot.
+
+        No station identifier is logged, transmitted or persisted beyond the
+        runtime directory. Disconnected clients disappear on the next poll.
+        """
+        old = set()
+        last_joined_at = None
+        while not self.clients_stop.is_set():
+            if self.done:
+                break
+            try:
+                raw = self.run(["iw", "dev", IFACE, "station", "dump"],
+                               timeout=3, check=False)
+                clients = associated_stations(raw)
+                current = {row["mac"] for row in clients}
+                if current - old:
+                    last_joined_at = time.time()
+                old = current
+                private_write(ap_config.CLIENTS_FILE, json.dumps(
+                    dict(clients=clients, updated_at=time.time(),
+                         last_joined_at=last_joined_at)), owner="obivan")
+            except (OSError, SetupError, ValueError):
+                # Unavailable driver statistics never disable the setup AP.
+                pass
+            self.clients_stop.wait(ap_config.CLIENT_REFRESH_SECONDS)
 
     def _drop_profile(self, identity, path):
         self.run(["nmcli", "connection", "delete", "uuid", identity],
@@ -190,6 +257,10 @@ class Provisioning:
     def cleanup(self):
         if self.pending is not None:
             self.pending.cancel()
+        self.clients_stop.set()
+        if self.clients_thread is not None:
+            self.clients_thread.join(timeout=4)
+        ap_config.CLIENTS_FILE.unlink(missing_ok=True)
         self.info_path.unlink(missing_ok=True)
         self._drop_profile(self.ap_uuid, self.ap_path)
         self.run(["nft", "delete", "table", "inet", TABLE], timeout=5, check=False)
