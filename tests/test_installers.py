@@ -1,4 +1,7 @@
 import re
+import subprocess
+import tarfile
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -42,6 +45,49 @@ class InstallerTests(unittest.TestCase):
         display_setup = (ROOT / 'scripts' / 'install-display.sh').read_text()
         self.assertIn("python3-qrcode", display_setup)
         self.assertIn('install -m 0644 "${repo_root}/src/display.py"', installer)
+
+
+    def test_private_repository_installer_uses_pinned_local_git_archive(self):
+        script_path = ROOT / 'deploy' / 'pi-voice-install'
+        subprocess.run(['/bin/sh', '-n', str(script_path)], check=True)
+        src = script_path.read_text()
+        self.assertIn('cat-file -e "$commit^{commit}"', src)
+        self.assertIn('archive --format=tar --output="$work/repo.tar" "$commit"', src)
+        self.assertIn('/home/obivan/pi-voice-assistant', src)
+        self.assertIn('git fetch origin main', src)
+        self.assertIn('curl -fsSL --retry 2', src)
+        self.assertIn('-o "$work/repo.tar.gz"', src)
+        self.assertNotIn('curl -fsSL "https://codeload', src)
+        self.assertIn('bash "$work/scripts/install-voice-service.sh"', src)
+        self.assertIn('cut -c1-7 > /opt/pi-voice-assistant/src/DEPLOYED', src)
+
+    def test_git_archive_uses_committed_bytes_not_dirty_worktree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / 'checkout'
+            checkout.mkdir()
+            subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+            subprocess.run(['git', '-C', str(checkout), 'config', 'user.email',
+                            'ci@example.invalid'], check=True)
+            subprocess.run(['git', '-C', str(checkout), 'config', 'user.name',
+                            'CI'], check=True)
+            data = checkout / 'scripts'
+            data.mkdir()
+            target = data / 'install-voice-service.sh'
+            target.write_text('echo committed\n')
+            subprocess.run(['git', '-C', str(checkout), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(checkout), 'commit', '-qm',
+                            'pinned'], check=True)
+            commit = subprocess.check_output(
+                ['git', '-C', str(checkout), 'rev-parse', 'HEAD'], text=True).strip()
+            target.write_text('echo dirty\n')
+            archive = root / 'snapshot.tar'
+            subprocess.run(['git', '-C', str(checkout), 'archive',
+                            '--format=tar', '--output=' + str(archive),
+                            commit], check=True)
+            with tarfile.open(archive) as tar:
+                content = tar.extractfile('scripts/install-voice-service.sh').read()
+                self.assertEqual(content, b'echo committed\n')
 
 
 
