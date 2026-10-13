@@ -104,7 +104,10 @@ def keyfile_text(ssid, password, identity, ap=False):
     if not network_name(ssid) or not password_ok(password):
         raise SetupError("Invalid Wi-Fi credentials")
     def escape(value):
-        return value.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
+        # GKeyFile strips unescaped leading blanks from values ("  pass"
+        # would become "pass"); \s is decoded anywhere in a value.
+        return (value.replace("\\", "\\\\").replace("\n", "\\n")
+                .replace("\t", "\\t").replace(" ", "\\s"))
     mode = "ap" if ap else "infrastructure"
     ipv4 = ("method=shared\naddress1=" + AP_IP + "/24\n") if ap else "method=auto\n"
     ipv6 = "disabled" if ap else "auto"
@@ -304,7 +307,10 @@ class Provisioning:
         with self.lock:
             if (self.busy or self.done or self.attempts >= MAX_ATTEMPTS
                     or (self.expires_at is not None and time.time() >= self.expires_at)
-                    or not hmac.compare_digest(token, self.csrf)):
+                    or not isinstance(token, str)
+                    # compare_digest raises TypeError on non-ASCII str.
+                    or not hmac.compare_digest(token.encode("utf-8"),
+                                               self.csrf.encode("utf-8"))):
                 return False
             if not network_name(ssid) or not password_ok(password):
                 return False

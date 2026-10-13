@@ -19,6 +19,7 @@ NO_NETWORKS = "Keine WLAN-Netze gefunden."
 RADIO_OFF = "WLAN ist ausgeschaltet."
 UNAVAILABLE = "NetworkManager nicht verfügbar."
 BUSY = "Netzwerkvorgang läuft. Bitte warten."
+AP_ACTIVE = "Access Point aktiv. Erst im Menü Access Point beenden."
 
 
 class WifiError(RuntimeError):

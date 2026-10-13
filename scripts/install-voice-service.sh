@@ -34,7 +34,9 @@ fi
 
 # Enable the analog jack and persist its mixer state before stopping a healthy
 # service. Preserve existing speaker, capture and digital playback levels.
-/usr/bin/python3 "${repo_root}/scripts/configure-wm8960.py" --if-present
+# The jack is optional: an unreadable mixer must not block code deploys.
+/usr/bin/python3 "${repo_root}/scripts/configure-wm8960.py" --if-present ||
+  echo "Warning: WM8960 headphone/AUX setup failed; speaker output unchanged." >&2
 
 service_was_active=0
 if systemctl is-active --quiet pi-ptt.service; then

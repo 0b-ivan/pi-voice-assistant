@@ -46,9 +46,11 @@ STATES = ('on', 'offers', 'ask', 'origin', 'destination', 'calendar', 'choice')
 MODES = ('tram', 'bus', 'train', 'regional', 'long')
 ACTIONS = ('remind', 'calendar')
 
+# "bus", "busse", "buslinie 14", "busverbindung" … but not "business"/"bussi".
+_BUS = r'bus(?:se|sen|linie\w*|verbindung\w*|haltestelle\w*|bahnhof\w*|abfahrt\w*)?'
 _VEHICLE = (r'(straßenbahn\w*|strassenbahn\w*|tram|trams|zug|züge|zuge|bahn|bahnen|s bahn|'
             r'regionalzug\w*|regionalbahn\w*|regionalexpress|regio|ice|intercity|fernzug\w*|'
-            r'verbindung\w*|abfahrt\w*|bus\w*)')
+            r'verbindung\w*|abfahrt\w*|' + _BUS + ')')
 _ASKS = re.compile(r'\b(wann|nächste[nrs]?|wie komme ich|verbindung\w*|abfahrt\w*|fahrplan|'
                    r'fährt|fahren|geht|gehen|welche[rn]?)\b')
 _HOW = re.compile(r'\bwie (komme|kommen) (ich|wir)\b.*\b(nach|zum|zur|in die (innen)?stadt)\b')
@@ -67,7 +69,7 @@ _BARE_NUMBER = {'eins': 0, 'zwei': 1, 'drei': 2, '1': 0, '2': 1, '3': 2}
 _ORDINALS = {'erste': 0, 'zweite': 1, 'dritte': 2, 'letzte': -1}
 _FILTER = re.compile(r'\b(nur|bloß|lieber) (noch )?(?:mit )?(?:dem |der |den )?'
                      r'(regional\w*|regio|straßenbahn\w*|strassenbahn\w*|tram|ice|fernzüge|'
-                     r'fernverkehr|züge|zug|bahn|bus\w*)\b|\bohne (ice|fernverkehr|fernzüge)\b')
+                     r'fernverkehr|züge|zug|bahn|' + _BUS + r')\b|\bohne (ice|fernverkehr|fernzüge)\b')
 _REMIND = re.compile(r'\b(erinner\w* (mich|uns)|weck\w* mich|sag mir bescheid|sag bescheid)\b')
 _CALENDAR = re.compile(r'\b(kalender\w*|eintragen|trag\w* (\w+ ){0,5}ein)\b')
 _BOTH = re.compile(r'\b(beides|beide|alles beides)\b')
@@ -84,7 +86,7 @@ def _mode(text):
         return 'long'
     if re.search(r'\b(straßenbahn\w*|strassenbahn\w*|trams?)\b', text):
         return 'tram'
-    if re.search(r'\bbus\w*\b', text):
+    if re.search(rf'\b{_BUS}\b', text):
         return 'bus'
     if re.search(r'\b(zug|züge|zuge|s bahn|s-bahn)\b', text):
         return 'train'
