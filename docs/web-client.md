@@ -4,7 +4,7 @@ Proximus im Browser, aus derselben Codebasis wie der Pi. Der Server auf CT 107
 liefert die Seite selbst aus (`web/`) und beantwortet sie mit genau derselben
 Pipeline wie den Pi: Vosk → Regelwerk/Intents → OpenRouter bzw. lokales Qwen →
 Piper Thorsten + Servitor-DSP. Es gibt keinen zweiten Server und keinen
-Build-Schritt; die Seite besteht aus vier statischen Dateien.
+Build-Schritt; die Seite besteht aus wenigen statischen Dateien.
 
 ```text
 Browser: Taste halten → Mikrofon → 16 kHz PCM → POST /v1/turn  ┐
@@ -34,19 +34,46 @@ aus `/etc/servitor-voice.env`). Er bleibt nur im Arbeitsspeicher der Seite,
 außer „Token in diesem Browser merken“ ist angehakt (dann `localStorage`).
 Auf dem Handy lässt sich die Seite zum Startbildschirm hinzufügen (Manifest).
 
-## Darstellung
+## Darstellung: das Vox-Terminal
 
-Die Seite nutzt die volle Fensterbreite. Hinter dem Chat liegt derselbe
-Servo-Schädel wie auf dem PiTFT. Er leuchtet je nach Schritt: rot bei der
-Aufnahme, bernsteinfarben pulsierend während der Server arbeitet, grün bei der
-Sprachausgabe. Der aktuelle Schritt steht oben in der Kopfzeile.
+Die Seite sieht aus wie ein Vox-Gerät des Imperiums: eisernes Gehäuse,
+Phosphor-Röhre, Lampen und Zeigerinstrument. Wer sie öffnet, **ruft Proximus
+über Vox an**:
 
-- **Mobil (unter 900 px):** Der Schädel ist so gezoomt, dass das Gesicht die
-  Breite füllt. Das Eingabefeld liegt über einem großen Sprechknopf in
-  Daumenreichweite, mit Abstand zu Notch und Home-Leiste.
-- **Desktop (ab 900 px):** Der ganze Schädel steht groß in der Mitte. Sprechknopf,
-  Eingabefeld und Senden liegen in einer Zeile, Nachrichten nehmen höchstens
-  62 % der Breite ein.
+1. **Anruf-Bildschirm** mit Lautsprechergitter und Röhre. Vox-Code (Token)
+   eingeben oder hinterlegt lassen, dann „Verbindung herstellen“.
+2. **Wählsequenz** (ca. 4 s, mit Ton): Terminal erwacht, Litanei, Suche nach
+   dem Trägersignal (Rauschen mit Pfeifton), gemessene Signallaufzeit, Prüfung
+   des Vox-Codes über `GET /v1/status`, binharische Bestätigung. Ein falscher
+   Code ergibt „ZUGANG VERWEIGERT“, ein fehlender Server „KEIN TRÄGERSIGNAL“.
+3. Die Röhre schaltet sich ein. Ein leises Rauschen zeigt den offenen Kanal an.
+   ⏻ trennt den Kanal und führt zurück zum Anruf.
+
+Im Betrieb:
+
+| Element | Bedeutung |
+|---|---|
+| Oszilloskop oben in der Röhre | eigene Stimme beim Senden, Proximus beim Antworten, sonst Trägerrauschen; unruhig, während der Server arbeitet |
+| Zeigerinstrument „SIGNAL“ | Sprachpegel beim Senden/Empfangen, sonst Signalstärke aus der gemessenen Laufzeit zu `/health` |
+| grüne Lampe | Kanal verbunden, Server bereit |
+| rote Lampe | leuchtet beim Senden, blinkt bernsteinfarben, während der Server arbeitet |
+| Schädel | grüner Geist auf der Röhre, glimmt je nach Schritt |
+| Protokoll | `BEDIENER »` und `PROXIMUS »` wie ein Fernschreiber; Proximus' Zeilen tippen sich ein |
+
+Geräusche (alle im Browser erzeugt, nichts wird geladen): Klicken der
+Sendetaste, binharische Bitfolge beim Absenden (wie der Quittungston des Pi),
+Trägerstoß vor jeder Antwort, Rauschschwanz am Ende. Proximus' Stimme läuft
+zusätzlich durch einen Funkfilter (Bandpass 320–3300 Hz, leichte Sättigung):
+Er klingt weit weg. Gelegentlich reißt das Bild kurz ab und knackt es.
+
+„Vox-Effekte“ in den Einstellungen schaltet Rauschen, Funkfilter, Störungen
+und Schreibmaschineneffekt ab; die Antworten bleiben gleich. Bei „Bewegung
+reduzieren“ im Betriebssystem entfallen alle Animationen.
+
+- **Mobil (unter 600 bzw. 900 px):** Der Schritt steht in der Röhre unter dem
+  Oszilloskop, das Eingabefeld liegt über einer großen Sendetaste.
+- **Desktop (ab 900 px):** Schritt in der Kopfzeile, großer Schädel, Sendetaste,
+  Eingabe und Übertragen in einer Zeile, Bediener rechts, Proximus links.
 
 ## Bedienung
 
@@ -98,7 +125,8 @@ das LLM und Geschichten funktionieren wie am Pi.
 | Datei | Inhalt |
 |---|---|
 | `web/index.html` | Oberfläche, Einstellungsdialog |
-| `web/app.js` | Aufnahme, Anfragen, NDJSON-Auswertung, Wiedergabe |
+| `web/app.js` | Anruf, Aufnahme, Anfragen, NDJSON-Auswertung, Wiedergabe |
+| `web/vox.js` | Vox-Effekte: Geräusche, Funkfilter, Oszilloskop, Zeiger, Störungen |
 | `web/capture-worklet.js` | AudioWorklet: Mikrofon → 16 kHz mono s16le |
 | `web/style.css` | Darstellung |
 | `web/manifest.webmanifest` | Startbildschirm-Symbol |

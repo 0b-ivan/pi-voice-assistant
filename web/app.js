@@ -2,13 +2,15 @@
 // Hold the button (or space), speak, release: 16 kHz PCM goes to POST /v1/turn
 // and the NDJSON answer (server/servitor_server.py) is shown and played.
 // Typed questions go to POST /v1/ask. Nothing here keeps state on the server.
+// The look and sound of the vox terminal (call, hiss, scope, needle) live in vox.js.
 'use strict';
 
 const RATE = 16000;                 // PCM_RATE of the server
 const MAX_SECONDS = 29;             // SERVITOR_MAX_AUDIO_SECONDS is 30 by default
 const MIN_SECONDS = 0.3;            // protocol.MIN_TURN_SECONDS is 0.2
-const STAGES = { recognize: 'ERKENNUNG', think: 'DENKVORGANG', synthesize: 'SYNTHESE',
-                 render: 'KLANGFORMUNG' };
+const STAGES = { recognize: 'ENTSCHLÜSSELE SIGNAL', think: 'MASCHINENGEIST DENKT',
+                 synthesize: 'KODIERE ANTWORT', render: 'VOX-MODULATION' };
+const IDLE = 'KANAL OFFEN', SENDING = 'SENDE …', UPLINK = 'ÜBERTRAGUNG', INCOMING = 'EINGEHENDE ÜBERTRAGUNG';
 const ERRORS = { no_speech: 'Keine Sprache erkannt.', too_short: 'Aufnahme zu kurz.',
                  too_large: 'Aufnahme zu lang.', llm: 'Sprachkern nicht erreichbar.',
                  stt: 'Spracherkennung gestört.', tts: 'Sprachsynthese gestört.',
@@ -28,6 +30,7 @@ const store = {
 const state = {
   token: store.get('servitor.token') || '',
   toggle: store.get('servitor.toggle') === '1',
+  effects: store.get('servitor.effects') !== 'off',
   recording: null,   // the running capture, see startRecording()
   request: null,     // AbortController of the running request
   story: null,       // state of a running long story (src/story.py)
@@ -39,22 +42,30 @@ const FORMAT = new Audio().canPlayType('audio/ogg; codecs=opus') ? 'opus' : 'wav
 // --- display -------------------------------------------------------------------
 
 function setStage(text, mode) {
-  $('stage').textContent = text;
-  $('stage').dataset.state = mode;
+  for (const id of ['stage', 'readout']) {
+    $(id).textContent = text;
+    $(id).dataset.state = mode;
+  }
   $('chat').dataset.state = mode;
+  // Red lamp: lit while transmitting, blinking while the server works.
+  $('lamp-tx').dataset.on = mode === 'listen' ? 'yes' : mode === 'work' ? 'blink' : 'no';
+  Vox.stateChanged(mode);
 }
 
 function idle() {
   if (state.recording || state.request) return;
-  setStage(player.playing ? 'SPRACHAUSGABE' : 'BEREIT', player.playing ? 'speak' : 'idle');
+  setStage(player.playing ? INCOMING : IDLE, player.playing ? 'speak' : 'idle');
   $('talk').disabled = false;
   $('cancel').hidden = !player.playing;
 }
 
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
 function addLog(kind, text, note) {
   const item = document.createElement('li');
   item.className = kind;
-  item.textContent = text;
+  const body = document.createElement('span');
+  item.append(body);
   if (note) {
     const small = document.createElement('small');
     small.textContent = note;
@@ -63,8 +74,27 @@ function addLog(kind, text, note) {
   const log = $('log');
   log.append(item);
   while (log.children.length > 100) log.firstElementChild.remove();
+  if (kind === 'servitor' && state.effects && !reducedMotion.matches) typeOut(body, text, log);
+  else body.textContent = text;
   log.scrollTop = log.scrollHeight;
   return item;
+}
+
+// Proximus' lines arrive like a teleprinter: at most about 1.6 s per line.
+function typeOut(target, text, log) {
+  const cursor = document.createElement('i');
+  cursor.className = 'cursor';
+  const step = Math.max(1, Math.ceil(text.length / 80));
+  let shown = 0;
+  target.after(cursor);
+  const tick = () => {
+    shown = Math.min(text.length, shown + step);
+    target.textContent = text.slice(0, shown);
+    log.scrollTop = log.scrollHeight;
+    if (shown < text.length) setTimeout(tick, 18);
+    else cursor.remove();
+  };
+  tick();
 }
 
 // --- playback: audio parts in order, one <audio> element -----------------------
@@ -95,16 +125,24 @@ const player = {
     if (this.current) URL.revokeObjectURL(this.current);
     const url = this.current = this.queue.shift() || null;
     if (!url) {
+      if (this.playing) Vox.sounds.squelch();   // end of transmission
       this.playing = false;
+      Vox.live.speaking = false;
       this.waiters.splice(0).forEach((resolve) => resolve());
       idle();
       return;
     }
+    const opening = !this.playing;
     this.playing = true;
-    if (!state.request && !state.recording) setStage('SPRACHAUSGABE', 'speak');
+    Vox.live.speaking = true;
+    if (!state.request && !state.recording) setStage(INCOMING, 'speak');
     $('cancel').hidden = false;
     this.element.src = url;
-    this.element.play().catch(() => this.next());
+    // The carrier opens with a short burst before the voice comes through.
+    if (opening) Vox.sounds.open();
+    setTimeout(() => {
+      if (this.current === url) this.element.play().catch(() => this.next());
+    }, opening && state.effects ? 110 : 0);
   },
 
   stop() {
@@ -152,7 +190,7 @@ async function exchange(path, body, type) {
   state.request = controller;
   $('talk').disabled = true;
   $('cancel').hidden = false;
-  setStage('ÜBERTRAGUNG', 'work');
+  setStage(UPLINK, 'work');
   let reply = null;
   try {
     const response = await fetch(`${path}?format=${FORMAT}`, {
@@ -161,7 +199,7 @@ async function exchange(path, body, type) {
                  'X-Servitor-Status': statusHeader() },
     });
     if (!response.ok) {
-      const messages = { 401: 'Token abgelehnt.', 429: 'Zu viele Anfragen, kurz warten.',
+      const messages = { 401: 'Vox-Code abgelehnt.', 429: 'Zu viele Anfragen, kurz warten.',
                          503: 'Server beschäftigt oder lädt noch.', 413: 'Zu lang.' };
       addLog('error', messages[response.status] || `Serverfehler ${response.status}.`);
       if (response.status === 401) openSettings();
@@ -182,7 +220,7 @@ async function exchange(path, body, type) {
       }
     }
   } catch (error) {
-    if (error.name !== 'AbortError') addLog('error', `Verbindung gestört: ${error.message}`);
+    if (error.name !== 'AbortError') addLog('error', `Verbindung abgerissen: ${error.message}`);
     state.story = null;
   } finally {
     if (state.request === controller) state.request = null;
@@ -260,20 +298,23 @@ async function audioContext(stream) {
 }
 
 async function startRecording() {
-  if (state.recording || state.request) return;
+  if (state.recording || state.request || !Vox.connected) return;
   if (!state.token) { openSettings(); return; }
   if (!navigator.mediaDevices || !window.AudioWorkletNode) {
     addLog('error', 'Mikrofon nur über HTTPS oder localhost verfügbar. Frage tippen geht immer.');
     return;
   }
   player.unlock();
+  Vox.ensure();
   player.stop();
   state.story = null;
   const recording = { chunks: [], samples: 0, stop: false, discard: false };
   state.recording = recording;
   $('talk').classList.add('active');
   $('cancel').hidden = false;
-  setStage('AUFNAHME', 'listen');
+  Vox.sounds.click();
+  Vox.hiss(false);   // the operator's own channel is quiet while transmitting
+  setStage(SENDING, 'listen');
   try {
     recording.stream = await navigator.mediaDevices.getUserMedia({ audio: {
       channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -286,11 +327,15 @@ async function startRecording() {
         if (data === 'end') { resolve(); return; }
         recording.chunks.push(data.pcm);
         recording.samples += data.pcm.length;
-        $('meter').firstElementChild.style.width = `${Math.min(100, data.peak * 140)}%`;
+        Vox.live.peak = data.peak;
         if (recording.samples >= MAX_SECONDS * RATE) stopRecording();
       };
     });
     recording.source.connect(recording.node);
+    const analyser = recording.context.createAnalyser();
+    analyser.fftSize = 1024;
+    recording.source.connect(analyser);
+    Vox.live.mic = analyser;
   } catch (error) {
     release(recording);
     state.recording = null;
@@ -305,6 +350,9 @@ async function startRecording() {
 function release(recording) {
   if (recording.stream) recording.stream.getTracks().forEach((track) => track.stop());
   if (recording.context) recording.context.close().catch(() => {});
+  Vox.live.mic = null;
+  Vox.live.peak = 0;
+  if (Vox.connected) Vox.hiss(true);
 }
 
 async function stopRecording() {
@@ -312,9 +360,9 @@ async function stopRecording() {
   if (!recording) return;
   recording.stop = true;
   $('talk').classList.remove('active');
-  $('meter').firstElementChild.style.width = '0';
   if (!recording.node || recording.finishing) return;  // startRecording() comes back here
   recording.finishing = true;
+  Vox.sounds.click();
   recording.node.port.postMessage('stop');
   await Promise.race([recording.ended, new Promise((resolve) => setTimeout(resolve, 500))]);
   release(recording);
@@ -328,6 +376,7 @@ async function stopRecording() {
   const pcm = new Int16Array(recording.samples);
   let offset = 0;
   for (const chunk of recording.chunks) { pcm.set(chunk, offset); offset += chunk.length; }
+  Vox.sounds.cant(0.05);   // binharic sign-off: over
   exchange('/v1/turn', pcm.buffer, 'application/octet-stream');
 }
 
@@ -373,12 +422,14 @@ $('cancel').addEventListener('click', cancel);
 $('ask').addEventListener('submit', (event) => {
   event.preventDefault();
   const text = $('question').value.trim();
-  if (!text || state.request || state.recording) return;
+  if (!text || state.request || state.recording || !Vox.connected) return;
   if (!state.token) { openSettings(); return; }
   player.unlock();
+  Vox.ensure();
   player.stop();
   state.story = null;
   $('question').value = '';
+  Vox.sounds.cant();
   exchange('/v1/ask', JSON.stringify({ text }), 'application/json');
 });
 
@@ -388,6 +439,7 @@ function openSettings() {
   $('token').value = state.token;
   $('remember').checked = store.get('servitor.token') !== null;
   $('toggle').checked = state.toggle;
+  $('effects').checked = state.effects;
   for (const name of SETTINGS) $(name).value = state[name];
   if (!$('settings').open) $('settings').showModal();
 }
@@ -399,30 +451,149 @@ $('settings').addEventListener('close', () => {
   store.set('servitor.token', $('remember').checked && state.token ? state.token : null);
   state.toggle = $('toggle').checked;
   store.set('servitor.toggle', state.toggle ? '1' : null);
+  state.effects = $('effects').checked;
+  store.set('servitor.effects', state.effects ? null : 'off');
+  Vox.setEffects(state.effects);
   for (const name of SETTINGS) {
     state[name] = $(name).value;
     store.set(`servitor.${name}`, state[name]);
   }
-  talk.querySelector('.talk-main').textContent = state.toggle ? 'ANTIPPEN ZUM SPRECHEN'
-                                                              : 'HALTEN ZUM SPRECHEN';
+  talkLabel();
 });
 
-// --- server state ----------------------------------------------------------------
+function talkLabel() {
+  talk.querySelector('.talk-main').textContent = state.toggle ? 'SENDETASTE · ANTIPPEN'
+                                                              : 'SENDETASTE · HALTEN';
+}
+
+// --- server state: the link lamp, the signal needle --------------------------------
 
 async function health() {
   const pill = $('link');
+  const started = performance.now();
+  let link = 'down';
   try {
     const response = await fetch('/health', { cache: 'no-store' });
     const data = await response.json();
-    pill.dataset.state = data.ready ? 'ok' : 'loading';
-    pill.textContent = data.ready ? 'Server bereit' : 'Server lädt';
+    link = data.ready ? 'ok' : 'loading';
+  } catch { /* no carrier */ }
+  const latency = Math.round(performance.now() - started);
+  Object.assign(Vox.live, { link, latency });
+  pill.dataset.state = link;
+  pill.textContent = link === 'ok' ? `Signal ${latency} ms` : link === 'loading' ? 'Servitor erwacht' : 'Kein Träger';
+  $('lamp-link').dataset.on = link === 'ok' && Vox.connected ? 'yes' : 'no';
+  return link;
+}
+
+// --- the call: entering the page dials Proximus -----------------------------------
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function dialLine(text, kind) {
+  const item = document.createElement('li');
+  item.textContent = text;
+  if (kind) item.className = kind;
+  const log = $('dial-log');
+  log.append(item);
+  while (log.children.length > 7) log.firstElementChild.remove();
+}
+
+async function authorize(token) {
+  // GET /v1/status needs the token and does no work: a cheap check of the code.
+  try {
+    const response = await fetch('/v1/status', { cache: 'no-store',
+                                                 headers: { Authorization: `Bearer ${token}` } });
+    return response.ok ? 'ok' : response.status === 401 ? 'denied' : 'down';
   } catch {
-    pill.dataset.state = 'down';
-    pill.textContent = 'Server weg';
+    return 'down';
   }
 }
 
+async function dial(event) {
+  event.preventDefault();
+  const form = $('dial-form');
+  const token = form.dataset.known === 'yes' ? state.token : $('dial-token').value.trim();
+  if (token.length < 32) {
+    form.dataset.known = 'no';
+    dialLine('Vox-Code fehlt oder ist zu kurz.', 'bad');
+    $('dial-token').focus();
+    return;
+  }
+  // The click is the gesture browsers want before any sound may play.
+  Vox.ensure();
+  Vox.attach(player.element);
+  player.unlock();
+  $('dial-connect').disabled = true;
+  $('dial-log').replaceChildren();
+  const pace = state.effects && !reducedMotion.matches ? 1 : 0.15;
+  Vox.sounds.click();
+  dialLine('Vox-Terminal erwacht. Weihrauch entzündet.');
+  await wait(600 * pace);
+  dialLine('Litanei der Verbindung rezitiert …');
+  await wait(500 * pace);
+  dialLine('Suche Trägersignal auf Kanal 107 …');
+  Vox.sounds.tune(1.8);
+  const [link] = await Promise.all([health(), wait(1800 * pace)]);
+  if (link === 'down') {
+    Vox.sounds.crackle();
+    dialLine('+++ KEIN TRÄGERSIGNAL +++ Servitor nicht erreichbar.', 'bad');
+    $('dial-connect').disabled = false;
+    return;
+  }
+  Vox.sounds.crackle();
+  dialLine(`Signal gefunden · Laufzeit ${Vox.live.latency} ms · Störungen hoch`);
+  await wait(500 * pace);
+  dialLine('Prüfe Vox-Code …');
+  const verdict = await authorize(token);
+  if (verdict !== 'ok') {
+    Vox.sounds.squelch();
+    dialLine(verdict === 'denied' ? '+++ ZUGANG VERWEIGERT +++ Vox-Code ungültig.'
+                                  : '+++ VERBINDUNG ABGERISSEN +++', 'bad');
+    form.dataset.known = 'no';
+    $('dial-connect').disabled = false;
+    return;
+  }
+  if (form.dataset.known !== 'yes') {
+    state.token = token;
+    store.set('servitor.token', $('dial-remember').checked ? token : null);
+  }
+  Vox.sounds.cant();
+  dialLine(link === 'loading' ? 'Maschinengeist erwacht noch. Geduld, Bediener.'
+                              : 'Maschinengeist antwortet.', 'good');
+  await wait(700 * pace);
+  dialLine('VERBINDUNG STEHT.', 'good');
+  await wait(400 * pace);
+  connect();
+}
+
+function connect() {
+  document.body.dataset.connected = 'yes';
+  $('dial-connect').disabled = false;
+  Vox.connect();
+  $('lamp-link').dataset.on = Vox.live.link === 'ok' ? 'yes' : 'no';
+  addLog('system', `+++ Vox-Verbindung zu Servitor Proximus · ${new Date().toLocaleTimeString('de-DE')} +++`);
+  idle();
+}
+
+function hangup() {
+  cancel();
+  Vox.sounds.squelch();
+  Vox.disconnect();
+  addLog('system', '+++ Kanal getrennt +++');
+  document.body.dataset.connected = 'no';
+  $('lamp-link').dataset.on = 'no';
+  $('dial-form').dataset.known = state.token ? 'yes' : 'no';
+  $('dial-log').replaceChildren();
+  dialLine('Kanal 107 getrennt. Erneut anrufen?');
+}
+
+$('dial-form').addEventListener('submit', dial);
+$('hangup').addEventListener('click', hangup);
+
+Vox.setEffects(state.effects);
+Vox.start({ scopes: [$('scope'), $('dial-scope')], needleElement: $('needle') });
+$('dial-form').dataset.known = state.token ? 'yes' : 'no';
+dialLine(state.token ? 'Vox-Code hinterlegt. Bereit zum Anruf.' : 'Vox-Code eingeben, dann anrufen.');
 health();
 setInterval(health, 15000);
-if (state.toggle) talk.querySelector('.talk-main').textContent = 'ANTIPPEN ZUM SPRECHEN';
-if (!state.token) openSettings();
+talkLabel();

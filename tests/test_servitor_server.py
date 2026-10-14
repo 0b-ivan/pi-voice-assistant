@@ -645,8 +645,9 @@ class ServerTest(unittest.TestCase):
         for name in re.findall(r'(?:src|href)="([^"]+)"', html):
             self.assertIn(name, ss.WEB_FILES)
         script = (ss.WEB / 'app.js').read_text()
+        # Turns plus the read-only token check of the call; never maintenance.
         for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):
-            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story'))
+            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story', '/v1/status'))
         self.assertIn("addModule('/web/capture-worklet.js')", script)
 
     def test_speak_requires_string_text(self):

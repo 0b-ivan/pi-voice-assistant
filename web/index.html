@@ -4,37 +4,76 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0b0f0a">
+  <meta name="theme-color" content="#0d0f0c">
   <title>Servitor Proximus</title>
   <link rel="manifest" href="/web/manifest.webmanifest">
   <link rel="icon" href="/web/servo-skull.png">
   <link rel="stylesheet" href="/web/style.css">
+  <script src="/web/vox.js" defer></script>
   <script src="/web/app.js" defer></script>
 </head>
-<body>
-  <header class="bar">
-    <h1>PROXIMUS</h1>
-    <p id="stage" class="stage" data-state="idle" aria-live="polite">BEREIT</p>
-    <span id="link" class="pill" data-state="unknown">Server ?</span>
-    <button id="open-settings" class="icon" type="button" aria-label="Einstellungen">⚙</button>
+<body data-effects="on" data-connected="no">
+  <!-- Entering the page: the operator calls Proximus over the vox. -->
+  <section id="dial" class="dial" aria-labelledby="dial-title">
+    <div class="dial-unit">
+      <div class="grille" aria-hidden="true"></div>
+      <div class="dial-screen crt">
+        <p id="dial-title" class="dial-head">+++ VOX-TERMINAL · KANAL 107 +++</p>
+        <canvas id="dial-scope" class="scope" aria-hidden="true"></canvas>
+        <ol id="dial-log" class="dial-log" aria-live="polite"></ol>
+        <div class="scanlines" aria-hidden="true"></div>
+      </div>
+      <form id="dial-form" class="dial-form" autocomplete="off">
+        <label id="dial-token-row" class="dial-token">Vox-Code
+          <input id="dial-token" type="password" autocomplete="current-password" spellcheck="false"
+                 placeholder="SERVITOR_API_TOKEN" minlength="32">
+        </label>
+        <label id="dial-remember-row" class="check"><input id="dial-remember" type="checkbox"> Vox-Code merken</label>
+        <button id="dial-connect" class="dial-connect" type="submit">
+          <span class="lamp" aria-hidden="true"></span> VERBINDUNG HERSTELLEN
+        </button>
+      </form>
+      <p class="dial-foot">Ruft Servitor Proximus auf CT 107. Rauschen und Störungen sind Absicht.</p>
+    </div>
+  </section>
+
+  <header class="bar plate">
+    <span id="lamp-link" class="lamp green" aria-hidden="true"></span>
+    <h1>PROXIMUS <small>KANAL 107</small></h1>
+    <p id="stage" class="stage" data-state="idle" aria-live="polite">KANAL OFFEN</p>
+    <span class="spacer"></span>
+    <svg class="gauge" viewBox="0 0 100 60" aria-hidden="true">
+      <path class="gauge-arc" d="M12 52 A40 40 0 0 1 88 52"/>
+      <path class="gauge-red" d="M76 24 A40 40 0 0 1 88 52"/>
+      <g class="gauge-ticks"><path d="M50 12v7M22 24l5 5M78 24l-5 5M12 52h7M88 52h-7"/></g>
+      <line id="needle" class="gauge-needle" x1="50" y1="52" x2="50" y2="16"/>
+      <circle class="gauge-hub" cx="50" cy="52" r="4"/>
+      <text x="50" y="44" class="gauge-label">SIGNAL</text>
+    </svg>
+    <span id="link" class="pill" data-state="unknown">Signal ?</span>
+    <span id="lamp-tx" class="lamp red" aria-hidden="true"></span>
+    <button id="hangup" class="icon" type="button" aria-label="Kanal trennen" title="Kanal trennen">⏻</button>
+    <button id="open-settings" class="icon" type="button" aria-label="Einstellungen" title="Einstellungen">⚙</button>
   </header>
 
-  <main id="chat" class="chat" data-state="idle">
+  <main id="chat" class="chat crt" data-state="idle">
     <div class="backdrop" aria-hidden="true"></div>
+    <canvas id="scope" class="scope" aria-hidden="true"></canvas>
+    <p id="readout" class="readout" data-state="idle" aria-hidden="true">KANAL OFFEN</p>
     <ol id="log" class="log" aria-live="polite"></ol>
-    <p class="hint">Taste halten und sprechen oder eine Frage tippen.<br>Der Maschinengeist hört.</p>
+    <p class="hint">Sendetaste halten und sprechen oder eine Nachricht tippen.<br>Der Maschinengeist hört.</p>
+    <div class="scanlines" aria-hidden="true"></div>
   </main>
 
-  <footer class="controls">
-    <p id="meter" class="meter" aria-hidden="true"><span></span></p>
+  <footer class="controls plate">
     <button id="talk" class="talk" type="button">
-      <span class="talk-main">HALTEN ZUM SPRECHEN</span>
+      <span class="talk-main">SENDETASTE · HALTEN</span>
       <span class="talk-hint">oder Leertaste halten</span>
     </button>
     <form id="ask" class="ask" autocomplete="off">
       <input id="question" name="question" type="text" maxlength="500"
-             placeholder="Frage tippen …" enterkeyhint="send" aria-label="Frage">
-      <button type="submit">SENDEN</button>
+             placeholder="Nachricht an Proximus …" enterkeyhint="send" aria-label="Nachricht">
+      <button type="submit">ÜBERTRAGEN</button>
     </form>
     <button id="cancel" class="cancel" type="button" hidden>ABBRECHEN</button>
   </footer>
@@ -42,11 +81,11 @@
   <dialog id="settings">
     <form method="dialog" id="settings-form">
       <h2>Einstellungen</h2>
-      <label>Server-Token
+      <label>Vox-Code (Server-Token)
         <input id="token" type="password" autocomplete="current-password" spellcheck="false"
                placeholder="SERVITOR_API_TOKEN" minlength="32">
       </label>
-      <label class="check"><input id="remember" type="checkbox"> Token in diesem Browser merken</label>
+      <label class="check"><input id="remember" type="checkbox"> Vox-Code in diesem Browser merken</label>
       <label>Persona
         <select id="persona"><option value="servitor">Servitor Proximus</option>
           <option value="mensch">Mensch (Billy)</option></select>
@@ -64,7 +103,8 @@
           <option value="free">Frei</option><option value="local">Lokal</option></select>
       </label>
       <label class="check"><input id="toggle" type="checkbox"> Antippen statt halten</label>
-      <p class="note">Mikrofon nur über HTTPS (Tunnel) oder localhost. Kein Gedächtnis,
+      <label class="check"><input id="effects" type="checkbox"> Vox-Effekte (Rauschen, Funkfilter, Störungen)</label>
+      <p class="note">Mikrofon nur über HTTPS oder localhost. Kein Gedächtnis,
         kein Kalender, keine Gerätesteuerung: der Web-Client ist ein Gast.</p>
       <div class="row">
         <button value="cancel" type="submit" class="secondary">Schließen</button>

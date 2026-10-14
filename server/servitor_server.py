@@ -93,6 +93,7 @@ WEB_FILES = {
     '/': ('index.html', 'text/html; charset=utf-8'),
     '/web/': ('index.html', 'text/html; charset=utf-8'),
     '/web/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+    '/web/vox.js': ('vox.js', 'text/javascript; charset=utf-8'),
     '/web/capture-worklet.js': ('capture-worklet.js', 'text/javascript; charset=utf-8'),
     '/web/style.css': ('style.css', 'text/css; charset=utf-8'),
     '/web/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json'),
