@@ -284,6 +284,88 @@ auf der echten Hardware bleibt bis zum erneuten Dauertest unbestätigt.
 Software-Standby ist kein echter suspend-to-RAM-Modus
 und keine elektrische Stromabschaltung.
 
+### Akkusparprofil im manuellen PiSugar-Standby (separates Opt-in)
+
+Die PiSugar-Funktionstaste und die Akku-/Unterspannungsüberwachung laufen im
+unprivilegierten `pi-ptt.service` weiter. Die CPU-Taktung und Funkgeräte werden
+**nicht** direkt von diesem Prozess manipuliert. Ein separater, root-eigener
+`proximus-battery-standby.service` setzt die optionalen Änderungen erst dann,
+wenn **alle** Bedingungen erfüllt sind:
+
+1. `PISUGAR_BATTERY_SAVE=on` in `/etc/pi-voice-assistant.env`;
+2. manueller Standby per PiSugar-Funktionstaste ist aktiv;
+3. PiSugar meldet **bestätigten Akkubetrieb** (Register `0x02`, Bit 7 = 0);
+4. keine aktive kritische Warnung und keine bereits eingeleitete Abschaltung.
+
+Bei Netzbetrieb oder unbekannter Stromquelle werden keine Optimierungen
+angewandt. Der Wechsel zurück auf Netzstrom (Überwachung im 10-Sekunden-Takt),
+Aufwachen, kritische Warnungen sowie Dienststop/-neustart lösen die
+Wiederherstellung aus. Der Helfer speichert die **vorherigen** CPU-Governors
+und WLAN-/Bluetooth-Softblock-Zustände atomar unter `/run`; `ExecStop` und
+`ExecStopPost` stellen sie wieder her. `BindsTo=pi-ptt.service` koppelt die
+Lebensdauer des Root-Helfers an die Voice-Unit. Nur `start` und `stop`
+dieser **einen** Unit werden für `obivan` via Polkit freigegeben. Das
+verhindert umfassende Root-Rechte im Sprachdienst.
+
+**Ersttest mit Netzverbindung (kein Funkverlust):**
+
+```bash
+sudo vim /etc/pi-voice-assistant.env
+# Ergänzen: PISUGAR_BATTERY_SAVE=on
+sudo vim /etc/proximus-battery-standby.env
+# PROXIMUS_SAVE_CPU=powersave
+# PROXIMUS_SAVE_WLAN=keep
+# PROXIMUS_SAVE_BLUETOOTH=keep
+sudo systemctl restart pi-ptt.service
+```
+
+Beim Pi Zero 2 W gibt es keine fest programmierte Frequenz: Der Helfer
+prüft den **tatsächlich angebotenen** Kernel-Governor `powersave` unter
+`/sys/devices/system/cpu/cpufreq/policy*/scaling_available_governors`
+und sichert den bestehenden Wert von `scaling_governor`. Ist der Governor
+nicht verfügbar, bleibt die Policy unverändert. Der Governor wählt die
+niedrigste Frequenz im vom Kernel erlaubten Bereich; Echtzeit-Ersparnis und
+Wiedergabelatenzen müssen am Gerät gemessen werden.
+
+**Erst nach erfolgreichem CPU- und I²C-Dauertest** können in der zweiten Datei
+einzeln `PROXIMUS_SAVE_BLUETOOTH=off` und schließlich
+`PROXIMUS_SAVE_WLAN=off` aktiviert werden. Diese Datei ist root-eigen und
+enthält **keine Tokens/Passwörter**. `off` ist beim WLAN ein Softblock via
+`rfkill` und bedeutet: **kein SSH, kein Webinterface, kein Remote-LLM über
+WLAN bis zum Aufwachen per physischer PiSugar-Funktionstaste**. Auch das
+Bluetooth-Audio kann beim Abschalten abbrechen und nach dem Wake etwas Zeit
+zum Wiederverbinden benötigen. Während eines aktiven Setup-Hotspots lässt
+der Helfer WLAN eingeschaltet. Bei mehreren gleichartigen Funkadaptern
+verändert er diesen Funktyp nicht, damit eine korrekte Rücksetzung möglich
+bleibt. Ein Hardwarefehler, der das Aufwachen verhindert, erfordert eine
+alternative Verbindung (z. B. USB-Ethernet) oder einen Service-Neustart;
+es gibt **keine** garantierte Fernrettung bei deaktiviertem WLAN.
+
+Beobachtung und Kontrolle:
+
+```bash
+journalctl -u pi-ptt.service -f -o cat | grep -E 'pisugar|battery_standby|power'
+systemctl is-active proximus-battery-standby.service
+cat /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
+rfkill list
+```
+
+**Rollback, am besten VOR dem WLAN-Off-Test über eine lokale Verbindung
+oder bei normal eingeschaltetem WLAN:**
+
+```bash
+sudo systemctl stop proximus-battery-standby.service
+sudo vim /etc/pi-voice-assistant.env
+# PISUGAR_BATTERY_SAVE=off
+sudo systemctl restart pi-ptt.service
+```
+
+`proximus-battery-standby.service` niemals manuell aktivieren (`enable`);
+sie wird bei Bedarf vom Sprachdienst ausgelöst. Kein echter Suspend-to-RAM,
+kein PiSugar-Hard-Poweroff, keine erfundenen mA- oder Laufzeitangaben.
+Aktivierungs-/Wiederherstellungslogik benötigt weiterhin einen echten
+Hardwaretest unter Akkubetrieb, bevor WLAN-Abschaltung freigegeben wird.
+
 ### Optional: Einstellungen des offiziellen Power Managers auslesen
 
 `src/pisugar_client.py` kann `get`-Kommandos des [offiziellen
