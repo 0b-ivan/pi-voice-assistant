@@ -17,7 +17,7 @@ GROUPS = {
     'hotspot': ('wifi_hotspot_start', 'wifi_hotspot_show',
                 'wifi_hotspot_clients', 'wifi_hotspot_rotate',
                 'wifi_hotspot_stop', 'back'),
-    'energy': ('energy_status', 'energy_config', 'power_notices', 'energy_shutdown', 'back'),
+    'energy': ('energy_status', 'energy_config', 'cpu_mode', 'power_notices', 'energy_shutdown', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
 TOP = ('voice', 'persona', 'people', 'audio', 'device', 'network', 'energy', 'system', 'close')
@@ -44,7 +44,8 @@ LABELS = {
     'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
     'energy_status': 'Akku-Diagnose', 'energy_config': 'PiSugar Konfig',
-    'power_notices': 'Stromhinweise', 'energy_shutdown': 'Sicher ausschalten',
+    'power_notices': 'Stromhinweise', 'cpu_mode': 'CPU-Profil',
+    'energy_shutdown': 'Sicher ausschalten',
 }
 # "people" is both a group and the person list inside it, "persona" both a
 # group and the speaking style switch inside it.
