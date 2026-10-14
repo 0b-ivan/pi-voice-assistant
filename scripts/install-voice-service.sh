@@ -51,6 +51,7 @@ install -m 0644 "${repo_root}/src/intents.py" /opt/pi-voice-assistant/src/intent
 install -m 0644 "${repo_root}/src/power.py" /opt/pi-voice-assistant/src/power.py
 install -m 0644 "${repo_root}/src/pisugar_client.py" /opt/pi-voice-assistant/src/pisugar_client.py
 install -m 0644 "${repo_root}/src/pisugar_button.py" /opt/pi-voice-assistant/src/pisugar_button.py
+install -m 0644 "${repo_root}/src/battery_standby.py" /opt/pi-voice-assistant/src/battery_standby.py
 install -m 0644 "${repo_root}/src/energy.py" /opt/pi-voice-assistant/src/energy.py
 install -m 0644 "${repo_root}/src/netprobe.py" /opt/pi-voice-assistant/src/netprobe.py
 install -m 0644 "${repo_root}/src/sysmon.py" /opt/pi-voice-assistant/src/sysmon.py
@@ -120,6 +121,16 @@ install -m 0755 "${repo_root}/scripts/install-vosk.sh" /opt/pi-voice-assistant/s
 install -m 0755 "${repo_root}/scripts/install-piper.sh" /opt/pi-voice-assistant/scripts/install-piper.sh
 install -m 0755 "${repo_root}/scripts/configure-wm8960.py" /opt/pi-voice-assistant/scripts/configure-wm8960.py
 install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.service
+# Privileged helper is root-owned: the voice service can only start/stop its
+# systemd unit over the narrowly scoped D-Bus/Polkit authorization below.
+install -D -o root -g root -m 0755 "${repo_root}/scripts/proximus-battery-standby.py" \
+  /usr/local/libexec/proximus-battery-standby.py
+install -m 0644 "${repo_root}/deploy/proximus-battery-standby.service" \
+  /etc/systemd/system/proximus-battery-standby.service
+if [[ ! -e /etc/proximus-battery-standby.env ]]; then
+  install -o root -g root -m 0644 "${repo_root}/config/proximus-battery-standby.env.example" \
+    /etc/proximus-battery-standby.env
+fi
 # On-demand only: never enable or start the provisioning AP at install time.
 install -m 0644 "${repo_root}/deploy/proximus-setup.service" /etc/systemd/system/proximus-setup.service
 # Remove the obsolete sudo rule from pre-fix PR #110. The PTT unit retains
@@ -133,6 +144,8 @@ if [[ -d /etc/polkit-1/rules.d ]]; then
     /etc/polkit-1/rules.d/51-pi-voice-network.rules
   install -m 0644 "${repo_root}/deploy/52-pi-voice-hotspot.rules" \
     /etc/polkit-1/rules.d/52-pi-voice-hotspot.rules
+  install -m 0644 "${repo_root}/deploy/53-pi-voice-battery-standby.rules" \
+    /etc/polkit-1/rules.d/53-pi-voice-battery-standby.rules
 fi
 
 if [[ ! -e /etc/pi-ptt.env ]]; then
@@ -148,7 +161,8 @@ if [[ ! -e /etc/pi-voice-assistant.env ]]; then
 fi
 
 systemctl daemon-reload
-systemd-analyze verify /etc/systemd/system/pi-ptt.service /etc/systemd/system/proximus-setup.service
+systemd-analyze verify /etc/systemd/system/pi-ptt.service /etc/systemd/system/proximus-setup.service \
+  /etc/systemd/system/proximus-battery-standby.service
 
 if [[ ${created_voice_env} -eq 1 ]]; then
   echo "Service left stopped until /etc/pi-voice-assistant.env is reviewed."
