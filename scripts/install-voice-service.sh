@@ -52,6 +52,7 @@ install -m 0644 "${repo_root}/src/power.py" /opt/pi-voice-assistant/src/power.py
 install -m 0644 "${repo_root}/src/pisugar_client.py" /opt/pi-voice-assistant/src/pisugar_client.py
 install -m 0644 "${repo_root}/src/pisugar_button.py" /opt/pi-voice-assistant/src/pisugar_button.py
 install -m 0644 "${repo_root}/src/battery_standby.py" /opt/pi-voice-assistant/src/battery_standby.py
+install -m 0644 "${repo_root}/src/cpu_modes.py" /opt/pi-voice-assistant/src/cpu_modes.py
 install -m 0644 "${repo_root}/src/energy.py" /opt/pi-voice-assistant/src/energy.py
 install -m 0644 "${repo_root}/src/netprobe.py" /opt/pi-voice-assistant/src/netprobe.py
 install -m 0644 "${repo_root}/src/sysmon.py" /opt/pi-voice-assistant/src/sysmon.py
@@ -126,7 +127,12 @@ install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.
 install -D -o root -g root -m 0755 "${repo_root}/scripts/proximus-battery-standby.py" \
   /usr/local/libexec/proximus-battery-standby.py
 install -m 0644 "${repo_root}/deploy/proximus-battery-standby.service" \
-  /etc/systemd/system/proximus-battery-standby.service
+  /etc/systemd/system/proximus-battery-standby.service \
+  /etc/systemd/system/proximus-cpu-mode@.service
+install -D -o root -g root -m 0755 "${repo_root}/scripts/proximus-cpu-mode.py" \
+  /usr/local/libexec/proximus-cpu-mode.py
+install -m 0644 "${repo_root}/deploy/proximus-cpu-mode@.service" \
+  /etc/systemd/system/proximus-cpu-mode@.service
 if [[ ! -e /etc/proximus-battery-standby.env ]]; then
   install -o root -g root -m 0644 "${repo_root}/config/proximus-battery-standby.env.example" \
     /etc/proximus-battery-standby.env
@@ -146,6 +152,8 @@ if [[ -d /etc/polkit-1/rules.d ]]; then
     /etc/polkit-1/rules.d/52-pi-voice-hotspot.rules
   install -m 0644 "${repo_root}/deploy/53-pi-voice-battery-standby.rules" \
     /etc/polkit-1/rules.d/53-pi-voice-battery-standby.rules
+  install -m 0644 "${repo_root}/deploy/54-pi-voice-cpu-mode.rules" \
+    /etc/polkit-1/rules.d/54-pi-voice-cpu-mode.rules
 fi
 
 if [[ ! -e /etc/pi-ptt.env ]]; then
