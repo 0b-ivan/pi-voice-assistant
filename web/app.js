@@ -40,7 +40,8 @@ const FORMAT = new Audio().canPlayType('audio/ogg; codecs=opus') ? 'opus' : 'wav
 
 function setStage(text, mode) {
   $('stage').textContent = text;
-  $('skull').dataset.state = mode;
+  $('stage').dataset.state = mode;
+  $('chat').dataset.state = mode;
 }
 
 function idle() {

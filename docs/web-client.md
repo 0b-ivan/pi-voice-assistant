@@ -34,6 +34,20 @@ aus `/etc/servitor-voice.env`). Er bleibt nur im Arbeitsspeicher der Seite,
 außer „Token in diesem Browser merken“ ist angehakt (dann `localStorage`).
 Auf dem Handy lässt sich die Seite zum Startbildschirm hinzufügen (Manifest).
 
+## Darstellung
+
+Die Seite nutzt die volle Fensterbreite. Hinter dem Chat liegt derselbe
+Servo-Schädel wie auf dem PiTFT. Er leuchtet je nach Schritt: rot bei der
+Aufnahme, bernsteinfarben pulsierend während der Server arbeitet, grün bei der
+Sprachausgabe. Der aktuelle Schritt steht oben in der Kopfzeile.
+
+- **Mobil (unter 900 px):** Der Schädel ist so gezoomt, dass das Gesicht die
+  Breite füllt. Das Eingabefeld liegt über einem großen Sprechknopf in
+  Daumenreichweite, mit Abstand zu Notch und Home-Leiste.
+- **Desktop (ab 900 px):** Der ganze Schädel steht groß in der Mitte. Sprechknopf,
+  Eingabefeld und Senden liegen in einer Zeile, Nachrichten nehmen höchstens
+  62 % der Breite ein.
+
 ## Bedienung
 
 - **Halten zum Sprechen** (Maus, Finger oder Leertaste), loslassen schickt die

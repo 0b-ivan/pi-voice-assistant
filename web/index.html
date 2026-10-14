@@ -14,32 +14,30 @@
 <body>
   <header class="bar">
     <h1>PROXIMUS</h1>
+    <p id="stage" class="stage" data-state="idle" aria-live="polite">BEREIT</p>
     <span id="link" class="pill" data-state="unknown">Server ?</span>
     <button id="open-settings" class="icon" type="button" aria-label="Einstellungen">⚙</button>
   </header>
 
-  <main>
-    <section class="core" aria-live="polite">
-      <img id="skull" src="/web/servo-skull.png" alt="" data-state="idle">
-      <p id="stage" class="stage">BEREIT</p>
-      <p id="meter" class="meter" aria-hidden="true"><span></span></p>
-    </section>
-
+  <main id="chat" class="chat" data-state="idle">
+    <div class="backdrop" aria-hidden="true"></div>
     <ol id="log" class="log" aria-live="polite"></ol>
-
-    <section class="controls">
-      <button id="talk" class="talk" type="button">
-        <span class="talk-main">HALTEN ZUM SPRECHEN</span>
-        <span class="talk-hint">oder Leertaste halten</span>
-      </button>
-      <button id="cancel" class="cancel" type="button" hidden>ABBRECHEN</button>
-      <form id="ask" class="ask" autocomplete="off">
-        <input id="question" name="question" type="text" maxlength="500"
-               placeholder="Frage tippen …" enterkeyhint="send" aria-label="Frage">
-        <button type="submit">SENDEN</button>
-      </form>
-    </section>
+    <p class="hint">Taste halten und sprechen oder eine Frage tippen.<br>Der Maschinengeist hört.</p>
   </main>
+
+  <footer class="controls">
+    <p id="meter" class="meter" aria-hidden="true"><span></span></p>
+    <button id="talk" class="talk" type="button">
+      <span class="talk-main">HALTEN ZUM SPRECHEN</span>
+      <span class="talk-hint">oder Leertaste halten</span>
+    </button>
+    <form id="ask" class="ask" autocomplete="off">
+      <input id="question" name="question" type="text" maxlength="500"
+             placeholder="Frage tippen …" enterkeyhint="send" aria-label="Frage">
+      <button type="submit">SENDEN</button>
+    </form>
+    <button id="cancel" class="cancel" type="button" hidden>ABBRECHEN</button>
+  </footer>
 
   <dialog id="settings">
     <form method="dialog" id="settings-form">
