@@ -1,0 +1,12 @@
+// Do not make obivan root: allow only start/stop of this one privileged unit.
+// BindsTo=pi-ptt.service ensures teardown on service stop or restart.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "obivan" &&
+        action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "proximus-battery-standby.service") {
+        var verb = action.lookup("verb");
+        if (verb === "start" || verb === "stop") {
+            return polkit.Result.YES;
+        }
+    }
+});
