@@ -1007,6 +1007,10 @@ class VoiceController:
         # the question is used up (anything else drops it).
         self.turn_device_pending = self._device_take_pending()
         # Same for an open journey proposal: only this turn may answer it.
+        if (self.journeys is not None and self.journeys.proposal is not None
+                and self.journeys.proposal.get('expires') is None):
+            # A new PTT interrupts the announcement: it must not confirm it.
+            self.journeys.cancel()
         self.turn_trip = self.journeys.take() if self.journeys is not None else None
         self.turn_weather_day = None
         if self.cue is not None and self.cue.play():
@@ -2849,6 +2853,14 @@ class VoiceController:
         if self.people.active and not self.menu.open and ('B' in commands or 'E' in commands):
             self._people_buttons('E' in commands, 'B' in commands, now)
             commands = [name for name in commands if name not in 'BE']
+        if (self.journeys is not None and self.journeys.proposal is not None
+                and 'E' in commands and
+                (self.job is not None or self.speech.active or
+                 self.journeys.proposal.get('expires') is None)):
+            # Until audio playback finished, E is not a confirmation and must
+            # not fall through to the generic status key handler either.
+            event('journey', result='confirmation_not_spoken')
+            commands = [name for name in commands if name != 'E']
         if (self.journeys is not None and self.journeys.proposal is not None
                 and not self.menu.open
                 and ('B' in commands or ('E' in commands and self.job is None))):
