@@ -116,16 +116,19 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
 
 ### Live-Journal und Fremdkanal
 
-Die Logzeilen des Servers laufen mit (`GET /v1/journal?after=N`, Token oder
-Sitzung, alle 2,5 s; der Server sammelt seine letzten 300 Ausgabezeilen im
-Arbeitsspeicher, IPv4-Adressen nur mit dem letzten Teil, ohne seine eigenen
-Journal-, Sitzungs- und Health-Abfragen und ohne das Laden der Seitendateien).
+Das System-Journal von CT 107 läuft mit: Kernel, systemd, lokales LLM,
+Cron, SSH, Updates und die Ereignisse des Sprachdienstes selbst
+(`GET /v1/journal?after=N`, Token oder Sitzung, alle 2,5 s). Der Dienst
+liest es mit `journalctl -f` (Gruppe `systemd-journal`, die die Unit schon hat)
+und hält die letzten 300 Zeilen im Arbeitsspeicher. Zugriffszeilen des
+Webservers fehlen; IPv4- und IPv6-Adressen werden maskiert. Ohne `journalctl`
+(oder mit `SERVITOR_JOURNAL_SOURCE=own`) zeigt es nur die Ausgabe des Dienstes.
 
 - **Desktop:** eigene Spalte rechts auf dem Röhrenbildschirm, der Chat links.
   **Handy:** hinter dem Chat; die Chat-Zeilen bleiben deckend.
-- Neueste Zeile oben, ältere blenden nach unten aus. JSON-Ereignisse lesbar
-  (`19:41:36 READY load_seconds=9.84`), Zugriffe kurz (`POST /v1/ask → 200`),
-  Fehler und Rückfälle bernsteinfarben.
+- Neueste Zeile oben, ältere blenden nach unten aus. Zeit, Dienst, Meldung
+  (`21:48:16 kernel Out of memory: …`, `19:41:36 servitor-voice READY
+  load_seconds=9.84`); Warnungen bernstein, Fehler rot.
 - Mit Vox-Effekten: Litaneien und Noosphären-Störungen dazwischen, und etwa
   alle 25–70 s rutscht ein **Fremdkanal** herein: im Browser erzeugtes
   Sprechfunk-Gemurmel (wandernde Tonhöhe, Silben mit springenden Formanten,

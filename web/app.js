@@ -657,20 +657,28 @@ function journalLine(text, kind) {
   while (list.children.length > 60) list.lastElementChild.remove();
 }
 
+// '21:48:16 kernel  Out of memory: …' – time, unit, message; the service's
+// JSON events read as 'READY load_seconds=9.84'.
 function describe(entry) {
   const time = new Date(entry.ts * 1000).toLocaleTimeString('de-DE');
+  const unit = entry.unit ? `${entry.unit} ` : '';
+  let text = entry.text;
   try {
-    const data = JSON.parse(entry.text);
+    const data = JSON.parse(text);
     if (data && typeof data === 'object' && data.event) {
       const rest = Object.entries(data).filter(([key]) => key !== 'event')
         .map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`);
-      return `${time} ${String(data.event).toUpperCase()} ${rest.join(' ')}`;
+      text = `${String(data.event).toUpperCase()} ${rest.join(' ')}`;
     }
   } catch { /* a plain line */ }
-  // Access log: '*.*.*.7 "POST /v1/ask?format=opus HTTP/1.1" 200 -' -> 'POST /v1/ask → 200'
-  const access = entry.text.match(/"([A-Z]+) ([^ ?"]+)[^"]*" (\d{3})/);
-  if (access) return `${time} ${access[1]} ${access[2]} → ${access[3]}`;
-  return `${time} ${entry.text}`;
+  return `${time} ${unit}${text}`;
+}
+
+function severity(entry) {
+  // syslog priority: 0-3 error, 4 warning; the service's own failures too.
+  if (entry.prio <= 3) return 'error';
+  if (entry.prio === 4 || /"event": ?"[a-z_]*(error|failed|fallback)/i.test(entry.text)) return 'warn';
+  return '';
 }
 
 async function pollJournal() {
@@ -681,7 +689,7 @@ async function pollJournal() {
     if (!response.ok) return;
     const data = await response.json();
     if (data.seq < journal.seq) journal.seq = 0;   // the service restarted
-    for (const entry of data.lines) journalLine(describe(entry), /error|failed|fallback/i.test(entry.text) ? 'warn' : '');
+    for (const entry of data.lines) journalLine(describe(entry), severity(entry));
     journal.seq = data.seq;
   } catch { /* no carrier: the next poll tries again */ }
 }

@@ -25,8 +25,9 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
   session already holds.
 * ``POST /v1/message`` with one SPX/1 envelope, answered with ``ack``.
 * ``GET /health`` without token: ``{"ok": true, "ready": bool}`` only.
-* ``GET /v1/journal?after=N``: the service's own recent log lines after
-  sequence number N (the browser client shows them behind its chat).
+* ``GET /v1/journal?after=N``: recent lines of this host's system journal
+  after sequence number N (unit, priority, text; HTTP access lines left out),
+  shown behind the browser client's chat.
 * ``POST /v1/login`` with JSON ``{"password": "...", "remember": bool}``: the
   browser client's password (SERVITOR_WEB_PASSWORD_HASH) for a session cookie;
   ``GET /v1/session`` tells whether it is still valid, ``POST /v1/logout``
@@ -455,13 +456,17 @@ class WebSessions:
 
 
 class Journal:
-    """The service's own recent log lines (stdout and stderr), for the browser
-    client's background. IPv4 addresses keep only their last part, and its
-    own polling is left out. Nothing here is written to disk."""
+    """Recent log lines of the server (CT 107), for the browser client's
+    background: the system journal (follow_system_journal) or, without
+    journalctl, the service's own output (Tee). HTTP access lines are left
+    out, IP addresses are masked. Nothing here is written to disk."""
 
-    # Its own polling and the page's static files would drown the real events.
-    SKIP = ('/v1/journal', '/v1/session', 'GET /health', '"GET /web/', '"GET / HTTP')
+    # Web server access lines ('1.2.3.4 "POST /v1/ask HTTP/1.1" 200 -') are not
+    # server logs; neither is the service's own HTTP noise.
+    ACCESS = re.compile(r'"(?:GET|POST|PUT|HEAD|DELETE|OPTIONS) /\S* HTTP/[\d.]+"'
+                        r'|request timed out|turn aborted', re.IGNORECASE)
     IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}(\d{1,3})\b')
+    IPV6 = re.compile(r'\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{0,4}\b', re.IGNORECASE)
 
     def __init__(self, size=300, clock=time.time):
         self.items = collections.deque(maxlen=size)
@@ -469,19 +474,55 @@ class Journal:
         self.clock = clock
         self.lock = threading.Lock()
 
-    def add(self, line):
+    def add(self, line, unit='', priority=6, at=None):
         line = line.strip()
-        if not line or any(part in line for part in self.SKIP):
+        if not line or self.ACCESS.search(line):
             return
-        line = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', line)[:300]
+        line = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', line)
+        line = self.IPV6.sub('*:*', line)[:300]
+        unit = re.sub(r'\.service$', '', unit or '')[:40]
         with self.lock:
             self.seq += 1
-            self.items.append(dict(seq=self.seq, ts=round(self.clock(), 1), text=line))
+            self.items.append(dict(seq=self.seq, ts=round(at or self.clock(), 1), text=line,
+                                   unit=unit, prio=int(priority)))
+
+    def add_journald(self, raw):
+        """One ``journalctl -o json`` line."""
+        entry = logwatch.parse_entry(raw)
+        if entry is None:
+            return
+        unit = entry['unit'] or ('kernel' if entry['kernel'] else '')
+        self.add(entry['text'], unit, entry['priority'], entry['at'] or None)
 
     def since(self, after, limit=100):
         with self.lock:
             lines = [item for item in self.items if item['seq'] > after][-limit:]
             return dict(seq=self.seq, lines=lines)
+
+
+def follow_system_journal(journal, command=None):
+    """Feed the whole system journal of this host into ``journal``, restarting
+    journalctl if it ends. Needs the group systemd-journal (the unit has it);
+    without it journalctl shows only this service's own lines."""
+    command = command or ['journalctl', '-f', '-n', '80', '-o', 'json', '-q', '--no-pager',
+                          '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
+                          '__REALTIME_TIMESTAMP']
+
+    def run():
+        while True:
+            try:
+                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      text=True, errors='replace',
+                                      env=dict(os.environ, LC_ALL='C')) as proc:
+                    for raw in proc.stdout:
+                        journal.add_journald(raw)
+            except OSError as exc:
+                journal.add(f'journalctl nicht verfügbar: {exc}', 'servitor-voice', 4)
+            time.sleep(5)
+
+    thread = threading.Thread(target=run, name='system-journal', daemon=True)
+    thread.start()
+    return thread
 
 
 class Tee:
@@ -1640,9 +1681,14 @@ def main():
     service = Service(config, pipeline)
     server = Server((config.bind, config.port), Handler)
     server.service = service
-    # Everything the service prints also goes to the journal the browser reads.
-    sys.stdout = Tee(sys.stdout, service.journal)
-    sys.stderr = Tee(sys.stderr, service.journal)
+    # The browser's background log: the system journal of this host; where
+    # there is no journalctl (no systemd), the service's own output.
+    import shutil
+    if shutil.which('journalctl') and os.environ.get('SERVITOR_JOURNAL_SOURCE') != 'own':
+        follow_system_journal(service.journal)
+    else:
+        sys.stdout = Tee(sys.stdout, service.journal)
+        sys.stderr = Tee(sys.stderr, service.journal)
 
     def load():
         started = time.monotonic()

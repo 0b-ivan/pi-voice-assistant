@@ -677,22 +677,49 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(ss.check_password('ave omnissiah', stored))
         self.assertFalse(ss.check_password('x', 'kaputt'))
 
-    def test_journal_masks_addresses_skips_its_own_polling_and_needs_the_token(self):
+    def test_journal_carries_system_log_lines_without_web_access_lines(self):
         journal = self.service.journal
-        tee = ss.Tee(open(os.devnull, 'w'), journal)
-        tee.write('{"event": "ready", "load_seconds": 3.2}\n192.168.1.77 "POST /v1/ask HTTP/1.1" 200 -\n')
-        tee.write('172.22.9.1 "GET /v1/journal?after=0 HTTP/1.1" 200 -\nhalf')
-        tee.write(' a line\n')
+        journal.add_journald(json.dumps(dict(MESSAGE='Started Daily apt upgrade.', PRIORITY='6',
+                                             _SYSTEMD_UNIT='apt-daily-upgrade.service',
+                                             __REALTIME_TIMESTAMP='1760000000000000')))
+        journal.add_journald(json.dumps(dict(MESSAGE='Out of memory: Killed process 4711 (llama-server)',
+                                             PRIORITY='3', _TRANSPORT='kernel')))
+        journal.add_journald(json.dumps(dict(MESSAGE='Failed password for root from 203.0.113.9 port 51515',
+                                             PRIORITY='5', _SYSTEMD_UNIT='ssh.service')))
+        journal.add_journald(json.dumps(dict(MESSAGE='172.22.9.1 "POST /v1/ask?format=opus HTTP/1.1" 200 -',
+                                             PRIORITY='6', _SYSTEMD_UNIT='servitor-voice.service')))
+        journal.add_journald('{"MESSAGE": "{\\"event\\": \\"ready\\", \\"load_seconds\\": 3.2}", "_SYSTEMD_UNIT": "servitor-voice.service"}')
+        journal.add_journald('kein json')
         response, _ = self.request('/v1/journal', method='GET', token=None)
         self.assertEqual(response.status, 401)
         response, data = self.request('/v1/journal?after=0', method='GET')
-        texts = [line['text'] for line in json.loads(data)['lines']]
-        self.assertEqual(texts[:3], ['{"event": "ready", "load_seconds": 3.2}',
-                                     '*.*.*.77 "POST /v1/ask HTTP/1.1" 200 -', 'half a line'])
-        self.assertFalse(any('/v1/journal' in text for text in texts))
+        lines = json.loads(data)['lines']
+        self.assertEqual([(l['unit'], l['prio']) for l in lines],
+                         [('apt-daily-upgrade', 6), ('kernel', 3), ('ssh', 5), ('servitor-voice', 6)])
+        self.assertEqual(lines[0]['ts'], 1760000000.0)
+        self.assertEqual(lines[2]['text'], 'Failed password for root from *.*.*.9 port 51515')
+        self.assertEqual(lines[3]['text'], '{"event": "ready", "load_seconds": 3.2}')
+        self.assertFalse(any('HTTP/1.1' in l['text'] for l in lines))
         last = json.loads(data)['seq']
         _, data = self.request(f'/v1/journal?after={last}', method='GET')
         self.assertEqual(json.loads(data)['lines'], [])
+
+    def test_journal_follows_journalctl_output(self):
+        script = Path(self.tmp.name) / 'fake-journalctl'
+        script.write_text('#!/bin/sh\necho \'{"MESSAGE": "cron tick", "_SYSTEMD_UNIT": "cron.service"}\'\nsleep 30\n')
+        script.chmod(0o755)
+        ss.follow_system_journal(self.service.journal, [str(script)])
+        for _ in range(50):
+            if self.service.journal.since(0)['lines']:
+                break
+            time.sleep(0.05)
+        self.assertEqual(self.service.journal.since(0)['lines'][0]['unit'], 'cron')
+
+    def test_tee_fallback_without_journalctl(self):
+        tee = ss.Tee(open(os.devnull, 'w'), self.service.journal)
+        tee.write('half')
+        tee.write(' a line\n192.168.1.77 "GET /web/ HTTP/1.1" 200 -\n')
+        self.assertEqual([l['text'] for l in self.service.journal.since(0)['lines']], ['half a line'])
 
     def test_web_client_is_served_without_token_and_only_its_files(self):
         response, _ = self.request('/web', method='GET', token=None)
