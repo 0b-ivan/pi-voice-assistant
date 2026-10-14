@@ -209,10 +209,13 @@ class SkullOverclockTests(unittest.TestCase):
         self.skull = skull.Skull('/does/not/exist')
 
     def test_gold_eye_frames_are_made_once(self):
-        frames = self.skull.blessed()
-        self.assertIs(self.skull.blessed(), frames)
+        gilded = self.skull.blessed()
+        self.assertIs(self.skull.blessed(), gilded)
+        box, frames = gilded
         self.assertEqual(len(frames), skull.STEPS)
-        box = self.skull.box
+        eye = self.skull.box                      # the gold box holds the red eye's
+        self.assertTrue(box[0] <= eye[0] and box[1] <= eye[1]
+                        and box[2] >= eye[2] and box[3] >= eye[3])
         red = self.skull.frame(0.8).crop(box)
         gold = self.skull.frame(0.8, gold=True).crop(box)
         self.assertEqual(gold_pixels(red), 0)
@@ -231,6 +234,23 @@ class SkullOverclockTests(unittest.TestCase):
     def test_repository_artwork_is_the_default_fallback(self):
         self.assertEqual(skull.REPO_SKULL, ROOT / 'assets' / 'display' / 'servo-skull.png')
         self.assertEqual(self.skull.source, 'drawn')    # explicit path: no fallback
+
+    @unittest.skipUnless(skull.REPO_SKULL.exists(), 'skull artwork not in checkout')
+    def test_real_artwork_gets_a_gold_eye_without_a_red_ring(self):
+        real = skull.Skull(skull.REPO_SKULL)
+        self.assertEqual(real.source, 'file')
+        self.assertIsNotNone(real.box)              # the red eye is found
+        box, _ = real.blessed()
+        for level in (0.3, 1.0):
+            red_eye = real.frame(level).crop(box)
+            gold_eye = real.frame(level, gold=True).crop(box)
+            def strong_red(image):
+                return sum(1 for r, g, b in rgb(image) if r > 120 and r > 2.5 * max(g, b))
+            # Red lights of the artwork beside the socket may stay; the eye
+            # and its glowing rim (hundreds of pixels) must not.
+            self.assertGreater(strong_red(red_eye), 200, level)
+            self.assertLess(strong_red(gold_eye), 25, level)
+            self.assertGreater(warm_pixels(gold_eye), warm_pixels(red_eye) + 100, level)
 
     def render(self, state='BEREIT', blessed=False, **kw):
         out = Capture()

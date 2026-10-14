@@ -162,7 +162,7 @@ In der Kopfzeile, links neben CPU-Temperatur und Akku, steht ein kleines Schild 
 - Hört Proximus zu, denkt oder spricht er, behalten die Litaneien und das zweite Auge ihre Statusfarbe; nur das Auge bleibt golden. Billys Schmerz-, Grinse-, Wut- und Seitenblick-Gesichter bleiben auch im Gottmodus erhalten; die kurze Gottmodus-Animation beim Anstecken des Netzteils funktioniert weiter.
 - Ressourcen: goldene Augenbilder (12 Stufen) und Billys Gottmodus-Pulsbilder werden beim ersten Gebrauch einmal berechnet und gecacht; gezeichnet wird nur, wenn sich etwas Sichtbares ändert, das Teilbild-Update (`PartialDisplay`) bleibt.
 
-Der Schädel liest seine Grafik aus `PI_DISPLAY_SKULL` (Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`) und, wenn dort keine liegt, aus `assets/display/servo-skull.png` im Repository. `install-voice-service.sh` installiert sie von dort, sobald sie im Repository liegt; vorher bleibt die Kopie auf dem Pi unangetastet.
+Die Schädelgrafik liegt in `assets/display/servo-skull.png`; `install-voice-service.sh` installiert sie nach `PI_DISPLAY_SKULL` (Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`). Beim goldenen Auge wird auch der rot glühende Rand der Augenhöhle zu Messing, damit kein roter Ring um das Gold bleibt; die übrigen roten Lichter der Grafik bleiben rot.
 
 ## Ruhe und Schlaf
 

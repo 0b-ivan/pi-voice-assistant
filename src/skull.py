@@ -85,7 +85,7 @@ class Skull:
         self.base = source.resize((size, size), Image.LANCZOS)
         mask = _eye_mask(self.base)
         self.box, self.frames, self.lens = None, [], []
-        self._mask_in_box, self._variants, self._gold = [], {1.0: (self.base, [])}, None
+        self._variants, self._gold = {1.0: (self.base, [])}, None
         if not mask:
             return
         xs = [i % size for i in mask]
@@ -106,7 +106,6 @@ class Skull:
                               min(255, int(b * gain * (1 - 0.35 * hot))))
             self.frames.append(patch)
         self.lens = sorted(_lens_mask(self.base, self.box))
-        self._mask_in_box = inside
         self._variants = {1.0: (self.base, self.frames)}
         self._gold = None
 
@@ -126,12 +125,13 @@ class Skull:
         lens_color (the status LED colour), if given; ``gain`` dims the whole
         picture (cached per value), ``gold`` shows the overclocked gold eye."""
         base, frames = self._variant(gain)
+        box = self.box
         if gold and self.frames:
-            frames = self.blessed()
+            box, frames = self.blessed()
         image = base.copy()
         if frames:
             step = max(0, min(STEPS - 1, round(level * (STEPS - 1))))
-            image.paste(frames[step], self.box[:2])
+            image.paste(frames[step], box[:2])
         if lens_color and self.lens:
             pixels = image.load()
             for x, y in self.lens:
@@ -142,10 +142,18 @@ class Skull:
         return image
 
     def blessed(self):
-        """Overclock look: the same eye frames recoloured to Mechanicus gold
-        (made once). frame(..., gold=True) uses them."""
+        """Overclock look: (box, frames) of the eye in Mechanicus gold at
+        every brightness step, made once. The box is wider than the red
+        eye's: the red rim of the socket turns brass too, so no red ring is
+        left around a gold eye. frame(..., gold=True) uses them."""
         if self._gold is None:
-            self._gold = [_gilded(patch, self._mask_in_box) for patch in self.frames]
+            box, inside = _rim(self.base, self.box)
+            frames = []
+            for patch in self.frames:
+                canvas = self.base.crop(box)
+                canvas.paste(patch, (self.box[0] - box[0], self.box[1] - box[1]))
+                frames.append(_gilded(canvas, inside))
+            self._gold = (box, frames)
         return self._gold
 
 
@@ -165,9 +173,9 @@ def speaking_level(now, envelope=None):
 
 # --- Overclock: the eye turns gold -----------------------------------------
 
-# Metallic gold from dark to glint (the colours of Doom's god mode eyes, so
-# Servitor and Billy share one "overclocked" gold).
-GOLD = ((155, 91, 19), (195, 155, 47), (215, 187, 67), (255, 255, 215))
+# Metallic gold from dark bronze to glint (mid tones are those of Doom's god
+# mode eyes, so Servitor and Billy share one "overclocked" gold).
+GOLD = ((30, 18, 4), (110, 70, 15), (195, 155, 47), (230, 200, 90), (255, 250, 210))
 
 
 def _gold(value):
@@ -178,14 +186,37 @@ def _gold(value):
     return tuple(int(a + (b - a) * k) for a, b in zip(GOLD[low], GOLD[low + 1]))
 
 
+def _red(pixel):
+    r, g, b = pixel
+    return r > 40 and r > g * 1.8 and r > b * 1.8
+
+
+def _rim(image, box):
+    """(box, pixels relative to it) of the eye plus every red pixel around
+    it up to about twice its radius (the glowing socket rim)."""
+    x0, y0, x1, y1 = box
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    radius = max(x1 - x0, y1 - y0) * 1.3
+    left, top = max(0, int(cx - radius)), max(0, int(cy - radius))
+    right = min(image.width, int(cx + radius) + 1)
+    bottom = min(image.height, int(cy + radius) + 1)
+    pixels = image.load()
+    inside = [(x - left, y - top) for y in range(top, bottom) for x in range(left, right)
+              if (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius
+              and (_red(pixels[x, y]) or (x0 <= x < x1 and y0 <= y < y1
+                                          and pixels[x, y][0] > 180))]
+    return (left, top, right, bottom), inside
+
+
 def _gilded(patch, inside):
-    """Eye patch with its red pixels in gold, shading kept: the red channel
-    carries the eye's light, so it picks the place on the gold ramp."""
+    """Patch with its red pixels in gold, shading kept: saturated red becomes
+    saturated gold, dark red brass, only the white-hot core the glint."""
     patch = patch.copy()
     data = patch.load()
     for x, y in inside:
         r, g, b = data[x, y]
-        data[x, y] = _gold(min(255, int(r * 0.72 + max(g, b) * 0.4)))
+        if r > max(g, b) or min(g, b) > 180:      # still red or the white core
+            data[x, y] = _gold(min(255, int(r * 0.66 + min(g, b) * 0.34)))
     return patch
 
 
