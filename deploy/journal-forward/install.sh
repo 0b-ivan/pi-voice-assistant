@@ -47,14 +47,23 @@ fi
 if [ "$role" = server ]; then
     getent passwd servitor >/dev/null
     install -d -o systemd-journal-remote -g systemd-journal-remote -m 2750 /var/log/journal/remote
-    install -d -m 0755 /etc/systemd/system/systemd-journal-remote.socket.d \
-        /etc/systemd/system/systemd-journal-remote.service.d \
+    install -d -m 0755 /etc/systemd/system/systemd-journal-remote@.service.d \
         /etc/systemd/system/servitor-voice.service.d /etc/systemd/journal-remote.conf.d
-    {
-        printf '[Socket]\nListenStream=\n'
-        for address in $target; do printf 'ListenStream=%s:19532\n' "$address"; done
-    } > /etc/systemd/system/systemd-journal-remote.socket.d/60-proximus.conf
-    cat > /etc/systemd/system/systemd-journal-remote.service.d/60-proximus.conf <<'EOF'
+    # journal-remote akzeptiert genau einen HTTP-Deskriptor. Eine Instanz je
+    # Adresse bekommt ihren eigenen Socket als fd 3; zwei ListenStream-Zeilen
+    # in einem Socket würden den zweiten Port als Rohdaten statt HTTP behandeln.
+    sed 's/systemd-journal-remote\.socket/systemd-journal-remote@%i.socket/g' \
+        /usr/lib/systemd/system/systemd-journal-remote.service \
+        > /etc/systemd/system/systemd-journal-remote@.service
+    cat > /etc/systemd/system/systemd-journal-remote@.socket <<'EOF'
+[Unit]
+Description=Proximus Journal-Empfänger an %i
+[Socket]
+ListenStream=%i:19532
+[Install]
+WantedBy=sockets.target
+EOF
+    cat > /etc/systemd/system/systemd-journal-remote@.service.d/60-proximus.conf <<'EOF'
 [Service]
 ExecStart=
 ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-http=-3 --output=/var/log/journal/remote/
@@ -75,9 +84,16 @@ EOF
 SupplementaryGroups=systemd-journal systemd-journal-remote
 EOF
     systemctl daemon-reload
-    systemctl stop systemd-journal-remote.service
-    systemctl enable systemd-journal-remote.socket
-    systemctl restart systemd-journal-remote.socket
+    # Migration des ersten Proximus-Installers (ein Socket, Pi-LAN).
+    if [ -e /etc/systemd/system/systemd-journal-remote.socket.d/60-proximus.conf ]; then
+        systemctl stop systemd-journal-remote.service
+        systemctl disable --now systemd-journal-remote.socket
+    fi
+    for address in $target; do
+        systemctl stop "systemd-journal-remote@$address.service"
+        systemctl enable "systemd-journal-remote@$address.socket"
+        systemctl restart "systemd-journal-remote@$address.socket"
+    done
     systemctl restart servitor-voice.service
     echo "Journal-Empfänger an $target, Port 19532 (nur LAN; HTTP ist unverschlüsselt)."
 else
