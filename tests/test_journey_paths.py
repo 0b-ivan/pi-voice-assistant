@@ -262,6 +262,13 @@ class RemoteJourneySpeechTests(LiveServerCase):
         self.assertLessEqual(len(spoken), 170)
         self.assertFalse(c.speech.play.called)
 
+    def test_failed_playback_never_arms_confirmation(self):
+        c, p = self.controller()
+        c.journeys.proposal = dict(id='ab123', created=0.0, expires=None)
+        c.speech.poll.return_value = 1
+        p.tick()
+        self.assertIsNone(c.journeys.proposal)
+
     def test_low_memory_never_synthesizes_locally_and_revokes_pending_consent(self):
         c, _p = self.controller()
         c.journeys.proposal = dict(id='ab123')
