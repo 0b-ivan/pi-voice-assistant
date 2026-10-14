@@ -3393,20 +3393,13 @@ def main():
     next_power = 0.0
     shim = None
     led = None
-    tap_reader = None
-    tap_next = 0.0
-    # Explicit opt-in: tap acknowledgement writes only PiSugar's event latch,
-    # which requires temporarily unlocking the chip's write protection.
+    # Explicit opt-in: a monitor retries intermittent I2C failures with
+    # bounded backoff. A failed initial read can recover without restarting.
+    # First *successful* read always consumes stale startup taps.
+    tap_monitor = None
     if (not args.probe and os.environ.get('PISUGAR_STANDBY_BUTTON', 'off')
             .strip().lower() in ('on', '1', 'true', 'yes')):
-        try:
-            tap_reader = pisugar_button.TapReader()
-            # Clear an old event without putting Proximus to sleep at boot.
-            tap_reader.poll()
-            event('pisugar_button_ready', address='0x57', mode='software_standby')
-        except (ImportError, OSError) as exc:
-            event('pisugar_button_error', message=str(exc), disabled=True)
-            tap_reader = None
+        tap_monitor = pisugar_button.TapMonitor()
     shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
 
     def open_shim(now):
@@ -3484,19 +3477,34 @@ def main():
                         stop_shim()
                         controller.cancel(gpio_pressed, now)
                         shim_retry_at = now + SHIM_RETRY_SECONDS
-                if tap_reader is not None and now >= tap_next:
-                    tap_next = now + 0.1
-                    try:
-                        gesture = tap_reader.poll(now)
-                    except (ImportError, OSError) as exc:
-                        # Fail closed: never act on an event we could not ack.
-                        event('pisugar_button_error', message=str(exc), disabled=True)
-                        tap_reader = None
-                    else:
-                        if gesture:
-                            event('pisugar_button', gesture=gesture)
-                            if gesture == pisugar_button.SINGLE:
-                                controller.pisugar_standby(now)
+                if tap_monitor is not None:
+                    result = tap_monitor.poll(now)
+                    if result is not None:
+                        if result['state'] == 'error':
+                            # An unacknowledged tap is never used to toggle
+                            # standby. Retain the reader and retry after a
+                            # bounded delay; one EREMOTEIO is not permanent.
+                            event('pisugar_button_error', message=result['message'],
+                                  failures=result['failures'],
+                                  retry_seconds=result['retry_seconds'],
+                                  disabled=False)
+                            if result['should_wake'] and controller.manual_standby:
+                                # If the PiSugar bus stays down, wake the
+                                # assistant so GPIO17 and the SHIM are usable.
+                                controller.pisugar_standby(now, reason='i2c_unavailable')
+                        elif result['state'] == 'ready':
+                            event('pisugar_button_ready', address='0x57',
+                                  mode='software_standby',
+                                  discarded=result['ignored_startup_gesture'])
+                        else:
+                            if result['recovered_after']:
+                                event('pisugar_button_recovered',
+                                      after_errors=result['recovered_after'])
+                            gesture = result['gesture']
+                            if gesture:
+                                event('pisugar_button', gesture=gesture)
+                                if gesture == pisugar_button.SINGLE:
+                                    controller.pisugar_standby(now)
                 try:
                     controller.tick(gpio_pressed, pressed, now, pitft)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
