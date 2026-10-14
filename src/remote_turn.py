@@ -424,6 +424,8 @@ class RemoteStoryUplink(RemoteTurnUplink):
     """``POST /v1/story`` with the story state: the next section of a long
     story. Same interface as the turn uplink, so RemoteTurnJob reads it."""
 
+    endpoint = 'story'
+
     def __init__(self, config, state, connect=_open_connection, status=None, timeout=None):
         self.body = json.dumps(dict(story=state), separators=(',', ':')).encode()
         self.timeout = timeout or story_timeout()
@@ -435,7 +437,7 @@ class RemoteStoryUplink(RemoteTurnUplink):
             connection.connect()
             connection.sock.settimeout(self.timeout)
             path = urllib.parse.urlsplit(url).path.rstrip('/')
-            connection.putrequest('POST', f'{path}/v1/story?format={self.config.audio_format}',
+            connection.putrequest('POST', f'{path}/v1/{self.endpoint}?format={self.config.audio_format}',
                                   skip_accept_encoding=True)
             self._headers(connection, url)
             connection.putheader('Content-Type', 'application/json')
@@ -459,6 +461,28 @@ class RemoteStoryUplink(RemoteTurnUplink):
                 self.error = str(exc) or type(exc).__name__
                 self.rejection = self._early_rejection()
             self.close()
+
+
+class RemoteSpeakUplink(RemoteStoryUplink):
+    """Synthesize a local Pi answer on CT 107 using the existing /v1/speak API.
+
+    Only the completed answer text and requested voice cross the network:
+    never the home coordinates, CalDAV credentials, or speaker identity.
+    Inherits authenticated HTTPS/LAN fallback, NDJSON and cancellation.
+    """
+
+    endpoint = 'speak'
+
+    def __init__(self, config, text, voice='servitor', connect=_open_connection):
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError('remote speech requires text')
+        if len(text) > 1200:
+            raise ValueError('remote speech text exceeds server limit')
+        self.body = json.dumps({'text': text}, ensure_ascii=False).encode('utf-8')
+        self.timeout = max(config.response_timeout, 60.0)
+        # Only the voice setting is sent; no Pi status, memory or address.
+        status = {'voice': 'natural' if voice == 'natural' else 'servitor'}
+        RemoteTurnUplink.__init__(self, config, connect=connect, status=status)
 
 
 def decode_opus(source, target, ffmpeg=None, run=subprocess.run):

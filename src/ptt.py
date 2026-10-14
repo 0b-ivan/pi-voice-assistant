@@ -45,8 +45,8 @@ import network_info
 import hotspot_control
 import hotspot_config as ap_config
 from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
-from remote_turn import (RemoteCapableSpeech, RemoteStoryUplink, RemoteTurnJob, RemoteTurnUplink,
-                         load_remote_config, story_timeout)
+from remote_turn import (RemoteCapableSpeech, RemoteSpeakUplink, RemoteStoryUplink,
+                         RemoteTurnJob, RemoteTurnUplink, load_remote_config, story_timeout)
 from protocol import ClientSession, MIN_TURN_SECONDS
 import datetime
 import intents
@@ -76,6 +76,39 @@ DISPLAY_EVENTS = {
 }
 DISPLAY_ERROR_EVENTS = {'stt_error', 'llm_error', 'tts_error', 'speech_error'}
 DISPLAY_ERROR_HOLD_SECONDS = 3.0
+# Resident Piper plus wake-word recognition must not exhaust Pi Zero 2 W RAM.
+JOURNEY_LOCAL_MIN_AVAILABLE_KIB = 140 * 1024
+JOURNEY_LOCAL_MAX_CHARS = 170
+
+
+def _available_memory_kib():
+    """MemAvailable from the kernel, not inaccurate RSS sums or free alone."""
+    try:
+        with open('/proc/meminfo', encoding='ascii') as source:
+            for line in source:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _short_journey_fallback(text, max_chars=JOURNEY_LOCAL_MAX_CHARS):
+    """Never send an unbounded, server-failed response through resident Piper."""
+    text = ' '.join(text.split())
+    if len(text) <= max_chars:
+        return text
+    parts = text.split('. ')
+    chosen = []
+    for part in parts:
+        sentence = part.rstrip('.')
+        candidate = '. '.join(chosen + [sentence]) + '.'
+        if len(candidate) > max_chars:
+            break
+        chosen.append(sentence)
+    return ('. '.join(chosen) + '.') if chosen else (
+        text[:max_chars - 1].rsplit(' ', 1)[0].rstrip(' ,.;:') + '.')
+
 _display_last_error_at = None
 
 
@@ -761,6 +794,8 @@ class VoiceController:
         self.journeys = journey_feed.Journeys.from_env(self.agenda, log=event)
         self.turn_trip = None              # journey proposal taken by the current turn
         self.journey_step = None           # journeys.Step of a running background job
+        self.journey_speak_config = None   # remote /v1/speak, assigned by main()
+        self.journey_speech_text = None    # answer pending remote audio synthesis
         self.memory = memory_core.MemoryCore()
         self.nightstore = nightwatch.Store(self.memory)
         self.nightwatch = None
@@ -972,6 +1007,10 @@ class VoiceController:
         # the question is used up (anything else drops it).
         self.turn_device_pending = self._device_take_pending()
         # Same for an open journey proposal: only this turn may answer it.
+        if (self.journeys is not None and self.journeys.proposal is not None
+                and self.journeys.proposal.get('expires') is None):
+            # A new PTT interrupts the announcement: it must not confirm it.
+            self.journeys.cancel()
         self.turn_trip = self.journeys.take() if self.journeys is not None else None
         self.turn_weather_day = None
         if self.cue is not None and self.cue.play():
@@ -2377,7 +2416,70 @@ class VoiceController:
         self.turn_llm = 'intent'
         event('llm_response', text=text, model='local/journey')
         print(f'SERVITOR: {text}', flush=True)
-        self._start_speech(text, source='assistant', model='local/journey')
+        if self.journey_speak_config is None:
+            self._journey_local_say(text, reason='offline')
+            return
+        try:
+            uplink = RemoteSpeakUplink(self.journey_speak_config, text, voice=self.voice)
+            self.job = RemoteTurnJob(uplink, self.config.runtime_dir, idle_timeout=60)
+        except (OSError, ValueError, RuntimeError) as exc:
+            event('journey', result='tts_remote_error', message=str(exc))
+            self._journey_local_say(text, reason='remote_setup')
+            return
+        self.journey_speech_text = text
+        self.job_stage = 'journey_tts'
+        self.job_started_at = time.monotonic()
+        event('journey', result='tts_remote_start', chars=len(text))
+
+    def _journey_local_say(self, text, reason):
+        # A remote failure may leave an unanswered, state-changing proposal.
+        # Never allow button E / voice confirmation for inaudible details.
+        if self.journeys.proposal is not None and len(text) > JOURNEY_LOCAL_MAX_CHARS:
+            brief = journey_feed.brief_proposal_text(self.journeys.proposal,
+                                                     self.journeys.now(),
+                                                     JOURNEY_LOCAL_MAX_CHARS)
+            if brief is None:
+                self.journeys.cancel()
+                text = 'Fahrtvorschlag abgebrochen. Sprachserver nicht erreichbar.'
+            else:
+                text = brief
+        available = _available_memory_kib()
+        if available is not None and available < JOURNEY_LOCAL_MIN_AVAILABLE_KIB:
+            event('journey', result='tts_low_memory', available_kib=available, reason=reason)
+            # No local model inference under memory pressure; the display/log
+            # records the condition and E cannot confirm an unheard proposal.
+            self.journeys.cancel()
+            return
+        short = _short_journey_fallback(text)
+        event('journey', result='tts_local_fallback', reason=reason,
+              available_kib=available, chars=len(short))
+        self._start_speech(short, source='assistant', model='local/journey')
+
+    def _journey_tts_done(self, job):
+        job.drain()
+        text, self.journey_speech_text = self.journey_speech_text, None
+        if job.cancelled:
+            event('journey', result='tts_cancelled')
+            self.journeys.cancel()
+            return
+        if job.error is not None or not (job.result or {}).get('audio'):
+            event('journey', result='tts_remote_failed',
+                  message=job.error or 'no audio', code=job.error_code)
+            self._journey_local_say(text or 'Fahrplanauskunft nicht verfügbar.',
+                                    reason='remote_failed')
+            return
+        try:
+            self._settle_cue()
+            display_progress('tts', 'playback')
+            self.speech.play(job.result['audio'], text=text)
+            self.speech_started_at = time.monotonic()
+            self._turn_spoken()
+            event('speech_started', source='remote', model='local/journey')
+            event('journey', result='tts_remote_play', host=job.result['host'])
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+            self._journey_local_say(text or 'Fahrplanauskunft nicht verfügbar.',
+                                    reason='remote_playback_failed')
 
     def _settle_cue(self):
         """The playback device is not shared: let the cue end before speech."""
@@ -2752,6 +2854,14 @@ class VoiceController:
             self._people_buttons('E' in commands, 'B' in commands, now)
             commands = [name for name in commands if name not in 'BE']
         if (self.journeys is not None and self.journeys.proposal is not None
+                and 'E' in commands and
+                (self.job is not None or self.speech.active or
+                 self.journeys.proposal.get('expires') is None)):
+            # Until audio playback finished, E is not a confirmation and must
+            # not fall through to the generic status key handler either.
+            event('journey', result='confirmation_not_spoken')
+            commands = [name for name in commands if name != 'E']
+        if (self.journeys is not None and self.journeys.proposal is not None
                 and not self.menu.open
                 and ('B' in commands or ('E' in commands and self.job is None))):
             taken = self.journeys.take()
@@ -2813,7 +2923,10 @@ class VoiceController:
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
             if self.journeys is not None:
-                self.journeys.spoken()       # 90 s to answer a proposal from now
+                if code == 0:
+                    self.journeys.spoken()   # 90 s only after successful playback
+                else:
+                    self.journeys.cancel()   # no confirmation for an unheard offer
             if self.enroll_after_speech:
                 self.enroll_after_speech = None
                 self._offer_enroll()
@@ -2845,6 +2958,8 @@ class VoiceController:
 
             if stage == 'remote':
                 self._finish_remote(job)
+            elif stage == 'journey_tts':
+                self._journey_tts_done(job)
             elif stage == 'journey':
                 step, self.journey_step = self.journey_step, None
                 # Applied even when B cut it off: a confirmed entry may already exist.
@@ -3162,6 +3277,10 @@ def main():
         def story_uplink_factory(state):
             return RemoteStoryUplink(remote_config, state, status=controller.turn_snapshot())
         controller.story_uplink_factory = story_uplink_factory
+    if not args.probe and remote_config is not None and os.environ.get(
+            'JOURNEY_REMOTE_TTS', 'on').strip().lower() not in ('off', '0', 'false', 'no'):
+        controller.journey_speak_config = remote_config
+        event('journey', result='tts_remote_ready', hosts=remote_config.hosts)
     if not args.probe and controller.weather.start().configured:
         event('weather_ready', days=weather.DAYS)
     if not args.probe and controller.agenda.start().configured:

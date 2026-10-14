@@ -147,6 +147,10 @@ class ControllerPathTests(unittest.TestCase):
         wait(self.c, self.p)
         self.c._start_llm('die erste erinnere mich')
         self.assertIn('hier am Gerät erinnern', self.spoken())
+        # Approval begins only when the confirmation announcement has finished.
+        self.c.speech.poll.return_value = 0
+        self.p.tick()
+        self.c.speech.poll.return_value = None
         snapshot = self.c.status_snapshot()
         self.assertEqual(snapshot['trip'], 'ask')
         return snapshot['trip_id']
@@ -188,6 +192,28 @@ class ControllerPathTests(unittest.TestCase):
         self.assertEqual(self.j.state(), 'offers')
         self.assertEqual(self.j.reminders, [])
 
+    def test_e_pressed_during_proposal_playback_is_not_confirmation(self):
+        self.c._start_llm('wie komme ich von zu hause nach nürnberg')
+        wait(self.c, self.p)
+        self.c._start_llm('die erste erinnere mich')
+        self.assertIsNotNone(self.j.proposal)
+        self.assertIsNone(self.j.proposal['expires'])
+        self.p.press('E')
+        self.assertIsNotNone(self.j.proposal)
+        self.assertEqual(self.j.reminders, [])
+        self.assertFalse(self.c.speech.play.called)
+
+    def test_interrupted_proposal_cannot_be_confirmed_by_voice(self):
+        self.c._start_llm('wie komme ich von zu hause nach nürnberg')
+        wait(self.c, self.p)
+        self.c._start_llm('die erste erinnere mich')
+        self.assertIsNone(self.j.proposal['expires'])
+        self.c.recorder.finish.return_value = Path('/tmp/capture.wav')
+        self.c.recorder.take_live_transcript.return_value = ('ja', 'vosk')
+        self.c.submit('release')
+        self.assertIsNone(self.c.turn_trip)
+        self.assertIsNone(self.j.proposal)
+
     def test_button_e_confirms_and_b_cancels(self):
         self.propose()
         self.p.press('E')
@@ -220,6 +246,71 @@ class ControllerPathTests(unittest.TestCase):
         texts = [call.args[0] for call in say.call_args_list]
         self.assertEqual(len(texts), 1)
         self.assertIn('Zeit zu gehen', texts[0][0])
+
+
+class RemoteJourneySpeechTests(LiveServerCase):
+    """Pi queries locally, CT 107 synthesizes /v1/speak, WM8960 plays WAV."""
+
+    def controller(self):
+        c = make_controller(self)
+        p = Presser(c)
+        install(c, [tram_journey(utc(12, 32)), tram_journey(utc(12, 47))])
+        return c, p
+
+    def test_local_journey_uses_server_audio_without_pi_piper(self):
+        c, p = self.controller()
+        c.journey_speak_config = self.config()
+        with patch.object(self.pipeline, 'synthesize',
+                          wraps=self.pipeline.synthesize) as synthesize:
+            c._start_llm('wie komme ich von zu hause nach nürnberg')
+            wait(c, p)
+            self.assertEqual(c.job_stage, 'journey_tts')
+            self.assertTrue(c.job.done.wait(10))
+            p.tick()
+        self.assertEqual(synthesize.call_count, 1)
+        text = synthesize.call_args.args[0]
+        self.assertIn('Straßenbahn 4', text)
+        self.assertNotIn('50.0', text)  # coordinates never sent to CT 107
+        self.assertTrue(c.speech.play.called)
+        self.assertFalse(c.speech.start.called)
+        self.assertEqual(self.pipeline.accepted, 0)
+
+    def test_server_failure_triggers_bounded_local_fallback(self):
+        from test_remote_turn import free_port
+        c, p = self.controller()
+        c.journey_speak_config = self.config(f'http://127.0.0.1:{free_port()}')
+        with patch('ptt._available_memory_kib', return_value=200 * 1024):
+            c._journey_say('Eine lange Fahrplanauskunft. ' + 'Sehr langer Satz. ' * 40)
+            self.assertEqual(c.job_stage, 'journey_tts')
+            self.assertTrue(c.job.done.wait(10))
+            p.tick()
+        spoken = c.speech.start.call_args.args[0]
+        self.assertLessEqual(len(spoken), 170)
+        self.assertFalse(c.speech.play.called)
+
+    def test_failed_playback_never_arms_confirmation(self):
+        c, p = self.controller()
+        c.journeys.proposal = dict(id='ab123', created=0.0, expires=None)
+        c.speech.poll.return_value = 1
+        p.tick()
+        self.assertIsNone(c.journeys.proposal)
+
+    def test_low_memory_never_synthesizes_locally_and_revokes_pending_consent(self):
+        c, _p = self.controller()
+        c.journeys.proposal = dict(id='ab123')
+        with patch('ptt._available_memory_kib', return_value=20 * 1024):
+            c._journey_local_say('Erinnerung bestätigen?', 'memory_pressure')
+        self.assertFalse(c.speech.start.called)
+        self.assertIsNone(c.journeys.proposal)
+
+    def test_offline_long_proposal_is_cancelled_before_short_speech(self):
+        c, _p = self.controller()
+        c.journeys.proposal = dict(id='ab123')
+        with patch('ptt._available_memory_kib', return_value=200 * 1024):
+            c._journey_local_say('Bestätige die Erinnerung. ' + 'Details. ' * 40,
+                                 'offline')
+        self.assertIsNone(c.journeys.proposal)
+        self.assertIn('abgebrochen', c.speech.start.call_args.args[0])
 
 
 if __name__ == '__main__':
