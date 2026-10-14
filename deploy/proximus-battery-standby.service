@@ -1,0 +1,21 @@
+[Unit]
+Description=Reversible PiSugar battery standby policy (CPU and optional radios)
+BindsTo=pi-ptt.service
+After=pi-ptt.service
+ConditionPathExists=/etc/proximus-battery-standby.env
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/proximus-battery-standby.env
+ExecStart=/usr/bin/python3 /usr/local/libexec/proximus-battery-standby.py enter
+ExecStop=/usr/bin/python3 /usr/local/libexec/proximus-battery-standby.py leave
+ExecStopPost=/usr/bin/python3 /usr/local/libexec/proximus-battery-standby.py leave
+TimeoutStartSec=20
+TimeoutStopSec=20
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=full
+UMask=0077
+
+# Intentionally not enabled for boot; pi-ptt requests start/stop over D-Bus.
