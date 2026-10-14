@@ -19,6 +19,7 @@ import agenda as agenda_feed
 import alarm_audio
 import audio_output
 import bluetooth
+import battery_standby
 import boardled
 import cue as cue_sound
 import device_control
@@ -3391,6 +3392,12 @@ def main():
                                                     report=selftest_report).start()
     battery_monitor = Battery()
     next_power = 0.0
+    # Optional, battery-only root helper. systemctl runs off the GPIO loop.
+    # Never turn WLAN off merely because the automatic idle timer expired.
+    power_saver = None
+    if (not args.probe and os.environ.get('PISUGAR_BATTERY_SAVE', 'off')
+            .strip().lower() in ('on', '1', 'true', 'yes')):
+        power_saver = battery_standby.Supervisor(report=event).start()
     shim = None
     led = None
     # Explicit opt-in: a monitor retries intermittent I2C failures with
@@ -3510,8 +3517,18 @@ def main():
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
                     event('error', message=str(exc))
                     controller.cancel(gpio_pressed or pressed[0], now)
+                if power_saver is not None:
+                    # Losing PiSugar telemetry / returning to mains / alarms /
+                    # waking Proximus must all immediately request restoration.
+                    safe_battery = (controller.battery is not None
+                                    and controller.battery.get('plugged') is False)
+                    critical = bool(CRITICAL_ALARMS.intersection(controller.alarms.active))
+                    power_saver.request(controller.manual_standby and safe_battery
+                                        and not critical and not controller.shutting_down)
                 stop.wait(0.01)
     finally:
+        if power_saver is not None:
+            power_saver.close()
         try:
             controller.close()
         finally:
