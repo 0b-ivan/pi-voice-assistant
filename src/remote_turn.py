@@ -292,9 +292,9 @@ class RemoteTurnUplink:
             connection.putheader('Content-Type', 'application/octet-stream')
             connection.putheader('Transfer-Encoding', 'chunked')
             connection.putheader('Accept', 'application/x-ndjson')
-            if self.status:
-                connection.putheader('X-Servitor-Status',
-                                     json.dumps(self.status, separators=(',', ':')))
+            status = protocol.status_header(self.status)
+            if status:
+                connection.putheader('X-Servitor-Status', status)
             if self.session is not None and self.session.id:
                 connection.putheader('X-Servitor-Session', self.session.id)
             if voice:
@@ -443,9 +443,9 @@ class RemoteStoryUplink(RemoteTurnUplink):
             connection.putheader('Content-Type', 'application/json')
             connection.putheader('Content-Length', str(len(self.body)))
             connection.putheader('Accept', 'application/x-ndjson')
-            if self.status:
-                connection.putheader('X-Servitor-Status',
-                                     json.dumps(self.status, separators=(',', ':')))
+            status = protocol.status_header(self.status)
+            if status:
+                connection.putheader('X-Servitor-Status', status)
             connection.endheaders(self.body)
         except BaseException:
             connection.close()

@@ -34,6 +34,34 @@ class CommandTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(dc.command(text))
 
+    def test_negated_sentence_is_no_command(self):
+        # "WLAN nicht ausschalten" switched WLAN off at once (audit 14.10.2026).
+        for text in ('wlan nicht ausschalten', 'schalte das wlan nicht ab',
+                     'mach das wlan bitte nicht aus', 'schalte die netzteil ansagen nicht aus',
+                     'starte dich nicht neu', 'fahr dich bloß nicht herunter',
+                     'stell die cpu nicht auf sparmodus', 'kein wlan ausschalten'):
+            with self.subTest(text=text):
+                self.assertIsNone(dc.command(text))
+
+    def test_cpu_profile_by_the_names_proximus_says(self):
+        # "Prozessor im Normalmodus." is spoken; saying it back must work.
+        cases = {
+            'schalte die cpu in den normalmodus': 'cpu_balanced',
+            'wechsel in den sparmodus': 'cpu_eco',
+            'aktiviere den leistungsmodus': 'cpu_power',
+            'stell die cpu auf leistungsmodus': 'cpu_power',
+            'schalte in den standardmodus': 'cpu_balanced',
+            'stell den leistungsmodus auf eco': 'cpu_eco',
+            'stell den prozessor auf normal': 'cpu_balanced',
+        }
+        for text, op in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(dc.command(text), op)
+        # Sleep stays sleep; a question stays a question.
+        self.assertEqual(dc.command('energiesparmodus'), 'sleep')
+        self.assertEqual(dc.command('schalte in den energiesparmodus'), 'sleep')
+        self.assertIsNone(dc.command('was ist der leistungsmodus'))
+
     def test_answers_must_be_the_whole_utterance(self):
         for text in ('bestätigt', 'ja', 'ja bitte', 'bestätigt proximus', 'ich bestätige',
                      'mach das'):
