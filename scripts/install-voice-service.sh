@@ -53,6 +53,7 @@ install -m 0644 "${repo_root}/src/pisugar_client.py" /opt/pi-voice-assistant/src
 install -m 0644 "${repo_root}/src/pisugar_button.py" /opt/pi-voice-assistant/src/pisugar_button.py
 install -m 0644 "${repo_root}/src/battery_standby.py" /opt/pi-voice-assistant/src/battery_standby.py
 install -m 0644 "${repo_root}/src/cpu_modes.py" /opt/pi-voice-assistant/src/cpu_modes.py
+install -m 0644 "${repo_root}/src/cpu_state.py" /opt/pi-voice-assistant/src/cpu_state.py
 install -m 0644 "${repo_root}/src/energy.py" /opt/pi-voice-assistant/src/energy.py
 install -m 0644 "${repo_root}/src/netprobe.py" /opt/pi-voice-assistant/src/netprobe.py
 install -m 0644 "${repo_root}/src/sysmon.py" /opt/pi-voice-assistant/src/sysmon.py
@@ -94,6 +95,12 @@ install -m 0644 "${repo_root}/src/visemes.py" /opt/pi-voice-assistant/src/viseme
 install -m 0644 "${repo_root}/src/protocol.py" /opt/pi-voice-assistant/src/protocol.py
 install -D -m 0644 "${repo_root}/assets/display/doom-faces.png" \
   /opt/pi-voice-assistant/models/display/doom-faces.png
+# The servo skull artwork, once it is in the repository; until then the
+# copy already on the Pi stays (never replaced by nothing).
+if [ -f "${repo_root}/assets/display/servo-skull.png" ]; then
+  install -D -m 0644 "${repo_root}/assets/display/servo-skull.png" \
+    /opt/pi-voice-assistant/models/display/servo-skull.png
+fi
 install -m 0644 "${repo_root}/src/endpoint.py" /opt/pi-voice-assistant/src/endpoint.py
 install -m 0644 "${repo_root}/src/wake_listener.py" /opt/pi-voice-assistant/src/wake_listener.py
 install -m 0644 "${repo_root}/src/wakeword.py" /opt/pi-voice-assistant/src/wakeword.py

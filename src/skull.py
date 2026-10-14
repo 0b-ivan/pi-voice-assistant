@@ -12,6 +12,9 @@ from pathlib import Path
 
 SKULL_FILE = Path(os.environ.get('PI_DISPLAY_SKULL',
                                  '/opt/pi-voice-assistant/models/display/servo-skull.png'))
+# The same artwork in the repository (installed from here; also used by
+# previews on a computer without /opt).
+REPO_SKULL = Path(__file__).resolve().parents[1] / 'assets' / 'display' / 'servo-skull.png'
 SIZE = 136          # square on the 240 x 240 screen
 STEPS = 12          # precomputed eye brightness levels
 
@@ -67,15 +70,22 @@ def _drawn_skull():
 class Skull:
     def __init__(self, path=SKULL_FILE, size=SIZE):
         from PIL import Image
-        try:
-            source = _square(Image.open(path).convert('RGB'))
-            self.source = 'file'
-        except (OSError, ValueError):
+        candidates = [path] + ([REPO_SKULL] if path == SKULL_FILE else [])
+        source = None
+        for candidate in candidates:
+            try:
+                source = _square(Image.open(candidate).convert('RGB'))
+                self.source = 'file'
+                break
+            except (OSError, ValueError):
+                continue
+        if source is None:
             source = _drawn_skull()
             self.source = 'drawn'
         self.base = source.resize((size, size), Image.LANCZOS)
         mask = _eye_mask(self.base)
         self.box, self.frames, self.lens = None, [], []
+        self._mask_in_box, self._variants, self._gold = [], {1.0: (self.base, [])}, None
         if not mask:
             return
         xs = [i % size for i in mask]
@@ -96,14 +106,32 @@ class Skull:
                               min(255, int(b * gain * (1 - 0.35 * hot))))
             self.frames.append(patch)
         self.lens = sorted(_lens_mask(self.base, self.box))
+        self._mask_in_box = inside
+        self._variants = {1.0: (self.base, self.frames)}
+        self._gold = None
 
-    def frame(self, level, lens_color=None):
+    def _variant(self, gain):
+        """Base and eye frames scaled by ``gain`` (ECO dims the whole skull),
+        made once per gain."""
+        variant = self._variants.get(gain)
+        if variant is None:
+            def scaled(image):
+                return image.point(lambda v: min(255, int(v * gain)))
+            variant = (scaled(self.base), [scaled(patch) for patch in self.frames])
+            self._variants[gain] = variant
+        return variant
+
+    def frame(self, level, lens_color=None, gain=1.0, gold=False):
         """Skull with the red eye at level 0..1 and the other eye glowing in
-        lens_color (the status LED colour), if given."""
-        image = self.base.copy()
-        if self.frames:
+        lens_color (the status LED colour), if given; ``gain`` dims the whole
+        picture (cached per value), ``gold`` shows the overclocked gold eye."""
+        base, frames = self._variant(gain)
+        if gold and self.frames:
+            frames = self.blessed()
+        image = base.copy()
+        if frames:
             step = max(0, min(STEPS - 1, round(level * (STEPS - 1))))
-            image.paste(self.frames[step], self.box[:2])
+            image.paste(frames[step], self.box[:2])
         if lens_color and self.lens:
             pixels = image.load()
             for x, y in self.lens:
@@ -113,10 +141,17 @@ class Skull:
                                 min(255, b // 2 + lens_color[2] * 2 // 3))
         return image
 
+    def blessed(self):
+        """Overclock look: the same eye frames recoloured to Mechanicus gold
+        (made once). frame(..., gold=True) uses them."""
+        if self._gold is None:
+            self._gold = [_gilded(patch, self._mask_in_box) for patch in self.frames]
+        return self._gold
 
-def idle_level(now):
-    """Slow breathing: about one cycle every 3.2 s."""
-    return 0.45 + 0.3 * math.sin(2 * math.pi * now / 3.2)
+
+def idle_level(now, period=3.2, low=0.45, swing=0.3):
+    """Slow breathing: about one cycle every ``period`` seconds."""
+    return low + swing * math.sin(2 * math.pi * now / period)
 
 
 def speaking_level(now, envelope=None):
@@ -128,6 +163,32 @@ def speaking_level(now, envelope=None):
     return 0.7 + 0.3 * math.sin(2 * math.pi * now / 0.5)
 
 
+# --- Overclock: the eye turns gold -----------------------------------------
+
+# Metallic gold from dark to glint (the colours of Doom's god mode eyes, so
+# Servitor and Billy share one "overclocked" gold).
+GOLD = ((155, 91, 19), (195, 155, 47), (215, 187, 67), (255, 255, 215))
+
+
+def _gold(value):
+    """Gold ramp for a brightness 0..255."""
+    t = value / 255 * (len(GOLD) - 1)
+    low = min(len(GOLD) - 2, int(t))
+    k = t - low
+    return tuple(int(a + (b - a) * k) for a, b in zip(GOLD[low], GOLD[low + 1]))
+
+
+def _gilded(patch, inside):
+    """Eye patch with its red pixels in gold, shading kept: the red channel
+    carries the eye's light, so it picks the place on the gold ramp."""
+    patch = patch.copy()
+    data = patch.load()
+    for x, y in inside:
+        r, g, b = data[x, y]
+        data[x, y] = _gold(min(255, int(r * 0.72 + max(g, b) * 0.4)))
+    return patch
+
+
 # --- Thought streams beside the skull ------------------------------------
 
 LITANIES = {
@@ -137,10 +198,13 @@ LITANIES = {
               'FRAGE ERFASST', '1011 0010', 'ANALYSE LAEUFT', 'OMNISSIAH LEITE MICH'),
     'speak': ('LOB DEM MASCHINENGEIST', 'ANTWORT GESENDET', 'VOX MECHANICUS',
               '1100 0111', 'DIE MASCHINE SPRICHT', 'AVE OMNISSIAH'),
+    # Overclocked and idle: the machine spirit runs above its rite.
+    'blessed': ('MOTIVKRAFT ERHOEHT', 'OMNISSIAH SEGNET', 'GEIST DER MASCHINE ERWACHT',
+                'RITUS DER BESCHLEUNIGUNG', 'SANCTUS MACHINA', '1200 MHZ GEHEILIGT'),
 }
 # rows per frame and trail length per mode
-RAIN_SPEED = {'idle': 0.35, 'think': 1.2, 'speak': 0.8}
-RAIN_TRAIL = {'idle': 8, 'think': 11, 'speak': 10}
+RAIN_SPEED = {'idle': 0.35, 'think': 1.2, 'speak': 0.8, 'blessed': 0.5}
+RAIN_TRAIL = {'idle': 8, 'think': 11, 'speak': 10, 'blessed': 9}
 
 
 class Rain:

@@ -11,6 +11,7 @@ import subprocess
 import time
 
 from alarms import ALARMS
+import cpu_state
 import menu
 import hotspot_config as ap_config
 import hotspot_control
@@ -225,15 +226,24 @@ def last_answer_text(status):
     return f'Zuletzt {seconds} s · {source}'
 
 
-def power_line(battery, throttled):
-    """Idle detail line: power warnings first, then the battery state."""
+def power_warning(throttled, now_only=False):
+    """(text, colour) of a firmware power warning, or None; ``now_only``
+    leaves out the sticky "since boot" under-voltage."""
     if throttled is not None:
         if throttled & 0x1:
             return 'UNTERSPANNUNG!', (255, 70, 70)
         if throttled & 0x6:
             return 'CPU gedrosselt', (255, 180, 0)
-        if throttled & 0x10000:
+        if throttled & 0x10000 and not now_only:
             return 'Unterspannung seit Start', (255, 180, 0)
+    return None
+
+
+def power_line(battery, throttled):
+    """Idle detail line: power warnings first, then the battery state."""
+    warning = power_warning(throttled)
+    if warning:
+        return warning
     if not battery:
         return None
     volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
@@ -659,6 +669,8 @@ def _draw_header(draw, info):
             draw.polygon(diamond, fill=MEMORY_ON)
         else:
             draw.polygon(diamond, outline=(90, 90, 90))
+    name_end = 18 + draw.textlength(DEVICE_NAME, font=font(17)) + (
+        11 if info.get('memory') in ('on', 'off') else 0)
     right_edge = 228
     if info.get('battery'):
         right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
@@ -666,7 +678,85 @@ def _draw_header(draw, info):
     if temp is not None:
         _right(draw, right_edge, 15, f'{temp}°C', 12,
                (255, 120, 90) if temp >= 70 else (145, 155, 165))
+        right_edge -= draw.textlength(f'{temp}°C', font=font(12)) + 3
+    _draw_cpu_tag(draw, right_edge, info, name_end)
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+
+
+# --- CPU profile in effect (cpu_state.classify) -----------------------------
+
+# How the skull looks per profile: picture gain, rain gain while idle, eye
+# breathing (period, low, swing) and the idle frame rate. BALANCED is the
+# unchanged look; ECO is dim and slow (and redraws half as often), POWER
+# glows stronger and breathes faster at the same frame rate.
+SKULL_LOOK = {
+    'eco': dict(gain=0.7, rain=0.3, period=5.0, low=0.3, swing=0.12, fps=2),
+    'balanced': dict(gain=1.0, rain=0.55, period=3.2, low=0.45, swing=0.3, fps=4),
+    'power': dict(gain=1.0, rain=0.8, period=2.2, low=0.68, swing=0.3, fps=4),
+}
+SKULL_LOOK['overclock'] = SKULL_LOOK['power']
+CPU_GOLD = (215, 187, 67)
+# Header tag left of the CPU temperature: ECO, PWR, OC; BALANCED shows none
+# (the usual look), '?' when the state cannot be read.
+CPU_TAG = {
+    'eco': ('ECO', (120, 220, 160)),
+    'power': ('PWR', (255, 150, 40)),
+    'overclock': ('OC', CPU_GOLD),
+    'unknown': ('?', (145, 155, 165)),
+}
+CPU_MISMATCH = (255, 180, 0)
+
+
+def cpu_look(cpu):
+    """Skull look for the CPU state; unknown, missing or limited: BALANCED."""
+    profile = (cpu or {}).get('profile')
+    if (cpu or {}).get('warning'):
+        profile = 'balanced' if profile == 'overclock' else profile
+    return SKULL_LOOK.get(profile, SKULL_LOOK['balanced'])
+
+
+def cpu_badge(cpu, selected=None):
+    """(text, colour, outline) of the CPU tag in the header, or None.
+
+    The text is the profile really in effect; a firmware limit now replaces
+    it (UV under-voltage, DRS throttled) and an overclock is never shown
+    then. The outline turns amber when the menu choice is not what runs
+    (e.g. POWER chosen, battery standby holds powersave)."""
+    if not cpu:
+        return None
+    profile, warning = cpu.get('profile'), cpu.get('warning')
+    if warning == 'undervolt':
+        text, color = 'UV', (255, 70, 70)
+    elif warning == 'throttled':
+        text, color = 'DRS', (255, 180, 0)
+    elif profile in CPU_TAG:
+        text, color = CPU_TAG[profile]
+    else:
+        text, color = None, None
+    outline = color
+    base = cpu.get('base')
+    if selected in cpu_state.GOVERNOR_PROFILE.values() and base in (
+            'eco', 'balanced', 'power') and base != selected:
+        text, color = text or 'NRM', color or (145, 155, 165)
+        outline = CPU_MISMATCH
+    if text is None:
+        return None
+    return text, color, outline
+
+
+def _draw_cpu_tag(draw, x_right, info, x_min):
+    """The CPU tag right-aligned at ``x_right``; returns its left edge."""
+    badge = cpu_badge(info.get('cpu'), info.get('cpu_selected'))
+    if badge is None:
+        return x_right
+    text, color, outline = badge
+    width = draw.textlength(text, font=font(9))
+    left = x_right - width - 4
+    if left < x_min:                       # never over name or memory mark
+        return x_right
+    draw.rectangle((left, 16, x_right, 27), outline=outline)
+    draw.text((left + 2, 17), text, font=font(9), fill=color)
+    return left
 
 
 REST_LEVEL = 0.12        # red eye while resting: low and steady
@@ -695,23 +785,34 @@ def render_rest(display, skull, network, info=None, picture=None):
     display.image(image, 180)
 
 
-def render_skull(display, skull, state, network, level, info=None, frame=0, details=None):
+def render_skull(display, skull, state, network, level, info=None, frame=0, details=None,
+                 blessed=False):
     """The servo skull: red eye glowing with ``level``, the other eye in the
-    status-LED colour, litany streams ("thoughts") falling on both sides."""
+    status-LED colour, litany streams ("thoughts") falling on both sides.
+    The CPU profile in effect (info['cpu']) dims or brightens it. ``blessed``
+    (a real overclock): the eye glows gold and, while idle, gold litanies
+    of the Omnissiah fall instead of the green ones."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     _draw_header(draw, info)
     light = status_light(state, info)
+    look = cpu_look(info.get('cpu'))
     if state in THINKING_STATES:
         mode, gain = 'think', 1.0
     elif state in ('AUSGABE', 'SPRECHEN'):
         mode, gain = 'speak', 0.45 + 0.55 * min(1.0, max(0.0, (level - 0.55) / 0.45))
     else:
-        mode, gain = 'idle', 0.55
-    rain().draw(image, frame, mode, light, font(10), gain)
-    image.paste(skull.frame(level, light), ((WIDTH - skull.base.width) // 2, 42))
+        mode, gain = 'idle', look['rain']
+    rain_color = light
+    if blessed and mode == 'idle' and state == 'BEREIT':
+        mode, rain_color = 'blessed', CPU_GOLD    # listening etc. keep the status colour
+    if look['gain'] < 1.0:
+        gain *= look['gain']
+    rain().draw(image, frame, mode, rain_color, font(10), gain)
+    image.paste(skull.frame(level, light, look['gain'], gold=blessed),
+                ((WIDTH - skull.base.width) // 2, 42))
     _state_line(draw, state, info, details, light)
     _draw_footer(draw, network, info)
     display.image(image, 180)
@@ -724,8 +825,11 @@ def _state_line(draw, state, info, details, light):
         text = f'{state} · {description}' if description else state
         color = VOICE_COLORS.get(state, light)
     elif state == 'BEREIT':
+        warning = power_warning(info.get('throttled'), now_only=True)
         if info.get('alarm'):
             text, color = ALARMS[info['alarm']][1], (255, 70, 70)
+        elif warning:
+            text, color = warning
         elif info.get('last'):
             text, color = info['last'], (145, 155, 165)
         elif info.get('wake'):
@@ -824,12 +928,24 @@ FACE_PANEL = ((52, 52, 52), (92, 92, 92), (24, 24, 24))  # fill, light edge, dar
 FACE_TOP = 43
 
 
-def _face_panel(draw, image, picture):
-    """Billy's face in a bevelled grey box, like Doom's status bar."""
+# Panel edge per CPU profile: POWER a warm accent, overclock pulsing gold.
+PANEL_ACCENT = {'power': ((120, 96, 60), (40, 30, 20))}
+PANEL_GOLD = (((150, 110, 30), (60, 40, 10)), ((215, 187, 67), (110, 75, 15)))
+
+
+def _face_panel(draw, image, picture, cpu=None, glow=None):
+    """Billy's face in a bevelled grey box, like Doom's status bar.
+    ``glow`` (0..1): overclock god mode, the bevel turns gold and pulses."""
     width, height = picture.size
     x0, y0 = (WIDTH - width) // 2 - 4, FACE_TOP
     x1, y1 = x0 + width + 7, y0 + height + 7
     fill, light, dark = FACE_PANEL
+    if glow is not None:
+        (l0, d0), (l1, d1) = PANEL_GOLD
+        light = tuple(int(a + (b - a) * glow) for a, b in zip(l0, l1))
+        dark = tuple(int(a + (b - a) * glow) for a, b in zip(d0, d1))
+    elif cpu in PANEL_ACCENT:
+        light, dark = PANEL_ACCENT[cpu]
     draw.rectangle((x0, y0, x1, y1), fill=fill)
     draw.line((x0, y1, x0, y0, x1, y0), fill=light, width=2)
     draw.line((x1, y0, x1, y1, x0, y1), fill=dark, width=2)
@@ -888,15 +1004,17 @@ def glitch_picture(skull_image, face_image, frame):
     return result.resize((face_image.width, face_image.height))
 
 
-def render_face(display, picture, state, network, info=None, details=None):
+def render_face(display, picture, state, network, info=None, details=None, glow=None):
     """Billy (persona "mensch"): the face picked by face.choose() instead of
-    the skull, same header, status line and footer."""
+    the skull, same header, status line and footer. ``glow``: overclock
+    pulse 0..1 for the golden panel (the eyes come golden in ``picture``)."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     _draw_header(draw, info)
-    _face_panel(draw, image, picture)
+    cpu = info.get('cpu') or {}
+    _face_panel(draw, image, picture, None if cpu.get('warning') else cpu.get('profile'), glow)
     _state_line(draw, state, info, details, status_light(state, info))
     _draw_footer(draw, network, info)
     display.image(image, 180)
@@ -1568,7 +1686,8 @@ def main():
     except Exception:  # never let the artwork take the status display down
         skull = None
     try:
-        from face import Face, choose as choose_face, health_row, resting as face_resting
+        from face import (Face, GOLD_STEPS, choose as choose_face, gold_step, health_row,
+                          resting as face_resting)
         face = Face()
     except Exception:  # without the sheet Billy keeps the skull
         face = None
@@ -1581,6 +1700,7 @@ def main():
     battery_monitor = Battery()
     battery = None
     throttled = None
+    cpu, cpu_stock = None, cpu_state.stock_khz()
     next_battery = 0.0
     voice_state = None
     last_event = None
@@ -1602,6 +1722,10 @@ def main():
             temp, wifi = cpu_temp_c(), wifi_dbm()
             battery = battery_monitor.read()
             throttled = throttled_flags()
+            try:      # effective governor/clock, never just the menu choice
+                cpu = cpu_state.classify(cpu_state.read(stock=cpu_stock, throttled=throttled))
+            except Exception:  # noqa: BLE001 - a status read must not stop the screen
+                cpu = None
             next_battery = now + BATTERY_SAMPLE_SECONDS
 
         current_event = read_voice_event()
@@ -1711,12 +1835,15 @@ def main():
                         battery=battery, volume=volume_overlay(status),
                         alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
                         memory=status.get('memory'), ap=ap,
+                        cpu=cpu, cpu_selected=status.get('opt_cpu'),
                         wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
                               if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))
             resting = status.get('power') == 'rest' and shown == 'BEREIT'
+            # Gold only for an overclock the firmware really runs, unlimited.
+            overclock = bool(cpu and cpu['profile'] == 'overclock' and not cpu['warning'])
             billy = face is not None and status.get('opt_persona') == 'mensch'
             persona = 'mensch' if billy else 'servitor'
             if (persona_shown is not None and persona != persona_shown
@@ -1761,7 +1888,8 @@ def main():
             elif billy and resting and info.get('volume') is None:
                 screen = ('rest-face', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']),
+                          cpu_badge(cpu, status.get('opt_cpu')))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info,
                                 picture=face.frame(face_resting(battery)))
@@ -1784,29 +1912,35 @@ def main():
                 key = choose_face(shown, time.time(), level, battery, mood=mood_now(status),
                                   viseme=mouth_now(envelope, time.time()),
                                   alarm=bool(info.get('alarm')), hushed_at=hushed_at,
-                                  plugged_at=plugged_at)
+                                  plugged_at=plugged_at, cpu=None if (cpu or {}).get('warning')
+                                  else (cpu or {}).get('profile'))
+                gold = gold_step(now) if overclock else None
                 # Only a new face (or text) is drawn: idle costs a redraw every few seconds.
-                screen = ('face', shown, states['network'], key,
+                screen = ('face', shown, states['network'], key, gold,
                           tuple(sorted(shown_info.items())))
                 if screen != previous_screen:
-                    render_face(display, face.frame(key), shown, states['network'], info,
-                                (description, icon, step))
+                    picture = face.frame(key) if gold is None else face.godlike(key, gold)
+                    render_face(display, picture, shown, states['network'], info,
+                                (description, icon, step),
+                                None if gold is None else gold / (GOLD_STEPS - 1))
                     previous_screen = screen
             elif skull is not None and resting and info.get('volume') is None:
                 # Temperature and WLAN dBm wobble constantly; at rest they may
                 # lag up to a minute, so the screen is redrawn about once a minute.
                 screen = ('rest', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']),
+                          cpu_badge(cpu, status.get('opt_cpu')))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info)
                     previous_screen = screen
             elif skull is not None and shown in SKULL_STATES and info.get('volume') is None:
-                fps = 4 if shown in ('BEREIT', 'ZUHÖREN') else 10
+                look = cpu_look(cpu)
+                fps = look['fps'] if shown in ('BEREIT', 'ZUHÖREN') else 10
                 frame = int(now * fps)
                 if shown not in ('AUSGABE', 'SPRECHEN'):
                     # Breathing is slow; the rain sets the frame rate.
-                    level = idle_level(frame / fps)
+                    level = idle_level(frame / fps, look['period'], look['low'], look['swing'])
                 else:
                     try:
                         mtime = ENVELOPE_FILE.stat().st_mtime
@@ -1819,7 +1953,7 @@ def main():
                           tuple(sorted(shown_info.items())))
                 if screen != previous_screen:
                     render_skull(display, skull, shown, states['network'], level, info,
-                                 frame, (description, icon, step))
+                                 frame, (description, icon, step), overclock)
                     previous_screen = screen
             else:
                 screen = ('voice', current, states['network'], tick,
