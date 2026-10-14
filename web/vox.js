@@ -28,7 +28,8 @@ const Vox = (() => {
 
   function ensure() {
     if (!ctx) {
-      ctx = new AudioContext();
+      const Context = window.AudioContext || window.webkitAudioContext;   // iOS < 14.5
+      ctx = new Context();
       const length = ctx.sampleRate * 2;
       noise = ctx.createBuffer(1, length, ctx.sampleRate);
       const data = noise.getChannelData(0);

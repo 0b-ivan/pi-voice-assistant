@@ -318,8 +318,10 @@ body[data-connected="yes"] .chat { animation: power .7s ease-out 1; }
 
 /* --- the call (entry screen) ---------------------------------------------------------- */
 .dial {
-  position: fixed; inset: 0; z-index: 20; overflow-y: auto;
-  display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 20; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  /* margin: auto on the unit centres it but, unlike align-items: center,
+     never pushes its top out of reach when the screen is too short. */
+  display: flex;
   padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
   background: radial-gradient(ellipse at 50% 30%, #1d2119, #070806 75%);
   transition: opacity .5s, visibility .5s;
@@ -327,6 +329,7 @@ body[data-connected="yes"] .chat { animation: power .7s ease-out 1; }
 body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-events: none; }
 .dial-unit {
   position: relative; width: min(100%, 560px); min-width: 0; padding: 22px 18px 18px; border-radius: 16px;
+  margin: auto;
   display: flex; flex-direction: column; gap: 14px;
   background:
     radial-gradient(circle at 14px 14px, var(--edge) 0 2.5px, #0008 3px, transparent 4px),
@@ -353,7 +356,19 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   background: radial-gradient(circle, #050605 0 2px, transparent 2.5px) 0 0 / 8px 8px, #1b1e18;
   box-shadow: inset 0 2px 4px #000, 0 1px 0 #ffffff14;
 }
-.dial-screen { height: clamp(220px, 40dvh, 320px); margin: 0 6px; }
+.dial-screen { height: clamp(150px, 30dvh, 320px); margin: 0 6px; }
+/* Phones: everything up to the connect button fits on one screen. */
+@media (max-width: 899px) {
+  .dial { padding-top: max(10px, env(safe-area-inset-top)); }
+  .dial-unit { margin-top: 30px; padding: 38px 14px 14px; gap: 10px; }
+  .dial-unit .grille { display: none; }
+  .dial-sigil { width: 56px; height: 56px; margin-left: -28px; top: -28px; }
+  .dial-body, .dial-left, .dial-side, .dial-form { gap: 10px; }
+  .dial-side .nameplate { display: none; }
+  .dial-screen .scope { height: 54px; }
+  .dial-log { inset: 88px 0 0; font-size: .74rem; }
+  .dial-connect { padding: 14px 10px; }
+}
 .dial-head { position: absolute; z-index: 1; top: 10px; left: 0; right: 0; margin: 0; text-align: center; font-size: .74rem; font-weight: 700; letter-spacing: .1em; white-space: nowrap; color: var(--phosphor); text-shadow: 0 0 6px #8dff6a99; }
 .dial-screen .scope { top: 30px; height: 84px; }
 .dial-log {

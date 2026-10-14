@@ -840,10 +840,15 @@ async function dial(event) {
     $('dial-token').focus();
     return;
   }
-  // The click is the gesture browsers want before any sound may play.
-  Vox.ensure();
-  Vox.attach(player.element);
-  player.unlock();
+  // The click is the gesture browsers want before any sound may play. Sound
+  // trouble (old iOS, blocked audio) must never keep the operator out.
+  try {
+    Vox.ensure();
+    Vox.attach(player.element);
+    player.unlock();
+  } catch (error) {
+    console.warn('Vox-Ton nicht verfügbar:', error);
+  }
   $('dial-connect').disabled = true;
   $('dial-log').replaceChildren();
   const pace = state.effects && !reducedMotion.matches ? 1 : 0.15;
