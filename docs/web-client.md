@@ -95,7 +95,7 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
 - **Mobil (unter 600 bzw. 900 px):** Der Schritt steht in der Röhre unter dem
   Oszilloskop, das Eingabefeld liegt über einer großen Sendetaste.
 - **Desktop (ab 900 px):** Schritt in der Kopfzeile, großer Schädel, Sendetaste,
-  Eingabe und Übertragen in einer Zeile, Bediener rechts, Proximus links.
+  Eingabe und Senden in einer Zeile, Bediener rechts, Proximus links.
 
 ### Synchroner Fernschreiber und Bedienteil
 
@@ -229,7 +229,10 @@ zu `/health`, beim Senden und Empfangen den Sprachpegel.
 - **Halten zum Sprechen** (Maus, Finger oder Leertaste), loslassen schickt die
   Aufnahme. In den Einstellungen auf „Antippen statt halten“ umstellbar.
   Höchstens 29 s (Server-Grenze `SERVITOR_MAX_AUDIO_SECONDS=30`).
-- **Frage tippen**: geht denselben Weg wie ein erkannter Satz, nur ohne
+- **Frage tippen**: mobil über die volle Breite, zunächst zwei Zeilen; längere
+  Texte vergrößern das Feld bis auf vier Zeilen. Darunter eine kompakte Zeile
+  für Sprachaufnahme, Senden und gegebenenfalls Abbrechen. Enter sendet,
+  Shift+Enter fügt einen Zeilenumbruch ein. Die Frage geht denselben Weg wie ein erkannter Satz, nur ohne
   Spracherkennung (`/v1/ask`, höchstens 500 Zeichen).
 - **Abbrechen** oder `Esc`: Aufnahme verwerfen, Anfrage abbrechen, Ausgabe stoppen.
 - **Einstellungen** (⚙): Persona (Servitor/Billy), Lore-Stufe, Stimme

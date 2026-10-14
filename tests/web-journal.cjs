@@ -14,6 +14,7 @@ const root = path.resolve(__dirname, '..');
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
     const errors = [];
+    const asks = [];
     page.on('pageerror', error => errors.push(error.message));
     let status = 200, source = { mode: 'system', error: '' }, instance = 'first', seq = 2;
     let entries = [
@@ -35,6 +36,11 @@ const root = path.resolve(__dirname, '..');
       }
       if (url.pathname === '/health') return route.fulfill({ json: { ok: true, ready: true } });
       if (url.pathname === '/v1/session') return route.fulfill({ json: { ok: false, password: true } });
+      if (url.pathname === '/v1/ask') {
+        asks.push(JSON.parse(route.request().postData()));
+        return route.fulfill({ contentType: 'application/x-ndjson',
+          body: '{"event":"reply","text":"Verstanden."}\n{"event":"done"}\n' });
+      }
       const relative = url.pathname === '/' ? 'web/index.html'
         : url.pathname === '/web/servo-skull.png' ? 'assets/display/servo-skull.png'
         : url.pathname.slice(1);
@@ -109,8 +115,45 @@ const root = path.resolve(__dirname, '..');
     await page.waitForTimeout(800);
     await page.screenshot({ path: process.env.JOURNAL_SCREENSHOT || '/private/tmp/proximus-web-journal-desktop.png' });
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => { state.session = true; });
+    const field = page.locator('#question');
+    await field.fill('Erste Zeile');
+    await field.press('Shift+Enter');
+    await field.press('End');
+    await field.press('Z');
+    assert.match(await field.inputValue(), /\n/);
+    await field.press('Enter');
+    await page.waitForFunction(() => !state.request);
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].text, 'Erste Zeile\nZ');
+    assert.equal(await field.inputValue(), '');
+    assert.equal(await page.evaluate(() => state.recording), null);
+
+    for (const [width, height] of [[320, 568], [390, 844], [430, 932], [844, 390], [390, 440]]) {
+      await page.setViewportSize({ width, height });
+      const geometry = await page.evaluate(() => {
+        const field = $('question').getBoundingClientRect();
+        const talk = $('talk').getBoundingClientRect();
+        const send = $('ask').querySelector('button').getBoundingClientRect();
+        return { field: { width: field.width, height: field.height, right: field.right },
+          talk: { height: talk.height, bottom: talk.bottom, top: talk.top },
+          send: { height: send.height, bottom: send.bottom, top: send.top },
+          width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollWidth };
+      });
+      assert(geometry.field.width >= width - 40, JSON.stringify(geometry));
+      assert(geometry.field.height >= 62 && geometry.field.height <= 112);
+      assert(Math.abs(geometry.talk.top - geometry.send.top) < 1);
+      assert(geometry.talk.height >= 44 && geometry.talk.height <= 54);
+      assert(geometry.send.bottom <= height + 1 && geometry.talk.bottom <= height + 1);
+      assert(geometry.scroll <= width, JSON.stringify(geometry));
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await field.fill('Wie sieht der Systemstatus aus? Zeige mir die aktuellen Meldungen vom Host.');
+    await page.waitForTimeout(400);
+    assert(await page.locator('#ask button').evaluate(e => e.getBoundingClientRect().bottom <= innerHeight));
+    assert(await page.locator('#talk').evaluate(e => e.getBoundingClientRect().bottom <= innerHeight));
     await page.screenshot({ path: '/private/tmp/proximus-web-journal-mobile.png' });
     assert.deepEqual(errors, []);
-    console.log('Journal-Browserprüfung bestanden: Logs, Effekte, Anmeldung, Fehler, Neustart, Abbruch, Zeitlimit; Desktop und Mobil.');
+    console.log('Browserprüfung bestanden: Journal, Wiederverbindung, Zeitlimit, Texteingabe und kompakte Bedienung bei fünf Mobilgrößen.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

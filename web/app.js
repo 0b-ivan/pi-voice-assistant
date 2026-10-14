@@ -481,6 +481,19 @@ document.addEventListener('keyup', (event) => {
 
 $('cancel').addEventListener('click', cancel);
 
+function fitQuestion() {
+  const field = $('question');
+  field.style.height = 'auto';
+  field.style.height = `${Math.max(62, Math.min(112, field.scrollHeight))}px`;
+}
+
+$('question').addEventListener('input', fitQuestion);
+$('question').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  $('ask').requestSubmit();
+});
+
 $('ask').addEventListener('submit', (event) => {
   event.preventDefault();
   const text = $('question').value.trim();
@@ -491,6 +504,7 @@ $('ask').addEventListener('submit', (event) => {
   player.stop();
   state.story = null;
   $('question').value = '';
+  fitQuestion();
   Vox.sounds.cant();
   exchange('/v1/ask', JSON.stringify({ text }), 'application/json');
 });

@@ -1,6 +1,7 @@
 # Übergabe: Proximus-Web-Client (Vox-Terminal)
 
-Stand 14.10.2026, Branch `claude/wizardly-euler-ogqg5u` (letzter Code-Commit siehe `git log`), noch
+Stand 14.10.2026, aktueller Branch `codex/proximus-web-journal-20261014`,
+Basis `claude/wizardly-euler-ogqg5u` (letzter Code-Commit siehe `git log`),
 **kein PR** nach `main`. Bedienerdoku: [`docs/web-client.md`](../../web-client.md).
 
 ## Ziel
@@ -53,71 +54,50 @@ Mechanicus) mit Bedienteil im Stil von Bundeswehr-Funkgeräten.
   Nachtprüfung, Stimmdaten bleiben **token-only**. Der Pi ist unverändert (Token).
 - `GET /v1/journal?after=N` → `{seq, host, lines:[{seq, ts, text, unit, prio, host}]}`.
 
-## Journal (der offene Hauptpunkt)
+## Journal: Stand nach der Weiterarbeit am 14.10.2026
 
-Soll: **alle Logs des gesamten Systems** hinter dem Chat – Kernel, alle Dienste,
-und sichtbar, wenn der Pi kommuniziert.
+Branch der Weiterarbeit: `codex/proximus-web-journal-20261014`, auf Basis des
+aktuellen `claude/wizardly-euler-ogqg5u` einschließlich Handy-Fix `de75251`.
 
-Umgesetzt:
-- `follow_system_journal()` startet `journalctl -f --merge -n 80 -o json` (Thread,
-  Neustart nach 5 s). Fallback ohne journalctl: `Tee` auf stdout/stderr
-  (`SERVITOR_JOURNAL_SOURCE=own` erzwingt das).
-- `Journal.add()` filtert HTTP-Zugriffszeilen und „Request timed out“, maskiert
-  IPv4 (`*.*.*.9`) und IPv6, hält 300 Zeilen im RAM.
-- `Handler.log_request()` schreibt pro API-Anfrage `{"event":"request","client":"pi|web|anon",…}`
-  → im Browser „PI ▸ POST /v1/turn → 200“ (hell hervorgehoben).
-- Client: Desktop eigene Spalte rechts in der Röhre, Handy hinter dem Chat;
-  neueste Zeile oben; `flex: none` verhindert das frühere Zusammenstauchen.
+- Der Sprachdienst sieht das System-Journal von CT 107. Gegenprobe mit den
+  **tatsächlichen Zusatzgruppen** zeigte dieselben Systemmeldungen wie root.
+  `runuser -u servitor` allein übernimmt die Zusatzgruppen der Unit nicht;
+  daraus darf man keine fehlenden Journal-Rechte ableiten. Keine ACL-Änderung nötig.
+- Host-Weiterleitung eingerichtet und live geprüft: `wgz-pve-01` sendet alle
+  lokalen Journal-Meldungen über `systemd-journal-upload` an CT 107. In der
+  Browser-API kamen Kernel, SSH, systemd-logind und Rclone an (in einer Abfrage
+  34 Host-Zeilen, darunter 16 Kernelmeldungen).
+- Der Empfänger hat je einen HTTP-Socket/Dienst an `172.22.2.107:19532` und
+  `172.22.9.107:19532`. **Je Adresse eine Instanz:** der native Empfänger kann
+  nicht zwei geerbte Sockets gleichzeitig als HTTP behandeln. Der Host nutzt
+  das direkt erreichbare Verwaltungsnetz (`http://172.22.2.107:19532`), der Pi
+  später das Pi-LAN (`http://172.22.9.107:19532`). Der geroutete Weg vom Host
+  zur Pi-LAN-Adresse war für diesen Port nicht erreichbar.
+- Skripte: `deploy/journal-forward/install.sh server [LAN-IP ...]` bzw.
+  `client <URL>` und `seed-cursor.py`. Cursor im RAM; nach Boot etwa 80 alte
+  Einträge plus alle neuen. Remote-Dateien unter `/var/log/journal/remote/`;
+  Gruppenrechte per Sprachdienst-Drop-in. HTTP im LAN ist unverschlüsselt
+  und ohne Client-Authentifizierung; nicht über den Tunnel veröffentlichen.
+- **Pi ausgeschaltet:** Installer vorbereitet, dort noch nicht installiert oder
+  abgenommen. Bei der nächsten Pi-Sitzung den Client einrichten (Befehle und
+  Prüfung in `docs/web-client.md`).
+- Browser hält 60 echte Logs und höchstens drei Effektzeilen. Litaneien und
+  Störungen bleiben alle 4–12 s; sie verdrängen keine echten Einträge mehr.
+- Eine feste Warnzeile zeigt Quellfehler, unterbrochene Abfragen und abgelaufene
+  Anmeldung. Polls haben ein Zeitlimit und überlappen nicht; Auflegen bricht
+  alte Abfragen ab. `instance` neben `seq` erkennt einen neuen RAM-Puffer nach
+  Server-Neustarts, auch wenn sein Zähler den alten schon überholt hat.
+- `journalctl`-Abbrüche und stderr werden sichtbar; ANSI wird entfernt und
+  Adressen werden maskiert. Fantasie-Zahlen und Binärzeilen aus Störungen
+  sowie die zufällige Fremdkanal-Nummer entfernt.
+- Mobil: Texteingabe über volle Breite, zwei Zeilen, wächst bis vier Zeilen;
+  Sprach-, Sende- und Abbrechen-Buttons in einer kompakten Zeile. Enter sendet,
+  Shift+Enter fügt einen Zeilenumbruch ein. Kopfzeile passt auch auf 320 px.
 
-**Problem laut Bediener (noch offen): „Nach einiger Zeit sehe ich nur noch
-Litaneien“ – das Log muss funktionieren.**
-
-**Diagnose vom 14.10.2026 auf CT 107 (Stand `3e55663` ausgerollt):**
-- `getent group systemd-journal` → `systemd-journal:x:999:` (Gruppe existiert).
-- `systemd-run --pipe --wait --uid=servitor -p SupplementaryGroups=systemd-journal journalctl -n 5 --merge --no-pager`
-  → **keine Ausgabe**.
-- `GET /v1/journal?after=0` liefert nur Zeilen der Units `servitor-voice` (und
-  Ausgaben des lokalen LLM), also nur, was als Benutzer `servitor` läuft.
-- **Schluss:** Der Dienst sieht nur sein eigenes Benutzer-Journal, nicht das
-  System-Journal. Daher kommen kaum echte Zeilen, und die Litaneien überwiegen.
-  Nächster Schritt: Rechte der Journal-Dateien im Container prüfen
-  (`ls -ln /var/log/journal /var/log/journal/* /run/log/journal 2>/dev/null`,
-  `journalctl --header | head`, `id servitor`), z. B. ob `system.journal`
-  der Gruppe `systemd-journal` gehört und Gruppen-Leserecht/ACL hat; in
-  unprivilegierten LXC-Containern sind die Dateien oft root:root 0640 ohne ACL.
-  Mögliche Lösungen: `setfacl -R -m g:systemd-journal:rX /var/log/journal`
-  plus Default-ACL (`-d`), oder `systemd-tmpfiles --create --prefix /var/log/journal`
-  (setzt die Journal-ACLs neu), danach Dienst neu starten und Befehl oben wiederholen.
-- Seit diesem Stand schreibt der Dienst Fehlermeldungen von `journalctl`
-  (stderr) als `journalctl: …` ins Log; ANSI-Farbcodes werden entfernt, und die
-  IPv6-Maskierung verschluckt keine Uhrzeiten mehr.
-
-Weitere Hypothesen, falls die Rechte stimmen:
-1. Auf CT 107 ausgerollt ist evtl. nicht der neueste Stand
-   (`cat /opt/servitor-voice/DEPLOYED` muss `3aa04d0…` sein).
-2. Der Dienst sieht das Journal nicht: `sudo -u servitor journalctl -n 5 --merge`
-   in CT 107. Unit hat `SupplementaryGroups=systemd-journal`; prüfen, ob die
-   Gruppe im Container existiert und der Journald persistent/volatil läuft.
-3. `journalctl -f` bricht im Container ab (Thread startet alle 5 s neu, ohne
-   Meldung, weil stderr nach DEVNULL geht) – testweise stderr ins Journal
-   schreiben bzw. `curl -s -H 'Authorization: Bearer <TOKEN>' https://proximus.obivan.org/v1/journal?after=0 | head`.
-4. CT 107 ist schlicht sehr ruhig; dann fehlt die Weiterleitung (Punkt unten).
-   Erst dann eventuell ein Lebenszeichen (z. B. periodisches Status-Ereignis)
-   ergänzen – **nicht** die Litaneien reduzieren.
-
-**Noch nicht gebaut: Journal-Weiterleitung** (Kernel-Log gehört dem Proxmox-Host,
-CT 107 ist LXC und sieht ihn nicht; Pi-Logs ebenso). Plan:
-`deploy/journal-forward/install.sh` mit Rollen
-- `server` (CT 107): `systemd-journal-remote` installieren, Socket 19532,
-  Override `ExecStart=… --listen-http=-3 --output=/var/log/journal/remote/`,
-  Drop-in für `servitor-voice` mit `SupplementaryGroups=systemd-journal-remote`
-  (nicht in die Haupt-Unit: fehlt die Gruppe, startet der Dienst nicht).
-- `client <URL>` (Proxmox-Host, Pi): `systemd-journal-upload` mit
-  `URL=http://172.22.9.107:19532`.
-Danach zeigt `--merge` alles; `describe()` setzt bei fremdem `_HOSTNAME`
-„wgz-pve-01 ▸ kernel …“ davor. Lesbarkeit der Remote-Dateien für den Dienst
-nach Einrichtung mit `sudo -u servitor journalctl -m -n 5` prüfen. HTTP im LAN
-ist unverschlüsselt (Hinweis an den Bediener).
+Validierung: 130 Server-Tests, 37 Journal-/Upload-Tests; echter Chrome mit
+simulierter API für lange Ruhephasen, Anmeldung, Quellfehler, Neustart,
+Abbruch, Zeitlimit, Texteingabe und fünf mobile Größen. Beide LAN-Empfänger
+und echter Host-Upload geprüft. Keine Pi-Abnahme bei ausgeschaltetem Gerät.
 
 ## Weitere offene Punkte / Ideen
 
