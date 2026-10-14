@@ -43,6 +43,7 @@ const state = {
   token: store.get('servitor.token') || '',
   toggle: store.get('servitor.toggle') === '1',
   effects: store.get('servitor.effects') !== 'off',
+  volume: Math.min(10, Math.max(0, Number(store.get('servitor.volume') ?? 8) || 0)),
   recording: null,   // the running capture, see startRecording()
   request: null,     // AbortController of the running request
   story: null,       // state of a running long story (src/story.py)
@@ -74,40 +75,68 @@ function idle() {
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-function addLog(kind, text, note) {
+function addLog(kind, text) {
   const item = document.createElement('li');
   item.className = kind;
   const body = document.createElement('span');
+  body.textContent = text;
   item.append(body);
-  if (note) {
-    const small = document.createElement('small');
-    small.textContent = note;
-    item.append(small);
-  }
   const log = $('log');
   log.append(item);
   while (log.children.length > 100) log.firstElementChild.remove();
-  if (kind === 'servitor' && state.effects && !reducedMotion.matches) typeOut(body, text, log);
-  else body.textContent = text;
   log.scrollTop = log.scrollHeight;
   return item;
 }
 
-// Proximus' lines arrive like a teleprinter: at most about 1.6 s per line.
-function typeOut(target, text, log) {
+// --- teleprinter: Proximus writes while he speaks -----------------------------------
+// A reply waits on the screen with a blinking cursor. Each audio part types its
+// text over the time the voice needs for it, starting when the sound starts.
+
+const teletype = new Set();   // running jobs, finished at once on cancel
+
+function addReply(text) {
+  const item = addLog('servitor', '');
   const cursor = document.createElement('i');
   cursor.className = 'cursor';
-  const step = Math.max(1, Math.ceil(text.length / 80));
-  let shown = 0;
-  target.after(cursor);
-  const tick = () => {
-    shown = Math.min(text.length, shown + step);
-    target.textContent = text.slice(0, shown);
+  item.append(cursor);
+  return { item, body: item.firstChild, cursor, text, queued: 0, typed: 0, closed: false };
+}
+
+function typeAlong(reply, text, ms) {
+  const prefix = reply.body.textContent ? `${reply.body.textContent} ` : '';
+  const log = $('log');
+  const job = { finish: null };
+  const finish = () => {
+    teletype.delete(job);
+    reply.body.textContent = prefix + text;
+    reply.typed += 1;
+    if (reply.closed && reply.typed >= reply.queued) reply.cursor.remove();
     log.scrollTop = log.scrollHeight;
-    if (shown < text.length) setTimeout(tick, 18);
-    else cursor.remove();
   };
-  tick();
+  job.finish = finish;
+  if (!state.effects || reducedMotion.matches || ms <= 0) { finish(); return; }
+  teletype.add(job);
+  const started = performance.now();
+  const frame = (now) => {
+    if (!teletype.has(job)) return;   // finished early (cancel)
+    const share = Math.min(1, (now - started) / ms);
+    reply.body.textContent = prefix + text.slice(0, Math.ceil(text.length * share));
+    log.scrollTop = log.scrollHeight;
+    if (share < 1) requestAnimationFrame(frame); else finish();
+  };
+  requestAnimationFrame(frame);
+}
+
+function closeReply(reply) {
+  if (!reply || reply.closed) return;
+  reply.closed = true;
+  // No voice came (error, cancelled synthesis): the text appears on its own.
+  if (reply.queued === 0) { reply.queued = 1; typeAlong(reply, reply.text, Math.min(1500, reply.text.length * 18)); }
+  else if (reply.typed >= reply.queued) reply.cursor.remove();
+}
+
+function finishTyping() {
+  for (const job of [...teletype]) job.finish();
 }
 
 // --- playback: audio parts in order, one <audio> element -----------------------
@@ -128,16 +157,18 @@ const player = {
     this.element.play().catch(() => {});
   },
 
-  add(base64, mime) {
+  // One part: its sound, and the text the teleprinter types while it plays.
+  add(base64, mime, reply, text, ms) {
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-    this.queue.push(URL.createObjectURL(new Blob([bytes], { type: mime })));
+    if (reply) reply.queued += 1;
+    this.queue.push({ url: URL.createObjectURL(new Blob([bytes], { type: mime })), reply, text, ms });
     if (!this.playing) this.next();
   },
 
   next() {
-    if (this.current) URL.revokeObjectURL(this.current);
-    const url = this.current = this.queue.shift() || null;
-    if (!url) {
+    if (this.current) URL.revokeObjectURL(this.current.url);
+    const part = this.current = this.queue.shift() || null;
+    if (!part) {
       if (this.playing) Vox.sounds.squelch();   // end of transmission
       this.playing = false;
       Vox.live.speaking = false;
@@ -150,16 +181,25 @@ const player = {
     Vox.live.speaking = true;
     if (!state.request && !state.recording) setStage(INCOMING, 'speak');
     $('cancel').hidden = false;
-    this.element.src = url;
+    this.element.src = part.url;
     // The carrier opens with a short burst before the voice comes through.
     if (opening) Vox.sounds.open();
+    const write = (ms) => { if (part.reply && part.text) typeAlong(part.reply, part.text, ms); };
     setTimeout(() => {
-      if (this.current === url) this.element.play().catch(() => this.next());
+      if (this.current !== part) return;
+      this.element.play()
+        .then(() => write(part.ms * 0.94))   // the line ends just before the voice
+        .catch(() => { write(0); this.next(); });
     }, opening && state.effects ? 110 : 0);
   },
 
   stop() {
-    this.queue.splice(0).forEach((url) => URL.revokeObjectURL(url));
+    // Whatever was still to be said appears at once: the transcript stays whole.
+    for (const part of this.queue.splice(0)) {
+      URL.revokeObjectURL(part.url);
+      if (part.reply && part.text) typeAlong(part.reply, part.text, 0);
+    }
+    finishTyping();
     this.element.pause();
     this.next();
   },
@@ -236,6 +276,7 @@ async function exchange(path, body, type) {
     if (error.name !== 'AbortError') addLog('error', `Verbindung abgerissen: ${error.message}`);
     state.story = null;
   } finally {
+    closeReply(reply);
     if (state.request === controller) state.request = null;
     idle();
   }
@@ -251,9 +292,12 @@ function handle(event, reply) {
       addLog('you', event.text);
       break;
     case 'reply':
-      return addLog('servitor', event.text, event.model);
+      closeReply(reply);           // a story's previous section
+      return addReply(event.text);  // which language model answered stays off screen
     case 'audio':
-      player.add(event.data, event.mime);
+      // A part names its own text; a single answer speaks the whole reply.
+      player.add(event.data, event.mime, reply, event.text || (reply && reply.text),
+                 event.duration_ms || 0);
       break;
     case 'story':
       state.story = event.state && !event.state.done ? event.state : null;
@@ -261,12 +305,9 @@ function handle(event, reply) {
     case 'stop':
       player.stop();
       break;
-    case 'done': {
-      const total = event.timings && event.timings.server_total;
-      const note = reply && reply.querySelector('small');
-      if (note && total != null) note.textContent += ` · ${total} s`;
+    case 'done':
+      closeReply(reply);
       break;
-    }
     case 'error':
       addLog('error', ERRORS[event.code] || event.message || 'Fehler.');
       state.story = null;
@@ -462,17 +503,122 @@ $('settings').addEventListener('close', () => {
   if ($('settings').returnValue !== 'save') return;
   state.token = $('token').value.trim();
   store.set('servitor.token', $('remember').checked && state.token ? state.token : null);
-  state.toggle = $('toggle').checked;
-  store.set('servitor.toggle', state.toggle ? '1' : null);
-  state.effects = $('effects').checked;
-  store.set('servitor.effects', state.effects ? null : 'off');
-  Vox.setEffects(state.effects);
-  for (const name of SETTINGS) {
-    state[name] = $(name).value;
-    store.set(`servitor.${name}`, state[name]);
-  }
-  talkLabel();
+  setOption('toggle', $('toggle').checked);
+  setOption('effects', $('effects').checked);
+  for (const name of SETTINGS) setOption(name, $(name).value);
 });
+
+// --- hardware: rotary switches, toggles, volume (desktop panel, dial unit) --------
+// Same values as the settings dialog; every change goes through setOption().
+
+const POSITIONS = {
+  persona: [['servitor', 'SERVITOR'], ['mensch', 'BILLY']],
+  lore: [['off', 'AUS'], ['light', 'LEICHT'], ['full', 'VOLL']],
+  voice: [['servitor', 'SERVITOR'], ['natural', 'NATÜRLICH']],
+  llm_mode: [['auto', 'AUTO'], ['free', 'FREI'], ['local', 'LOKAL']],
+};
+
+function setOption(name, value) {
+  if (SETTINGS.includes(name)) {
+    state[name] = value;
+    store.set(`servitor.${name}`, value);
+  } else if (name === 'effects') {
+    state.effects = value;
+    store.set('servitor.effects', value ? null : 'off');
+    Vox.setEffects(value);
+  } else if (name === 'toggle') {
+    state.toggle = value;
+    store.set('servitor.toggle', value ? '1' : null);
+    talkLabel();
+  } else if (name === 'volume') {
+    state.volume = Math.min(10, Math.max(0, value));
+    store.set('servitor.volume', String(state.volume));
+    Vox.setVolume(state.volume / 10);
+  }
+  renderHardware();
+}
+
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
+
+function buildHardware() {
+  for (const box of document.querySelectorAll('.hw-rotary')) {
+    const name = box.dataset.name;
+    const strip = element('div', 'hw-strip');
+    for (const [value, label] of POSITIONS[name]) {
+      const button = element('button', 'hw-position', label);
+      button.type = 'button';
+      button.dataset.value = value;
+      button.addEventListener('click', () => { Vox.sounds.click(); setOption(name, value); });
+      strip.append(button);
+    }
+    const knob = element('button', 'hw-knob');
+    knob.type = 'button';
+    knob.append(element('span', 'hw-knob-cap'));
+    const step = (delta) => {
+      const values = POSITIONS[name].map(([value]) => value);
+      const next = values[(values.indexOf(state[name]) + delta + values.length) % values.length];
+      Vox.sounds.click();
+      setOption(name, next);
+    };
+    knob.addEventListener('click', () => step(1));
+    knob.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === 'ArrowUp') { event.preventDefault(); step(1); }
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') { event.preventDefault(); step(-1); }
+    });
+    box.append(strip, knob, element('span', 'hw-label', box.dataset.label));
+  }
+  for (const box of document.querySelectorAll('.hw-toggle')) {
+    const name = box.dataset.name;
+    const button = element('button', 'hw-switch');
+    button.type = 'button';
+    button.setAttribute('role', 'switch');
+    button.append(element('span', 'hw-lever'));
+    button.addEventListener('click', () => { Vox.sounds.click(); setOption(name, !state[name]); });
+    box.append(element('span', 'hw-mark', box.dataset.on), button,
+               element('span', 'hw-mark', box.dataset.off), element('span', 'hw-label', box.dataset.label));
+  }
+  for (const box of document.querySelectorAll('.hw-volume')) {
+    const down = element('button', 'hw-arrow', '▼');
+    const up = element('button', 'hw-arrow', '▲');
+    down.type = up.type = 'button';
+    down.setAttribute('aria-label', 'leiser');
+    up.setAttribute('aria-label', 'lauter');
+    const bar = element('span', 'hw-bar');
+    for (let i = 0; i < 10; i++) bar.append(element('i'));
+    down.addEventListener('click', () => { setOption('volume', state.volume - 1); Vox.sounds.cant(); });
+    up.addEventListener('click', () => { setOption('volume', state.volume + 1); Vox.sounds.cant(); });
+    box.append(down, bar, up, element('span', 'hw-label', box.dataset.label));
+  }
+}
+
+function renderHardware() {
+  for (const box of document.querySelectorAll('.hw-rotary')) {
+    const name = box.dataset.name;
+    const values = POSITIONS[name];
+    const index = Math.max(0, values.findIndex(([value]) => value === state[name]));
+    // Positions spread over the upper arc, like the pointer of a selector switch.
+    const angle = values.length === 1 ? 0 : -50 + index * (100 / (values.length - 1));
+    box.querySelector('.hw-knob-cap').style.transform = `rotate(${angle}deg)`;
+    for (const button of box.querySelectorAll('.hw-position')) {
+      button.setAttribute('aria-pressed', String(button.dataset.value === state[name]));
+    }
+    box.querySelector('.hw-knob').setAttribute('aria-label', `${box.dataset.label}: ${values[index][1]}, weiterschalten`);
+  }
+  for (const box of document.querySelectorAll('.hw-toggle')) {
+    const on = Boolean(state[box.dataset.name]);
+    const button = box.querySelector('.hw-switch');
+    button.setAttribute('aria-checked', String(on));
+    button.setAttribute('aria-label', `${box.dataset.label}: ${on ? box.dataset.on : box.dataset.off}`);
+  }
+  for (const box of document.querySelectorAll('.hw-volume')) {
+    [...box.querySelectorAll('.hw-bar i')].forEach((led, i) => { led.dataset.on = String(i < state.volume); });
+  }
+}
 
 function talkLabel() {
   talk.querySelector('.talk-main').textContent = state.toggle ? 'SENDETASTE · ANTIPPEN'
@@ -610,7 +756,10 @@ $('dial-form').addEventListener('submit', dial);
 $('hangup').addEventListener('click', hangup);
 
 Vox.setEffects(state.effects);
-Vox.start({ scopes: [$('scope'), $('dial-scope')], needleElement: $('needle') });
+Vox.setVolume(state.volume / 10);
+Vox.start({ scopes: [$('scope'), $('dial-scope')], needles: [...document.querySelectorAll('.gauge-needle')] });
+buildHardware();
+renderHardware();
 $('dial-form').dataset.known = state.token ? 'yes' : 'no';
 dialLine(state.token ? 'Vox-Code hinterlegt. Bereit zum Anruf.' : 'Vox-Code eingeben, dann anrufen.');
 health();

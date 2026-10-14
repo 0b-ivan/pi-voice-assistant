@@ -19,7 +19,8 @@ const Vox = (() => {
   let fxUntil = 0;         // performance.now() until which effect sounds play
 
   const canvases = [];
-  const needle = { element: null, value: 0 };
+  const needle = { elements: [], value: 0 };
+  let volume = 0.8;
   // Set by app.js: an AnalyserNode of the microphone while recording,
   // the turn state ('idle', 'listen', 'work', 'speak') and the link quality.
   const live = { mic: null, state: 'idle', speaking: false, link: 'unknown', latency: null, peak: 0 };
@@ -32,6 +33,7 @@ const Vox = (() => {
       const data = noise.getChannelData(0);
       for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
       master = ctx.createGain();
+      master.gain.value = volume;
       master.connect(ctx.destination);
       analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
@@ -304,7 +306,8 @@ const Vox = (() => {
     } else if (live.link === 'loading') target = 0.2;
     else target = 0;
     needle.value += (target - needle.value) * 0.25;
-    if (needle.element) needle.element.style.transform = `rotate(${-50 + needle.value * 100}deg)`;
+    const angle = `rotate(${-50 + needle.value * 100}deg)`;
+    for (const element of needle.elements) element.style.transform = angle;
   }
 
   return {
@@ -319,9 +322,14 @@ const Vox = (() => {
     connect() { connected = true; hiss(true); scheduleGlitch(); },
     disconnect() { connected = false; hiss(false); clearTimeout(glitchTimer); },
     stateChanged(mode) { live.state = mode; },
-    start({ scopes, needleElement }) {
+    // Everything Proximus and the terminal say goes through one volume control.
+    setVolume(value) {
+      volume = value;
+      if (master) master.gain.setTargetAtTime(value, ctx.currentTime, 0.03);
+    },
+    start({ scopes, needles }) {
       canvases.push(...scopes);
-      needle.element = needleElement;
+      needle.elements = needles;
       grain();
       requestAnimationFrame(draw);
     },

@@ -75,6 +75,25 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
 - **Desktop (ab 900 px):** Schritt in der Kopfzeile, großer Schädel, Sendetaste,
   Eingabe und Übertragen in einer Zeile, Bediener rechts, Proximus links.
 
+### Synchroner Fernschreiber und Bedienteil
+
+- **Proximus schreibt, während er spricht:** Eine Antwort erscheint zuerst nur
+  als blinkender Cursor. Jeder Audioteil tippt seinen Text in genau der Zeit,
+  die die Stimme dafür braucht, beginnend mit dem Ton. Abbrechen zeigt den
+  Rest sofort. Ohne Ton (Fehler) erscheint der Text allein.
+- **Kein Modellname** mehr unter den Antworten.
+- **Gehäuse in Feldfunk-Oliv** (angelehnt an Bundeswehr-Funkgeräte): weiße
+  Schablonenschrift, gelbe Beschriftungsstreifen, Nummernschilder.
+- **Desktop-Bedienteil** rechts neben dem Monitor: großes Zeigerinstrument,
+  Wahlschalter (Bakelit-Drehknopf mit gelbem Streifen) für Persona, Stimme,
+  Lore und Sprachkern, Kippschalter für Störungen und Sendeart, Lautstärke mit
+  Pfeiltasten und Lampenzeile. Knopf anklicken schaltet weiter (auch mit
+  Pfeiltasten), ein Feld im Streifen wählt direkt. Dieselben Werte wie im
+  Einstellungsdialog, der auf dem Handy bleibt.
+- **Anruf-Gerät auf dem Desktop** breit: großer Monitor links, rechts
+  Nummernschild, Störungsschalter, Lautstärke, Vox-Code und Verbinden.
+- Fernschreiberschrift: Share Tech Mono (SIL OFL, `web/fonts/`).
+
 ### Schrift, Symbole, Litaneien
 
 - **Schrift:** Beschriftungen auf Gehäuse, Knöpfen und im Protokoll in

@@ -8,6 +8,10 @@
   font-family: "Schola"; font-weight: 400; font-style: normal; font-display: swap;
   src: url("/web/fonts/schola-regular.woff2") format("woff2");
 }
+@font-face {   /* teleprinter: Share Tech Mono, SIL Open Font License */
+  font-family: "Share Tech Mono"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/web/fonts/share-tech-mono.woff2") format("woff2");
+}
 @font-face {
   font-family: "Schola"; font-weight: 700; font-style: normal; font-display: swap;
   src: url("/web/fonts/schola-bold.woff2") format("woff2");
@@ -15,10 +19,15 @@
 :root {
   --serif: "Schola", "Century Schoolbook", "TeX Gyre Schola", Georgia, serif;
   --bg: #0d0f0c;
-  --iron-hi: #3a3f35;
-  --iron: #262a22;
-  --iron-lo: #171a15;
-  --edge: #4b5143;
+  /* Casing in field-radio olive (RAL 6014 Gelboliv), stencils in white,
+     label strips in signal yellow. */
+  --iron-hi: #5b5a3e;
+  --iron: #46452f;
+  --iron-lo: #2f2e1f;
+  --edge: #6f6d4c;
+  --stencil: #e9e6d6;
+  --signal: #e2c046;
+  --bakelite: #1c1a14;
   --brass: #a8894a;
   --text: #cfe8c4;
   --muted: #84a07a;
@@ -30,7 +39,8 @@
   --gutter: 12px;
   --scope: 56px;
   --grain: none;   /* set by vox.js: a small noise tile */
-  font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Menlo, monospace;
+  --mono: "Share Tech Mono", ui-monospace, "DejaVu Sans Mono", Menlo, monospace;
+  font-family: var(--mono);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
@@ -156,7 +166,7 @@ body[data-effects="off"] .scanlines::before { display: none; }
 }
 .chat[data-state="listen"] .backdrop { opacity: .26; }
 .chat[data-state="work"] .backdrop { opacity: .24; animation: breathe 1.6s ease-in-out infinite; }
-.chat[data-state="speak"] .backdrop { opacity: .32; }
+.chat[data-state="speak"] .backdrop { opacity: .24; }
 @keyframes breathe { 50% { opacity: .12; } }
 .chat::after {   /* state glow inside the glass */
   content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
@@ -196,7 +206,7 @@ body[data-effects="off"] .scanlines::before { display: none; }
 .log li {
   max-width: 100%; padding: 5px 10px; border-left: 2px solid var(--phosphor-dim);
   background: linear-gradient(90deg, #050805cc, #05080566 70%, transparent);
-  overflow-wrap: anywhere; line-height: 1.5;
+  overflow-wrap: anywhere; line-height: 1.5; font-size: 1.04rem; letter-spacing: .02em;
 }
 .log li::before { display: block; font-size: .66rem; letter-spacing: .2em; opacity: .7; }
 .log li.you { color: #b9c9a6; border-left-color: var(--amber); text-shadow: none; }
@@ -365,7 +375,7 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   /* The whole skull, large and centered; the transcript runs over it. */
   .backdrop { width: auto; height: 108%; top: 50%; }
   .log { padding: 10px clamp(20px, 4vw, 64px) 20px; gap: 10px; }
-  .log li { max-width: min(78%, 1000px); font-size: 1.02rem; }
+  .log li { max-width: min(78%, 1000px); font-size: 1.12rem; }
   .log li.you { align-self: flex-end; border-left: 0; border-right: 2px solid var(--amber); text-align: right;
                 background: linear-gradient(270deg, #050805cc, #05080566 70%, transparent); }
   .controls {
@@ -400,3 +410,118 @@ dialog input[type="password"], dialog select {
 .note { margin: 0; font-size: .75rem; color: var(--muted); }
 .row { display: flex; gap: 8px; justify-content: flex-end; }
 button.secondary { background: none; color: var(--text); border-color: var(--edge); box-shadow: none; }
+
+/* --- field-radio hardware ------------------------------------------------------- */
+.deck { flex: 1; min-height: 0; display: flex; }
+.deck .chat { flex: 1; min-width: 0; }
+.panel { display: none; }
+.nameplate {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  background: var(--iron-lo); box-shadow: inset 0 1px 3px #000a, 0 1px 0 #ffffff14;
+}
+.plate-num {
+  font-family: var(--serif); font-weight: 700; font-size: 1.15rem; line-height: 1;
+  padding: 4px 7px; border-radius: 4px; background: #111; color: var(--stencil);
+  box-shadow: inset 0 0 0 1px #ffffff22;
+}
+.plate-num.small { font-size: .8rem; color: var(--signal); background: none; box-shadow: none; }
+.plate-text { flex: 1; font-family: var(--serif); font-weight: 700; letter-spacing: .2em; font-size: .78rem; color: var(--stencil); }
+.hw-label {
+  display: block; margin-top: 4px; text-align: center; font-family: var(--serif); font-weight: 700;
+  font-size: .64rem; letter-spacing: .16em; color: var(--stencil); text-shadow: 0 1px 0 #000a;
+}
+.hw-row { display: flex; gap: 14px; justify-content: space-around; }
+.hw-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+
+/* Selector switch: yellow label strip above, bakelite knob with a white pointer. */
+.hw-rotary { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.hw-strip {
+  display: flex; width: 100%; border-radius: 99px; overflow: hidden;
+  background: var(--signal); box-shadow: inset 0 -1px 0 #0004, 0 1px 2px #000a;
+}
+.hw-position {
+  flex: 1; padding: 4px 2px; border: 0; background: none; cursor: pointer; color: #1a1708;
+  font-family: var(--serif); font-weight: 700; font-size: .66rem; letter-spacing: .06em;
+}
+.hw-position + .hw-position { border-left: 1.5px solid #1a1708; }
+.hw-position[aria-pressed="true"] { background: #1a1708; color: var(--signal); }
+.hw-knob {
+  position: relative; width: 58px; height: 58px; border-radius: 50%; border: 0; cursor: pointer; padding: 0;
+  background: radial-gradient(circle at 40% 35%, #4a463a, var(--bakelite) 62%);
+  box-shadow: 0 4px 0 #000, 0 6px 10px #000c, inset 0 1px 1px #ffffff2a, 0 0 0 4px #2a281c, 0 0 0 5px #000;
+}
+.hw-knob-cap { position: absolute; inset: 0; transition: transform .18s cubic-bezier(.3, 1.6, .5, 1); }
+.hw-knob-cap::before {   /* the white pointer bar */
+  content: ""; position: absolute; left: 50%; top: 5px; width: 7px; height: 30px; margin-left: -3.5px;
+  border-radius: 3px; background: linear-gradient(90deg, #d8d2c0, #fff, #cfc8b5); box-shadow: 0 0 0 1px #000a;
+}
+.hw-knob-cap::after {    /* the slotted screw */
+  content: ""; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px;
+  border-radius: 50%; background: radial-gradient(circle at 40% 35%, #555, #222);
+  box-shadow: inset 0 0 0 1px #000;
+}
+
+/* Toggle switch: a metal bat between EIN and AUS. */
+.hw-toggle { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.hw-mark { font-family: var(--serif); font-weight: 700; font-size: .6rem; letter-spacing: .12em; color: var(--stencil); opacity: .85; }
+.hw-switch {
+  position: relative; width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer; padding: 0;
+  background: radial-gradient(circle, #9a9a8c 0 30%, #4c4b40 32% 62%, #222 64%);
+  box-shadow: 0 0 0 3px #1d1c14, 0 2px 4px #000c;
+}
+.hw-lever {
+  position: absolute; left: 50%; width: 9px; height: 26px; margin-left: -4.5px; border-radius: 5px;
+  background: linear-gradient(90deg, #8d8d80, #f3f3ea 45%, #7a7a6c); box-shadow: 0 2px 3px #000c;
+  bottom: 50%; transform-origin: 50% 100%; transition: transform .12s;
+}
+.hw-switch[aria-checked="false"] .hw-lever { transform: rotate(180deg); }
+
+/* Volume: two arrow keys and a row of lamps. */
+.hw-volume { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.hw-volume .hw-label { grid-column: 1 / -1; }
+.hw-arrow {
+  width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-size: .8rem; color: var(--stencil);
+  border: 1px solid #000; background: linear-gradient(180deg, #4d4b38, #2c2b1e);
+  box-shadow: inset 0 1px 0 #ffffff22, 0 2px 0 #000;
+}
+.hw-arrow:active { transform: translateY(1px); box-shadow: inset 0 1px 3px #000a; }
+.hw-bar { display: flex; gap: 3px; justify-content: center; padding: 5px; border-radius: 4px; background: #0d0c08; box-shadow: inset 0 1px 3px #000; }
+.hw-bar i { width: 7px; height: 14px; border-radius: 1px; background: #2c2a1a; }
+.hw-bar i[data-on="true"] { background: var(--phosphor); box-shadow: 0 0 6px #8dff6a99; }
+.hw-bar i[data-on="true"]:nth-child(n+9) { background: var(--amber); box-shadow: 0 0 6px #ffb34799; }
+.warning {
+  margin: 0; padding: 6px 8px; border-radius: 4px; text-align: center; font-family: var(--serif); font-weight: 700;
+  font-size: .62rem; letter-spacing: .1em; color: #1a1708;
+  background: repeating-linear-gradient(-45deg, var(--signal) 0 10px, #d9b43a 10px 20px);
+  box-shadow: 0 1px 2px #000a;
+}
+
+/* Dial unit: on phones the hardware row sits above the form. */
+.dial-body, .dial-left { display: flex; flex-direction: column; gap: 14px; }
+.dial-side { display: flex; flex-direction: column; gap: 12px; }
+.dial-side .hw-row { align-items: flex-end; }
+.dial-side .hw-volume { flex: 1; max-width: 260px; }
+
+@media (min-width: 900px) {
+  .bar .gauge-bar { display: none; }
+  .deck { gap: 0; }
+  .panel {
+    display: flex; flex-direction: column; gap: 18px; width: clamp(250px, 21vw, 300px);
+    margin: 14px calc(var(--gutter) + 9px) 20px 0; padding: 16px 16px 18px; border-radius: 12px;
+    overflow-y: auto; box-shadow: inset 0 1px 0 #ffffff1c, 0 0 0 1px #000, 0 8px 24px #000c;
+  }
+  .gauge-panel { width: 100%; height: auto; aspect-ratio: 100 / 60; flex: none; }
+  .panel .hw-knob { width: 50px; height: 50px; }
+  .panel .hw-knob-cap::before { height: 24px; top: 4px; }
+  .panel .hw-position { font-size: .58rem; letter-spacing: .02em; padding: 4px 1px; }
+  .deck .chat { margin-right: 18px; }
+  :root { --scope: 110px; }
+  /* The call: a wide set with the screen left and the controls right. */
+  .dial-unit { width: min(100%, 980px); }
+  .dial-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; align-items: stretch; }
+  .dial-left { display: flex; flex-direction: column; gap: 14px; }
+  .dial-screen { height: clamp(320px, 52dvh, 460px); }
+  .dial-side { padding: 14px; border-radius: 10px; background: #0003; box-shadow: inset 0 1px 3px #000a; justify-content: space-between; }
+  .dial-side .hw-row { flex-direction: column; align-items: center; gap: 16px; }
+  .dial-side .hw-volume { width: 100%; max-width: none; }
+}
