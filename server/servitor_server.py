@@ -479,6 +479,8 @@ class Journal:
     def __init__(self, size=300, clock=time.time):
         self.items = collections.deque(maxlen=size)
         self.seq = 0
+        self.instance = secrets.token_hex(8)
+        self.source = dict(mode='own', error='')
         self.clock = clock
         self.lock = threading.Lock()
 
@@ -507,13 +509,24 @@ class Journal:
         self.add(entry['text'], unit, entry['priority'], entry['at'] or None,
                  host if isinstance(host, str) else '')
 
-    def since(self, after, limit=100):
+    def set_source(self, mode, error=''):
+        error = self.ANSI.sub('', error).strip()
+        error = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', error)
+        error = self.IPV6.sub('*:*', error)
         with self.lock:
+            self.source = dict(mode=mode, error=error[:300])
+
+    def since(self, after, limit=100, instance=None):
+        with self.lock:
+            # A reconnect must also work when the new process's counter has
+            # already overtaken the old one. The instance identifies this RAM log.
+            if after > self.seq or (instance and instance != self.instance):
+                after = 0
             lines = [item for item in self.items if item['seq'] > after][-limit:]
-            return dict(seq=self.seq, lines=lines)
+            return dict(seq=self.seq, instance=self.instance, source=dict(self.source), lines=lines)
 
 
-def follow_system_journal(journal, command=None):
+def follow_system_journal(journal, command=None, stop=None):
     """Feed the system journal into ``journal``, restarting journalctl if it
     ends. Needs the group systemd-journal (the unit has it); without it
     journalctl shows only this service's own lines. ``--merge`` adds the
@@ -523,25 +536,42 @@ def follow_system_journal(journal, command=None):
                           '--no-pager',
                           '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
                           '_HOSTNAME,__REALTIME_TIMESTAMP']
+    stop = stop or threading.Event()   # stop between launches, e.g. after a finite journal export
 
-    def complain(stream):
+    journal.set_source('system')
+
+    def complain(stream, problem):
         # journalctl's own complaints ("No journal files were found", missing
         # permissions) belong in the log too, not into nothing.
         for line in stream:
-            journal.add(f'journalctl: {line}', 'servitor-voice', 4)
+            problem.set()
+            message = f'journalctl: {line.strip()}'
+            journal.set_source('system', message)
+            journal.add(message, 'servitor-voice', 4)
 
     def run():
-        while True:
+        while not stop.is_set():
             try:
+                problem = threading.Event()
                 with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       text=True, errors='replace',
                                       env=dict(os.environ, LC_ALL='C')) as proc:
-                    threading.Thread(target=complain, args=(proc.stderr,), daemon=True).start()
+                    reader = threading.Thread(target=complain, args=(proc.stderr, problem), daemon=True)
+                    reader.start()
                     for raw in proc.stdout:
                         journal.add_journald(raw)
+                        if not problem.is_set():
+                            journal.set_source('system')
+                    code = proc.wait()
+                    reader.join()
+                message = f'journalctl beendet (Status {code}); neuer Versuch in 5 s.'
+                journal.set_source('system', message)
+                journal.add(message, 'servitor-voice', 4)
             except OSError as exc:
-                journal.add(f'journalctl nicht verfügbar: {exc}', 'servitor-voice', 4)
-            time.sleep(5)
+                message = f'journalctl nicht verfügbar: {exc}'
+                journal.set_source('system', message)
+                journal.add(message, 'servitor-voice', 4)
+            stop.wait(5)
 
     thread = threading.Thread(target=run, name='system-journal', daemon=True)
     thread.start()
@@ -1292,7 +1322,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 after = max(0, int(query.get('after', ['0'])[0]))
             except ValueError:
                 after = 0
-            data = self.service.journal.since(after)
+            data = self.service.journal.since(after, instance=query.get('instance', [None])[0])
             data['host'] = socket.gethostname()   # lines from here carry no host label
             self._json(200, data, {'Cache-Control': 'no-store'})
         elif path == '/v1/status':

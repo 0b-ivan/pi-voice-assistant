@@ -223,6 +223,7 @@ body[data-effects="off"] .scanlines::before { display: none; }
 /* flex: none - lines must never shrink as the journal fills (they used to
    squash into each other the longer it ran). */
 .journal li { flex: none; overflow: hidden; text-overflow: ellipsis; }
+.journal li[data-kind="status"] { order: -1; }
 .journal li.warn { color: var(--amber); }
 .journal li.error { color: #ff7a6e; }
 .journal li.traffic { color: #e6ffd9; }

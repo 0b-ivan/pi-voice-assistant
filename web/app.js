@@ -646,15 +646,33 @@ function talkLabel() {
 // The service's own log lines (GET /v1/journal) run dimly behind the transcript.
 // With effects on, litanies and noospheric interference are mixed in.
 
-const journal = { seq: 0, timers: [], host: '' };
+const journal = { seq: 0, instance: '', timers: [], murmurTimer: null, host: '', controller: null };
 
 function journalLine(text, kind) {
   const list = $('journal');
   const item = document.createElement('li');
   item.textContent = text;
   if (kind) item.className = kind;
+  const ambient = ['litany', 'noise', 'crosstalk'].includes(kind);
+  item.dataset.kind = ambient ? 'ambient' : 'log';
   list.prepend(item);
-  while (list.children.length > 60) list.lastElementChild.remove();
+  // Effects keep their cadence, but cannot evict the system log or fill the
+  // entire visible tube when the machines are quiet.
+  const entries = [...list.querySelectorAll(`[data-kind="${item.dataset.kind}"]`)];
+  entries.slice(ambient ? 3 : 60).forEach((entry) => entry.remove());
+}
+
+function journalStatus(message) {
+  const list = $('journal');
+  let item = list.querySelector('[data-kind="status"]');
+  if (!message) { item?.remove(); return; }
+  if (!item) {
+    item = document.createElement('li');
+    item.dataset.kind = 'status';
+    item.className = 'warn';
+    list.prepend(item);
+  }
+  item.textContent = message;
 }
 
 // '21:48:16 kernel  Out of memory: …' – time, unit, message; the service's
@@ -687,36 +705,50 @@ function severity(entry) {
 }
 
 async function pollJournal() {
-  if (!Vox.connected || document.hidden) return;
+  if (!Vox.connected || document.hidden || journal.controller) return;
+  const controller = new AbortController();
+  journal.controller = controller;
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(`/v1/journal?after=${journal.seq}`, {
-      cache: 'no-store', headers: authHeaders() });
-    if (!response.ok) return;
+    const response = await fetch(`/v1/journal?after=${journal.seq}&instance=${journal.instance}`, {
+      cache: 'no-store', headers: authHeaders(), signal: controller.signal });
+    if (journal.controller !== controller) return;
+    if (!response.ok) {
+      journalStatus(response.status === 401
+        ? 'Journal: Anmeldung abgelaufen – neu verbinden.'
+        : `Journal nicht erreichbar (HTTP ${response.status}).`);
+      return;
+    }
     const data = await response.json();
-    if (data.seq < journal.seq) journal.seq = 0;   // the service restarted
+    if (journal.controller !== controller) return;
     journal.host = data.host || journal.host;
     for (const entry of data.lines) {
       const pi = /"event": ?"request", ?"client": ?"pi"/.test(entry.text);
       journalLine(describe(entry), severity(entry) || (pi ? 'traffic' : ''));
     }
     journal.seq = data.seq;
-  } catch { /* no carrier: the next poll tries again */ }
+    journal.instance = data.instance || '';
+    journalStatus(data.source?.error ? `Journal gestört: ${data.source.error}`
+      : data.source?.mode === 'own' ? 'Journal: nur Ausgaben des Sprachdienstes verfügbar.' : '');
+  } catch {
+    if (journal.controller === controller) journalStatus('Journal-Verbindung unterbrochen. Neuer Versuch läuft.');
+  } finally {
+    clearTimeout(timeout);
+    if (journal.controller === controller) journal.controller = null;
+  }
 }
 
 function interference() {
-  const hex = () => Math.floor(Math.random() * 0x10000).toString(16).toUpperCase().padStart(4, '0');
-  const bits = () => Array.from({ length: 8 }, () => (Math.random() < 0.5 ? 0 : 1)).join('');
   return pick([
-    `░▒▓ NOOSPHÄRE-STÖRUNG 0x${hex()} ▓▒░`,
-    `${bits()} ${bits()} ${bits()} ${bits()} ··· SIGNAL VERZERRT`,
-    `▚▚ TRÄGER DRIFT ${(Math.random() * 4 - 2).toFixed(2)} kHz ▚▚`,
-    `[${hex()}:${hex()}] ··· ▒▒▒▒ ··· DATENFRAGMENT VERWORFEN`,
+    '░▒▓ NOOSPHÄRE-STÖRUNG ▓▒░',
+    '··· SIGNAL VERZERRT ···',
+    '▚▚ TRÄGER DRIFT ▚▚',
+    '▒▒ DATENFRAGMENT VERWORFEN ▒▒',
   ]);
 }
 
 Vox.onCrosstalk = () => {
-  const channel = `${Math.floor(Math.random() * 9) + 1}-${Math.floor(Math.random() * 90) + 10}`;
-  journalLine(`▒▒ FREMDKANAL ${channel} ▒▒ unverständlich · Kennung fehlt`, 'crosstalk');
+  journalLine('▒▒ FREMDKANAL ▒▒ unverständlich', 'crosstalk');
 };
 
 function startJournal() {
@@ -724,19 +756,22 @@ function startJournal() {
   pollJournal();
   journal.timers.push(setInterval(pollJournal, 2500));
   const murmur = () => {
-    journal.timers.push(setTimeout(() => {
+    journal.murmurTimer = setTimeout(() => {
       if (state.effects) {
         if (Math.random() < 0.55) journalLine(`+++ ${pick(LITANY.journal)} +++`, 'litany');
         else journalLine(interference(), 'noise');
       }
       murmur();
-    }, 4000 + Math.random() * 8000));
+    }, 4000 + Math.random() * 8000);
   };
   murmur();
 }
 
 function stopJournal() {
   journal.timers.splice(0).forEach((timer) => { clearInterval(timer); clearTimeout(timer); });
+  clearTimeout(journal.murmurTimer);
+  journal.controller?.abort();
+  journal.controller = null;
 }
 
 // --- server state: the link lamp, the signal needle --------------------------------
@@ -902,9 +937,9 @@ async function dial(event) {
 function connect() {
   document.body.dataset.connected = 'yes';
   $('hint-litany').textContent = pick(LITANY.hint);
+  Vox.connect();
   startJournal();
   $('dial-connect').disabled = false;
-  Vox.connect();
   $('lamp-link').dataset.on = Vox.live.link === 'ok' ? 'yes' : 'no';
   addLog('system', `+++ Vox-Verbindung zu Servitor Proximus · ${new Date().toLocaleTimeString('de-DE')} +++`);
   idle();

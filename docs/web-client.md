@@ -125,18 +125,75 @@ liest es mit `journalctl -f` (Gruppe `systemd-journal`, die die Unit schon hat)
 und hält die letzten 300 Zeilen im Arbeitsspeicher. Zugriffszeilen des
 Webservers fehlen; IPv4- und IPv6-Adressen werden maskiert. Ohne `journalctl`
 (oder mit `SERVITOR_JOURNAL_SOURCE=own`) zeigt es nur die Ausgabe des Dienstes.
+Fehler der Journal-Quelle, eine unterbrochene Verbindung oder eine abgelaufene
+Anmeldung erscheinen als feste Warnzeile. Nach einem Server-Neustart erkennt
+der Browser den neuen Journal-Puffer auch dann, wenn dessen Zähler schon
+weitergelaufen ist als vorher.
 
 - **Desktop:** eigene Spalte rechts auf dem Röhrenbildschirm, der Chat links.
   **Handy:** hinter dem Chat; die Chat-Zeilen bleiben deckend.
 - Neueste Zeile oben, ältere blenden nach unten aus. Zeit, Dienst, Meldung
   (`21:48:16 kernel Out of memory: …`, `19:41:36 servitor-voice READY
   load_seconds=9.84`); Warnungen bernstein, Fehler rot.
+- Die Anzeige hält 60 echte Meldungen und höchstens drei Effektzeilen.
+  Litaneien und Störungen kommen weiterhin alle 4–12 s; sie verdrängen keine
+  echten Meldungen mehr, wenn das System ruhig ist.
 - Mit Vox-Effekten: Litaneien und Noosphären-Störungen dazwischen, und etwa
   alle 25–70 s rutscht ein **Fremdkanal** herein: im Browser erzeugtes
   Sprechfunk-Gemurmel (wandernde Tonhöhe, Silben mit springenden Formanten,
   schmalbandig verzerrt, mit Rauschen und Squelch), sprachähnlich, aber ohne
   verständliche Wörter. Nie während man sendet oder Proximus spricht. Im
-  Journal steht dann „FREMDKANAL 6-32 · unverständlich“.
+  Journal steht dann „FREMDKANAL · unverständlich“.
+
+### Journal vom Proxmox-Host und Pi weiterleiten
+
+CT 107 sieht das Journal seines eigenen Containers. Der Kernel und die
+Proxmox-Dienste laufen auf dem Host; der Pi hat ebenfalls ein eigenes Journal.
+Damit deren echte Meldungen in der Röhre erscheinen, wird der native
+[systemd-Journal-Upload](https://manpages.debian.org/trixie/systemd-journal-remote/systemd-journal-upload.service.8.en.html)
+eingerichtet. Es leitet alle lokalen Journal-Einträge weiter, ohne Filter auf
+Sprachdienste oder Prioritäten.
+
+Als root, im Checkout dieses Standes:
+
+```sh
+# In CT 107: Empfänger nur an seiner LAN-Adresse, Port 19532
+sh deploy/journal-forward/install.sh server 172.22.9.107
+
+# Auf dem Proxmox-Host und später auf dem eingeschalteten Pi
+sh deploy/journal-forward/install.sh client http://172.22.9.107:19532
+```
+
+Das Debian-Paket `systemd-journal-remote` enthält Empfänger und Uploader. Der
+Empfänger speichert unter `/var/log/journal/remote/`; die Gruppe des
+Sprachdienstes wird über ein Drop-in ergänzt. `journalctl --merge` liest diese
+Dateien zusammen mit CT 107. Fremde Zeilen tragen den Rechnernamen vor Dienst
+und Meldung. **HTTP ist im LAN unverschlüsselt und ohne Client-Authentifizierung;
+Port 19532 nur im vertrauten LAN, nicht über cloudflared veröffentlichen.**
+Die Server-Einrichtung startet den Sprachdienst neu und meldet Browser ab.
+
+Der Upload-Cursor liegt unter `/run/proximus-journal-upload/`, also im RAM.
+Dienst-Neustarts setzen an dieser Position fort. Nach einem Rechner-Neustart
+beginnt der Upload mit etwa 80 vorhandenen Meldungen und folgt anschließend
+allen neuen Einträgen. Er überträgt kein vollständiges historisches Archiv;
+auf dem Pi entstehen keine laufenden Cursor-Schreibzugriffe auf die SD-Karte.
+Die Remote-Ablage ist auf 128 MB je Journal begrenzt (aktive Dateien können
+die Grenze vorübergehend überschreiten).
+
+Prüfen:
+
+```sh
+# Je Sender
+systemctl status systemd-journal-upload --no-pager
+
+# CT 107: tatsächliche Zusatzgruppen wie beim Sprachdienst verwenden
+systemd-run --pipe --wait --uid=servitor \
+  -p 'SupplementaryGroups=systemd-journal systemd-journal-remote' \
+  journalctl --merge -n 20 --no-pager
+```
+
+Ohne Forwarder sind ruhige CT-Logs normal; ein ausgeschalteter Pi sendet
+keine Meldungen. Die Röhre zeigt echte Ereignisse aus angeschlossenen Quellen.
 
 ### Zeigerinstrument
 
