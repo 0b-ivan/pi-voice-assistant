@@ -927,23 +927,25 @@ def brief_proposal_text(proposal, now, max_chars=170):
         label = first['label']
         depart = clock(option['dep'], now)
         arrive = f", an {clock(option['arr'], now)}" if option['arr'] else ''
-        intro = f"{label}, ab {depart}{arrive}. "
+        intro = f"Fahrt {label}, ab {depart}{arrive}. "
         actions = set(proposal['actions'])
         extras = []
         if 'calendar' in actions:
-            extras.append(f"in Kalender {proposal['calendar'][1]} eintragen")
+            extras.append(f"die Fahrt in Kalender {proposal['calendar'][1]} eintragen")
         if 'remind' in actions:
             alarm = proposal['alarm']
             if alarm is None:
-                extras.append('hier am Gerät vor Abfahrt erinnern')
+                extras.append('dich hier am Gerät vor Abfahrt erinnern')
             else:
-                extras.append(f"{clock(alarm, now)} hier am Gerät erinnern")
+                extras.append(f"dich um {clock(alarm, now)} hier am Gerät erinnern")
         if not extras:
             return None
         message = intro + 'Soll ich ' + ' und '.join(extras) + '? '
         if 'remind' in actions:
             message += 'Neustart löscht die Erinnerung. '
         message += 'Ja oder Taste E.'
+        if len(message) > max_chars and arrive:
+            message = message.replace(intro, f"Fahrt {label}, ab {depart}. ", 1)
         return message if len(message) <= max_chars else None
     except (KeyError, IndexError, TypeError, ValueError):
         return None
