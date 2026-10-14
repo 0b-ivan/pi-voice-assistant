@@ -225,6 +225,7 @@ body[data-effects="off"] .scanlines::before { display: none; }
 .journal li { flex: none; overflow: hidden; text-overflow: ellipsis; }
 .journal li.warn { color: var(--amber); }
 .journal li.error { color: #ff7a6e; }
+.journal li.traffic { color: #e6ffd9; }
 .journal li.crosstalk { color: #c9b98a; letter-spacing: .08em; }
 .journal li.litany { font-family: var(--serif); font-style: italic; font-size: .8rem; color: #d9ffc9; letter-spacing: .04em; }
 .journal li.noise { color: #b9c9a6; letter-spacing: .12em; }

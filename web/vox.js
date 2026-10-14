@@ -54,16 +54,18 @@ const Vox = (() => {
     dry = ctx.createGain();
     wet = ctx.createGain();
     const low = ctx.createBiquadFilter();
-    low.type = 'highpass'; low.frequency.value = 320;
+    // Mild: the Servitor voice is already processed on the server; the radio
+    // colour must not cost intelligibility.
+    low.type = 'highpass'; low.frequency.value = 180;
     const high = ctx.createBiquadFilter();
-    high.type = 'lowpass'; high.frequency.value = 3300;
+    high.type = 'lowpass'; high.frequency.value = 5200;
     const presence = ctx.createBiquadFilter();
-    presence.type = 'peaking'; presence.frequency.value = 1800; presence.gain.value = 4;
+    presence.type = 'peaking'; presence.frequency.value = 2200; presence.gain.value = 2;
     const shaper = ctx.createWaveShaper();
     const curve = new Float32Array(1024);
     for (let i = 0; i < curve.length; i++) {
       const x = i / (curve.length - 1) * 2 - 1;
-      curve[i] = Math.tanh(2.2 * x) / Math.tanh(2.2);
+      curve[i] = Math.tanh(1.2 * x) / Math.tanh(1.2);
     }
     shaper.curve = curve;
     source.connect(dry);
@@ -249,8 +251,9 @@ const Vox = (() => {
     effects = on;
     document.body.dataset.effects = on ? 'on' : 'off';
     if (dry && wet) {
-      dry.gain.value = on ? 0 : 1;
-      wet.gain.value = on ? 0.9 : 0;
+      // Mostly the clean voice, a share of the radio band on top.
+      dry.gain.value = on ? 0.65 : 1;
+      wet.gain.value = on ? 0.4 : 0;
     }
     hiss(on && connected);
     scheduleGlitch();

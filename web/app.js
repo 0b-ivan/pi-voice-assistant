@@ -646,7 +646,7 @@ function talkLabel() {
 // The service's own log lines (GET /v1/journal) run dimly behind the transcript.
 // With effects on, litanies and noospheric interference are mixed in.
 
-const journal = { seq: 0, timers: [] };
+const journal = { seq: 0, timers: [], host: '' };
 
 function journalLine(text, kind) {
   const list = $('journal');
@@ -661,17 +661,22 @@ function journalLine(text, kind) {
 // JSON events read as 'READY load_seconds=9.84'.
 function describe(entry) {
   const time = new Date(entry.ts * 1000).toLocaleTimeString('de-DE');
+  // Forwarded lines (Proxmox host, Pi) name their machine; CT 107's own do not.
+  const host = entry.host && entry.host !== journal.host ? `${entry.host} ▸ ` : '';
   const unit = entry.unit ? `${entry.unit} ` : '';
   let text = entry.text;
   try {
     const data = JSON.parse(text);
+    if (data && data.event === 'request') {   // who talked to the server
+      return `${time} ${String(data.client).toUpperCase()} ▸ ${data.method} ${data.path} → ${data.status}`;
+    }
     if (data && typeof data === 'object' && data.event) {
       const rest = Object.entries(data).filter(([key]) => key !== 'event')
         .map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`);
       text = `${String(data.event).toUpperCase()} ${rest.join(' ')}`;
     }
   } catch { /* a plain line */ }
-  return `${time} ${unit}${text}`;
+  return `${time} ${host}${unit}${text}`;
 }
 
 function severity(entry) {
@@ -689,7 +694,11 @@ async function pollJournal() {
     if (!response.ok) return;
     const data = await response.json();
     if (data.seq < journal.seq) journal.seq = 0;   // the service restarted
-    for (const entry of data.lines) journalLine(describe(entry), severity(entry));
+    journal.host = data.host || journal.host;
+    for (const entry of data.lines) {
+      const pi = /"event": ?"request", ?"client": ?"pi"/.test(entry.text);
+      journalLine(describe(entry), severity(entry) || (pi ? 'traffic' : ''));
+    }
     journal.seq = data.seq;
   } catch { /* no carrier: the next poll tries again */ }
 }

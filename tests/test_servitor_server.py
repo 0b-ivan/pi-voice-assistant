@@ -604,6 +604,15 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(reply['text'], 'Antwort auf Wie hoch ist der Eiffelturm?')
         self.assertEqual([e['event'] for e in events][-2:], ['audio', 'done'])
 
+    def test_journey_without_journey_support_is_answered_without_llm(self):
+        self.pipeline.fail_llm = True
+        _, data = self.request('/v1/ask', json.dumps({'text': 'Wann fährt der nächste Bus zum Bahnhof'}).encode())
+        events = self.events(data)
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual((reply['model'], reply['text']), ('local/journey', ss.JOURNEY_ELSEWHERE['servitor']))
+        self.assertFalse(any(e['event'] == 'journey' for e in events))
+        self.assertEqual([e['event'] for e in events][-2:], ['audio', 'done'])
+
     def test_ask_answers_fixed_requests_without_llm(self):
         self.pipeline.fail_llm = True
         _, data = self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode())
@@ -703,6 +712,23 @@ class ServerTest(unittest.TestCase):
         last = json.loads(data)['seq']
         _, data = self.request(f'/v1/journal?after={last}', method='GET')
         self.assertEqual(json.loads(data)['lines'], [])
+
+    def test_api_requests_are_logged_as_events_with_their_client(self):
+        lines = []
+        with unittest.mock.patch('builtins.print', lambda *a, **k: lines.append(a[0])):
+            self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode())
+            self.request('/health', method='GET', token=None)
+            self.request('/web/app.js', method='GET', token=None)
+        requests = [json.loads(line) for line in lines if '"request"' in line]
+        self.assertEqual(requests, [dict(event='request', client='pi', method='POST',
+                                         path='/v1/ask', status=200)])
+
+    def test_journal_keeps_the_host_of_forwarded_lines(self):
+        self.service.journal.add_journald(json.dumps(dict(
+            MESSAGE='usb 1-1.3: new high-speed USB device', PRIORITY='6', _TRANSPORT='kernel',
+            _HOSTNAME='wgz-pve-01')))
+        line = self.service.journal.since(0)['lines'][-1]
+        self.assertEqual((line['host'], line['unit']), ('wgz-pve-01', 'kernel'))
 
     def test_journal_follows_journalctl_output(self):
         script = Path(self.tmp.name) / 'fake-journalctl'

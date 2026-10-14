@@ -56,6 +56,7 @@ import json
 import os
 import re
 import secrets
+import socket
 from pathlib import Path
 import socketserver
 import subprocess
@@ -97,6 +98,11 @@ CLIP_MAX_SECONDS = 12
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 # TurnError codes caused by the input, not by the server (logwatch ignores them).
 OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
+# Journeys are answered by the Pi (MoBY, home address); other clients get this.
+JOURNEY_ELSEWHERE = {
+    'servitor': 'Fahrtauskunft nur über die Einheit am Gerät verfügbar. Dieser Kanal führt keine Fahrplandaten.',
+    'mensch': 'Fahrpläne frage ich nur am Gerät selbst ab, hier im Browser leider nicht.',
+}
 MAX_TYPED_CHARS = 500     # /v1/ask: about what a 30 s spoken question holds
 # The browser client: published path -> (file in WEB, MIME type). Nothing else is served.
 WEB = Path(__file__).resolve().parent.parent / 'web'
@@ -474,7 +480,7 @@ class Journal:
         self.clock = clock
         self.lock = threading.Lock()
 
-    def add(self, line, unit='', priority=6, at=None):
+    def add(self, line, unit='', priority=6, at=None, host=''):
         line = line.strip()
         if not line or self.ACCESS.search(line):
             return
@@ -484,15 +490,20 @@ class Journal:
         with self.lock:
             self.seq += 1
             self.items.append(dict(seq=self.seq, ts=round(at or self.clock(), 1), text=line,
-                                   unit=unit, prio=int(priority)))
+                                   unit=unit, prio=int(priority), host=host[:32]))
 
     def add_journald(self, raw):
         """One ``journalctl -o json`` line."""
         entry = logwatch.parse_entry(raw)
         if entry is None:
             return
+        try:
+            host = json.loads(raw).get('_HOSTNAME', '')
+        except (ValueError, AttributeError):
+            host = ''
         unit = entry['unit'] or ('kernel' if entry['kernel'] else '')
-        self.add(entry['text'], unit, entry['priority'], entry['at'] or None)
+        self.add(entry['text'], unit, entry['priority'], entry['at'] or None,
+                 host if isinstance(host, str) else '')
 
     def since(self, after, limit=100):
         with self.lock:
@@ -501,12 +512,15 @@ class Journal:
 
 
 def follow_system_journal(journal, command=None):
-    """Feed the whole system journal of this host into ``journal``, restarting
-    journalctl if it ends. Needs the group systemd-journal (the unit has it);
-    without it journalctl shows only this service's own lines."""
-    command = command or ['journalctl', '-f', '-n', '80', '-o', 'json', '-q', '--no-pager',
+    """Feed the system journal into ``journal``, restarting journalctl if it
+    ends. Needs the group systemd-journal (the unit has it); without it
+    journalctl shows only this service's own lines. ``--merge`` adds the
+    journals other machines forward here (deploy/journal-forward: the Proxmox
+    host with the kernel log, the Pi)."""
+    command = command or ['journalctl', '-f', '--merge', '-n', '80', '-o', 'json', '-q',
+                          '--no-pager',
                           '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
-                          '__REALTIME_TIMESTAMP']
+                          '_HOSTNAME,__REALTIME_TIMESTAMP']
 
     def run():
         while True:
@@ -916,6 +930,9 @@ class Service:
                     return
                 trip_state = (device or {}).get('trip')
                 trip = journeys.parse(text, trip_state) if trip_state else None
+                # A client without journeys (the browser) asking for one: the
+                # timetable is queried on the Pi. Say so instead of letting the LLM guess.
+                elsewhere = trip_state is None and journeys.parse(text, 'on') is not None
                 if trip is not None:
                     # Trams/trains, reminder, calendar: the Pi queries and acts itself
                     # (home and calendar stay there). Structured, no LLM, no audio.
@@ -943,7 +960,10 @@ class Service:
                 service_op = maintenance.command(intents.normalize(text))
                 device_reply = self._device_reply(intents.normalize(text), device or {},
                                                   memory_copy, emit)
-                if device_reply is not None:
+                if elsewhere:
+                    persona = 'mensch' if (device or {}).get('persona') == 'mensch' else 'servitor'
+                    answer, model = JOURNEY_ELSEWHERE[persona], 'local/journey'
+                elif device_reply is not None:
                     answer, model = device_reply, 'local/device'
                 elif (enroll.command(intents.normalize(text)) and memory_copy is not NO_MEMORY
                         and not memory.unknown_speaker(memory_copy)):
@@ -1142,6 +1162,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write('%s %s\n' % (self.address_string(), fmt % args))
 
+    # Static files, health checks and the browser's own polling are not worth a line.
+    QUIET = ('/', '/web', '/health', '/v1/journal', '/v1/session')
+
+    def log_request(self, code='-', size='-'):
+        """One JSON line per API request: who talked (the Pi, the browser) and how
+        it went. The browser's background log shows these as the Pi's traffic."""
+        headers = getattr(self, 'headers', None) or {}   # absent for a broken request line
+        path = urllib.parse.urlsplit(getattr(self, 'path', '') or '').path
+        if path in self.QUIET or path.startswith('/web/'):
+            return
+        client = ('web' if headers.get('X-Servitor-Client') == 'web'
+                  else 'pi' if headers.get('Authorization') else 'anon')
+        try:
+            status = int(code)
+        except (TypeError, ValueError):
+            status = 0
+        print(json.dumps(dict(event='request', client=client, method=self.command,
+                              path=path, status=status)), flush=True)
+
     COOKIE = 'servitor_session'
 
     def _cookie(self):
@@ -1244,8 +1283,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 after = max(0, int(query.get('after', ['0'])[0]))
             except ValueError:
                 after = 0
-            self._json(200, self.service.journal.since(after),
-                       {'Cache-Control': 'no-store'})
+            data = self.service.journal.since(after)
+            data['host'] = socket.gethostname()   # lines from here carry no host label
+            self._json(200, data, {'Cache-Control': 'no-store'})
         elif path == '/v1/status':
             # Maintenance data only with the token (the URL is public).
             if not self.service.authorized(self.headers.get('Authorization')):
