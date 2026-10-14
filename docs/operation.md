@@ -264,13 +264,24 @@ Um einen erfolgreichen kurzen Druck zu quittieren, liest der Treiber
 unteren zwei Bits von `0x08` auf null und setzt `0x0B=0x00`.
 Das ist die Sequenz des offiziellen `pisugar3.rs`-Treibers.
 **Keine** Ein-/Ausschalt-, Lade-, RTC- oder Watchdog-Register werden
-geschrieben. Fehlende Quittierung darf nie mehrfach Standby auslösen;
-bei einem I²C-Fehler wird die Integration bis zum Dienstneustart deaktiviert.
-Einen konkurrierenden offiziellen PiSugar-Tastenhandler nicht gleichzeitig
-betreiben.
+geschrieben. Fehlende Quittierung darf nie mehrfach Standby auslösen.
+Bei einem einzelnen I²C-Fehler wie `[Errno 121] Remote I/O error` bleibt
+die Integration aktiv, wiederholt die Abfrage mit exponentiellem Backoff
+(1, 2, 4 ... maximal 30 Sekunden) und protokolliert Erholung über
+`pisugar_button_recovered`. Unquittierte Ereignisse lösen **keine**
+Standby-Umschaltung aus. Nach **drei aufeinanderfolgenden** Fehlern
+**im manuellen Standby** wird Proximus vorsorglich wieder aufgeweckt,
+damit PTT/GPIO17 und SHIM bedienbar sind; die PiSugar-Abfrage läuft mit
+reduzierter Frequenz weiter. Beim Start wird ein altes Ereignis weiterhin
+erst nach erfolgreichem ACK verworfen. Einen konkurrierenden offiziellen
+PiSugar-Tastenhandler nicht gleichzeitig betreiben.
 
-**Die Integration bleibt bis zu einem echten ACK-/Wake-Hardwaretest
-deaktiviert.** Software-Standby ist kein echter suspend-to-RAM-Modus
+**Hardwaretests am 14.10.2026:** ACK und Standby-/Aufwach-Umschaltung
+waren erfolgreich. Später trat ein transienter I²C-Fehler `Errno 121`
+auf und die ursprüngliche Version deaktivierte den Button dauerhaft.
+Der Retry-/Failsafe-Fix ist durch Unit-Tests abgedeckt; sein Verhalten
+auf der echten Hardware bleibt bis zum erneuten Dauertest unbestätigt.
+Software-Standby ist kein echter suspend-to-RAM-Modus
 und keine elektrische Stromabschaltung.
 
 ### Optional: Einstellungen des offiziellen Power Managers auslesen
