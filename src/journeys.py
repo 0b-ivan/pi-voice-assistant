@@ -927,7 +927,8 @@ def brief_proposal_text(proposal, now, max_chars=170):
         label = first['label']
         depart = clock(option['dep'], now)
         arrive = f", an {clock(option['arr'], now)}" if option['arr'] else ''
-        intro = f"Fahrt {label}, ab {depart}{arrive}. "
+        day = day_word(option['dep'], now)
+        intro = f"Fahrt {label}, {day} ab {depart}{arrive}. "
         actions = set(proposal['actions'])
         extras = []
         if 'calendar' in actions:
@@ -945,7 +946,7 @@ def brief_proposal_text(proposal, now, max_chars=170):
             message += 'Neustart löscht die Erinnerung. '
         message += 'Ja oder Taste E.'
         if len(message) > max_chars and arrive:
-            message = message.replace(intro, f"Fahrt {label}, ab {depart}. ", 1)
+            message = message.replace(intro, f"Fahrt {label}, {day} ab {depart}. ", 1)
         return message if len(message) <= max_chars else None
     except (KeyError, IndexError, TypeError, ValueError):
         return None
