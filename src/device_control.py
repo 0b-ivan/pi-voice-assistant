@@ -19,11 +19,17 @@ Text only (no hardware): ptt.py switches WLAN (rfkill), requests the reboot
 import re
 
 OPS = ('wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown',
-       'power_notices_on', 'power_notices_off')
+       'power_notices_on', 'power_notices_off',
+       'cpu_eco', 'cpu_balanced', 'cpu_power')
 CONFIRM_OPS = ('reboot', 'shutdown')
 CONFIRM_SECONDS = 20.0   # from the question; the answer's recording starts well before
 
 _WLAN = re.compile(r'\b(wlan|w lan|wifi|wi fi|wireless lan|funkmodul|funk)\b')
+_CPU_MODE = re.compile(r'\b(cpu|prozessor|leistungs ?modus|leistungs ?profil|rechen ?modus)\b')
+_CPU_SET = re.compile(r'\b(stell\w*|schalt\w*|setz\w*|wechsel\w*|aktivier\w*|nutz\w*|wähl\w*)\b')
+_CPU_ECO = re.compile(r'\b(eco|spar ?modus|spar ?profil|energiespar\w*)\b')
+_CPU_BALANCED = re.compile(r'\b(normal|balanced|ausgeglichen|standard)\b')
+_CPU_POWER = re.compile(r'\b(power|performance|leistung|hochleistung)\b')
 _POWER_NOTICES = re.compile(r'\b(energie ?hinweise|energie ?meldungen|stromwechsel ?meldungen|strom ?hinweise|ladehinweise)\b')
 _OFF = re.compile(r'\b(aus|ab|deaktivier\w*|abschalt\w*|ausschalt\w*|trenn\w*)\b')
 _ON = re.compile(r'\b(an|ein|aktivier\w*|einschalt\w*|anschalt\w*)\b')
@@ -52,6 +58,16 @@ def command(text):
     text = str(text).strip()
     if not text or len(text.split()) > 8:
         return None
+    # The spoken command can select only the kernel governor. Never interpret
+    # overclock/voltage terms as authorization to change boot firmware.
+    if _CPU_MODE.search(text) and _CPU_SET.search(text):
+        if re.search(r'\b(overclock\w*|übertakt\w*|spannungs\w*|voltage)\b', text):
+            return None
+        matches = [('cpu_eco', _CPU_ECO.search(text)),
+                   ('cpu_balanced', _CPU_BALANCED.search(text)),
+                   ('cpu_power', _CPU_POWER.search(text))]
+        selected = [name for name, result in matches if result]
+        return selected[0] if len(selected) == 1 else None
     # Only an explicit command changes optional announcements. Questions about
     # configuring them remain questions, not actions.
     if _POWER_NOTICES.search(text):
@@ -110,6 +126,9 @@ START = {
     'shutdown': "Einheit fährt herunter.",
     'power_notices_on': "Stromwechselhinweise aktiviert. Kritische Warnungen bleiben aktiv.",
     'power_notices_off': "Stromwechselhinweise deaktiviert. Kritische Warnungen bleiben aktiv.",
+    'cpu_eco': "CPU-Profil Eco wird aktiviert.",
+    'cpu_balanced': "CPU-Profil Balanced wird aktiviert.",
+    'cpu_power': "CPU-Profil Power wird aktiviert. Keine Übertaktung.",
 }
 START_FULL = {
     'sleep': "Ruhemodus. Der Maschinengeist schlummert, das Auspex wacht.",
@@ -124,6 +143,9 @@ START_BILLY = {
     'shutdown': "Ich mach dann mal aus.",
     'power_notices_on': "Ich melde normale Stromwechsel wieder. Wichtige Warnungen bleiben an.",
     'power_notices_off': "Normale Stromwechsel sage ich nicht mehr an. Wichtige Warnungen bleiben an.",
+    'cpu_eco': "CPU auf Sparmodus. Ich schalte runter.",
+    'cpu_balanced': "CPU auf Normalmodus.",
+    'cpu_power': "CPU im Power-Modus. Ohne Übertaktung.",
 }
 ALREADY = {'wlan_off': "WLAN ist bereits deaktiviert.", 'wlan_on': "WLAN ist bereits aktiv."}
 ALREADY_BILLY = {'wlan_off': "WLAN ist schon aus.", 'wlan_on': "WLAN ist schon an."}
