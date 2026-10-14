@@ -22,8 +22,11 @@ def battery_plugged():
     """Return None if source cannot be verified. Never guess battery power."""
     try:
         import smbus
-        with smbus.SMBus(1) as bus:
+        bus = smbus.SMBus(1)
+        try:
             return bool(bus.read_byte_data(PISUGAR, 0x02) & 0x80)
+        finally:
+            bus.close()
     except (ImportError, OSError):
         return None
 
