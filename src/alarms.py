@@ -241,12 +241,12 @@ class AlarmMonitor:
     def shutdown_due(self, now):
         return self.shutdown_at is not None and now >= self.shutdown_at
 
-    def _battery(self, snapshot, now, out, lore):
+    def _battery(self, snapshot, now, out, lore, announce_source=True):
         percent = snapshot.get('battery_pct')
         if percent is None:
             return
         plugged = bool(snapshot.get('battery_plugged', False))
-        if self.plugged is not None and plugged != self.plugged:
+        if announce_source and self.plugged is not None and plugged != self.plugged:
             out.append(power_source_phrase(plugged, percent, lore))
         self.plugged = plugged
         state = self.states['battery']
@@ -323,14 +323,16 @@ class AlarmMonitor:
             return sentence + " Soll sich ein Techpriester drum kümmern."
         return sentence
 
-    def update(self, snapshot, now, network=None, server=None, lore='off', internet=None):
+    def update(self, snapshot, now, network=None, server=None, lore='off', internet=None,
+               power_source_announcements=True):
         """network/internet: True/False/None (unknown or WLAN switched off on
         purpose); server: 'ok'/'down'/'off'. Returns sentences to speak."""
         out = []
         s = self.states
         throttled = snapshot.get('throttled', 0) or 0
         self._set('undervoltage', bool(throttled & 0x1), now, out, snapshot, lore)
-        self._battery(snapshot, now, out, lore)
+        self._battery(snapshot, now, out, lore,
+                      announce_source=power_source_announcements)
 
         free = snapshot.get('mem_free_pct')
         swap = snapshot.get('swap_used_pct', 0) or 0

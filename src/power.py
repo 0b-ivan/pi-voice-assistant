@@ -31,11 +31,33 @@ class Battery:
         try:
             bus = self._bus()
             try:
+                # Optional configuration status bits. A failed auxiliary read
+                # must never suppress the core battery measurement.
+                optional = {}
+                for key, register, mask in (
+                    ('soft_poweroff', 0x03, 0x10),
+                    ('watchdog', 0x06, 0x80),
+                    ('charge_protection', 0x20, 0x80),
+                ):
+                    try:
+                        optional[key] = bool(bus.read_byte_data(PISUGAR3_ADDRESS, register) & mask)
+                    except OSError:
+                        pass
                 mv = (bus.read_byte_data(PISUGAR3_ADDRESS, 0x22) << 8) | bus.read_byte_data(
                     PISUGAR3_ADDRESS, 0x23)
                 percent = bus.read_byte_data(PISUGAR3_ADDRESS, 0x2A)
                 ctr1 = bus.read_byte_data(PISUGAR3_ADDRESS, 0x02)
                 board = bus.read_byte_data(PISUGAR3_ADDRESS, 0x04) - 40
+                # Vendor PiSugar-3 driver: 0x26/0x27 report output current
+                # in milliamps (intensity = raw / 1000 amperes).
+                # Optional: unsupported firmware must not suppress battery data.
+                try:
+                    output_ma = (bus.read_byte_data(PISUGAR3_ADDRESS, 0x26) << 8) | bus.read_byte_data(
+                        PISUGAR3_ADDRESS, 0x27)
+                    if 0 <= output_ma <= 5000:
+                        optional['output_current_ma'] = output_ma
+                except (OSError, ValueError):
+                    pass
             finally:
                 bus.close()
         except (ImportError, OSError):
@@ -48,7 +70,7 @@ class Battery:
         plugged = bool(ctr1 & 0x80)
         return dict(percent=avg_percent, mv=avg_mv, plugged=plugged,
                     charging=plugged and bool(ctr1 & 0x40) and avg_percent < 100,
-                    board_c=board)
+                    board_c=board, auto_power_on=bool(ctr1 & 0x10), **optional)
 
 
 def throttled_flags(run=subprocess.run):

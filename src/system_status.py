@@ -151,6 +151,13 @@ SNAPSHOT_FIELDS = {
     'disk_free_pct': (int, 0, 100),
     'uptime_s': (int, 0, 10 ** 9),
     'battery_pct': (int, 0, 100),
+    'battery_mv': (int, 2500, 4500),
+    'output_current_ma': (int, 0, 5000),
+    'pisugar_chip_c': (int, -40, 85),
+    'charge_restart_pct': (int, 0, 100),
+    'charge_limit_pct': (int, 1, 100),
+    'safe_shutdown_pct': (int, 0, 100),
+    'safe_shutdown_delay_s': (int, 0, 3600),
     'swap_used_pct': (int, 0, 100),
     'throttled': (int, 0, 0xFFFFFFFF),
     'wifi_dbm': (int, -120, 0),
@@ -174,6 +181,12 @@ SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offli
                    # device_control: the Pi knows spoken device commands, and the
                    # reboot/shutdown question it is waiting to have confirmed.
                    'devctl': ('on',), 'pending': ('reboot', 'shutdown'),
+                   'power_notices': ('on', 'off'),
+                   'pisugar_soft_poweroff': ('on', 'off'),
+                   'pisugar_rtc_alarm': ('on', 'off'),
+                   'pisugar_watchdog': ('on', 'off'),
+                   'pisugar_charge_protection': ('on', 'off'),
+                   'pisugar_auto_power_on': ('on', 'off'),
                    # The Pi plays multi-part long stories (story.py, /v1/story).
                    'story': ('on',),
                    # journeys.py: the Pi knows journeys, and what it is waiting for.
@@ -259,7 +272,19 @@ def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=
     if battery:
         raw.update(battery_pct=battery.get('percent'),
                    battery_charging=bool(battery.get('charging')),
-                   battery_plugged=bool(battery.get('plugged')))
+                   battery_plugged=bool(battery.get('plugged')),
+                   battery_mv=battery.get('mv'),
+                   output_current_ma=battery.get('output_current_ma'),
+                   pisugar_chip_c=battery.get('board_c'))
+        for battery_key, status_key in (
+            ('soft_poweroff', 'pisugar_soft_poweroff'),
+            ('watchdog', 'pisugar_watchdog'),
+            ('charge_protection', 'pisugar_charge_protection'),
+            ('auto_power_on', 'pisugar_auto_power_on'),
+        ):
+            flag = battery.get(battery_key)
+            if isinstance(flag, bool):
+                raw[status_key] = 'on' if flag else 'off'
     return sanitize_snapshot({k: v for k, v in raw.items() if v is not None})
 
 

@@ -12,6 +12,7 @@ import re
 from system_status import (battery_sentence, is_billy, network_text, phrase_style, status_text,
                            updates_sentence, updates_text)
 import agenda
+import energy
 import logwatch
 import nightwatch
 import variants
@@ -74,6 +75,13 @@ _PATTERNS = (
     ('calendar', re.compile(r'\b(termine?|kalender|was steht (?:(?:heute|morgen|übermorgen) )?(noch )?an|'
                             r'steht (?:heute|morgen|übermorgen) (?:noch )?(was|etwas) an|'
                             r'habe ich (?:heute|morgen|übermorgen) (?:was|etwas) vor)\b')),
+    # Specific output-current question must not trigger a long diagnostics dump.
+    ('power_current', re.compile(r'\b(ausgangs ?strom|strom ?aufnahme|strom ?verbrauch|'
+                                 r'wie ?viel strom (?:ziehst|verbrauchst|benötigst|nimmst))\b')),
+    # Precise PiSugar data and lifetime uncertainty before the broad battery intent.
+    ('power_config', re.compile(r'\b(soft ?power ?off|soft ?shutdown|rtc ?weck\w*|weck ?alarm|lade ?grenz\w*|lade ?fenster|pi ?sugar (?:konfig\w*|einstellung\w*))\b')),
+    ('power_runtime', re.compile(r'\b(restlaufzeit|akku ?laufzeit|wie lange (?:hält|reicht|läuft) (?:der |dein |deine )?akku)\b')),
+    ('power_detail', re.compile(r'\b(pi ?sugar|sugar ?pi|batteriespannung|akku ?spannung|energie ?diagnose|energie ?details|ladegrenze|ladeschutz|chip ?temperatur|akku ?temperatur)\b')),
     # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
     ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
                            r'ladestand|ladezustand|energiereserve\w*)\b|\bwie (?:viel|viele) prozent hast du (?:noch|übrig)\b')),
@@ -400,6 +408,14 @@ def answer(intent, now, snapshot=None, lore=None):
         return date_text(now, lore)
     if intent == 'status':
         return status_text(snapshot, lore=lore)
+    if intent == 'power_current':
+        return energy.current(snapshot)
+    if intent == 'power_config':
+        return energy.config(snapshot)
+    if intent == 'power_detail':
+        return energy.detail(snapshot)
+    if intent == 'power_runtime':
+        return energy.runtime(snapshot)
     if intent == 'battery':
         sentence = battery_sentence(snapshot, lore)
         if sentence is None:

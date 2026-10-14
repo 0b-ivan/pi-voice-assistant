@@ -17,16 +17,17 @@ GROUPS = {
     'hotspot': ('wifi_hotspot_start', 'wifi_hotspot_show',
                 'wifi_hotspot_clients', 'wifi_hotspot_rotate',
                 'wifi_hotspot_stop', 'back'),
+    'energy': ('energy_status', 'energy_config', 'power_notices', 'energy_shutdown', 'back'),
     'system': ('info', 'status', 'maintenance', 'back'),
 }
-TOP = ('voice', 'persona', 'people', 'audio', 'device', 'network', 'system', 'close')
+TOP = ('voice', 'persona', 'people', 'audio', 'device', 'network', 'energy', 'system', 'close')
 # A single nested sub-menu keeps AP functions separate from normal Wi-Fi.
 PARENTS = {'hotspot': 'network'}
 # Every selectable action (for publishing and tests).
 ITEMS = tuple(item for group in GROUPS.values() for item in group if item != 'back') + ('close',)
 LABELS = {
     'voice': 'Sprache', 'persona': 'Persönlichkeit', 'people': 'Personen', 'audio': 'Audio',
-    'device': 'Gerät', 'network': 'Netzwerk', 'hotspot': 'Access Point',
+    'device': 'Gerät', 'network': 'Netzwerk', 'hotspot': 'Access Point', 'energy': 'Energie',
     'system': 'System', 'bt_speaker': 'BT-Lautsprecher', 'bt_scan': 'Lautsprecher suchen',
     'bt_forget': 'Lautsprecher entfernen', 'bt_connect': 'Lautsprecher verbinden',
     'close': 'Schließen', 'back': 'Zurück',
@@ -42,12 +43,14 @@ LABELS = {
     'wifi_hotspot_clients': 'Verbundene Geräte',
     'alarms': 'Alarme', 'led': 'Status-LED', 'screen': 'Display aus',
     'info': 'Systeminfo', 'status': 'Status ansagen', 'maintenance': 'Wartung',
+    'energy_status': 'Akku-Diagnose', 'energy_config': 'PiSugar Konfig',
+    'power_notices': 'Stromhinweise', 'energy_shutdown': 'Sicher ausschalten',
 }
 # "people" is both a group and the person list inside it, "persona" both a
 # group and the speaking style switch inside it.
 LABELS_IN_GROUP = {'people': 'Bekannte Personen', 'persona': 'Sprechstil'}
 # Selecting these leaves the menu (another screen or an action takes over).
-CLOSING = ('close', 'status', 'screen', 'maintenance', 'enroll', 'refine', 'facts', 'wake_rec',
+CLOSING = ('close', 'status', 'screen', 'maintenance', 'energy_status', 'energy_config', 'energy_shutdown', 'enroll', 'refine', 'facts', 'wake_rec',
            'people', 'bt_scan',
            'bt_forget', 'bt_connect', 'wifi_scan', 'wifi_saved', 'net_info',
            'wifi_hotspot_start', 'wifi_hotspot_show',

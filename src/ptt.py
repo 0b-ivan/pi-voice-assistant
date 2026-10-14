@@ -22,6 +22,8 @@ import bluetooth
 import boardled
 import cue as cue_sound
 import device_control
+import energy
+import pisugar_client
 import enroll
 import journeys as journey_feed
 import people
@@ -197,6 +199,7 @@ DISPLAY_STATUS_VALUES = {
     'mood': set(EMOTIONS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
+    'opt_power_notices': {'on', 'off'}, 
     'opt_llm': set(LLM_MODES),
     'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
@@ -768,11 +771,15 @@ class VoiceController:
         self.mood_shown = None
         self._apply_voice_effect()
         self.battery = None      # power.Battery reading, refreshed by main()
+        self.pisugar_poller = None  # vendor telemetry only if socket explicitly enabled
         self.throttled = None
         self.remote_failed = False
         self.server_probe = None  # netprobe.ServerProbe when a server is configured
         self.alarms = AlarmMonitor()
         self.alarms_enabled = self.config.alarms
+        # Routine mains/battery change chatter is opt-in. Critical warnings
+        # and the existing shutdown policy never depend on this preference.
+        self.power_notices = saved.get('power_notices') == 'on'
         self.alarm_queue = []    # sentences waiting until the unit is idle
         self.wlan_on = True
         self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
@@ -1068,6 +1075,7 @@ class VoiceController:
                                opt_emotions='on' if self.mood.enabled else 'off',
                                opt_wlan='on' if self.wlan_on else 'off',
                                opt_alarms='on' if self.alarms_enabled else 'off',
+                               opt_power_notices='on' if self.power_notices else 'off',
                                opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
                                opt_cue='none' if self.cue is None else
@@ -1107,6 +1115,20 @@ class VoiceController:
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
             return
+        if item == 'energy_status':
+            self._say(energy.detail(self.status_snapshot()))
+            self._publish_menu()
+            return
+        if item == 'energy_config':
+            vendor = (self.pisugar_poller.snapshot()
+                      if self.pisugar_poller is not None else {})
+            self._say(energy.config(dict(self.status_snapshot(), **vendor)))
+            self._publish_menu()
+            return
+        if item == 'energy_shutdown':
+            self._say(self._device_command('shutdown'))  # existing 20 s confirmation / E
+            self._publish_menu()
+            return
         if item == 'server' and self.remote:
             self.remote_enabled = not self.remote_enabled
             self.recorder.uplink_enabled = self.remote_enabled
@@ -1140,6 +1162,8 @@ class VoiceController:
             event('menu', item='llm', value=self.llm_mode)
         elif item == 'wlan':
             self.set_wlan(not self.wlan_on)
+        elif item == 'power_notices':
+            self._set_power_notices(not self.power_notices)
         elif item == 'alarms':
             self.alarms_enabled = not self.alarms_enabled
             if not self.alarms_enabled:
@@ -1182,6 +1206,9 @@ class VoiceController:
                                     memory='on' if self.memory_present else 'off',
                                     maintenance='on' if self.maint.active else 'off',
                                     devctl='on', pending=self._device_pending_now(),
+                                    power_notices='on' if self.power_notices else 'off',
+                                    **(self.pisugar_poller.snapshot()
+                                       if self.pisugar_poller is not None else {}),
                                     story='on',
                                     **(self.journeys.snapshot()
                                        if self.journeys is not None else {}),
@@ -1208,7 +1235,8 @@ class VoiceController:
         texts = self.alarms.update(snapshot, now,
                                    network=network if links else None,
                                    server=self.server_state() if links else 'off',
-                                   lore=self.style, internet=internet)
+                                   lore=self.style, internet=internet,
+                                   power_source_announcements=self.power_notices)
         texts += self._check_memory()
         notes, self.bt_notes = self.bt_notes, []
         texts += notes
@@ -1302,10 +1330,19 @@ class VoiceController:
             return None
         return self._device_command(op)
 
+    def _set_power_notices(self, enabled):
+        self.power_notices = bool(enabled)
+        self.settings.save(power_notices='on' if enabled else 'off')
+        event('energy', preference='power_notices', value='on' if enabled else 'off')
+        self._publish_menu()
+
     def _device_command(self, op):
         """A recognized command: ask (reboot/shutdown) or switch WLAN now."""
         wlan = 'on' if self.wlan_on else 'off'
         text = device_control.reply(op, wlan, self.style)
+        if op in ('power_notices_on', 'power_notices_off'):
+            self._set_power_notices(op == 'power_notices_on')
+            return text
         if op in device_control.CONFIRM_OPS:
             self.device_pending = op
             self.device_pending_until = time.monotonic() + device_control.CONFIRM_SECONDS
@@ -1351,6 +1388,8 @@ class VoiceController:
         self.turn_device_pending = None
         if op == 'sleep':
             self._device_arm(op)            # after the server's reply
+        elif op in ('power_notices_on', 'power_notices_off'):
+            self._set_power_notices(op == 'power_notices_on')
         elif op in device_control.CONFIRM_OPS:
             if not (op == 'reboot' and self.maint.active):
                 self.device_pending = op
@@ -3098,6 +3137,8 @@ class VoiceController:
             self._greet()
 
     def close(self):
+        if self.pisugar_poller is not None:
+            self.pisugar_poller.close()
         if self.wake is not None:
             self.wake.stop()
         stop_prepared_vosk()
@@ -3270,6 +3311,8 @@ def main():
                                  wake=wake, wake_word=wake_label, cue=acknowledge,
                                  config=config)
     controller_ref.append(controller)
+    if not args.probe:
+        controller.pisugar_poller = pisugar_client.Poller().start()
     if not args.probe and remote_config is not None and config.nightwatch:
         controller.nightwatch = nightwatch_client.Client(controller.memory, remote_config,
             start=config.night_start, end=config.night_end, idle_seconds=config.night_idle, log=event)

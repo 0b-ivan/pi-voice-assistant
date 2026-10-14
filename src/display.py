@@ -966,7 +966,7 @@ def _menu_value(item, status):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
     if item == 'llm':
         return {'auto': 'AUTO', 'free': 'FREI', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
-    if item in ('wlan', 'alarms'):
+    if item in ('wlan', 'alarms', 'power_notices'):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
         return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')

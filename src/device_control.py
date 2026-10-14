@@ -18,11 +18,13 @@ Text only (no hardware): ptt.py switches WLAN (rfkill), requests the reboot
 """
 import re
 
-OPS = ('wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown')
+OPS = ('wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown',
+       'power_notices_on', 'power_notices_off')
 CONFIRM_OPS = ('reboot', 'shutdown')
 CONFIRM_SECONDS = 20.0   # from the question; the answer's recording starts well before
 
 _WLAN = re.compile(r'\b(wlan|w lan|wifi|wi fi|wireless lan|funkmodul|funk)\b')
+_POWER_NOTICES = re.compile(r'\b(energie ?hinweise|energie ?meldungen|stromwechsel ?meldungen|strom ?hinweise|ladehinweise)\b')
 _OFF = re.compile(r'\b(aus|ab|deaktivier\w*|abschalt\w*|ausschalt\w*|trenn\w*)\b')
 _ON = re.compile(r'\b(an|ein|aktivier\w*|einschalt\w*|anschalt\w*)\b')
 _SHUTDOWN = re.compile(
@@ -49,6 +51,16 @@ def command(text):
     (lower case, no punctuation). Reboot of the server is not ours (maintenance)."""
     text = str(text).strip()
     if not text or len(text.split()) > 8:
+        return None
+    # Only an explicit command changes optional announcements. Questions about
+    # configuring them remain questions, not actions.
+    if _POWER_NOTICES.search(text):
+        if text.startswith(('wie ', 'was ', 'warum ', 'wieso ', 'weshalb ')):
+            return None
+        if _OFF.search(text):
+            return 'power_notices_off'
+        if _ON.search(text):
+            return 'power_notices_on'
         return None
     if _WLAN.search(text):
         if _OFF.search(text):
@@ -96,6 +108,8 @@ START = {
     'sleep': "Ruhemodus. Aktivierungswort bleibt aktiv.",
     'reboot': "Neustart eingeleitet.",
     'shutdown': "Einheit fährt herunter.",
+    'power_notices_on': "Stromwechselhinweise aktiviert. Kritische Warnungen bleiben aktiv.",
+    'power_notices_off': "Stromwechselhinweise deaktiviert. Kritische Warnungen bleiben aktiv.",
 }
 START_FULL = {
     'sleep': "Ruhemodus. Der Maschinengeist schlummert, das Auspex wacht.",
@@ -108,6 +122,8 @@ START_BILLY = {
     'sleep': "Ich hau mich hin. Ruf mich, wenn was ist.",
     'reboot': "Ich starte neu. Bis gleich.",
     'shutdown': "Ich mach dann mal aus.",
+    'power_notices_on': "Ich melde normale Stromwechsel wieder. Wichtige Warnungen bleiben an.",
+    'power_notices_off': "Normale Stromwechsel sage ich nicht mehr an. Wichtige Warnungen bleiben an.",
 }
 ALREADY = {'wlan_off': "WLAN ist bereits deaktiviert.", 'wlan_on': "WLAN ist bereits aktiv."}
 ALREADY_BILLY = {'wlan_off': "WLAN ist schon aus.", 'wlan_on': "WLAN ist schon an."}

@@ -170,3 +170,102 @@ set -a; . /etc/servitor-voice.env; set +a
 Bewerten: Aufgabe gelöst, beim einmaligen Hören verständlich, Charakter, Lore-Konsistenz (A01 nie als eigene Erinnerung, keine Kameradennamen beim Servitor, Phobos IX nicht der Marsmond), keine gleichen Einstiege, kein „Boss“ in jeder Antwort, keine Pointe über den fehlenden Körper.
 
 Lange Geschichten am Gerät prüfen: „Erzähl mir zehn Minuten über deinen Trupp“, „… fünfzehn Minuten von Phobos“, „Erzähl die alte Höllenläufer-Sage zwanzig Minuten lang“. Im Journal erscheinen `story_start`, `story_part`, `story_fetch`, `story_section` und am Ende `story_finished` mit `played_ms`; Taste B oder die Sprechtaste ergibt `story_stopped`. Zu messen: Zeit bis zum ersten Ton, Lücken zwischen den Abschnitten, tatsächliche Dauer gegenüber dem Ziel (`STORY_WORDS_PER_MINUTE` danach anpassen), Speicher in `/run/pi-ptt` während der Wiedergabe.
+
+
+## Energieverwaltung: PiSugar 3
+
+Proximus besitzt bereits einen read-only I²C-Akku-Monitor in `src/power.py`.
+Zusätzlich liest er direkt am PiSugar 3 die Statusbits für Soft-Poweroff,
+Ladeschutz, Watchdog und automatisches Einschalten bei Netzanschluss sowie den
+Ausgangsstrom (Register `0x26/0x27`, in Milliampere) aus. Der Ausgangsstrom
+ist **nicht** gleich dem Batteriestrom und erlaubt ohne kalibrierte Akkukapazität
+und weitere Annahmen keine verlässliche Restlaufzeit.
+Diese **reinen Lesezugriffe** funktionieren ohne den Herstellerdienst; ein
+Fehler in einem der Zusatzregister verhindert die Akkumessung nicht.
+Die Akkustandsanzeige und das Herunterfahren bei Energieknappheit sind **lokal**,
+auch ohne OpenRouter oder Kogitator, verfügbar. **Die bestehende Schutzlogik
+bleibt unverändert:** Warnungen bei 15/10/6 % im Akkubetrieb; ab 6 % wird
+nach 60 Sekunden `systemctl poweroff` angefordert. Anschluss des Netzteils
+hebt die ausstehende automatische Abschaltung auf. Die Schwellen sind noch
+nicht auf den konkreten Akku kalibriert; die Hardware muss abschließend
+geprüft werden.
+
+Im Display: **Energie → Akku-Diagnose / PiSugar Konfig /
+Stromhinweise / Sicher ausschalten**. `Sicher ausschalten` benutzt dieselbe
+20-Sekunden-Bestätigungslogik wie „Fahr dich herunter“ (Taste E oder eine
+autorisierte Sprachbestätigung; Taste B bricht ab). Es ist **kein** sofortiges
+Abschalten des Akkus. Die zusätzliche Konfigurationsansicht ist ausschließlich
+lesend. Direkt per I²C bekannte Werte erscheinen auch ohne Herstellerdienst;
+Firmware, Ladefenster und RTC-Alarme können als „nicht verfügbar“ gelten,
+solange kein PiSugar-Power-Manager-Socket erreichbar ist.
+
+Lokale Sprachbeispiele (ohne LLM-Hardwarezugriff):
+
+- „Wie hoch ist der Akkustand?“ → Prozent und Ladezustand.
+- „Wie hoch ist die Batteriespannung?“ / „Was meldet PiSugar?“ →
+  Batteriespannung, Ausgangsstrom, Stromquelle und PiSugar-**Chip**temperatur,
+  soweit bekannt.
+- „Wie viel Strom verbrauchst du?“ → nur der gemessene Ausgangsstrom,
+  nicht als Batteriestrom oder Laufzeit ausgeben.
+- „Wie lange hält der Akku noch?“ → ehrlich **keine** Zeitangabe ohne
+  gemessenen Verbrauch; keine erfundenen Stunden.
+- „Schalte die Energiehinweise an“ / „Schalte die Stromhinweise aus“ →
+  normale Ansagen bei Wechsel zwischen Netzteil und Akku einschalten/
+  unterdrücken. Standardmäßig sind sie **aus**, der Wert liegt in
+  `/var/lib/pi-ptt/settings.json`.
+- „Fahr dich herunter“ → verlangt Bestätigung, wie zuvor.
+
+`Stromhinweise AUS` unterdrückt **nur routinemäßige** Netz-/Akkuwechsel,
+nicht die kritischen Akkustufen, die Meldung einer gerade abgebrochenen
+Notabschaltung oder den Poweroff selbst. Der allgemeine Menüpunkt
+`Gerät → Alarme` beeinflusst weiterhin die Sprachausgabe der Alarme, **nicht**
+die automatische Notabschaltung. Bei I²C-Leseausfall wird kein Akkustand
+erfunden; der Linux-Poweroff-Befehl allein garantiert **keine** elektrische
+Abtrennung durch den PiSugar.
+
+### Optional: Einstellungen des offiziellen Power Managers auslesen
+
+`src/pisugar_client.py` kann `get`-Kommandos des [offiziellen
+PiSugar Power Managers](https://github.com/PiSugar/pisugar-power-manager-rs)
+über **einen lokalen Unix-Socket** lesen: Firmware, Ladefenster,
+Soft-Poweroff-Status, RTC-Alarm-Status und Safe-Shutdown-Konfiguration.
+Alle Werte werden geprüft; es gibt **keine** `set`-Befehle,
+kein direktes Schreiben von I²C-Konfigurationsregistern und keine externen
+Aktionen durch das LLM. Der Hintergrund-Poller liest höchstens alle zwei
+Minuten und blockiert den Sprachpfad nicht.
+
+Aufgrund von `PrivateTmp=yes` in `pi-ptt.service` ist das übliche
+`/tmp/pisugar-server.sock` der Herstellerinstallation **nicht** sichtbar.
+Erst nach gesicherter Installation des Herstellerdienstes und Kontrolle
+von dessen Besitzrechten einen gemeinsamen Socket unter `/run/` mit
+**minimalen Berechtigungen** bereitstellen, z. B. Pfad
+`/run/pisugar-server.sock`, Modus `0660` und Gruppe `i2c` (die Pi-PTT-Unit
+ist Mitglied). Den Zugriffsmodus `0666` ausdrücklich **nicht** übernehmen:
+die Herstellerschnittstelle akzeptiert auch schreibende Befehle.
+**Auch ein UDS mit Modus `0660` ist nicht technisch read-only.** Nur
+vertrauenswürdigen Benutzern Zugriff geben; langfristig ist ein ausschließlich
+lesender Broker statt direktem Zugriff durch den Voice-Prozess vorzuziehen. Die
+Datei `/etc/pi-voice-assistant.env` bekommt **erst dann**:
+
+```text
+PISUGAR_SOCKET=/run/pisugar-server.sock
+```
+
+Danach `sudo systemctl restart pi-ptt.service`. Ohne Socket läuft alles
+ohne Herstellerdaemon (I²C-Akkudaten, die zusätzlichen Statusbits und
+lokale kritische Schutzfunktion);
+keine Abhängigkeit von einem zusätzlichen Daemon. Hersteller-TCP/HTTP,
+falls aktiviert, nur lokal binden oder abschalten, niemals offen als
+administrative Netzwerk-API bereitstellen.
+
+**Vor produktiver Freigabe auf Hardware prüfen:** Erkennung von PiSugar 3,
+I²C-Bus, abgezogenes Netzteil, Ladezustandswechsel, kurzzeitige
+Spannungsschwankungen, Offline-Dialog, 15/10/6-%-Simulation, Abbruch durch
+Laden, Backup der SD-Karte, `systemctl poweroff` und die
+**tatsächliche elektrische Abschaltung** durch `pisugar-poweroff`/
+Soft-Poweroff. Kein Live-Test mit absichtlich tiefentladenem Akku.
+PiSugar-Watchdog, automatische Wiederanschaltung, Ladegrenzen ändern und
+RTC-Weckzeiten **noch nicht** aktiviert: dafür braucht es einen separaten
+privilegierten Schreibpfad, explizite Autorisierung, Rollback und
+Hardware-Abnahmetests. Bestehenden Hersteller-Manager nicht durch einen
+zweiten konkurrierenden I²C-Schreibdienst ersetzen.
