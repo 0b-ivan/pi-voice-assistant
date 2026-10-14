@@ -736,11 +736,11 @@ class ServerTest(unittest.TestCase):
         old = ss.Journal()
         old.add('alte Sitzung')
         new = self.service.journal
-        new.add('Pi verbunden', host='pi-assistent')
-        new.add('Kernelmeldung', unit='kernel', host='wgz-pve-01')
+        new.add('Proximus verbunden', unit='servitor-voice')
+        new.add('Sprachkern bereit', unit='servitor-llm')
         _, raw = self.request(f'/v1/journal?after={old.seq}&instance={old.instance}', method='GET')
         data = json.loads(raw)
-        self.assertEqual([entry['text'] for entry in data['lines']], ['Pi verbunden', 'Kernelmeldung'])
+        self.assertEqual([entry['text'] for entry in data['lines']], ['Proximus verbunden', 'Sprachkern bereit'])
         self.assertEqual(data['instance'], new.instance)
         _, raw = self.request(f'/v1/journal?after={new.seq}&instance={new.instance}', method='GET')
         self.assertEqual(json.loads(raw)['lines'], [])
@@ -770,7 +770,7 @@ class ServerTest(unittest.TestCase):
                     break
                 time.sleep(0.05)
             texts = [line['text'] for line in data['lines']]
-            self.assertIn('cron tick', texts)
+            self.assertIn('Proximus bereit', texts)
             self.assertIn('journalctl: No journal files were found.', texts)
             self.assertIn('Status 9', data['source']['error'])
         finally:
