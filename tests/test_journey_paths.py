@@ -147,6 +147,10 @@ class ControllerPathTests(unittest.TestCase):
         wait(self.c, self.p)
         self.c._start_llm('die erste erinnere mich')
         self.assertIn('hier am Gerät erinnern', self.spoken())
+        # Approval begins only when the confirmation announcement has finished.
+        self.c.speech.poll.return_value = 0
+        self.p.tick()
+        self.c.speech.poll.return_value = None
         snapshot = self.c.status_snapshot()
         self.assertEqual(snapshot['trip'], 'ask')
         return snapshot['trip_id']
@@ -187,6 +191,28 @@ class ControllerPathTests(unittest.TestCase):
         self.assertIsNone(self.c.turn_trip)
         self.assertEqual(self.j.state(), 'offers')
         self.assertEqual(self.j.reminders, [])
+
+    def test_e_pressed_during_proposal_playback_is_not_confirmation(self):
+        self.c._start_llm('wie komme ich von zu hause nach nürnberg')
+        wait(self.c, self.p)
+        self.c._start_llm('die erste erinnere mich')
+        self.assertIsNotNone(self.j.proposal)
+        self.assertIsNone(self.j.proposal['expires'])
+        self.p.press('E')
+        self.assertIsNotNone(self.j.proposal)
+        self.assertEqual(self.j.reminders, [])
+        self.assertFalse(self.c.speech.play.called)
+
+    def test_interrupted_proposal_cannot_be_confirmed_by_voice(self):
+        self.c._start_llm('wie komme ich von zu hause nach nürnberg')
+        wait(self.c, self.p)
+        self.c._start_llm('die erste erinnere mich')
+        self.assertIsNone(self.j.proposal['expires'])
+        self.c.recorder.finish.return_value = Path('/tmp/capture.wav')
+        self.c.recorder.take_live_transcript.return_value = ('ja', 'vosk')
+        self.c.submit('release')
+        self.assertIsNone(self.c.turn_trip)
+        self.assertIsNone(self.j.proposal)
 
     def test_button_e_confirms_and_b_cancels(self):
         self.propose()
