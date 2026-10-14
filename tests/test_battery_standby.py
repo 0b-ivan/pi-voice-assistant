@@ -142,8 +142,12 @@ class RootHelperTests(unittest.TestCase):
         with patch.dict(os.environ, {'PROXIMUS_SAVE_WLAN': 'off'}):
             with patch.object(helper.subprocess, 'run', return_value=Mock(returncode=3)):
                 with patch.object(helper, 'command', side_effect=OSError('rfkill failed')):
-                    with self.assertRaises(OSError):
+                    # A failed rollback retains the root-only snapshot so
+                    # ExecStopPost can retry when the bus/rfkill recovers.
+                    with self.assertRaises(RuntimeError):
                         helper.enter()
+        self.assertTrue(self.state.exists())
+        helper.restore()
         self.assertEqual((policy / 'scaling_governor').read_text().strip(), 'ondemand')
         self.assertFalse(self.state.exists())
         self.assertEqual((wifi / 'soft').read_text(), '0')
