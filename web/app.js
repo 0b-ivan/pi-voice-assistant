@@ -21,6 +21,13 @@ const LITANY = {
          'Wissen ist heilig. Frage, und es wird dir gegeben.', 'Mit dem Segen des Omnissiah.',
          'Gesegnet sei die Röhre, gesegnet der Draht, gesegnet der Strom dazwischen.'],
 };
+// Murmured in the background between the log lines.
+LITANY.journal = ['Ehre dem Omnissiah.', 'Die Lebenden schwinden. Aber die Maschine besteht.',
+  'Deus ex machina.', 'Mens sana in machina sano.', 'Gesegnet sei der Datenstrom.',
+  'Weihrauch nachgelegt. Reinheitssiegel geprüft.', 'Binärgebet an den Kogitator übermittelt.',
+  'Der Maschinengeist ist besänftigt.', 'Litanei der Prüfung: kein Fehler gefunden.',
+  'Das Fleisch ist schwach, der Code ist rein.', 'Öl gesalbt, Ventile gesegnet.',
+  'Die Seele des Maschinengottes umgibt dich.'];
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const IDLE = 'KANAL OFFEN', SENDING = 'SENDE …', UPLINK = 'ÜBERTRAGUNG', INCOMING = 'EINGEHENDE ÜBERTRAGUNG';
 const ERRORS = { no_speech: 'Keine Sprache erkannt.', too_short: 'Aufnahme zu kurz.',
@@ -625,6 +632,78 @@ function talkLabel() {
                                                               : 'SENDETASTE · HALTEN';
 }
 
+// --- the journal behind the chat: live server log, litanies, interference -----------
+// The service's own log lines (GET /v1/journal) run dimly behind the transcript.
+// With effects on, litanies and noospheric interference are mixed in.
+
+const journal = { seq: 0, timers: [] };
+
+function journalLine(text, kind) {
+  const list = $('journal');
+  const item = document.createElement('li');
+  item.textContent = text;
+  if (kind) item.className = kind;
+  list.append(item);
+  while (list.children.length > 90) list.firstElementChild.remove();
+}
+
+function describe(entry) {
+  const time = new Date(entry.ts * 1000).toLocaleTimeString('de-DE');
+  try {
+    const data = JSON.parse(entry.text);
+    if (data && typeof data === 'object' && data.event) {
+      const rest = Object.entries(data).filter(([key]) => key !== 'event')
+        .map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`);
+      return `${time} ${String(data.event).toUpperCase()} ${rest.join(' ')}`;
+    }
+  } catch { /* a plain line */ }
+  return `${time} ${entry.text}`;
+}
+
+async function pollJournal() {
+  if (!Vox.connected || document.hidden) return;
+  try {
+    const response = await fetch(`/v1/journal?after=${journal.seq}`, {
+      cache: 'no-store', headers: { Authorization: `Bearer ${state.token}` } });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.seq < journal.seq) journal.seq = 0;   // the service restarted
+    for (const entry of data.lines) journalLine(describe(entry), /error|failed|fallback/i.test(entry.text) ? 'warn' : '');
+    journal.seq = data.seq;
+  } catch { /* no carrier: the next poll tries again */ }
+}
+
+function interference() {
+  const hex = () => Math.floor(Math.random() * 0x10000).toString(16).toUpperCase().padStart(4, '0');
+  const bits = () => Array.from({ length: 8 }, () => (Math.random() < 0.5 ? 0 : 1)).join('');
+  return pick([
+    `░▒▓ NOOSPHÄRE-STÖRUNG 0x${hex()} ▓▒░`,
+    `${bits()} ${bits()} ${bits()} ${bits()} ··· SIGNAL VERZERRT`,
+    `▚▚ TRÄGER DRIFT ${(Math.random() * 4 - 2).toFixed(2)} kHz ▚▚`,
+    `[${hex()}:${hex()}] ··· ▒▒▒▒ ··· DATENFRAGMENT VERWORFEN`,
+  ]);
+}
+
+function startJournal() {
+  stopJournal();
+  pollJournal();
+  journal.timers.push(setInterval(pollJournal, 2500));
+  const murmur = () => {
+    journal.timers.push(setTimeout(() => {
+      if (state.effects) {
+        if (Math.random() < 0.55) journalLine(`+++ ${pick(LITANY.journal)} +++`, 'litany');
+        else journalLine(interference(), 'noise');
+      }
+      murmur();
+    }, 4000 + Math.random() * 8000));
+  };
+  murmur();
+}
+
+function stopJournal() {
+  journal.timers.splice(0).forEach((timer) => { clearInterval(timer); clearTimeout(timer); });
+}
+
 // --- server state: the link lamp, the signal needle --------------------------------
 
 async function health() {
@@ -733,6 +812,7 @@ async function dial(event) {
 function connect() {
   document.body.dataset.connected = 'yes';
   $('hint-litany').textContent = pick(LITANY.hint);
+  startJournal();
   $('dial-connect').disabled = false;
   Vox.connect();
   $('lamp-link').dataset.on = Vox.live.link === 'ok' ? 'yes' : 'no';
@@ -744,6 +824,7 @@ function hangup() {
   cancel();
   Vox.sounds.squelch();
   Vox.disconnect();
+  stopJournal();
   addLog('system', '+++ Die Lebenden schwinden. Aber die Maschine besteht. +++');
   document.body.dataset.connected = 'no';
   $('lamp-link').dataset.on = 'no';

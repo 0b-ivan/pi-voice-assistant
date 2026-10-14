@@ -202,17 +202,35 @@ body[data-effects="off"] .scanlines::before { display: none; }
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px);
   mask-image: linear-gradient(to bottom, transparent, #000 18px);
 }
-.log::before { content: ""; margin-top: auto; }   /* few lines: they sit at the bottom */
+.log { z-index: 1; }
+.log::before { content: ""; margin-top: auto; }
+/* The live journal: dim, small, behind the transcript, fading out at the top. */
+.journal {
+  position: absolute; z-index: 0; inset: calc(var(--scope) + 28px) 0 0; margin: 0; padding: 6px 14px 14px;
+  list-style: none; overflow: hidden; pointer-events: none;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  font-size: .7rem; line-height: 1.35; color: var(--phosphor); opacity: .22;
+  white-space: nowrap; text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22%);
+  mask-image: linear-gradient(to bottom, transparent, #000 22%);
+}
+.journal li { overflow: hidden; text-overflow: ellipsis; }
+.journal li.warn { color: var(--amber); }
+.journal li.litany { font-family: var(--serif); font-style: italic; font-size: .8rem; color: #d9ffc9; letter-spacing: .04em; }
+.journal li.noise { color: #b9c9a6; letter-spacing: .12em; }
+body[data-effects="on"] .crt.glitch .journal { animation: tear .25s steps(3) 1; }   /* few lines: they sit at the bottom */
 .log li {
   max-width: 100%; padding: 5px 10px; border-left: 2px solid var(--phosphor-dim);
-  background: linear-gradient(90deg, #050805cc, #05080566 70%, transparent);
+  background: linear-gradient(90deg, #040704f2, #040704dd 75%, #040704aa);
+  box-shadow: 0 0 0 1px #8dff6a14, 0 4px 14px #000c;
+  backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px);
   overflow-wrap: anywhere; line-height: 1.5; font-size: 1.04rem; letter-spacing: .02em;
 }
 .log li::before { display: block; font-size: .66rem; letter-spacing: .2em; opacity: .7; }
 .log li.you { color: #b9c9a6; border-left-color: var(--amber); text-shadow: none; }
 .log li.you::before { content: "BEDIENER »"; color: var(--amber); }
 .log li.servitor::before { content: "PROXIMUS »"; }
-.log li.system { align-self: center; color: var(--muted); border: 0; background: none; text-align: center; font-size: .72rem; letter-spacing: .12em; text-shadow: none; }
+.log li.system { align-self: center; color: var(--muted); border: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; text-align: center; font-size: .72rem; letter-spacing: .12em; text-shadow: none; }
 .log li.error { color: var(--red); border-left-color: var(--red); text-shadow: 0 0 6px #ff3b2f77; }
 .log li.error::before { content: "+++ SIGNAL GESTÖRT +++"; }
 .log li small { display: block; margin-top: 3px; color: var(--muted); font-size: .66rem; text-shadow: none; }
@@ -361,7 +379,7 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   .stage { display: block; }
   .cogitator { display: block; }
   .bar .spacer, .readout { display: none; }
-  .log { inset: calc(var(--scope) + 14px) 0 0; }
+  .log, .journal { inset: calc(var(--scope) + 14px) 0 0; }
 }
 @media (min-width: 900px) {
   :root { --gutter: clamp(20px, 3vw, 48px); --scope: 84px; }
@@ -373,9 +391,10 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   /* The whole skull, large and centered; the transcript runs over it. */
   .backdrop { width: auto; height: 108%; top: 50%; }
   .log { padding: 10px clamp(20px, 4vw, 64px) 20px; gap: 10px; }
+  .journal { padding: 10px 24px 20px; font-size: .76rem; }
   .log li { max-width: min(78%, 1000px); font-size: 1.12rem; }
   .log li.you { align-self: flex-end; border-left: 0; border-right: 2px solid var(--amber); text-align: right;
-                background: linear-gradient(270deg, #050805cc, #05080566 70%, transparent); }
+                background: linear-gradient(270deg, #040704f2, #040704dd 75%, #040704aa); }
   .controls {
     grid-template-columns: minmax(260px, 340px) 1fr auto;
     grid-template-areas: "talk ask cancel";

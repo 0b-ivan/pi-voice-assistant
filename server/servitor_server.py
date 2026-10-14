@@ -25,6 +25,8 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
   session already holds.
 * ``POST /v1/message`` with one SPX/1 envelope, answered with ``ack``.
 * ``GET /health`` without token: ``{"ok": true, "ready": bool}`` only.
+* ``GET /v1/journal?after=N``: the service's own recent log lines after
+  sequence number N (the browser client shows them behind its chat).
 * ``GET /`` (also ``/web/``) without token: the browser client (``web/``,
   docs/web-client.md); https://proximus.obivan.org/ lands on it.
   Only its fixed files are served; every request it makes needs the token.
@@ -374,6 +376,58 @@ def wav_duration_ms(path):
         return round(audio.getnframes() * 1000 / audio.getframerate())
 
 
+class Journal:
+    """The service's own recent log lines (stdout and stderr), for the browser
+    client's background. IPv4 addresses keep only their last part, and its
+    own polling is left out. Nothing here is written to disk."""
+
+    SKIP = ('/v1/journal', 'GET /health')
+    IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}(\d{1,3})\b')
+
+    def __init__(self, size=300, clock=time.time):
+        self.items = collections.deque(maxlen=size)
+        self.seq = 0
+        self.clock = clock
+        self.lock = threading.Lock()
+
+    def add(self, line):
+        line = line.strip()
+        if not line or any(part in line for part in self.SKIP):
+            return
+        line = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', line)[:300]
+        with self.lock:
+            self.seq += 1
+            self.items.append(dict(seq=self.seq, ts=round(self.clock(), 1), text=line))
+
+    def since(self, after, limit=100):
+        with self.lock:
+            lines = [item for item in self.items if item['seq'] > after][-limit:]
+            return dict(seq=self.seq, lines=lines)
+
+
+class Tee:
+    """A text stream that also hands every complete line to a Journal."""
+
+    def __init__(self, stream, journal):
+        self.stream, self.journal = stream, journal
+        self.pending = ''
+        self.lock = threading.Lock()
+
+    def write(self, text):
+        self.stream.write(text)
+        with self.lock:
+            *lines, self.pending = (self.pending + text).split('\n')
+        for line in lines:
+            self.journal.add(line)
+        return len(text)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
 class RateLimiter:
     def __init__(self, per_minute, clock=time.monotonic):
         self.per_minute, self.clock = per_minute, clock
@@ -405,6 +459,7 @@ class Service:
         self.logwatch = None  # logwatch.server_watch(), started by main()
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
+        self.journal = Journal()
         self.ready = False
         import nightwatch_server
         self.nightwatch = nightwatch_server.Manager(self)
@@ -999,6 +1054,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._web(path)
         if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
+        elif path == '/v1/journal':
+            if not self.service.authorized(self.headers.get('Authorization')):
+                return self._json(401, dict(error='unauthorized'))
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                after = max(0, int(query.get('after', ['0'])[0]))
+            except ValueError:
+                after = 0
+            self._json(200, self.service.journal.since(after),
+                       {'Cache-Control': 'no-store'})
         elif path == '/v1/status':
             # Maintenance data only with the token (the URL is public).
             if not self.service.authorized(self.headers.get('Authorization')):
@@ -1423,6 +1488,9 @@ def main():
     service = Service(config, pipeline)
     server = Server((config.bind, config.port), Handler)
     server.service = service
+    # Everything the service prints also goes to the journal the browser reads.
+    sys.stdout = Tee(sys.stdout, service.journal)
+    sys.stderr = Tee(sys.stderr, service.journal)
 
     def load():
         started = time.monotonic()

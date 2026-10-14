@@ -619,6 +619,23 @@ class ServerTest(unittest.TestCase):
                 response, _ = self.request('/v1/ask', json.dumps(payload).encode())
                 self.assertEqual(response.status, status)
 
+    def test_journal_masks_addresses_skips_its_own_polling_and_needs_the_token(self):
+        journal = self.service.journal
+        tee = ss.Tee(open(os.devnull, 'w'), journal)
+        tee.write('{"event": "ready", "load_seconds": 3.2}\n192.168.1.77 "POST /v1/ask HTTP/1.1" 200 -\n')
+        tee.write('172.22.9.1 "GET /v1/journal?after=0 HTTP/1.1" 200 -\nhalf')
+        tee.write(' a line\n')
+        response, _ = self.request('/v1/journal', method='GET', token=None)
+        self.assertEqual(response.status, 401)
+        response, data = self.request('/v1/journal?after=0', method='GET')
+        texts = [line['text'] for line in json.loads(data)['lines']]
+        self.assertEqual(texts[:3], ['{"event": "ready", "load_seconds": 3.2}',
+                                     '*.*.*.77 "POST /v1/ask HTTP/1.1" 200 -', 'half a line'])
+        self.assertFalse(any('/v1/journal' in text for text in texts))
+        last = json.loads(data)['seq']
+        _, data = self.request(f'/v1/journal?after={last}', method='GET')
+        self.assertEqual(json.loads(data)['lines'], [])
+
     def test_web_client_is_served_without_token_and_only_its_files(self):
         response, _ = self.request('/web', method='GET', token=None)
         self.assertEqual((response.status, response.getheader('Location')), (302, '/web/'))
@@ -653,7 +670,7 @@ class ServerTest(unittest.TestCase):
         script = (ss.WEB / 'app.js').read_text()
         # Turns plus the read-only token check of the call; never maintenance.
         for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):
-            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story', '/v1/status'))
+            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story', '/v1/status', '/v1/journal'))
         self.assertIn("addModule('/web/capture-worklet.js')", script)
 
     def test_speak_requires_string_text(self):

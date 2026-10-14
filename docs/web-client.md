@@ -94,6 +94,19 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
   Nummernschild, Störungsschalter, Lautstärke, Vox-Code und Verbinden.
 - Fernschreiberschrift: Share Tech Mono (SIL OFL, `web/fonts/`).
 
+### Live-Journal hinter dem Chat
+
+Hinter dem Protokoll laufen gedämpft die Logzeilen des Servers mit
+(`GET /v1/journal?after=N`, nur mit Token, alle 2,5 s; der Server sammelt
+seine letzten 300 Ausgabezeilen im Arbeitsspeicher, IPv4-Adressen nur mit
+dem letzten Teil, seine eigenen Journal- und Health-Abfragen nicht).
+JSON-Ereignisse erscheinen lesbar (`19:41:36 READY load_seconds=9.84`),
+Fehler und Rückfälle bernsteinfarben. Mit Vox-Effekten mischen sich alle
+4–12 s Litaneien („Ehre dem Omnissiah.“) und Noosphären-Störungen
+(„░▒▓ NOOSPHÄRE-STÖRUNG 0x3F7A ▓▒░“) darunter, und Bildstörungen reißen auch
+das Journal mit. Die Chat-Zeilen haben einen fast deckenden, leicht
+weichgezeichneten Hintergrund und bleiben davor gut lesbar.
+
 ### Schrift, Symbole, Litaneien
 
 - **Schrift:** Beschriftungen auf Gehäuse, Knöpfen und im Protokoll in
