@@ -2911,7 +2911,10 @@ class VoiceController:
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
             if self.journeys is not None:
-                self.journeys.spoken()       # 90 s to answer a proposal from now
+                if code == 0:
+                    self.journeys.spoken()   # 90 s only after successful playback
+                else:
+                    self.journeys.cancel()   # no confirmation for an unheard offer
             if self.enroll_after_speech:
                 self.enroll_after_speech = None
                 self._offer_enroll()
