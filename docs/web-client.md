@@ -1,5 +1,7 @@
 # Web-Client
 
+Übergabe für die Weiterarbeit: [GPT_UEBERGABE](concepts/proximus-web-client/GPT_UEBERGABE.md).
+
 Proximus im Browser, aus derselben Codebasis wie der Pi. Der Server auf CT 107
 liefert die Seite selbst aus (`web/`) und beantwortet sie mit genau derselben
 Pipeline wie den Pi: Vosk → Regelwerk/Intents → OpenRouter bzw. lokales Qwen →
