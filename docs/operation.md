@@ -180,6 +180,12 @@ Ladeschutz, Watchdog und automatisches Einschalten bei Netzanschluss sowie den
 Ausgangsstrom (Register `0x26/0x27`, in Milliampere) aus. Der Ausgangsstrom
 ist **nicht** gleich dem Batteriestrom und erlaubt ohne kalibrierte Akkukapazität
 und weitere Annahmen keine verlässliche Restlaufzeit.
+**Hardwarebefund 14.10.2026:** Bei laufendem Pi Zero 2 W lieferten die
+Register `0x26/0x27` mehrfach `0 mA`, sowohl mit Netzteil als auch auf
+Akku. Dieser Wert ist für ein eingeschaltetes Gerät **nicht als gemessener
+Nullverbrauch plausibel**; daher wird ein Rohwert von Null im Proximus
+als `Ausgangsstrom nicht verfügbar` behandelt und nicht als Verbrauch
+ausgesprochen. Die Ursache ist noch offen (Firmware-/Messpfad).
 Diese **reinen Lesezugriffe** funktionieren ohne den Herstellerdienst; ein
 Fehler in einem der Zusatzregister verhindert die Akkumessung nicht.
 Die Akkustandsanzeige und das Herunterfahren bei Energieknappheit sind **lokal**,
