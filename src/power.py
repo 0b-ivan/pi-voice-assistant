@@ -50,11 +50,15 @@ class Battery:
                 board = bus.read_byte_data(PISUGAR3_ADDRESS, 0x04) - 40
                 # Vendor PiSugar-3 driver: 0x26/0x27 report output current
                 # in milliamps (intensity = raw / 1000 amperes).
-                # Optional: unsupported firmware must not suppress battery data.
+                # Some PiSugar 3 units report 0 mA even while the Pi runs
+                # on battery (observed on real hardware). Treat such a raw
+                # zero as an unavailable measurement, never as zero usage.
+                # Other unavailable/unsupported firmware must not suppress
+                # the core battery status.
                 try:
                     output_ma = (bus.read_byte_data(PISUGAR3_ADDRESS, 0x26) << 8) | bus.read_byte_data(
                         PISUGAR3_ADDRESS, 0x27)
-                    if 0 <= output_ma <= 5000:
+                    if 0 < output_ma <= 5000:
                         optional['output_current_ma'] = output_ma
                 except (OSError, ValueError):
                     pass
