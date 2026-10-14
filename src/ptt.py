@@ -1383,6 +1383,10 @@ class VoiceController:
         """A recognized command: ask (reboot/shutdown) or switch WLAN now."""
         wlan = 'on' if self.wlan_on else 'off'
         text = device_control.reply(op, wlan, self.style)
+        if op in ('cpu_eco', 'cpu_balanced', 'cpu_power'):
+            if not self._set_cpu_mode(op.removeprefix('cpu_')):
+                return device_control.failed_text(self.style)
+            return text
         if op in ('power_notices_on', 'power_notices_off'):
             self._set_power_notices(op == 'power_notices_on')
             return text
@@ -1431,6 +1435,8 @@ class VoiceController:
         self.turn_device_pending = None
         if op == 'sleep':
             self._device_arm(op)            # after the server's reply
+        elif op in ('cpu_eco', 'cpu_balanced', 'cpu_power'):
+            self._set_cpu_mode(op.removeprefix('cpu_'))
         elif op in ('power_notices_on', 'power_notices_off'):
             self._set_power_notices(op == 'power_notices_on')
         elif op in device_control.CONFIRM_OPS:
