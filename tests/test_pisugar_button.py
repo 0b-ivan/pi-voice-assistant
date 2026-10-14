@@ -92,6 +92,78 @@ class TapReaderTests(unittest.TestCase):
         self.assertFalse(bus.unlocked)
 
 
+class TapMonitorRecoveryTests(unittest.TestCase):
+    def test_stale_startup_tap_is_consumed_without_action(self):
+        reader = Mock()
+        reader.poll.side_effect = [1, 0, 1]
+        monitor = pisugar_button.TapMonitor(reader=reader)
+        self.assertEqual(monitor.poll(0), dict(
+            state='ready', ignored_startup_gesture=1, recovered_after=0))
+        self.assertIsNone(monitor.poll(0.1))
+        self.assertEqual(monitor.poll(0.25)['gesture'], 0)
+        self.assertEqual(monitor.poll(0.50)['gesture'], 1)
+
+    def test_one_i2c_error_recovers_automatically_without_replay(self):
+        reader = Mock()
+        reader.poll.side_effect = [0, OSError(121, 'Remote I/O error'), 1, 0]
+        monitor = pisugar_button.TapMonitor(reader=reader)
+        self.assertEqual(monitor.poll(0)['state'], 'ready')
+        error = monitor.poll(0.25)
+        self.assertEqual(error['state'], 'error')
+        self.assertEqual(error['failures'], 1)
+        self.assertEqual(error['retry_seconds'], 1)
+        self.assertFalse(error['should_wake'])
+        self.assertIsNone(monitor.poll(1.0))
+        recovered = monitor.poll(1.25)
+        self.assertEqual(recovered, dict(
+            state='ok', gesture=1, recovered_after=1))
+        self.assertEqual(monitor.poll(1.50)['gesture'], 0)
+        self.assertEqual(monitor.failures, 0)
+
+    def test_repeated_errors_trigger_safe_wake_and_continue_retry(self):
+        reader = Mock()
+        reader.poll.side_effect = [0, OSError(121, 'Remote I/O error'),
+                                   OSError(121, 'Remote I/O error'),
+                                   OSError(121, 'Remote I/O error'), 1]
+        monitor = pisugar_button.TapMonitor(reader=reader)
+        self.assertEqual(monitor.poll(0)['state'], 'ready')
+        first = monitor.poll(0.25)
+        second = monitor.poll(1.25)
+        third = monitor.poll(3.25)
+        self.assertEqual([r['retry_seconds'] for r in (first, second, third)],
+                         [1, 2, 4])
+        self.assertFalse(first['should_wake'])
+        self.assertFalse(second['should_wake'])
+        self.assertTrue(third['should_wake'])
+        self.assertIsNone(monitor.poll(4))
+        self.assertEqual(monitor.poll(7.25), dict(
+            state='ok', gesture=1, recovered_after=3))
+
+    def test_initial_read_failure_does_not_replay_startup_tap(self):
+        reader = Mock()
+        reader.poll.side_effect = [OSError(121, 'Remote I/O error'), 1, 0, 1]
+        monitor = pisugar_button.TapMonitor(reader=reader)
+        self.assertEqual(monitor.poll(0)['state'], 'error')
+        resumed = monitor.poll(1)
+        self.assertEqual(resumed['state'], 'ready')
+        self.assertEqual(resumed['ignored_startup_gesture'], 1)
+        self.assertEqual(resumed['recovered_after'], 1)
+        self.assertEqual(monitor.poll(1.25)['gesture'], 0)
+        self.assertEqual(monitor.poll(1.50)['gesture'], 1)
+
+    def test_max_backoff_is_bounded(self):
+        reader = Mock()
+        reader.poll.side_effect = [OSError(121, 'Remote I/O error')] * 12
+        monitor = pisugar_button.TapMonitor(reader=reader)
+        now = 0
+        for _ in range(12):
+            result = monitor.poll(now)
+            self.assertLessEqual(result['retry_seconds'], 30)
+            now += result['retry_seconds']
+        self.assertTrue(result['should_wake'])
+        self.assertEqual(result['retry_seconds'], 30)
+
+
 class ManualStandbyTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
