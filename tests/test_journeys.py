@@ -214,6 +214,8 @@ class ControllerTests(unittest.TestCase):
         rig = Rig([rail_journey(utc(12, 32), utc(12, 50), delay=4)])
         text = self.offers(rig)
         self.assertIn('1 Umstieg', text)
+        self.assertNotIn('Gleis 8', text)  # details only after choosing
+        text = rig.say('die erste')
         self.assertIn('ICE 623 Richtung München Hbf ab Würzburg Hbf 14 Uhr 54, '
                       '4 Minuten später als geplant, Gleis 4.', text)
         self.assertIn('Gleis 8', text)
