@@ -27,6 +27,12 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 * ``GET /health`` without token: ``{"ok": true, "ready": bool}`` only.
 * ``GET /v1/journal?after=N``: the service's own recent log lines after
   sequence number N (the browser client shows them behind its chat).
+* ``POST /v1/login`` with JSON ``{"password": "...", "remember": bool}``: the
+  browser client's password (SERVITOR_WEB_PASSWORD_HASH) for a session cookie;
+  ``GET /v1/session`` tells whether it is still valid, ``POST /v1/logout``
+  ends it. The cookie opens turns, typed questions, stories and the journal,
+  only together with the header ``X-Servitor-Client: web``; maintenance,
+  status, nightwatch and voice data stay token-only.
 * ``GET /`` (also ``/web/``) without token: the browser client (``web/``,
   docs/web-client.md); https://proximus.obivan.org/ lands on it.
   Only its fixed files are served; every request it makes needs the token.
@@ -42,11 +48,13 @@ timetable and speaks the answer itself.
 import base64
 import collections
 import datetime
+import hashlib
 import hmac
 import http.server
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 import socketserver
 import subprocess
@@ -194,6 +202,8 @@ class Config:
         self.busy_wait = float(env.get('SERVITOR_BUSY_WAIT_SECONDS', '8'))
         self.loading_wait = float(env.get('SERVITOR_LOADING_WAIT_SECONDS', '15'))
         # CF-Connecting-IP is only believed from these peers (local cloudflared).
+        # Browser login (docs/web-client.md): scrypt hash from --hash-password.
+        self.web_password = env.get('SERVITOR_WEB_PASSWORD_HASH', '').strip()
         self.trusted_proxies = {
             value.strip() for value in
             env.get('SERVITOR_TRUSTED_PROXIES', '127.0.0.1,::1').split(',') if value.strip()}
@@ -376,6 +386,74 @@ def wav_duration_ms(path):
         return round(audio.getnframes() * 1000 / audio.getframerate())
 
 
+def hash_password(password, salt=None, n=2 ** 14, r=8, p=1):
+    """scrypt$n$r$p$salt$hash (hex) of a password, for SERVITOR_WEB_PASSWORD_HASH."""
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode('utf-8'), salt=salt, n=n, r=r, p=p, dklen=32)
+    return f'scrypt${n}${r}${p}${salt.hex()}${digest.hex()}'
+
+
+def check_password(password, stored):
+    try:
+        kind, n, r, p, salt, digest = stored.split('$')
+        if kind != 'scrypt':
+            return False
+        mine = hash_password(password, bytes.fromhex(salt), int(n), int(r), int(p))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(mine.encode(), stored.encode())
+
+
+class WebSessions:
+    """Browser sessions after a password login, in RAM only (a restart logs
+    out). Five wrong passwords from one address lock it for 15 minutes."""
+
+    SHORT, LONG = 12 * 3600, 30 * 24 * 3600
+    TRIES, LOCK = 5, 15 * 60
+
+    def __init__(self, clock=time.time):
+        self.clock = clock
+        self.items = {}
+        self.failures = collections.defaultdict(list)
+        self.lock = threading.Lock()
+
+    def locked(self, client):
+        with self.lock:
+            now = self.clock()
+            recent = [t for t in self.failures[client] if now - t < self.LOCK]
+            self.failures[client] = recent
+            return len(recent) >= self.TRIES
+
+    def failed(self, client):
+        with self.lock:
+            self.failures[client].append(self.clock())
+
+    def open(self, client, remember):
+        ident = secrets.token_urlsafe(32)
+        lifetime = self.LONG if remember else self.SHORT
+        with self.lock:
+            self.failures.pop(client, None)
+            now = self.clock()
+            for key in [k for k, until in self.items.items() if until < now]:
+                del self.items[key]
+            self.items[ident] = now + lifetime
+        return ident, lifetime
+
+    def valid(self, ident):
+        if not ident:
+            return False
+        with self.lock:
+            until = self.items.get(ident)
+            if until is None or until < self.clock():
+                self.items.pop(ident, None)
+                return False
+            return True
+
+    def close(self, ident):
+        with self.lock:
+            self.items.pop(ident, None)
+
+
 class Journal:
     """The service's own recent log lines (stdout and stderr), for the browser
     client's background. IPv4 addresses keep only their last part, and its
@@ -460,6 +538,7 @@ class Service:
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
         self.journal = Journal()
+        self.web_sessions = WebSessions()
         self.ready = False
         import nightwatch_server
         self.nightwatch = nightwatch_server.Manager(self)
@@ -1021,6 +1100,63 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write('%s %s\n' % (self.address_string(), fmt % args))
 
+    COOKIE = 'servitor_session'
+
+    def _cookie(self):
+        for part in self.headers.get('Cookie', '').split(';'):
+            name, _, value = part.strip().partition('=')
+            if name == self.COOKIE:
+                return value[:64]
+        return ''
+
+    def _web_authorized(self):
+        """Token, or a browser session. The session counts only with the
+        X-Servitor-Client header, which no foreign page can add (no CORS)."""
+        if self.service.authorized(self.headers.get('Authorization')):
+            return True
+        return (self.headers.get('X-Servitor-Client') == 'web'
+                and self.service.web_sessions.valid(self._cookie()))
+
+    def _secure(self):
+        # Behind cloudflared the browser speaks HTTPS; on the LAN it is HTTP.
+        return (self.client_address[0] in self.service.config.trusted_proxies
+                or self.headers.get('X-Forwarded-Proto') == 'https')
+
+    def _set_cookie(self, value, lifetime):
+        cookie = f'{self.COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={lifetime}'
+        return cookie + ('; Secure' if self._secure() else '')
+
+    def _login(self):
+        self.close_connection = True
+        sessions = self.service.web_sessions
+        client = self._client()
+        if not self.service.config.web_password:
+            return self._json(503, dict(error='password login not configured'))
+        if sessions.locked(client):
+            return self._json(429, dict(error='locked'), {'Retry-After': str(sessions.LOCK)})
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+            if not 0 < length <= 1024:
+                raise ValueError('length')
+            data = json.loads(self.rfile.read(length))
+            password = data['password']
+            if not isinstance(password, str):
+                raise ValueError('password')
+        except (ValueError, KeyError, TypeError):
+            return self._json(400, dict(error='expected JSON {"password": "..."}'))
+        if not check_password(password, self.service.config.web_password):
+            sessions.failed(client)
+            print(json.dumps(dict(event='web_login_failed')), flush=True)
+            return self._json(401, dict(error='wrong password'))
+        ident, lifetime = sessions.open(client, bool(data.get('remember')))
+        print(json.dumps(dict(event='web_login', remember=bool(data.get('remember')))), flush=True)
+        return self._json(200, dict(ok=True), {'Set-Cookie': self._set_cookie(ident, lifetime)})
+
+    def _logout(self):
+        self.close_connection = True
+        self.service.web_sessions.close(self._cookie())
+        return self._json(200, dict(ok=True), {'Set-Cookie': self._set_cookie('', 0)})
+
     def _client(self):
         # Behind a trusted local cloudflared the header names the real client;
         # any other peer could forge it, so LAN requests use the socket peer.
@@ -1054,8 +1190,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._web(path)
         if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
+        elif path == '/v1/session':
+            self._json(200, dict(ok=self._web_authorized(),
+                                 password=bool(self.service.config.web_password)),
+                       {'Cache-Control': 'no-store'})
         elif path == '/v1/journal':
-            if not self.service.authorized(self.headers.get('Authorization')):
+            if not self._web_authorized():
                 return self._json(401, dict(error='unauthorized'))
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             try:
@@ -1328,6 +1468,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == '/v1/login':
+            return self._login()
+        if url.path == '/v1/logout':
+            return self._logout()
         if url.path == '/v1/hello':
             return self._hello()
         if url.path == '/v1/message':
@@ -1345,7 +1489,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(404, dict(error='not found'))
         self.close_connection = True  # never reuse a connection with an unread body
         self.connection.settimeout(self.service.config.idle_timeout)
-        if not self.service.authorized(self.headers.get('Authorization')):
+        if not self._web_authorized():
             return self._json(401, dict(error='unauthorized'))
         self.service.nightwatch.foreground()
         if not self.service.limiter.allow(self._client()):
@@ -1481,6 +1625,13 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def main():
+    if sys.argv[1:] == ['--hash-password']:
+        import getpass
+        password = getpass.getpass('Passwort für den Web-Client: ')
+        if len(password) < 8 or password != getpass.getpass('Wiederholen: '):
+            sys.exit('Passwörter stimmen nicht überein oder sind kürzer als 8 Zeichen.')
+        print(f'SERVITOR_WEB_PASSWORD_HASH={hash_password(password)}')
+        return
     config = Config()
     os.environ.setdefault('TTS_SERVITOR_AURA', 'reference')
     os.environ.setdefault('TTS_VOICE_PROFILE', 'servitor')

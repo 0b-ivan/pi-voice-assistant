@@ -29,9 +29,29 @@ Sprache den Tunnel nehmen. Die Seite liegt unter `/` und zusätzlich unter
 `172.22.9.107:8765` (derselbe Weg wie der Fallback des Pi), am Tunnel ist
 nichts einzustellen.
 
-Beim ersten Aufruf fragt die Seite nach dem Server-Token (`SERVITOR_API_TOKEN`
-aus `/etc/servitor-voice.env`). Er bleibt nur im Arbeitsspeicher der Seite,
-außer „Token in diesem Browser merken“ ist angehakt (dann `localStorage`).
+### Anmelden mit Kennwort
+
+Im Anruf-Terminal steht ein Kennwortfeld. Nach dem Login setzt der Server ein
+Sitzungs-Cookie; mit „Angemeldet bleiben“ hält es 30 Tage, sonst 12 Stunden.
+⚙ → „Abmelden“ beendet die Sitzung. Der Pi bleibt beim Token.
+
+Einrichten auf CT 107 (das Kennwort selbst steht nirgends, nur sein
+scrypt-Hash):
+
+```sh
+cd /opt/servitor-voice/repo
+/opt/servitor-voice/.venv/bin/python server/servitor_server.py --hash-password
+# Ausgabe SERVITOR_WEB_PASSWORD_HASH=scrypt$16384$8$… an /etc/servitor-voice.env anhängen
+systemctl restart servitor-voice
+```
+
+Ohne `SERVITOR_WEB_PASSWORD_HASH` meldet das Terminal „Kennwort nicht
+eingerichtet“. In dasselbe Feld kann man auch weiterhin den Server-Token
+eingeben (oder ihn unter ⚙ hinterlegen); er wird erkannt, wenn das Kennwort
+nicht passt.
+
+Sitzungen liegen nur im Arbeitsspeicher: Ein Neustart des Dienstes meldet alle
+Browser ab.
 Auf dem Handy lässt sich die Seite zum Startbildschirm hinzufügen (Manifest).
 
 ## Darstellung: das Vox-Terminal
@@ -91,7 +111,7 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
   Pfeiltasten), ein Feld im Streifen wählt direkt. Dieselben Werte wie im
   Einstellungsdialog, der auf dem Handy bleibt.
 - **Anruf-Gerät auf dem Desktop** breit: großer Monitor links, rechts
-  Nummernschild, Störungsschalter, Lautstärke, Vox-Code und Verbinden.
+  Nummernschild, Lautstärke, Kennwort und Verbinden.
 - Fernschreiberschrift: Share Tech Mono (SIL OFL, `web/fonts/`).
 
 ### Live-Journal hinter dem Chat
@@ -160,17 +180,24 @@ das LLM und Geschichten funktionieren wie am Pi.
 
 ## Sicherheit
 
-- Ohne Token liefert der Server nur die festen Dateien aus `WEB_FILES`
+- Ohne Anmeldung liefert der Server nur die festen Dateien aus `WEB_FILES`
   (`server/servitor_server.py`); jeder andere Pfad unter `/web/` ergibt 404.
-  Jede Anfrage der Seite an `/v1/*` braucht den Token.
+- **Kennwort-Login:** `POST /v1/login` prüft gegen einen scrypt-Hash; fünf
+  Fehlversuche von einer Adresse sperren sie 15 Minuten. Das Cookie ist
+  `HttpOnly`, `SameSite=Strict` und über den Tunnel `Secure`. Es zählt nur
+  zusammen mit dem Header `X-Servitor-Client: web`, den eine fremde Seite
+  nicht setzen kann. Es öffnet nur Anfragen, getippte Fragen, Geschichten,
+  Sprachausgabe und das Journal; Status, Wartung, Nachtprüfung und
+  Stimmdaten brauchen weiter den Token. Logins erscheinen im Journal
+  (`web_login`, `web_login_failed`).
 - Die Seite läuft mit strenger Content-Security-Policy (nur eigene Skripte,
   kein Inline-Code, keine fremden Verbindungen) und setzt Texte nur als
   `textContent`.
 - Rate-Limit und „ein Turn zugleich“ gelten für Browser und Pi gemeinsam: Spricht
   gerade der Pi, wartet der Browser bis zu `SERVITOR_BUSY_WAIT_SECONDS` und
   bekommt sonst „Server beschäftigt“.
-- Der Browser nutzt denselben Token wie der Pi. Wer den Token im Browser
-  speichert, sollte das Gerät entsprechend schützen.
+- Wer statt des Kennworts den Token im Browser speichert, gibt diesem Gerät
+  dieselben Rechte wie dem Pi.
 
 ## Dateien
 

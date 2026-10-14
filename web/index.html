@@ -62,15 +62,14 @@
       <div class="dial-side">
         <div class="nameplate"><span class="plate-num">107</span><span class="plate-text">VOX · KANAL</span></div>
         <div class="hw-row">
-          <div class="hw-toggle" data-name="effects" data-on="EIN" data-off="AUS" data-label="STÖRUNGEN"></div>
           <div class="hw-volume" data-label="LAUTSTÄRKE"></div>
         </div>
       <form id="dial-form" class="dial-form" autocomplete="off">
-        <label id="dial-token-row" class="dial-token">Vox-Code
-          <input id="dial-token" type="password" autocomplete="current-password" spellcheck="false"
-                 placeholder="SERVITOR_API_TOKEN" minlength="32">
+        <input type="text" name="username" value="proximus" autocomplete="username" hidden>
+        <label id="dial-token-row" class="dial-token">Kennwort
+          <input id="dial-token" name="password" type="password" autocomplete="current-password" spellcheck="false">
         </label>
-        <label id="dial-remember-row" class="check"><input id="dial-remember" type="checkbox"> Vox-Code merken</label>
+        <label id="dial-remember-row" class="check"><input id="dial-remember" type="checkbox"> Angemeldet bleiben (30 Tage)</label>
         <button id="dial-connect" class="dial-connect" type="submit">
           <span class="lamp" aria-hidden="true"></span> VERBINDUNG HERSTELLEN
         </button>
@@ -157,11 +156,11 @@
   <dialog id="settings">
     <form method="dialog" id="settings-form">
       <h2>Einstellungen</h2>
-      <label>Vox-Code (Server-Token)
-        <input id="token" type="password" autocomplete="current-password" spellcheck="false"
-               placeholder="SERVITOR_API_TOKEN" minlength="32">
+      <label>Server-Token (statt Kennwort, optional)
+        <input id="token" type="password" autocomplete="off" spellcheck="false"
+               placeholder="SERVITOR_API_TOKEN">
       </label>
-      <label class="check"><input id="remember" type="checkbox"> Vox-Code in diesem Browser merken</label>
+      <label class="check"><input id="remember" type="checkbox"> Token in diesem Browser merken</label>
       <label>Persona
         <select id="persona"><option value="servitor">Servitor Proximus</option>
           <option value="mensch">Mensch (Billy)</option></select>
@@ -183,6 +182,7 @@
       <p class="note">Mikrofon nur über HTTPS oder localhost. Kein Gedächtnis,
         kein Kalender, keine Gerätesteuerung: der Web-Client ist ein Gast.</p>
       <div class="row">
+        <button id="logout" type="button" class="secondary">Abmelden</button>
         <button value="cancel" type="submit" class="secondary">Schließen</button>
         <button value="save" type="submit" id="save">Speichern</button>
       </div>

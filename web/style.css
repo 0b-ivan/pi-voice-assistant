@@ -510,7 +510,7 @@ button.secondary { background: none; color: var(--text); border-color: var(--edg
 .dial-body, .dial-left { display: flex; flex-direction: column; gap: 14px; }
 .dial-side { display: flex; flex-direction: column; gap: 12px; }
 .dial-side .hw-row { align-items: flex-end; }
-.dial-side .hw-volume { flex: 1; max-width: 260px; }
+.dial-side .hw-volume { flex: 1; }
 
 @media (min-width: 900px) {
   .bar .gauge-bar { display: none; }

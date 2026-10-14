@@ -47,7 +47,8 @@ const store = {
 };
 
 const state = {
-  token: store.get('servitor.token') || '',
+  token: store.get('servitor.token') || '',   // optional: the server token instead of a password
+  session: false,    // a password login's cookie is valid (GET /v1/session)
   toggle: store.get('servitor.toggle') === '1',
   effects: store.get('servitor.effects') !== 'off',
   volume: Math.min(10, Math.max(0, Number(store.get('servitor.volume') ?? 8) || 0)),
@@ -255,14 +256,14 @@ async function exchange(path, body, type) {
   try {
     const response = await fetch(`${path}?format=${FORMAT}`, {
       method: 'POST', body, signal: controller.signal, cache: 'no-store',
-      headers: { Authorization: `Bearer ${state.token}`, 'Content-Type': type,
+      headers: { ...authHeaders(), 'Content-Type': type,
                  'X-Servitor-Status': statusHeader() },
     });
     if (!response.ok) {
       const messages = { 401: 'Vox-Code abgelehnt.', 429: 'Zu viele Anfragen, kurz warten.',
                          503: 'Server beschäftigt oder lädt noch.', 413: 'Zu lang.' };
       addLog('error', messages[response.status] || `Serverfehler ${response.status}.`);
-      if (response.status === 401) openSettings();
+      if (response.status === 401) { state.session = false; hangup(); }
       return;
     }
     const reader = response.body.getReader();
@@ -360,7 +361,7 @@ async function audioContext(stream) {
 
 async function startRecording() {
   if (state.recording || state.request || !Vox.connected) return;
-  if (!state.token) { openSettings(); return; }
+  if (!state.token && !state.session) return;
   if (!navigator.mediaDevices || !window.AudioWorkletNode) {
     addLog('error', 'Mikrofon nur über HTTPS oder localhost verfügbar. Frage tippen geht immer.');
     return;
@@ -484,7 +485,7 @@ $('ask').addEventListener('submit', (event) => {
   event.preventDefault();
   const text = $('question').value.trim();
   if (!text || state.request || state.recording || !Vox.connected) return;
-  if (!state.token) { openSettings(); return; }
+  if (!state.token && !state.session) return;
   player.unlock();
   Vox.ensure();
   player.stop();
@@ -506,6 +507,15 @@ function openSettings() {
 }
 
 $('open-settings').addEventListener('click', openSettings);
+$('logout').addEventListener('click', async () => {
+  // Ends the session and forgets a stored token: the next call asks again.
+  await fetch('/v1/logout', { method: 'POST', headers: authHeaders() }).catch(() => {});
+  state.session = false;
+  state.token = '';
+  store.set('servitor.token', null);
+  $('settings').close();
+  hangup();
+});
 $('settings').addEventListener('close', () => {
   if ($('settings').returnValue !== 'save') return;
   state.token = $('token').value.trim();
@@ -664,7 +674,7 @@ async function pollJournal() {
   if (!Vox.connected || document.hidden) return;
   try {
     const response = await fetch(`/v1/journal?after=${journal.seq}`, {
-      cache: 'no-store', headers: { Authorization: `Bearer ${state.token}` } });
+      cache: 'no-store', headers: authHeaders() });
     if (!response.ok) return;
     const data = await response.json();
     if (data.seq < journal.seq) journal.seq = 0;   // the service restarted
@@ -736,7 +746,16 @@ function dialLine(text, kind) {
   while (log.children.length > 7) log.firstElementChild.remove();
 }
 
-async function authorize(token) {
+// Password login: a session cookie (POST /v1/login). The server token still
+// works in the same field; every request names the web client in a header,
+// without it the server ignores the cookie.
+function authHeaders() {
+  const headers = { 'X-Servitor-Client': 'web' };
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  return headers;
+}
+
+async function checkToken(token) {
   // GET /v1/status needs the token and does no work: a cheap check of the code.
   try {
     const response = await fetch('/v1/status', { cache: 'no-store',
@@ -747,13 +766,52 @@ async function authorize(token) {
   }
 }
 
+async function checkSession() {
+  try {
+    const response = await fetch('/v1/session', { cache: 'no-store', headers: authHeaders() });
+    return response.ok ? await response.json() : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function login(secret, remember) {
+  let status = 0;
+  try {
+    const response = await fetch('/v1/login', {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: secret, remember }) });
+    status = response.status;
+  } catch {
+    return 'down';
+  }
+  if (status === 200) { state.session = true; state.token = ''; return 'ok'; }
+  if (status === 429) return 'locked';
+  // A long secret may be the server token instead of a password.
+  if ((status === 401 || status === 503) && secret.length >= 32) {
+    const verdict = await checkToken(secret);
+    if (verdict === 'ok') {
+      state.token = secret;
+      store.set('servitor.token', remember ? secret : null);
+    }
+    return verdict;
+  }
+  return status === 503 ? 'unset' : status === 401 ? 'denied' : 'down';
+}
+
+async function signedIn() {
+  if (state.token) return checkToken(state.token);
+  state.session = (await checkSession()).ok;
+  return state.session ? 'ok' : 'denied';
+}
+
 async function dial(event) {
   event.preventDefault();
   const form = $('dial-form');
-  const token = form.dataset.known === 'yes' ? state.token : $('dial-token').value.trim();
-  if (token.length < 32) {
-    form.dataset.known = 'no';
-    dialLine('Vox-Code fehlt oder ist zu kurz.', 'bad');
+  const known = form.dataset.known === 'yes';
+  const secret = known ? '' : $('dial-token').value;
+  if (!known && !secret) {
+    dialLine('Kennwort eingeben.', 'bad');
     $('dial-token').focus();
     return;
   }
@@ -784,22 +842,24 @@ async function dial(event) {
   dialLine(`Signal gefunden · Laufzeit ${Vox.live.latency} ms · Störungen hoch`);
   await wait(500 * pace);
   dialLine(LITANY.ignition[2]);
-  dialLine('Prüfe Vox-Code …');
-  const verdict = await authorize(token);
+  dialLine('Prüfe Kennung …');
+  const verdict = known ? await signedIn() : await login(secret, $('dial-remember').checked);
   if (verdict !== 'ok') {
     Vox.sounds.squelch();
-    dialLine(verdict === 'denied' ? '+++ ZUGANG VERWEIGERT +++ Im Namen des Omnissiah, identifiziere dich.'
-                                  : '+++ VERBINDUNG ABGERISSEN +++', 'bad');
+    const why = {
+      denied: '+++ ZUGANG VERWEIGERT +++ Im Namen des Omnissiah, identifiziere dich.',
+      locked: '+++ GESPERRT +++ Zu viele Fehlversuche. 15 Minuten warten.',
+      unset: '+++ KENNWORT NICHT EINGERICHTET +++ SERVITOR_WEB_PASSWORD_HASH fehlt.',
+    };
+    dialLine(why[verdict] || '+++ VERBINDUNG ABGERISSEN +++', 'bad');
     form.dataset.known = 'no';
+    $('dial-token').value = '';
     $('dial-connect').disabled = false;
     return;
   }
-  if (form.dataset.known !== 'yes') {
-    state.token = token;
-    store.set('servitor.token', $('dial-remember').checked ? token : null);
-  }
+  $('dial-token').value = '';
   Vox.sounds.cant();
-  dialLine('Dignus est intrare. Vox-Code angenommen.', 'good');
+  dialLine('Dignus est intrare. Kennung angenommen.', 'good');
   await wait(600 * pace);
   dialLine(link === 'loading' ? 'Der Maschinengeist erwacht noch. Geduld, Bediener.'
                               : LITANY.ignition[3], 'good');
@@ -828,7 +888,7 @@ function hangup() {
   addLog('system', '+++ Die Lebenden schwinden. Aber die Maschine besteht. +++');
   document.body.dataset.connected = 'no';
   $('lamp-link').dataset.on = 'no';
-  $('dial-form').dataset.known = state.token ? 'yes' : 'no';
+  $('dial-form').dataset.known = state.token || state.session ? 'yes' : 'no';
   $('dial-log').replaceChildren();
   dialLine('Kanal 107 getrennt. Die Maschine besteht. Erneut anrufen?');
 }
@@ -842,7 +902,14 @@ Vox.start({ scopes: [$('scope'), $('dial-scope')], needles: [...document.querySe
 buildHardware();
 renderHardware();
 $('dial-form').dataset.known = state.token ? 'yes' : 'no';
-dialLine(state.token ? 'Vox-Code hinterlegt. Bereit zum Anruf.' : 'Vox-Code eingeben, dann anrufen.');
+dialLine(state.token ? 'Kennung hinterlegt. Bereit zum Anruf.' : 'Kennwort eingeben, dann anrufen.');
+checkSession().then(({ ok }) => {
+  if (!ok || state.token) return;
+  state.session = true;
+  $('dial-form').dataset.known = 'yes';
+  $('dial-log').replaceChildren();
+  dialLine('Angemeldet. Bereit zum Anruf.');
+});
 health();
 setInterval(health, 15000);
 talkLabel();

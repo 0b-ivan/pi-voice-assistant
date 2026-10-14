@@ -619,6 +619,64 @@ class ServerTest(unittest.TestCase):
                 response, _ = self.request('/v1/ask', json.dumps(payload).encode())
                 self.assertEqual(response.status, status)
 
+    def test_password_login_gives_a_web_session_that_opens_turns_but_not_maintenance(self):
+        self.service.config.web_password = ss.hash_password('kogitator-7')
+        port = self.server.server_address[1]
+
+        def call(method, path, body=None, headers=None):
+            conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+            try:
+                conn.request(method, path, body=body, headers=headers or {})
+                response = conn.getresponse()
+                return response, response.read()
+            finally:
+                conn.close()
+
+        response, _ = call('POST', '/v1/login', json.dumps({'password': 'falsch'}))
+        self.assertEqual(response.status, 401)
+        self.assertIsNone(response.getheader('Set-Cookie'))
+        response, _ = call('POST', '/v1/login', json.dumps({'password': 'kogitator-7', 'remember': True}))
+        self.assertEqual(response.status, 200)
+        cookie = response.getheader('Set-Cookie')
+        self.assertIn('HttpOnly', cookie)
+        self.assertIn('SameSite=Strict', cookie)
+        self.assertIn(f'Max-Age={ss.WebSessions.LONG}', cookie)
+        session = cookie.split(';')[0]
+        web = {'Cookie': session, 'X-Servitor-Client': 'web'}
+        _, data = call('GET', '/v1/session', headers=web)
+        self.assertTrue(json.loads(data)['ok'])
+        response, data = call('POST', '/v1/ask', json.dumps({'text': 'wie spät ist es'}), web)
+        self.assertEqual(response.status, 200)
+        self.assertTrue(any(e['event'] == 'reply' for e in self.events(data)))
+        # Without the client header (a foreign page posting a form) the cookie is worthless.
+        response, _ = call('POST', '/v1/ask', json.dumps({'text': 'x'}), {'Cookie': session})
+        self.assertEqual(response.status, 401)
+        for method, path in (('GET', '/v1/status'), ('POST', '/v1/maintenance'), ('GET', '/v1/nightwatch')):
+            with self.subTest(path=path):
+                response, _ = call(method, path, b'{}' if method == 'POST' else None, web)
+                self.assertEqual(response.status, 401)
+        response, _ = call('POST', '/v1/logout', b'', web)
+        self.assertIn('Max-Age=0', response.getheader('Set-Cookie'))
+        _, data = call('GET', '/v1/session', headers=web)
+        self.assertFalse(json.loads(data)['ok'])
+
+    def test_password_login_locks_after_five_failures_and_is_off_without_a_hash(self):
+        response, _ = self.request('/v1/login', json.dumps({'password': 'x'}).encode(), token=None)
+        self.assertEqual(response.status, 503)
+        self.service.config.web_password = ss.hash_password('kogitator-7')
+        for _ in range(ss.WebSessions.TRIES):
+            response, _ = self.request('/v1/login', json.dumps({'password': 'x'}).encode(), token=None)
+            self.assertEqual(response.status, 401)
+        response, _ = self.request('/v1/login', json.dumps({'password': 'kogitator-7'}).encode(), token=None)
+        self.assertEqual(response.status, 429)
+
+    def test_password_hash_round_trip(self):
+        stored = ss.hash_password('Ave Omnissiah')
+        self.assertTrue(stored.startswith('scrypt$'))
+        self.assertTrue(ss.check_password('Ave Omnissiah', stored))
+        self.assertFalse(ss.check_password('ave omnissiah', stored))
+        self.assertFalse(ss.check_password('x', 'kaputt'))
+
     def test_journal_masks_addresses_skips_its_own_polling_and_needs_the_token(self):
         journal = self.service.journal
         tee = ss.Tee(open(os.devnull, 'w'), journal)
@@ -670,7 +728,8 @@ class ServerTest(unittest.TestCase):
         script = (ss.WEB / 'app.js').read_text()
         # Turns plus the read-only token check of the call; never maintenance.
         for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):
-            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story', '/v1/status', '/v1/journal'))
+            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story', '/v1/status', '/v1/journal',
+                                     '/v1/login', '/v1/logout', '/v1/session'))
         self.assertIn("addModule('/web/capture-worklet.js')", script)
 
     def test_speak_requires_string_text(self):
