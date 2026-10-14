@@ -157,10 +157,13 @@ Sprachdienste oder Prioritäten.
 Als root, im Checkout dieses Standes:
 
 ```sh
-# In CT 107: Empfänger nur an seiner LAN-Adresse, Port 19532
-sh deploy/journal-forward/install.sh server 172.22.9.107
+# In CT 107: Pi-LAN und Verwaltungsnetz, jeweils Port 19532
+sh deploy/journal-forward/install.sh server 172.22.9.107 172.22.2.107
 
-# Auf dem Proxmox-Host und später auf dem eingeschalteten Pi
+# Auf dem Proxmox-Host: direkter Weg im Verwaltungsnetz
+sh deploy/journal-forward/install.sh client http://172.22.2.107:19532
+
+# Auf dem eingeschalteten Pi: direkter Weg im Pi-LAN
 sh deploy/journal-forward/install.sh client http://172.22.9.107:19532
 ```
 

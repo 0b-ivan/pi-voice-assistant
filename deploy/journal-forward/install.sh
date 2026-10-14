@@ -1,20 +1,22 @@
 #!/bin/sh
 # Als root auf Debian/Raspberry Pi OS:
-#   sh deploy/journal-forward/install.sh server [LAN-IP]
+#   sh deploy/journal-forward/install.sh server [LAN-IP ...]
 #   sh deploy/journal-forward/install.sh client http://172.22.9.107:19532
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 role=${1:-}
 case "$role" in
     server)
-        [ "$#" -le 2 ] || exit 2
-        target=${2:-172.22.9.107}
-        python3 - "$target" <<'PY'
+        shift
+        [ "$#" -gt 0 ] || set -- 172.22.9.107
+        python3 - "$@" <<'PY'
 import ipaddress, sys
-address = ipaddress.IPv4Address(sys.argv[1])
-if not address.is_private or address.is_unspecified or address.is_multicast:
-    raise SystemExit('Der Empfänger braucht eine konkrete private LAN-IPv4-Adresse.')
+for value in sys.argv[1:]:
+    address = ipaddress.IPv4Address(value)
+    if not address.is_private or address.is_unspecified or address.is_multicast:
+        raise SystemExit('Der Empfänger braucht konkrete private LAN-IPv4-Adressen.')
 PY
+        target="$*"
         ;;
     client)
         [ "$#" -eq 2 ] || { echo 'client braucht die URL des Empfängers.' >&2; exit 2; }
@@ -31,7 +33,7 @@ if parts.port is not None and not 1 <= parts.port <= 65535:
     raise SystemExit('Ungültiger Port.')
 PY
         ;;
-    *) echo "Aufruf: $0 server [LAN-IP] | client http[s]://Rechner:19532" >&2; exit 2 ;;
+    *) echo "Aufruf: $0 server [LAN-IP ...] | client http[s]://Rechner:19532" >&2; exit 2 ;;
 esac
 [ "$(id -u)" -eq 0 ] || { echo 'Bitte als root ausführen.' >&2; exit 1; }
 
@@ -48,11 +50,10 @@ if [ "$role" = server ]; then
     install -d -m 0755 /etc/systemd/system/systemd-journal-remote.socket.d \
         /etc/systemd/system/systemd-journal-remote.service.d \
         /etc/systemd/system/servitor-voice.service.d /etc/systemd/journal-remote.conf.d
-    cat > /etc/systemd/system/systemd-journal-remote.socket.d/60-proximus.conf <<EOF
-[Socket]
-ListenStream=
-ListenStream=$target:19532
-EOF
+    {
+        printf '[Socket]\nListenStream=\n'
+        for address in $target; do printf 'ListenStream=%s:19532\n' "$address"; done
+    } > /etc/systemd/system/systemd-journal-remote.socket.d/60-proximus.conf
     cat > /etc/systemd/system/systemd-journal-remote.service.d/60-proximus.conf <<'EOF'
 [Service]
 ExecStart=
@@ -78,7 +79,7 @@ EOF
     systemctl enable systemd-journal-remote.socket
     systemctl restart systemd-journal-remote.socket
     systemctl restart servitor-voice.service
-    echo "Journal-Empfänger: http://$target:19532 (nur LAN; HTTP ist unverschlüsselt)."
+    echo "Journal-Empfänger an $target, Port 19532 (nur LAN; HTTP ist unverschlüsselt)."
 else
     install -d -m 0755 /usr/local/libexec
     install -m 0755 "$here/seed-cursor.py" /usr/local/libexec/proximus-journal-cursor
