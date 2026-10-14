@@ -620,9 +620,9 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(response.status, status)
 
     def test_web_client_is_served_without_token_and_only_its_files(self):
-        response, _ = self.request('/', method='GET', token=None)
+        response, _ = self.request('/web', method='GET', token=None)
         self.assertEqual((response.status, response.getheader('Location')), (302, '/web/'))
-        for path, mime in (('/web/', 'text/html'), ('/web/app.js', 'text/javascript'),
+        for path, mime in (('/', 'text/html'), ('/web/', 'text/html'), ('/web/app.js', 'text/javascript'),
                            ('/web/capture-worklet.js', 'text/javascript'),
                            ('/web/style.css', 'text/css'), ('/web/servo-skull.png', 'image/png'),
                            ('/web/manifest.webmanifest', 'application/manifest+json')):
@@ -643,11 +643,11 @@ class ServerTest(unittest.TestCase):
         import re
         html = (ss.WEB / 'index.html').read_text()
         for name in re.findall(r'(?:src|href)="([^"]+)"', html):
-            self.assertIn('/web/' + name, ss.WEB_FILES)
+            self.assertIn(name, ss.WEB_FILES)
         script = (ss.WEB / 'app.js').read_text()
         for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):
             self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story'))
-        self.assertIn("addModule('capture-worklet.js')", script)
+        self.assertIn("addModule('/web/capture-worklet.js')", script)
 
     def test_speak_requires_string_text(self):
         for payload in ({'text': None}, {'text': ['a']}, {'text': 5}):

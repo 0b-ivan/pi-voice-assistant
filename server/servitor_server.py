@@ -25,7 +25,8 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
   session already holds.
 * ``POST /v1/message`` with one SPX/1 envelope, answered with ``ack``.
 * ``GET /health`` without token: ``{"ok": true, "ready": bool}`` only.
-* ``GET /web/`` without token: the browser client (``web/``, docs/web-client.md).
+* ``GET /`` (also ``/web/``) without token: the browser client (``web/``,
+  docs/web-client.md); https://proximus.obivan.org/ lands on it.
   Only its fixed files are served; every request it makes needs the token.
 
 Responses of /v1 are NDJSON events: ``stage`` (recognize, think, synthesize,
@@ -89,6 +90,7 @@ MAX_TYPED_CHARS = 500     # /v1/ask: about what a 30 s spoken question holds
 # The browser client: published path -> (file in WEB, MIME type). Nothing else is served.
 WEB = Path(__file__).resolve().parent.parent / 'web'
 WEB_FILES = {
+    '/': ('index.html', 'text/html; charset=utf-8'),
     '/web/': ('index.html', 'text/html; charset=utf-8'),
     '/web/app.js': ('app.js', 'text/javascript; charset=utf-8'),
     '/web/capture-worklet.js': ('capture-worklet.js', 'text/javascript; charset=utf-8'),
@@ -982,7 +984,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         if path == '/v1/nightwatch':
             return self._nightwatch()
-        if path in ('/', '/web'):
+        if path == '/web':
             self.send_response(302)
             self.send_header('Location', '/web/')
             self.send_header('Content-Length', '0')

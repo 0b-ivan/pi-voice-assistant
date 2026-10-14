@@ -277,7 +277,7 @@ async function startRecording() {
     recording.stream = await navigator.mediaDevices.getUserMedia({ audio: {
       channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     [recording.context, recording.source] = await audioContext(recording.stream);
-    await recording.context.audioWorklet.addModule('capture-worklet.js');
+    await recording.context.audioWorklet.addModule('/web/capture-worklet.js');
     recording.node = new AudioWorkletNode(recording.context, 'servitor-capture', {
       numberOfOutputs: 0, processorOptions: { targetRate: RATE } });
     recording.ended = new Promise((resolve) => {

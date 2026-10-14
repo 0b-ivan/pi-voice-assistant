@@ -16,13 +16,18 @@ Browser: Taste halten → Mikrofon → 16 kHz PCM → POST /v1/turn  ┐
 
 | Weg | Adresse | Mikrofon |
 |---|---|---|
-| Cloudflare-Tunnel (HTTPS) | `https://<tunnel-host>/web/` | ja |
-| Auf CT 107 selbst | `http://localhost:8765/web/` | ja |
-| LAN | `http://<CT-107-IP>:8765/web/` | nein, nur Texteingabe |
+| Cloudflare-Tunnel (HTTPS) | **https://proximus.obivan.org/** | ja |
+| Auf CT 107 selbst | `http://localhost:8765/` | ja |
+| LAN | `http://172.22.9.107:8765/` | nein, nur Texteingabe |
 
 Browser geben das Mikrofon nur in einem sicheren Kontext frei (HTTPS oder
 localhost). Über die LAN-Adresse funktioniert deshalb nur das Tippen; für
-Sprache den Tunnel nehmen. `/` leitet auf `/web/` weiter.
+Sprache den Tunnel nehmen. Die Seite liegt unter `/` und zusätzlich unter
+`/web/`; ihre Dateien lädt sie immer aus `/web/`.
+
+`proximus.obivan.org` zeigt über cloudflared auf CT 100 bereits auf
+`172.22.9.107:8765` (derselbe Weg wie der Fallback des Pi), am Tunnel ist
+nichts einzustellen.
 
 Beim ersten Aufruf fragt die Seite nach dem Server-Token (`SERVITOR_API_TOKEN`
 aus `/etc/servitor-voice.env`). Er bleibt nur im Arbeitsspeicher der Seite,
@@ -85,6 +90,23 @@ das LLM und Geschichten funktionieren wie am Pi.
 | `web/manifest.webmanifest` | Startbildschirm-Symbol |
 | `assets/display/servo-skull.png` | derselbe Schädel wie auf dem PiTFT |
 
-`server/install-ct.sh` kopiert `web/` mit; bei einem Checkout direkt in
-`/opt/servitor-voice/repo` liegt es ohnehin dort. Danach
-`systemctl restart servitor-voice`.
+## Ausrollen auf CT 107
+
+`/opt/servitor-voice/repo` ist ein Git-Checkout, `web/` kommt mit dem Commit:
+
+```sh
+ssh root@172.22.2.11
+pct exec 107 -- sh -c 'cd /opt/servitor-voice/repo && git fetch origin <branch-oder-main> \
+  && git checkout --detach FETCH_HEAD && git rev-parse HEAD > /opt/servitor-voice/DEPLOYED \
+  && systemctl restart servitor-voice'
+```
+
+Prüfen (nach dem Laden der Modelle, ca. 10 s):
+
+```sh
+curl -s https://proximus.obivan.org/health                 # {"ok": true, "ready": true}
+curl -sI https://proximus.obivan.org/ | grep -i content-type  # text/html
+```
+
+Wer aus einem anderen Checkout installiert, nimmt `server/install-ct.sh`; es
+kopiert `web/` und den Schädel mit.
