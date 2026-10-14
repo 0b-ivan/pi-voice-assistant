@@ -164,6 +164,14 @@ In der Kopfzeile, links neben CPU-Temperatur und Akku, steht ein kleines Schild 
 
 Die Schädelgrafik liegt in `assets/display/servo-skull.png`; `install-voice-service.sh` installiert sie nach `PI_DISPLAY_SKULL` (Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`). Beim goldenen Auge wird auch der rot glühende Rand der Augenhöhle zu Messing, damit kein roter Ring um das Gold bleibt; die übrigen roten Lichter der Grafik bleiben rot.
 
+## Netzteil an und ab
+
+Steckt man das Netzteil an oder zieht es ab, zeigt das Display 2,5 s lang eine Karte statt Schädel oder Gesicht: ein Stecker in der Steckdose mit Blitz und „NETZTEIL VERBUNDEN · 80 % · lädt“ (cyan) bzw. ein Akku mit Füllstand, daneben der abgezogene Stecker, und „AKKUBETRIEB · 64 % · Netzteil getrennt“ (gelb, ab 15 % rot). `display.py` liest dafür jede Sekunde nur das Netzteil-Bit des PiSugar (ein Register, `power.Battery.plugged`), die Karte erscheint also binnen etwa einer Sekunde; Akkustand und Ladezustand werden im selben Moment frisch gelesen. Kopf- und Fußzeile bleiben, eine Lautstärkeanzeige hat Vorrang. Bei Billy folgt nach der Karte wie bisher der kurze Gottmodus-Blick. Bei dunklem Bildschirm (Ruhe, Standby, „Display aus“) erscheint keine Karte nachträglich.
+
+## Menü
+
+Das Menü zeichnet [`render_menu`](../src/display.py): oben „MENÜ“ bzw. „MENÜ › GRUPPE“, acht Zeilen à 19 Pixel, auf der obersten Ebene je ein Symbol (Gesicht, Sprechblase, Funkwellen, Lautsprecher, Blitz, Person, Zahnrad, Kreuz) und rechts der wichtigste Zustand der Gruppe. Werte stehen rechts und kürzen notfalls die Bezeichnung mit „…“, nie umgekehrt; längere Listen haben rechts einen Scrollbalken. Die Fußzeile erklärt den markierten Eintrag (`menu.HINTS`), darunter klein die Tastenbelegung; „Ausschalten“ ist rot. `Energie → Akku & Strom` öffnet eine Seite (Akku, Versorgung, Verbrauch, Akkumodul, CPU mit Takt, gewähltes Profil wenn abweichend, CPU-Temperatur, Drosselung) aus den eigenen Messwerten des Displays; jede Taste führt zurück. Struktur und Einträge: [Bedienung](button-controls.md#menü-auf-dem-pitft).
+
 ## Ruhe und Schlaf
 
 `ptt.py` kennt drei Stufen und schreibt sie als `power` in `display-status.json`:
@@ -172,7 +180,7 @@ Die Schädelgrafik liegt in `assets/display/servo-skull.png`; `install-voice-ser
 |---|---|---|---|
 | `awake` | – | Schädel mit pulsierendem Auge, Litaneien, zweites Auge in Statusfarbe | normal |
 | `rest` | 30 s (`PTT_REST_SECONDS`) | auf 35 % abgedunkelt, rotes Auge schwach und ruhig, zweites Auge aus, keine Litaneien; Neuzeichnen etwa einmal pro Minute (Uhr, Akku, Alarm) | 30 % |
-| `sleep` | 10 min (`PTT_SLEEP_SECONDS`) | Hintergrundbeleuchtung aus, kein Rendern | aus |
+| `sleep` | 10 min (`PTT_SLEEP_SECONDS`) | Hintergrundbeleuchtung aus, kein Rendern, keine Prüfprozesse (nur die Statusdatei, alle 0,5 s) | aus |
 
 Beim Aufwachen aus dem Schlaf sagt Proximus kurz an, dass er erwacht (je nach Lore-Stufe, z. B. „Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.“; vorgefertigter Clip wie bei den Alarmen). Weckt ihn das Aktivierungswort, hört er erst nach dieser Ansage zu. Nach Druck auf die Sprechtaste, bei Alarmen und Statusansagen entfällt sie.
 

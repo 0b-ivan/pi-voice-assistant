@@ -196,8 +196,9 @@ hebt die ausstehende automatische Abschaltung auf. Die Schwellen sind noch
 nicht auf den konkreten Akku kalibriert; die Hardware muss abschließend
 geprüft werden.
 
-Im Display: **Energie → Akku-Diagnose / PiSugar Konfig /
-Stromhinweise / Sicher ausschalten**. `Sicher ausschalten` benutzt dieselbe
+Im Display: **Energie → Akku & Strom / CPU-Leistung / Netzteil-Ansagen /
+Akku-Einstellungen / Ausschalten**. `Akku & Strom` zeigt die Werte als
+Seite auf dem Display (nichts wird vorgelesen). `Ausschalten` benutzt dieselbe
 20-Sekunden-Bestätigungslogik wie „Fahr dich herunter“ (Taste E oder eine
 autorisierte Sprachbestätigung; Taste B bricht ab). Es ist **kein** sofortiges
 Abschalten des Akkus. Die zusätzliche Konfigurationsansicht ist ausschließlich
@@ -209,22 +210,33 @@ Lokale Sprachbeispiele (ohne LLM-Hardwarezugriff):
 
 - „Wie hoch ist der Akkustand?“ → Prozent und Ladezustand.
 - „Wie hoch ist die Batteriespannung?“ / „Was meldet PiSugar?“ →
-  Batteriespannung, Ausgangsstrom, Stromquelle und PiSugar-**Chip**temperatur,
-  soweit bekannt.
-- „Wie viel Strom verbrauchst du?“ → nur der gemessene Ausgangsstrom,
-  nicht als Batteriestrom oder Laufzeit ausgeben.
+  z. B. „Energiespeicher 80 Prozent. Netzbetrieb, Ladung aktiv. Zellspannung
+  4,02 Volt. Stromverbrauch 350 Milliampere. Akkumodul 38 Grad.“ (Billy:
+  „Akku bei 80 Prozent. Netzteil steckt, ich lade. …“).
+- „Wie viel Strom verbrauchst du?“ → „Stromverbrauch 350 Milliampere.“
+  (gemessen am Ausgang des Akkumoduls, kein Batteriestrom, keine Laufzeit).
 - „Wie lange hält der Akku noch?“ → ehrlich **keine** Zeitangabe ohne
   gemessenen Verbrauch; keine erfundenen Stunden.
-- „Schalte die Energiehinweise an“ / „Schalte die Stromhinweise aus“ →
-  normale Ansagen bei Wechsel zwischen Netzteil und Akku einschalten/
+- „Schalte die Netzteil-Ansagen an“ (auch „Energiehinweise“, „Stromhinweise“) →
+  normale Ansagen beim Anstecken/Abziehen des Netzteils einschalten/
   unterdrücken. Standardmäßig sind sie **aus**, der Wert liegt in
   `/var/lib/pi-ptt/settings.json`.
+- „Stell den CPU-Modus auf Eco/Normal/Power“ → „Prozessor im Sparmodus“ usw.;
+  ist der Modus schon aktiv, sagt Proximus das, statt neu zu schalten.
+  Scheitert das Umschalten, sagt er „Befehl fehlgeschlagen“.
 - „Fahr dich herunter“ → verlangt Bestätigung, wie zuvor.
 
-`Stromhinweise AUS` unterdrückt **nur routinemäßige** Netz-/Akkuwechsel,
+Gesprochen wird ohne Herstellerjargon: Der PiSugar heißt „Akkumodul“,
+der Watchdog „Absturzwächter“, Soft-Poweroff „Ausschalten per Software“;
+Billy spricht in ganzen Sätzen ohne Maschinenvokabular. Fällt das Wort
+„PiSugar“ doch (etwa in einer LLM-Antwort), spricht Piper es „Pai-Schugger“.
+
+`Netzteil-Ansagen AUS` unterdrückt **nur routinemäßige** Netz-/Akkuwechsel,
 nicht die kritischen Akkustufen, die Meldung einer gerade abgebrochenen
-Notabschaltung oder den Poweroff selbst. Der allgemeine Menüpunkt
-`Gerät → Alarme` beeinflusst weiterhin die Sprachausgabe der Alarme, **nicht**
+Notabschaltung oder den Poweroff selbst. Beim Anstecken oder Abziehen
+zeigt das Display zusätzlich 2,5 s lang ein Stecker- bzw. Akku-Piktogramm
+([Display](display.md#netzteil-an-und-ab)). Der allgemeine Menüpunkt
+`System → Alarme` beeinflusst weiterhin die Sprachausgabe der Alarme, **nicht**
 die automatische Notabschaltung. Bei I²C-Leseausfall wird kein Akkustand
 erfunden; der Linux-Poweroff-Befehl allein garantiert **keine** elektrische
 Abtrennung durch den PiSugar.
@@ -253,8 +265,33 @@ sowie normale Audio-/Tastenbedienung sind pausiert. **Linux, I²C, SSH,
 WLAN und der 5-V-Ausgang bleiben an** (auch bei konfigurierter automatischer
 WLAN-Abschaltung im normalen Idle-Sleep). Kritische Alarme wecken Proximus
 auf; die vorhandene lokale Notabschaltung bleibt unabhängig davon aktiv.
-Während Aufnahme, Sprachausgabe, laufenden Wartungsaktionen und noch
-bestätigungsbedürftigen Shutdowns wird ein Standby-Tap abgewiesen.
+Ein Tap bedeutet „jetzt Ruhe“: Laufende normale Antworten, Ansagen,
+Geschichten, Aufnahmen und ein offenes Menü werden abgebrochen, wartende
+gewöhnliche Hinweise verworfen (Journal: `interrupted: true`). Abgewiesen
+wird der Tap nur, wenn Abbrechen etwas Wichtiges verlöre; das Journal nennt
+den Grund: `critical_alarm` (kritische Akku-, Unterspannungs-, Speicher- oder
+Temperaturwarnung aktiv), `power_action` (bestätigter oder noch offener
+Neustart/Shutdown), `maintenance`, `enrollment` (Stimme kennenlernen läuft),
+`cpu_mode` (Umschaltung läuft gerade). Hardwarebefund vom 14.10.2026: Vorher
+wurde der Tap während längerer Status- und Wartungsansagen mit
+`busy_or_critical` abgewiesen.
+
+Im manuellen Standby spart Proximus zusätzlich Strom, auch ohne
+Akkusparprofil: Die Hauptschleife läuft mit 5 statt 100 Durchläufen pro
+Sekunde und fragt die Button-SHIM nicht mehr per I²C ab (sie wird ohnehin
+ignoriert). Server-, Internet- und Netzwerkproben, die Update-Prüfung und
+die Bluetooth-Suche pausieren, damit das WLAN-Funkmodul in seinen
+Stromsparmodus fallen kann; nach dem Aufwachen messen sie binnen 2 s neu.
+Der Display-Dienst startet bei dunklem Bildschirm keine Prüfprozesse
+(`systemctl`, `ip`, `vcgencmd`) mehr und liest nur noch die Statusdatei.
+Den Arbeitsspeicher zu leeren (Garbage Collection) spart dagegen keinen
+Strom: Der RAM wird unabhängig vom Inhalt aufgefrischt, und Modelle neu zu
+laden kostet beim Aufwachen mehr Energie, als es spart. Der Software-Standby
+bleibt ein laufendes Linux (grob ein halbes Watt beim Pi Zero 2 W, am
+Gerät zu messen); nahezu keinen Strom braucht er nur ausgeschaltet
+(`Energie → Ausschalten`). Ob der PiSugar danach den 5-V-Ausgang trennt,
+hängt von „Ausschalten per Software“ ab und ist auf der Hardware noch nicht
+geprüft.
 Aufwachen per Taste ist absichtlich **lautlos**. Ein Dienstneustart führt
 zur normalen aktiven Betriebsart zurück.
 
@@ -297,6 +334,10 @@ wenn **alle** Bedingungen erfüllt sind:
 3. PiSugar meldet **bestätigten Akkubetrieb** (Register `0x02`, Bit 7 = 0);
 4. keine aktive kritische Warnung und keine bereits eingeleitete Abschaltung.
 
+Im Akkubetrieb schaltet der Helfer zusätzlich die grüne ACT-LED des Pi
+aus (`PROXIMUS_SAVE_LED=off`, Grundeinstellung; `keep` lässt sie an) und
+stellt deren vorherigen Auslöser beim Aufwachen wieder her.
+
 Bei Netzbetrieb oder unbekannter Stromquelle werden keine Optimierungen
 angewandt. Der Wechsel zurück auf Netzstrom (Überwachung im 10-Sekunden-Takt),
 Aufwachen, kritische Warnungen sowie Dienststop/-neustart lösen die
@@ -316,6 +357,7 @@ sudo vim /etc/proximus-battery-standby.env
 # PROXIMUS_SAVE_CPU=powersave
 # PROXIMUS_SAVE_WLAN=keep
 # PROXIMUS_SAVE_BLUETOOTH=keep
+# PROXIMUS_SAVE_LED=off
 sudo systemctl restart pi-ptt.service
 ```
 
@@ -368,7 +410,7 @@ Hardwaretest unter Akkubetrieb, bevor WLAN-Abschaltung freigegeben wird.
 
 ### CPU-Profil selbst wählen und optional übertakten (Pi Zero 2 W)
 
-**Sofort umschaltbar:** Unter `Energie → CPU-Profil` auf dem 240×240
+**Sofort umschaltbar:** Unter `Energie → CPU-Leistung` auf dem 240×240
 PiTFT zwischen **ECO** (`powersave`), **NORMAL** (`ondemand`) und
 **POWER** (`performance`) durchschalten. Entsprechende lokale Sprachbefehle
 sind z. B. „Stell den CPU-Modus auf Eco“, „Stell den CPU-Modus auf
