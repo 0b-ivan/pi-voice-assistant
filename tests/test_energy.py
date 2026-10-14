@@ -65,6 +65,24 @@ class DirectPiSugarTests(unittest.TestCase):
         self.assertNotIn('charge_protection', reading)
         self.assertEqual(reading['output_current_ma'], 500)
 
+    def test_zero_output_current_is_unknown_with_plug_and_battery(self):
+        # Real PiSugar 3 returned 0x0000 on 0x26/0x27 for both NETZ
+        # and AKKU while Pi Zero 2 W was running (October 2026).
+        for ctrl1 in (0xF4, 0x74):
+            with self.subTest(ctrl1=hex(ctrl1)):
+                class ZeroBus(self.FakeBus):
+                    values = dict(self.FakeBus.values, **{0x02: ctrl1,
+                                                         0x26: 0, 0x27: 0})
+
+                reading = power.Battery(bus_factory=ZeroBus).read()
+                self.assertIsNotNone(reading)
+                self.assertEqual(reading['plugged'], bool(ctrl1 & 0x80))
+                self.assertNotIn('output_current_ma', reading)
+                snapshot = system_status.collect_snapshot(battery=reading)
+                self.assertNotIn('output_current_ma', snapshot)
+                self.assertNotIn('Ausgangsstrom 0', energy.detail(snapshot))
+                self.assertIn('nicht verfügbar', energy.current(snapshot))
+
 
 class EnergyTextTests(unittest.TestCase):
     def test_direct_offline_questions(self):
