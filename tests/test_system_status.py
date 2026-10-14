@@ -139,7 +139,7 @@ class StatusTextTests(unittest.TestCase):
     def test_unknown_network_readings_are_not_an_outage(self):
         for level in ('off', 'light', 'full', 'billy_full'):
             with self.subTest(lore=level):
-                result = ss.network_text({'server': 'ok', 'lore': level})
+                result = ss.network_text({'server': 'ok'}, lore=level)
                 self.assertIn('Pi-Netzwerkdaten', result) if level != 'billy_full' else (
                     self.assertIn('Netzwerkdaten des Pi fehlen', result))
                 self.assertNotIn('Internet nicht erreichbar', result)
