@@ -389,7 +389,7 @@ def offers_text(options, query, now):
     line = (option_text(None, first, now) if query['kind'] == 'departures'
             else short_text(1, first, now))
     lines = [head, line]
-    if not first['realtime']:
+    if not first['realtime'] and query['kind'] != 'departures':
         lines.append('Laut Fahrplan.')
     if len(options) > 1:
         lines.append('Weitere Verbindung verfügbar.' if len(options) == 2 else
