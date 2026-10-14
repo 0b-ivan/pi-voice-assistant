@@ -24,6 +24,7 @@ import cue as cue_sound
 import device_control
 import energy
 import pisugar_client
+import pisugar_button
 import enroll
 import journeys as journey_feed
 import people
@@ -784,6 +785,7 @@ class VoiceController:
         self.wlan_on = True
         self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
         self.power = 'awake'
+        self.manual_standby = False  # PiSugar function-button latch, not Linux poweroff
         self.last_activity = time.monotonic()
         self.rest_after = self.config.rest_seconds
         self.sleep_after = self.config.sleep_seconds
@@ -2854,6 +2856,15 @@ class VoiceController:
         action = self.ptt.update(held, now)
         commands = [name for i, name in enumerate('BCDE', 1)
                     if self.commands[name].update(shim_pressed[i], now) == 'start']
+        if self.manual_standby and not self.probe:
+            # Ignore PTT, SHIM, menu and wakeword while manually asleep.
+            # Hardware low-battery / undervoltage / thermal alarms may wake
+            # Proximus to announce the problem; shutdown_due is checked by
+            # check_alarms regardless of this gate.
+            self.ptt.resync(held, now)
+            if not CRITICAL_ALARMS.intersection(self.alarms.active):
+                return
+            self.pisugar_standby(now, reason='critical_alarm')
         if self.enroll is not None and not self.probe:
             if self.enroll.running:
                 # The session owns microphone and speaker; B cancels, E confirms.
@@ -3100,17 +3111,46 @@ class VoiceController:
                 or self.menu.open or bool(self.alarm_queue) or self.maint.active
                 or self.people.active or self.story is not None)
 
+    def pisugar_standby(self, now, reason='button'):
+        """Single function-button tap toggles quiet *software* standby.
+
+        SSH, Wi-Fi and Linux stay alive. Only the PiSugar function button
+        wakes an otherwise quiet Proximus; safety-critical alarms override.
+        Reject entry during active work, pending confirmed power actions,
+        or alarm playback so the tap cannot discard important audio.
+        """
+        if self.manual_standby:
+            self.manual_standby = False
+            self.last_activity = now
+            self._update_power(now, greet=False)
+            self.wake_resume_at = now + WAKE_ECHO_PAUSE
+            event('pisugar_standby', state='awake', reason=reason)
+            return True
+        if (self.probe or self.shutting_down or self._busy()
+                or self.device_pending or self.device_after_speech
+                or (self.alarms_enabled and
+                    CRITICAL_ALARMS.intersection(self.alarms.active))):
+            event('pisugar_standby', state='rejected', reason='busy_or_critical')
+            return False
+        self.manual_standby = True
+        self._release_microphone()
+        self.menu.close()
+        self._publish_menu()
+        self._update_power(now, greet=False)
+        event('pisugar_standby', state='sleep', reason=reason)
+        return True
+
     def _wake_up(self, now):
         self.last_activity = now
         self._update_power(now, False)
 
-    def _update_power(self, now, pressed=False):
+    def _update_power(self, now, pressed=False, greet=True):
         """awake -> rest -> sleep while nothing happens; any activity wakes."""
         quiet = now - self.last_activity
-        if pressed or self._busy():
+        if not self.manual_standby and (pressed or self._busy()):
             self.last_activity = now
         idle = now - self.last_activity
-        power = ('sleep' if idle >= self.sleep_after else
+        power = ('sleep' if self.manual_standby or idle >= self.sleep_after else
                  'rest' if idle >= self.rest_after else 'awake')
         if power == self.power:
             return
@@ -3125,12 +3165,13 @@ class VoiceController:
         elif previous == 'sleep':
             self.board_leds.restore()
             self.mood.woke_up(quiet, time.time())
-        if power == 'sleep' and self.sleep_wlan_off and self.wlan_on:
+        if (power == 'sleep' and not self.manual_standby
+                and self.sleep_wlan_off and self.wlan_on):
             self.wlan_slept = self.set_wlan(False)
         elif previous == 'sleep' and self.wlan_slept:
             self.wlan_slept = False
             self.set_wlan(True)
-        if previous == 'sleep' and self._idle() and not self.alarm_queue:
+        if previous == 'sleep' and greet and self._idle() and not self.alarm_queue:
             # Woken by a display/SHIM button: say so. Talking (PTT), alarms
             # and status replies already speak or listen; the wake word
             # greets on its own before listening.
@@ -3352,6 +3393,20 @@ def main():
     next_power = 0.0
     shim = None
     led = None
+    tap_reader = None
+    tap_next = 0.0
+    # Explicit opt-in: tap acknowledgement writes only PiSugar's event latch,
+    # which requires temporarily unlocking the chip's write protection.
+    if (not args.probe and os.environ.get('PISUGAR_STANDBY_BUTTON', 'off')
+            .strip().lower() in ('on', '1', 'true', 'yes')):
+        try:
+            tap_reader = pisugar_button.TapReader()
+            # Clear an old event without putting Proximus to sleep at boot.
+            tap_reader.poll()
+            event('pisugar_button_ready', address='0x57', mode='software_standby')
+        except (ImportError, OSError) as exc:
+            event('pisugar_button_error', message=str(exc), disabled=True)
+            tap_reader = None
     shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
 
     def open_shim(now):
@@ -3429,6 +3484,19 @@ def main():
                         stop_shim()
                         controller.cancel(gpio_pressed, now)
                         shim_retry_at = now + SHIM_RETRY_SECONDS
+                if tap_reader is not None and now >= tap_next:
+                    tap_next = now + 0.1
+                    try:
+                        gesture = tap_reader.poll(now)
+                    except (ImportError, OSError) as exc:
+                        # Fail closed: never act on an event we could not ack.
+                        event('pisugar_button_error', message=str(exc), disabled=True)
+                        tap_reader = None
+                    else:
+                        if gesture:
+                            event('pisugar_button', gesture=gesture)
+                            if gesture == pisugar_button.SINGLE:
+                                controller.pisugar_standby(now)
                 try:
                     controller.tick(gpio_pressed, pressed, now, pitft)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
