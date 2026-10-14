@@ -18,6 +18,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 | Charakter | Servitor-Systemprompt in [`src/llm.py`](src/llm.py); Datum/Uhrzeit des Bedieners werden mitgegeben, Antworten für die Sprachausgabe geglättet |
 | Erkennung | Vosk `small-de-0.15`; größeres Vosk-Modell gemessen und verworfen ([Architektur](docs/architecture.md#größeres-vosk-modell-verworfen)); Whisper auf CT 107 optional (`SERVITOR_STT=whisper`, Vosk bleibt Sprachschranke und Schnellweg), Vergleich mit echter Stimme über `scripts/mic-check.py record` offen ([STT](docs/speech-to-text.md#whisper-auf-ct-107-optional)) |
 | Aktivierungswort | „Hey Jarvis“ startet eine Anfrage, eine Sprechpause beendet sie; läuft auf dem Pi, abschaltbar im Menü. [Architektur](docs/architecture.md#aktivierungswort) |
+| Web-Client | Proximus im Browser aus derselben Codebasis: CT 107 liefert die Seite unter `/web/` aus, Sprechen per Halten oder Tippen, Antwort mit derselben Stimme und Pipeline; ohne Gedächtnis, Kalender und Gerätesteuerung (Gast). Mikrofon nur über HTTPS (Tunnel) oder localhost. [Web-Client](docs/web-client.md) |
 | Bedienung | Quittungston (Servo + Binärfolge) beim Loslassen; Taste/SHIM A sprechen, B abbrechen, C/D Lautstärke (2 dB, halten wiederholt), E Status bzw. Menü-OK; PiTFT-Tasten öffnen ein Menü. [Button-Bedienung](docs/button-controls.md) |
 | Display | Schritt, Verarbeitungsort SERVER/LOKAL, letzte Antwort, Akku, Temperatur, WLAN, Uhrzeit, Lautstärke, Menü. [Display](docs/display.md) |
 | Alarme | Akku (3 Warnungen, dann Herunterfahren), Stromquelle, Unterspannung, Temperatur, Speicher, CPU, Netzwerk/Internet/Server; abschaltbar. [Architektur](docs/architecture.md#alarme-strom-und-netz) |
@@ -40,7 +41,7 @@ Server weg   → Pi: Vosk → [direkt | OpenRouter] → Piper → Lautsprecher (
 3. Server CT 107: [`server/install-ct.sh`](server/install-ct.sh), Offline-LLM [`server/install-llm.sh`](server/install-llm.sh).
 4. [Troubleshooting](docs/troubleshooting.md).
 
-Vertiefung: [Architektur](docs/architecture.md), [Hardware](docs/hardware.md), [Display](docs/display.md), [Button-Bedienung und LED](docs/button-controls.md), [STT](docs/speech-to-text.md), [TTS](docs/text-to-speech.md), [Entscheidungen](docs/decisions/), [Roadmap](docs/roadmap.md).
+Vertiefung: [Architektur](docs/architecture.md), [Web-Client](docs/web-client.md), [Hardware](docs/hardware.md), [Display](docs/display.md), [Button-Bedienung und LED](docs/button-controls.md), [STT](docs/speech-to-text.md), [TTS](docs/text-to-speech.md), [Entscheidungen](docs/decisions/), [Roadmap](docs/roadmap.md).
 
 Charakter und Lore: [Proximus/Billy – ausgearbeitete Geschichte und Sprachvorgaben](docs/concepts/proximus-billy-lore/LORE_PROXIMUS_BILLY.md) mit 33 Episoden, sechs Doom-/Wolfenstein-Sagen und dem Konzept für ausdrücklich lange Geschichten (10–20 Minuten). [Claude-Auftrag zur Implementierung](docs/concepts/proximus-billy-lore/CLAUDE_AUFTRAG.md). Status: ausgearbeitet, Laufzeitintegration noch umzusetzen.
 

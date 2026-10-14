@@ -594,6 +594,61 @@ class ServerTest(unittest.TestCase):
                 last = self.raw_turn(body)[-1]
                 self.assertEqual((last['event'], last['code']), ('error', 'bad_request'))
 
+    def test_ask_takes_the_way_of_a_transcript_without_audio(self):
+        self.pipeline.transcript = None  # any recognition would fail
+        _, data = self.request('/v1/ask', json.dumps({'text': 'Wie hoch ist der Eiffelturm?'}).encode())
+        events = self.events(data)
+        self.assertEqual(self.pipeline.accepted, 0)
+        self.assertEqual(events[0], dict(event='transcript', text='Wie hoch ist der Eiffelturm?'))
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual(reply['text'], 'Antwort auf Wie hoch ist der Eiffelturm?')
+        self.assertEqual([e['event'] for e in events][-2:], ['audio', 'done'])
+
+    def test_ask_answers_fixed_requests_without_llm(self):
+        self.pipeline.fail_llm = True
+        _, data = self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode())
+        reply = next(e for e in self.events(data) if e['event'] == 'reply')
+        self.assertEqual(reply['model'], 'local/intent')
+
+    def test_ask_validates_text_and_token(self):
+        response, _ = self.request('/v1/ask', b'{"text": "x"}', token='y' * 40)
+        self.assertEqual(response.status, 401)
+        for payload, status in (({'text': ''}, 400), ({'text': 3}, 400), ({}, 400),
+                                ({'text': 'x' * (ss.MAX_TYPED_CHARS + 1)}, 413)):
+            with self.subTest(payload=payload):
+                response, _ = self.request('/v1/ask', json.dumps(payload).encode())
+                self.assertEqual(response.status, status)
+
+    def test_web_client_is_served_without_token_and_only_its_files(self):
+        response, _ = self.request('/', method='GET', token=None)
+        self.assertEqual((response.status, response.getheader('Location')), (302, '/web/'))
+        for path, mime in (('/web/', 'text/html'), ('/web/app.js', 'text/javascript'),
+                           ('/web/capture-worklet.js', 'text/javascript'),
+                           ('/web/style.css', 'text/css'), ('/web/servo-skull.png', 'image/png'),
+                           ('/web/manifest.webmanifest', 'application/manifest+json')):
+            with self.subTest(path=path):
+                response, data = self.request(path, method='GET', token=None)
+                self.assertEqual(response.status, 200)
+                self.assertTrue(response.getheader('Content-Type').startswith(mime))
+                self.assertIn("default-src 'self'", response.getheader('Content-Security-Policy'))
+                self.assertEqual(response.getheader('X-Content-Type-Options'), 'nosniff')
+                self.assertTrue(data)
+        for path in ('/web/../server/servitor_server.py', '/web/index.html', '/web/%2e%2e/README.md',
+                     '/web/app.js.map'):
+            with self.subTest(path=path):
+                response, _ = self.request(path, method='GET', token=None)
+                self.assertEqual(response.status, 404)
+
+    def test_web_client_references_only_served_files(self):
+        import re
+        html = (ss.WEB / 'index.html').read_text()
+        for name in re.findall(r'(?:src|href)="([^"]+)"', html):
+            self.assertIn('/web/' + name, ss.WEB_FILES)
+        script = (ss.WEB / 'app.js').read_text()
+        for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):
+            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story'))
+        self.assertIn("addModule('capture-worklet.js')", script)
+
     def test_speak_requires_string_text(self):
         for payload in ({'text': None}, {'text': ['a']}, {'text': 5}):
             with self.subTest(payload=payload):

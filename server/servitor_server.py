@@ -11,6 +11,9 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 * ``POST /v1/turn?format=wav|opus`` with raw 16 kHz mono s16le PCM as body
   (Content-Length or chunked; chunks are recognized while they arrive).
 * ``POST /v1/speak?format=wav|opus`` with JSON ``{"text": "..."}``.
+* ``POST /v1/ask?format=wav|opus`` with JSON ``{"text": "..."}``: a typed
+  question that takes the way of a transcript (intents, LLM, voice); the
+  browser client's text field.
 * ``POST /v1/story?format=wav|opus`` with JSON ``{"story": state}``: the next
   section of an explicitly long story (src/story.py). Like a turn that asks
   for a long story, it answers with ``reply``, several ``audio`` events with
@@ -22,6 +25,8 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
   session already holds.
 * ``POST /v1/message`` with one SPX/1 envelope, answered with ``ack``.
 * ``GET /health`` without token: ``{"ok": true, "ready": bool}`` only.
+* ``GET /web/`` without token: the browser client (``web/``, docs/web-client.md).
+  Only its fixed files are served; every request it makes needs the token.
 
 Responses of /v1 are NDJSON events: ``stage`` (recognize, think, synthesize,
 render), ``transcript``, ``reply``, ``audio`` (base64), ``done`` (timings) or
@@ -80,6 +85,20 @@ CLIP_MAX_SECONDS = 12
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 # TurnError codes caused by the input, not by the server (logwatch ignores them).
 OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
+MAX_TYPED_CHARS = 500     # /v1/ask: about what a 30 s spoken question holds
+# The browser client: published path -> (file in WEB, MIME type). Nothing else is served.
+WEB = Path(__file__).resolve().parent.parent / 'web'
+WEB_FILES = {
+    '/web/': ('index.html', 'text/html; charset=utf-8'),
+    '/web/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+    '/web/capture-worklet.js': ('capture-worklet.js', 'text/javascript; charset=utf-8'),
+    '/web/style.css': ('style.css', 'text/css; charset=utf-8'),
+    '/web/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json'),
+    '/web/servo-skull.png': ('../assets/display/servo-skull.png', 'image/png'),
+}
+WEB_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+           "media-src 'self' blob: data:; connect-src 'self'; worker-src 'self'; "
+           "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
 
 # Fixed information answers the server may let the LLM say in fresh words
@@ -642,8 +661,10 @@ class Service:
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None, appointments_tomorrow=None,
-                 voice=None, nightwatch_copy=None):
-        """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
+                 voice=None, nightwatch_copy=None, typed=None):
+        """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` and
+        ``typed`` are None. ``typed``: a typed question (web client, /v1/ask)
+        that takes the whole way of a transcript; ``text`` is spoken as it is.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
         time, date or status are answered from it without the LLM.
@@ -663,43 +684,49 @@ class Service:
 
         try:
             if text is None:
-                try:
-                    recognizer = self.pipeline.recognizer()
-                except Exception as exc:
-                    raise TurnError('recognize', 'stt', str(exc)) from exc
-                if transcribe_only and hasattr(recognizer, 'whisper'):
-                    recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
-                pending = b''
-                received = 0
-                # Keep the audio only when a voice must be recognized.
-                keep = memory.enrolled(memory_copy) or voice is not None
-                audio = bytearray()
-                for chunk in pcm_chunks:
-                    received += len(chunk)
-                    if received > self.config.max_bytes:
-                        raise TurnError('upload', 'too_large', 'audio exceeds limit')
-                    if keep:
-                        audio += chunk
-                    pending += chunk
-                    usable = len(pending) - len(pending) % 2
-                    if usable:
-                        try:
-                            recognizer.accept_pcm(pending[:usable])
-                        except Exception as exc:
-                            raise TurnError('recognize', 'stt', str(exc)) from exc
-                        pending = pending[usable:]
-                upload_end = time.monotonic()
-                if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
-                    raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
-                emit(dict(event='stage', stage='recognize'))
-                try:
-                    text = timed('stt_finalize', recognizer.finish)
-                except Exception as exc:
-                    # Only an empty transcript is final for the Pi; a broken
-                    # finalization must still let it retry with local Vosk.
-                    from transcribe import NoSpeechError
-                    code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
-                    raise TurnError('recognize', code, str(exc)) from exc
+                keep, audio = False, b''
+                if typed is not None:
+                    # The web client typed its question: no audio, no voice check.
+                    upload_end = time.monotonic()
+                    text = typed
+                else:
+                    try:
+                        recognizer = self.pipeline.recognizer()
+                    except Exception as exc:
+                        raise TurnError('recognize', 'stt', str(exc)) from exc
+                    if transcribe_only and hasattr(recognizer, 'whisper'):
+                        recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
+                    pending = b''
+                    received = 0
+                    # Keep the audio only when a voice must be recognized.
+                    keep = memory.enrolled(memory_copy) or voice is not None
+                    audio = bytearray()
+                    for chunk in pcm_chunks:
+                        received += len(chunk)
+                        if received > self.config.max_bytes:
+                            raise TurnError('upload', 'too_large', 'audio exceeds limit')
+                        if keep:
+                            audio += chunk
+                        pending += chunk
+                        usable = len(pending) - len(pending) % 2
+                        if usable:
+                            try:
+                                recognizer.accept_pcm(pending[:usable])
+                            except Exception as exc:
+                                raise TurnError('recognize', 'stt', str(exc)) from exc
+                            pending = pending[usable:]
+                    upload_end = time.monotonic()
+                    if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
+                        raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
+                    emit(dict(event='stage', stage='recognize'))
+                    try:
+                        text = timed('stt_finalize', recognizer.finish)
+                    except Exception as exc:
+                        # Only an empty transcript is final for the Pi; a broken
+                        # finalization must still let it retry with local Vosk.
+                        from transcribe import NoSpeechError
+                        code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
+                        raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
                 if transcribe_only:  # enrollment answers: the Pi stores them itself
                     emit(dict(event='done', timings=timings))
@@ -955,6 +982,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         if path == '/v1/nightwatch':
             return self._nightwatch()
+        if path in ('/', '/web'):
+            self.send_response(302)
+            self.send_header('Location', '/web/')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if path in WEB_FILES:
+            return self._web(path)
         if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
         elif path == '/v1/status':
@@ -967,6 +1002,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                  maintenance=maintenance.status(self.service.maintenance_dir)))
         else:
             self._json(404, dict(error='not found'))
+
+    def _web(self, path):
+        """One fixed file of the browser client; no token (it asks for it)."""
+        name, mime = WEB_FILES[path]
+        try:
+            body = (WEB / name).read_bytes()
+        except OSError:
+            return self._json(404, dict(error='not found'))
+        self.send_response(200)
+        self.send_header('Content-Type', mime)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Content-Security-Policy', WEB_CSP)
+        self.send_header('Permissions-Policy', 'microphone=(self)')
+        self.end_headers()
+        self.wfile.write(body)
 
     def _nightwatch(self):
         """Authenticated LAN-only job control; no arbitrary commands or paths."""
@@ -1215,7 +1268,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._enroll_clip()
         if url.path == '/v1/nightwatch':
             return self._nightwatch()
-        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story'):
+        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story', '/v1/ask'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
         self.close_connection = True  # never reuse a connection with an unread body
@@ -1246,9 +1299,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 <= length <= (limit if url.path == '/v1/turn' else 65536):
                 return self._json(413, dict(error='body too large'))
 
-        text = None
+        text = typed = None
         story_state = None
-        if url.path in ('/v1/speak', '/v1/story'):
+        if url.path in ('/v1/speak', '/v1/story', '/v1/ask'):
             if chunked:
                 return self._json(411, dict(error='length required'))
             try:
@@ -1274,6 +1327,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 text = text.strip()
                 if not text:
                     return self._json(400, dict(error='text must not be empty'))
+                if url.path == '/v1/ask':
+                    if len(text) > MAX_TYPED_CHARS:
+                        return self._json(413, dict(error='question too long'))
+                    text, typed = None, text
             body = iter(())
         else:
             body = read_chunked(self.rfile, limit) if chunked else read_length(self.rfile, length)
@@ -1324,7 +1381,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           transcribe_only=transcribe_only,
                                           appointments=appointments,
                                           appointments_tomorrow=appointments_tomorrow,
-                                          voice=voice, nightwatch_copy=nightwatch_copy)
+                                          voice=voice, nightwatch_copy=nightwatch_copy,
+                                          typed=typed)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.

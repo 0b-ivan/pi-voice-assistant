@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0f0a">
+  <title>Servitor Proximus</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="servo-skull.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="bar">
+    <h1>PROXIMUS</h1>
+    <span id="link" class="pill" data-state="unknown">Server ?</span>
+    <button id="open-settings" class="icon" type="button" aria-label="Einstellungen">⚙</button>
+  </header>
+
+  <main>
+    <section class="core" aria-live="polite">
+      <img id="skull" src="servo-skull.png" alt="" data-state="idle">
+      <p id="stage" class="stage">BEREIT</p>
+      <p id="meter" class="meter" aria-hidden="true"><span></span></p>
+    </section>
+
+    <ol id="log" class="log" aria-live="polite"></ol>
+
+    <section class="controls">
+      <button id="talk" class="talk" type="button">
+        <span class="talk-main">HALTEN ZUM SPRECHEN</span>
+        <span class="talk-hint">oder Leertaste halten</span>
+      </button>
+      <button id="cancel" class="cancel" type="button" hidden>ABBRECHEN</button>
+      <form id="ask" class="ask" autocomplete="off">
+        <input id="question" name="question" type="text" maxlength="500"
+               placeholder="Frage tippen …" enterkeyhint="send" aria-label="Frage">
+        <button type="submit">SENDEN</button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" id="settings-form">
+      <h2>Einstellungen</h2>
+      <label>Server-Token
+        <input id="token" type="password" autocomplete="current-password" spellcheck="false"
+               placeholder="SERVITOR_API_TOKEN" minlength="32">
+      </label>
+      <label class="check"><input id="remember" type="checkbox"> Token in diesem Browser merken</label>
+      <label>Persona
+        <select id="persona"><option value="servitor">Servitor Proximus</option>
+          <option value="mensch">Mensch (Billy)</option></select>
+      </label>
+      <label>Lore
+        <select id="lore"><option value="off">Aus</option><option value="light">Leicht</option>
+          <option value="full">Voll</option></select>
+      </label>
+      <label>Stimme
+        <select id="voice"><option value="servitor">Servitor</option>
+          <option value="natural">Natürlich</option></select>
+      </label>
+      <label>Sprachkern
+        <select id="llm_mode"><option value="auto">Auto (OpenRouter)</option>
+          <option value="free">Frei</option><option value="local">Lokal</option></select>
+      </label>
+      <label class="check"><input id="toggle" type="checkbox"> Antippen statt halten</label>
+      <p class="note">Mikrofon nur über HTTPS (Tunnel) oder localhost. Kein Gedächtnis,
+        kein Kalender, keine Gerätesteuerung: der Web-Client ist ein Gast.</p>
+      <div class="row">
+        <button value="cancel" type="submit" class="secondary">Schließen</button>
+        <button value="save" type="submit" id="save">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

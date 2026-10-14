@@ -14,6 +14,11 @@ if [ "$SRC" != "$B/repo/server" ]; then
   install -o root -g root -m 0644 "$SRC/../src/"*.py "$B/repo/src/"
   # Lore archive (src/lore_engrams.json): without it the lore search returns nothing.
   install -o root -g root -m 0644 "$SRC/../src/"*.json "$B/repo/src/"
+  # Browser client (GET /web/, docs/web-client.md) and the skull it shows.
+  install -d -o root -g root -m 0755 "$B/repo/web" "$B/repo/assets/display"
+  rm -f "$B/repo/web/"*
+  install -o root -g root -m 0644 "$SRC/../web/"* "$B/repo/web/"
+  install -o root -g root -m 0644 "$SRC/../assets/display/servo-skull.png" "$B/repo/assets/display/"
 fi
 # Speaker recognition (src/speaker.py): sherpa-onnx and the CAM++ VoxCeleb model.
 "$B/.venv/bin/pip" install -q sherpa-onnx==1.13.8
