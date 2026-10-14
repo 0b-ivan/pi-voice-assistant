@@ -1,0 +1,11 @@
+[Unit]
+Description=Proximus CPU governor mode %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/proximus-cpu-mode.py %i
+TimeoutStartSec=8
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+UMask=0077
