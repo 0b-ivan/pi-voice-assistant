@@ -155,10 +155,10 @@ const root = path.resolve(__dirname, '..');
     assert(await page.locator('#talk').evaluate(e => e.getBoundingClientRect().bottom <= innerHeight));
     await page.screenshot({ path: path.join(os.tmpdir(), 'proximus-web-journal-mobile.png') });
     // UI-Wording: keine erfundenen Messungen, Wartungsergebnisse oder binären Füllzeilen.
-    const source = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
-    assert(!source.includes('Störungen hoch'));
-    assert(!source.includes('Litanei der Prüfung: kein Fehler gefunden.'));
-    assert(source.includes('Kennwort oder Token ungültig.'));
+    const uiSource = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
+    assert(!uiSource.includes('Störungen hoch'));
+    assert(!uiSource.includes('Litanei der Prüfung: kein Fehler gefunden.'));
+    assert(uiSource.includes('Kennwort oder Token ungültig.'));
     assert.deepEqual(errors, []);
     console.log('Browserprüfung bestanden: Journal, Wiederverbindung, Zeitlimit, Texteingabe und kompakte Bedienung bei fünf Mobilgrößen.');
   } finally { await browser.close(); }
