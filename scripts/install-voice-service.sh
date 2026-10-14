@@ -50,6 +50,7 @@ install -m 0644 "${repo_root}/src/menu.py" /opt/pi-voice-assistant/src/menu.py
 install -m 0644 "${repo_root}/src/intents.py" /opt/pi-voice-assistant/src/intents.py
 install -m 0644 "${repo_root}/src/power.py" /opt/pi-voice-assistant/src/power.py
 install -m 0644 "${repo_root}/src/pisugar_client.py" /opt/pi-voice-assistant/src/pisugar_client.py
+install -m 0644 "${repo_root}/src/pisugar_button.py" /opt/pi-voice-assistant/src/pisugar_button.py
 install -m 0644 "${repo_root}/src/energy.py" /opt/pi-voice-assistant/src/energy.py
 install -m 0644 "${repo_root}/src/netprobe.py" /opt/pi-voice-assistant/src/netprobe.py
 install -m 0644 "${repo_root}/src/sysmon.py" /opt/pi-voice-assistant/src/sysmon.py
