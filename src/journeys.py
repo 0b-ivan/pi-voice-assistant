@@ -382,18 +382,19 @@ def offers_text(options, query, now):
     else:
         head = (f"{len(options)} Verbindungen nach {target}." if len(options) > 1
                 else f"Eine Verbindung nach {target}.")
-    lines = [head]
-    if len(options) == 1 or query['kind'] == 'departures':
-        lines += [option_text(number if len(options) > 1 else None, option, now)
-                  for number, option in enumerate(options, 1)]
-    else:
-        # Several trips: one short sentence each; the details follow the choice.
-        lines += [short_text(number, option, now) for number, option in enumerate(options, 1)]
-        if not all(option['realtime'] for option in options):
-            lines.append('Zeiten teils laut Fahrplan.')
+    # A "next departure" request should not synthesize three complete trips
+    # on the 512 MB Pi. Retain every option for "die zweite"/"die dritte",
+    # but speak only the nearest connection initially.
+    first = options[0]
+    line = (option_text(None, first, now) if query['kind'] == 'departures'
+            else short_text(1, first, now))
+    lines = [head, line]
+    if not first['realtime']:
+        lines.append('Laut Fahrplan.')
     if len(options) > 1:
-        lines.append('Welche? Die erste' + (', zweite oder dritte?' if len(options) == 3
-                                            else ' oder zweite?'))
+        lines.append('Weitere Verbindung verfügbar.' if len(options) == 2 else
+                     'Zwei weitere Verbindungen verfügbar.')
+        lines.append('Sag die zweite' + (' oder dritte.' if len(options) == 3 else '.'))
     return ' '.join(lines)
 
 
