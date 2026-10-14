@@ -426,6 +426,17 @@ def status_text(snapshot, processing=False, lore=None, rng=None):
     snapshot = sanitize_snapshot(snapshot)
     lore = _style(snapshot, lore)
     billy = is_billy(lore)
+    # Ein erreichbarer Webserver ist keine vollständige Pi-Zustandsprüfung.
+    measured = ('battery_pct', 'temp_c', 'load_pct', 'mem_free_pct',
+                'disk_free_pct', 'uptime_s', 'wlan', 'wifi_dbm', 'net_ms',
+                'throttled', 'cpu', 'updates', 'server_updates')
+    if not any(key in snapshot for key in measured):
+        if snapshot.get('server') == 'ok':
+            return ('Der Sprachserver antwortet. Aktuelle Pi-Messwerte liegen nicht vor.'
+                    if billy else
+                    'Sprachserver erreichbar. Aktuelle Pi-Messwerte nicht verfügbar.')
+        return ('Aktuelle Statusdaten fehlen.' if billy
+                else 'Statusdaten nicht verfügbar.')
     warnings, trouble = [], False
 
     def warn(servitor, human, serious=True):

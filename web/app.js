@@ -16,14 +16,14 @@ const STAGES = { recognize: 'ENTSCHLÜSSELE SIGNAL', think: 'MASCHINENGEIST DENK
 const LITANY = {
   ignition: ['Die Seele des Maschinengottes umgibt dich.', 'Die Macht des Maschinengottes erfüllt dich.',
              'Der Hass des Maschinengottes treibt dich an.', 'Der Maschinengott schenkt dir Leben.'],
-  hint: ['Der Maschinengeist lauscht.', 'Mens sana in machina sana.',
+  hint: ['Der Maschinengeist lauscht.', 'Wissen ist heilig. Halte die Verbindung rein.',
          'Wissen ist Werkzeug. Setze es mit Bedacht ein.',
          'Wissen ist heilig. Stelle deine Frage.', 'Mit dem Segen des Omnissiah.',
          'Gesegnet seien Leitung und Signal.'],
 };
 // Murmured in the background between the log lines.
 LITANY.journal = ['Ehre dem Omnissiah.', 'Die Lebenden schwinden. Aber die Maschine besteht.',
-  'Deus ex machina.', 'Mens sana in machina sana.', 'Gesegnet sei der Datenstrom.',
+  'Deus ex machina.', 'Die Maschine besteht.', 'Gesegnet sei der Datenstrom.',
   'Möge Weihrauch die Schaltkreise schützen.', 'Litanei der unverfälschten Übertragung.',
   'Möge der Maschinengeist Ruhe finden.', 'Fehler seien benannt, nicht verschwiegen.',
   'Das Fleisch ist schwach. Der Stahl bleibt.', 'Öl für die Gelenke, Lobpreis für die Maschine.',
@@ -938,7 +938,7 @@ async function dial(event) {
   }
   $('dial-token').value = '';
   Vox.sounds.cant();
-  dialLine('Dignus est intrare. Kennung angenommen.', 'good');
+  dialLine('Kennung angenommen. Einlass in den Vox-Kanal gewährt.', 'good');
   await wait(600 * pace);
   dialLine(link === 'loading' ? 'Sprachkern startet noch. Verbindung steht.'
                               : LITANY.ignition[3], 'good');

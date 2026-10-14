@@ -159,6 +159,8 @@ const root = path.resolve(__dirname, '..');
     assert(!uiSource.includes('Störungen hoch'));
     assert(!uiSource.includes('Litanei der Prüfung: kein Fehler gefunden.'));
     assert(uiSource.includes('Kennwort oder Token ungültig.'));
+    assert(!uiSource.includes('Dignus est intrare'));
+    assert(!uiSource.includes('Mens sana in machina sana'));
     assert.deepEqual(errors, []);
     console.log('Browserprüfung bestanden: Journal, Wiederverbindung, Zeitlimit, Texteingabe und kompakte Bedienung bei fünf Mobilgrößen.');
   } finally { await browser.close(); }

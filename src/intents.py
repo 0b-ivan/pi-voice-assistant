@@ -85,7 +85,7 @@ _PATTERNS = (
     # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
     ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
                            r'ladestand|ladezustand|energiereserve\w*)\b|\bwie (?:viel|viele) prozent hast du (?:noch|übrig)\b')),
-    ('status', re.compile(r'\b(dein(en)? status|systemstatus|statusbericht|status bericht|'
+    ('status', re.compile(r'\b(dein(en)? status|system ?status|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht|'
                           r'(?:deine? |system ?)(?:temperatur|auslastung|betriebszeit|messwerte)|'
                           r'wie (?:heiß|warm) bist du|uptime)\b|^status\b')),

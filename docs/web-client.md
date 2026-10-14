@@ -169,6 +169,27 @@ Die Oberfläche verbindet imperiale Funk-Atmosphäre mit überprüfbaren Zustän
 - **Sprache:** Deutsch und knapp; etablierte Begriffe wie Vox, Omnissiah oder
   Maschinengeist bleiben. Kein Modellname unter Antworten.
 
+### Lore-Prüfung der Formulierungen
+
+Die `Litanei der Zündung` ist an die überlieferte `Litany of Ignition` angelehnt.
+Andere atmosphärische Funksprüche sind **eigene Projekttexte** und nicht
+automatisch offizielle Mechanicus-Gebete. `Dignus est intrare` und
+`Mens sana in machina sana` entfallen als pseudo-kanonische Losungen.
+
+Billy, Phobos IX, Milwaukee Secundus und Magos Kael sind projektinterne
+Geschichte, kein offizieller Warhammer-Kanon. Der Prompt trennt das nur,
+wenn ausdrücklich nach kanonischer Lore gefragt wird; ansonsten bleibt
+die Figur in ihrer Rolle.
+
+Die Antworten „Status nominal“ und „Alle Riten erfüllt“ dürfen bei fehlenden
+Pi-Messwerten nicht als Befund erscheinen. `system status?` wird als
+Status-Intent erkannt. Die Antwort nennt ausdrücklich fehlende Telemetrie.
+
+**Testgrenze:** Der Testlauf prüft feste Antworten, Lore-Kontext, Persona-
+Grenzen, Browserabläufe und Fehlerfälle; er misst **keine tatsächlichen
+generierten Modellantworten**. Hierfür sind auf CT 107 authentifizierte
+Modell-Stichproben mit `server/sample-persona.py dialog` nötig.
+
 ### Journal-Sicherheit und Abschaltung der Vollweiterleitung
 
 Die bisherige Weiterleitung mit `systemd-journal-upload` war zu breit:
@@ -226,8 +247,7 @@ zu `/health`, beim Senden und Empfangen den Sprachpegel.
   Anruf-Bildschirm), Zahnrad mit Dürers magischem Quadrat (dreht sich in der
   Kopfzeile, solange der Server arbeitet, und steht über dem leeren Protokoll).
 - **Litaneien:** Die Wählsequenz folgt der Litanei der Zündung („Die Seele
-  des Maschinengottes umgibt dich …“, „Lebe!“), der Zugang wird mit „Dignus
-  est intrare“ gewährt, ein falscher Code mit „Im Namen des Omnissiah,
+  des Maschinengottes umgibt dich …“, „Lebe!“), nach erfolgreicher Anmeldung erscheint die Bestätigung der Kennung, ein falscher Code mit „Im Namen des Omnissiah,
   identifiziere dich“ abgewiesen. Auflegen endet mit „Die Lebenden schwinden.
   Aber die Maschine besteht.“ Über dem leeren Protokoll steht ein zufälliger
   Spruch („Mens sana in machina sano“ …). Alle Texte stehen in `LITANY`
