@@ -134,8 +134,7 @@ install -m 0644 "${repo_root}/deploy/pi-ptt.service" /etc/systemd/system/pi-ptt.
 install -D -o root -g root -m 0755 "${repo_root}/scripts/proximus-battery-standby.py" \
   /usr/local/libexec/proximus-battery-standby.py
 install -m 0644 "${repo_root}/deploy/proximus-battery-standby.service" \
-  /etc/systemd/system/proximus-battery-standby.service \
-  /etc/systemd/system/proximus-cpu-mode@.service
+  /etc/systemd/system/proximus-battery-standby.service
 install -D -o root -g root -m 0755 "${repo_root}/scripts/proximus-cpu-mode.py" \
   /usr/local/libexec/proximus-cpu-mode.py
 install -m 0644 "${repo_root}/deploy/proximus-cpu-mode@.service" \
