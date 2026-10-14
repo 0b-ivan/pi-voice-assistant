@@ -442,6 +442,11 @@ angelegtes datiertes Backup von `config.txt` bleibt erhalten. Die
 entfernt, bleibt der Governor `power` innerhalb der Standardtaktgrenze.
 **Ohne Hardwaretests keine automatische OC-Freigabe oder Merge.**
 
+Ob die Übertaktung wirklich greift, zeigt das PiTFT: Erst wenn der Kernel
+nach dem Reboot mehr als 1000 MHz erlaubt (und keine Unterspannung oder
+Drosselung anliegt), erscheint `OC` in der Kopfzeile, das goldene Servitor-Auge bzw.
+Billys Gottmodus ([Display](display.md#cpu-profil-auf-dem-display)).
+
 ### Optional: Einstellungen des offiziellen Power Managers auslesen
 
 `src/pisugar_client.py` kann `get`-Kommandos des [offiziellen

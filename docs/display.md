@@ -145,6 +145,25 @@ Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nic
 
 Beim Morgenbericht und bei Wetterfragen setzt `ptt.py` `weather_day` (0 = heute … 4) in `display-status.json`; `display.py` zeichnet dann mit 8 Bildern pro Sekunde `render_weather` aus `/run/pi-ptt/display-weather.json` (die vom Sprachdienst auf dem Gedächtnis-Stick gehaltene Fünf-Tage-Vorhersage). Oben „AUSPEX · WETTERDATEN“ (Sprechstil BILLY: „WETTER“) und der Abrufzeitpunkt, links das Piktogramm (24×24 Pixel, dreifach skaliert, mit Scanlines), rechts Tag, Temperatur, Spanne, Wetterlage und Regenwahrscheinlichkeit, unten der Fünf-Tage-Streifen. Die Vorschau ist mit dem Display-Code gerendert, kein Foto. [Architektur](architecture.md#morgenlitanei-und-wetter).
 
+## CPU-Profil auf dem Display
+
+In der Kopfzeile, links neben CPU-Temperatur und Akku, steht ein kleines Schild mit dem CPU-Profil, das **tatsächlich läuft**, nicht nur dem im Menü gewählten (auf allen Live-Ansichten, auch Wetter und Ruhe). `display.py` liest dazu alle 5 s (zusammen mit Akku und `vcgencmd get_throttled`) read-only über [`src/cpu_state.py`](../src/cpu_state.py): Governor, aktuelle Frequenz und die vom Kernel erlaubte Höchstfrequenz (`cpuinfo_max_freq`/`scaling_max_freq` von `policy0`). `vcgencmd measure_clock arm` wird nur aufgerufen, wenn die Grenze über dem Standardtakt liegt.
+
+| Profil | Governor | Servitor | Billy | Schild |
+|---|---|---|---|---|
+| ECO | `powersave` | auf 70 % gedimmt, Auge atmet langsam (5 s) und schwach, Litaneien gedämpft, nur 2 Bilder/s | ruhig geradeaus, langsames Blinzeln | `ECO` grün |
+| BALANCED | `ondemand`/`schedutil`/`conservative` | unverändert | unverändert | kein Schild |
+| POWER | `performance` | Auge kräftiger und schneller (2,2 s), Litaneien heller | wach: weit geöffnete Augen, schnellere Blicke, warmer Rahmen | `PWR` orange |
+| Übertaktet | Kernel-Grenze über Standardtakt | **goldenes Auge**, im Leerlauf goldene Litaneien („MOTIVKRAFT ERHOEHT“, „OMNISSIAH SEGNET“ …) | **Doom-Gottmodus**: das originale `god`-Gesicht mit goldenen Augen, die leicht pulsieren; beim Sprechen derselbe Mund wie sonst, goldener Rahmen | `OC` gold |
+
+- **Übertaktet** gilt nur, wenn die vom Kernel erlaubte Höchstfrequenz über dem Standardtakt des Boards liegt (Pi Zero 2 W: 1000 MHz, aus `/proc/device-tree/model`; andere Boards zeigen nie Gold, Override `PI_DISPLAY_CPU_STOCK_KHZ`). `arm_freq=1200` in `config.txt` allein reicht nicht. Unter `performance` muss zusätzlich `measure_clock arm` über dem Standardtakt liegen. `powersave` auf einem übertakteten Pi zeigt ECO.
+- **Warnungen gehen vor:** Unterspannung oder Drosselung *jetzt* (`get_throttled` Bits 0–3) ersetzen den Profilnamen im Schild (`UV` rot, `DRS` gelb), schalten Gold ab und stehen im Leerlauf in der Zeile unter Schädel/Gesicht. Sind die Firmware-Flags nicht lesbar, wird über dem Standardtakt `?` gezeigt, kein Gold.
+- **Wahl ≠ Wirklichkeit:** Läuft ein anderer Governor als gewählt (z. B. POWER gewählt, Akku-Standby hält `powersave`), bekommt das Schild einen gelben Rahmen und zeigt das echte Profil (bei NORMAL dann `NRM`).
+- Hört Proximus zu, denkt oder spricht er, behalten die Litaneien und das zweite Auge ihre Statusfarbe; nur das Auge bleibt golden. Billys Schmerz-, Grinse-, Wut- und Seitenblick-Gesichter bleiben auch im Gottmodus erhalten; die kurze Gottmodus-Animation beim Anstecken des Netzteils funktioniert weiter.
+- Ressourcen: goldene Augenbilder (12 Stufen) und Billys Gottmodus-Pulsbilder werden beim ersten Gebrauch einmal berechnet und gecacht; gezeichnet wird nur, wenn sich etwas Sichtbares ändert, das Teilbild-Update (`PartialDisplay`) bleibt.
+
+Der Schädel liest seine Grafik aus `PI_DISPLAY_SKULL` (Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`) und, wenn dort keine liegt, aus `assets/display/servo-skull.png` im Repository. `install-voice-service.sh` installiert sie von dort, sobald sie im Repository liegt; vorher bleibt die Kopie auf dem Pi unangetastet.
+
 ## Ruhe und Schlaf
 
 `ptt.py` kennt drei Stufen und schreibt sie als `power` in `display-status.json`:
