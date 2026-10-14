@@ -71,8 +71,8 @@ class DirectPiSugarTests(unittest.TestCase):
         for ctrl1 in (0xF4, 0x74):
             with self.subTest(ctrl1=hex(ctrl1)):
                 class ZeroBus(self.FakeBus):
-                    values = dict(self.FakeBus.values, **{0x02: ctrl1,
-                                                         0x26: 0, 0x27: 0})
+                    values = {**self.FakeBus.values, 0x02: ctrl1,
+                              0x26: 0, 0x27: 0}
 
                 reading = power.Battery(bus_factory=ZeroBus).read()
                 self.assertIsNotNone(reading)
