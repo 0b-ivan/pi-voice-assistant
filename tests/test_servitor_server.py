@@ -686,29 +686,32 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(ss.check_password('ave omnissiah', stored))
         self.assertFalse(ss.check_password('x', 'kaputt'))
 
-    def test_journal_carries_system_log_lines_without_web_access_lines(self):
+    def test_journal_accepts_only_local_proximus_services(self):
         journal = self.service.journal
-        journal.add_journald(json.dumps(dict(MESSAGE='Started Daily apt upgrade.', PRIORITY='6',
-                                             _SYSTEMD_UNIT='apt-daily-upgrade.service',
+        for name, unit in (('Fremder Host-Dienst', 'ssh.service'),
+                           ('Fremder Container', 'cron.service'),
+                           ('Alle Kernelmeldungen', 'kernel')):
+            journal.add_journald(json.dumps(dict(MESSAGE=name, PRIORITY='4',
+                                                 _SYSTEMD_UNIT=unit)))
+        journal.add_journald(json.dumps(dict(MESSAGE='Nicht lokaler Proximus',
+                                             PRIORITY='4', _SYSTEMD_UNIT='servitor-voice.service',
+                                             _HOSTNAME='wgz-pve-01')))
+        journal.add_journald(json.dumps(dict(MESSAGE='172.22.9.1 "POST /v1/ask HTTP/1.1" 200 -',
+                                             _SYSTEMD_UNIT='servitor-voice.service')))
+        journal.add_journald(json.dumps(dict(MESSAGE='{"event": "ready", "load_seconds": 3.2}',
+                                             PRIORITY='6', _SYSTEMD_UNIT='servitor-voice.service',
                                              __REALTIME_TIMESTAMP='1760000000000000')))
-        journal.add_journald(json.dumps(dict(MESSAGE='Out of memory: Killed process 4711 (llama-server)',
-                                             PRIORITY='3', _TRANSPORT='kernel')))
-        journal.add_journald(json.dumps(dict(MESSAGE='Failed password for root from 203.0.113.9 port 51515',
-                                             PRIORITY='5', _SYSTEMD_UNIT='ssh.service')))
-        journal.add_journald(json.dumps(dict(MESSAGE='172.22.9.1 "POST /v1/ask?format=opus HTTP/1.1" 200 -',
-                                             PRIORITY='6', _SYSTEMD_UNIT='servitor-voice.service')))
-        journal.add_journald('{"MESSAGE": "{\\"event\\": \\"ready\\", \\"load_seconds\\": 3.2}", "_SYSTEMD_UNIT": "servitor-voice.service"}')
+        journal.add_journald(json.dumps(dict(MESSAGE='Sprachkern bereit', PRIORITY='4',
+                                             _SYSTEMD_UNIT='servitor-llm.service')))
         journal.add_journald('kein json')
         response, _ = self.request('/v1/journal', method='GET', token=None)
         self.assertEqual(response.status, 401)
         response, data = self.request('/v1/journal?after=0', method='GET')
         lines = json.loads(data)['lines']
-        self.assertEqual([(l['unit'], l['prio']) for l in lines],
-                         [('apt-daily-upgrade', 6), ('kernel', 3), ('ssh', 5), ('servitor-voice', 6)])
+        self.assertEqual([(line['unit'], line['prio']) for line in lines],
+                         [('servitor-voice', 6), ('servitor-llm', 4)])
         self.assertEqual(lines[0]['ts'], 1760000000.0)
-        self.assertEqual(lines[2]['text'], 'Failed password for root from *.*.*.9 port 51515')
-        self.assertEqual(lines[3]['text'], '{"event": "ready", "load_seconds": 3.2}')
-        self.assertFalse(any('HTTP/1.1' in l['text'] for l in lines))
+        self.assertEqual(lines[0]['text'], '{"event": "ready", "load_seconds": 3.2}')
         last = json.loads(data)['seq']
         _, data = self.request(f'/v1/journal?after={last}', method='GET')
         self.assertEqual(json.loads(data)['lines'], [])
@@ -723,12 +726,11 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(requests, [dict(event='request', client='pi', method='POST',
                                          path='/v1/ask', status=200)])
 
-    def test_journal_keeps_the_host_of_forwarded_lines(self):
+    def test_journal_excludes_forwarded_logs_even_with_allowed_unit(self):
         self.service.journal.add_journald(json.dumps(dict(
-            MESSAGE='usb 1-1.3: new high-speed USB device', PRIORITY='6', _TRANSPORT='kernel',
-            _HOSTNAME='wgz-pve-01')))
-        line = self.service.journal.since(0)['lines'][-1]
-        self.assertEqual((line['host'], line['unit']), ('wgz-pve-01', 'kernel'))
+            MESSAGE='Unzulässiger Fremdhost', PRIORITY='6',
+            _SYSTEMD_UNIT='servitor-voice.service', _HOSTNAME='wgz-pve-01')))
+        self.assertEqual(self.service.journal.since(0)['lines'], [])
 
     def test_journal_reconnects_after_restart_even_if_new_counter_is_higher(self):
         old = ss.Journal()
@@ -756,7 +758,7 @@ class ServerTest(unittest.TestCase):
 
     def test_journal_follows_journalctl_output(self):
         script = Path(self.tmp.name) / 'fake-journalctl'
-        script.write_text('#!/bin/sh\necho \'{"MESSAGE": "cron tick", "_SYSTEMD_UNIT": "cron.service"}\'\n'
+        script.write_text('#!/bin/sh\necho \'{"MESSAGE": "Proximus bereit", "_SYSTEMD_UNIT": "servitor-voice.service"}\'\n'
                           'echo "No journal files were found." >&2\nexit 9\n')
         script.chmod(0o755)
         stop = threading.Event()

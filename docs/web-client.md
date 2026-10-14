@@ -118,8 +118,8 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
 
 ### Live-Journal und Fremdkanal
 
-Das System-Journal von CT 107 läuft mit: Kernel, systemd, lokales LLM,
-Cron, SSH, Updates und die Ereignisse des Sprachdienstes selbst
+Nur die lokalen Proximus-Dienste `servitor-voice.service` und
+`servitor-llm.service` liefern echte Journal-Einträge
 (`GET /v1/journal?after=N`, Token oder Sitzung, alle 2,5 s). Der Dienst
 liest es mit `journalctl -f` (Gruppe `systemd-journal`, die die Unit schon hat)
 und hält die letzten 300 Zeilen im Arbeitsspeicher. Zugriffszeilen des
@@ -145,58 +145,43 @@ weitergelaufen ist als vorher.
   verständliche Wörter. Nie während man sendet oder Proximus spricht. Im
   Journal steht dann „FREMDKANAL · unverständlich“.
 
-### Journal vom Proxmox-Host und Pi weiterleiten
+### Journal-Sicherheit und Abschaltung der Vollweiterleitung
 
-CT 107 sieht das Journal seines eigenen Containers. Der Kernel und die
-Proxmox-Dienste laufen auf dem Host; der Pi hat ebenfalls ein eigenes Journal.
-Damit deren echte Meldungen in der Röhre erscheinen, wird der native
-[systemd-Journal-Upload](https://manpages.debian.org/trixie/systemd-journal-remote/systemd-journal-upload.service.8.en.html)
-eingerichtet. Es leitet alle lokalen Journal-Einträge weiter, ohne Filter auf
-Sprachdienste oder Prioritäten.
+Die bisherige Weiterleitung mit `systemd-journal-upload` war zu breit:
+Sie übertrug sämtliche Host-/Pi-Systemmeldungen, darunter SSH, Kernel,
+andere Dienste und Proxmox-Verwaltung. **Diese Vollweiterleitung ist
+deaktiviert und darf nicht erneut installiert werden.**
 
-Als root, im Checkout dieses Standes:
+Der Server liest jetzt nur `servitor-voice.service` und
+`servitor-llm.service` aus dem lokalen Journal (`journalctl -u`).
+Zusätzlich verwirft eine Whitelist fremde Units und fremde Hostnamen.
+Der frühere Installer `deploy/journal-forward/install.sh` ist gesperrt.
 
-```sh
-# In CT 107: Pi-LAN und Verwaltungsnetz, jeweils Port 19532
-sh deploy/journal-forward/install.sh server 172.22.9.107 172.22.2.107
-
-# Auf dem Proxmox-Host: direkter Weg im Verwaltungsnetz
-sh deploy/journal-forward/install.sh client http://172.22.2.107:19532
-
-# Auf dem eingeschalteten Pi: direkter Weg im Pi-LAN
-sh deploy/journal-forward/install.sh client http://172.22.9.107:19532
-```
-
-Das Debian-Paket `systemd-journal-remote` enthält Empfänger und Uploader. Der
-Empfänger speichert unter `/var/log/journal/remote/`; die Gruppe des
-Sprachdienstes wird über ein Drop-in ergänzt. `journalctl --merge` liest diese
-Dateien zusammen mit CT 107. Fremde Zeilen tragen den Rechnernamen vor Dienst
-und Meldung. **HTTP ist im LAN unverschlüsselt und ohne Client-Authentifizierung;
-Port 19532 nur im vertrauten LAN, nicht über cloudflared veröffentlichen.**
-Die Server-Einrichtung startet den Sprachdienst neu und meldet Browser ab.
-
-Der Upload-Cursor liegt unter `/run/proximus-journal-upload/`, also im RAM.
-Dienst-Neustarts setzen an dieser Position fort. Nach einem Rechner-Neustart
-beginnt der Upload mit etwa 80 vorhandenen Meldungen und folgt anschließend
-allen neuen Einträgen. Er überträgt kein vollständiges historisches Archiv;
-auf dem Pi entstehen keine laufenden Cursor-Schreibzugriffe auf die SD-Karte.
-Die Remote-Ablage ist auf 128 MB je Journal begrenzt (aktive Dateien können
-die Grenze vorübergehend überschreiten).
-
-Prüfen:
+**Einmalig bestehende Installation abschalten:**
 
 ```sh
-# Je Sender
-systemctl status systemd-journal-upload --no-pager
+# Auf dem Proxmox-Host wgz-pve-01 als root:
+systemctl disable --now systemd-journal-upload.service
 
-# CT 107: tatsächliche Zusatzgruppen wie beim Sprachdienst verwenden
-systemd-run --pipe --wait --uid=servitor \
-  -p 'SupplementaryGroups=systemd-journal systemd-journal-remote' \
-  journalctl --merge -n 20 --no-pager
+# In CT 107 als root (nur die beiden Proximus-Remote-Empfänger):
+systemctl disable --now 'systemd-journal-remote@172.22.2.107.socket' \
+  'systemd-journal-remote@172.22.9.107.socket'
+systemctl stop 'systemd-journal-remote@172.22.2.107.service' \
+  'systemd-journal-remote@172.22.9.107.service'
 ```
 
-Ohne Forwarder sind ruhige CT-Logs normal; ein ausgeschalteter Pi sendet
-keine Meldungen. Die Röhre zeigt echte Ereignisse aus angeschlossenen Quellen.
+Für sofortige Einschränkung **vor** der Code-Aktualisierung in
+`/etc/servitor-voice.env` den Wert `SERVITOR_JOURNAL_SOURCE=own`
+setzen und `systemctl restart servitor-voice` ausführen. Dies zeigt
+nur noch die Proximus-Serverausgabe, leert den RAM-Puffer und beendet
+bestehende Browser-Sitzungen.
+
+Bereits empfangene Dateien unter `/var/log/journal/remote/` werden
+durch die Abschaltung **nicht automatisch gelöscht**. Nach dem Stoppen
+der Empfänger gesondert prüfen und bereinigen; lokale Journale erhalten.
+
+**Pi-Weiterleitung bleibt aus**, bis es einen ausschließlich auf
+Proximus-Dienste eingeschränkten, authentifizierten Transport gibt.
 
 ### Zeigerinstrument
 

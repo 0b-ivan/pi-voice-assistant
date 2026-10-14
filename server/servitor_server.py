@@ -462,10 +462,13 @@ class WebSessions:
 
 
 class Journal:
-    """Recent log lines of the server (CT 107), for the browser client's
-    background: the system journal (follow_system_journal) or, without
-    journalctl, the service's own output (Tee). HTTP access lines are left
-    out, IP addresses are masked. Nothing here is written to disk."""
+    """Nur lokale Proximus-Dienste gelangen in das Browser-Journal.
+
+    Die serverseitige Whitelist gilt auch bei späteren Änderungen am
+    journalctl-Aufruf. Journal-Puffer werden nur im RAM gehalten.
+    """
+
+    OWN_UNITS = frozenset({'servitor-voice.service', 'servitor-llm.service'})
 
     # Web server access lines ('1.2.3.4 "POST /v1/ask HTTP/1.1" 200 -') are not
     # server logs; neither is the service's own HTTP noise.
@@ -497,17 +500,18 @@ class Journal:
                                    unit=unit, prio=int(priority), host=host[:32]))
 
     def add_journald(self, raw):
-        """One ``journalctl -o json`` line."""
+        """Nur Einträge lokaler Proximus-Units übernehmen."""
         entry = logwatch.parse_entry(raw)
-        if entry is None:
+        if entry is None or entry['unit'] not in self.OWN_UNITS:
             return
         try:
             host = json.loads(raw).get('_HOSTNAME', '')
         except (ValueError, AttributeError):
-            host = ''
-        unit = entry['unit'] or ('kernel' if entry['kernel'] else '')
-        self.add(entry['text'], unit, entry['priority'], entry['at'] or None,
-                 host if isinstance(host, str) else '')
+            return
+        # Auch gefälschte Unit-Namen in weitergeleiteten Journalen abweisen.
+        if not isinstance(host, str) or (host and host != socket.gethostname()):
+            return
+        self.add(entry['text'], entry['unit'], entry['priority'], entry['at'] or None, host)
 
     def set_source(self, mode, error=''):
         error = self.ANSI.sub('', error).strip()
@@ -527,13 +531,15 @@ class Journal:
 
 
 def follow_system_journal(journal, command=None, stop=None):
-    """Feed the system journal into ``journal``, restarting journalctl if it
-    ends. Needs the group systemd-journal (the unit has it); without it
-    journalctl shows only this service's own lines. ``--merge`` adds the
-    journals other machines forward here (deploy/journal-forward: the Proxmox
-    host with the kernel log, the Pi)."""
-    command = command or ['journalctl', '-f', '--merge', '-n', '80', '-o', 'json', '-q',
-                          '--no-pager',
+    """Nur lokale Proximus-Dienste verfolgen, nicht das gesamte Systemjournal.
+
+    -u filtert vor dem Stream; Journal.add_journald prüft zusätzlich Units
+    und Rechnernamen, auch wenn der Aufruf künftig erweitert wird.
+    """
+    command = command or ['journalctl', '-f', '-n', '80',
+                          '-u', 'servitor-voice.service',
+                          '-u', 'servitor-llm.service',
+                          '-o', 'json', '-q', '--no-pager',
                           '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
                           '_HOSTNAME,__REALTIME_TIMESTAMP']
     stop = stop or threading.Event()   # stop between launches, e.g. after a finite journal export
@@ -1760,8 +1766,8 @@ def main():
     service = Service(config, pipeline)
     server = Server((config.bind, config.port), Handler)
     server.service = service
-    # The browser's background log: the system journal of this host; where
-    # there is no journalctl (no systemd), the service's own output.
+    # Browser-Journal nur von lokalen Proximus-Diensten; ohne journalctl
+    # wird ausschließlich die Ausgabe dieses Dienstes erfasst.
     import shutil
     if shutil.which('journalctl') and os.environ.get('SERVITOR_JOURNAL_SOURCE') != 'own':
         follow_system_journal(service.journal)

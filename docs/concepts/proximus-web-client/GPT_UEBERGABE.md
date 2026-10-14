@@ -4,6 +4,16 @@ Stand 14.10.2026, aktueller Branch `codex/proximus-web-journal-20261014`,
 Basis `claude/wizardly-euler-ogqg5u` (letzter Code-Commit siehe `git log`),
 **kein PR** nach `main`. Bedienerdoku: [`docs/web-client.md`](../../web-client.md).
 
+## Korrektur: kein fremdes Systemjournal im Web
+
+Die unten protokollierte Vollweiterleitung des Proxmox-Journals ist ein
+**überholter Versuchsstand**. Sie umfasst fremde Dienste und darf nicht
+weiterbetrieben werden. Der Fix beschränkt die Browser-API auf lokale
+`servitor-voice.service`- und `servitor-llm.service`-Logs. Der alte
+Installer ist gesperrt. Host-Uploader und CT-Empfänger müssen separat
+abgeschaltet werden; Anweisungen stehen in `docs/web-client.md`.
+Pi-Forwarding bleibt ausgeschaltet. Der Live-Fix auf CT 107 steht noch aus.
+
 ## Ziel
 
 Proximus aus derselben Codebasis als Browser-Client. CT 107 (`server/servitor_server.py`)
