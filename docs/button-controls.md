@@ -44,7 +44,8 @@ Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B ge
 | | Lautsprecher verbinden | Liste der gekoppelten Lautsprecher, E verbindet den gewählten |
 | | Lautsprecher suchen | Liste erscheint sofort und wächst während der 12 s Suche (nur Audiogeräte, gekoppelte mit ✓); E auf einen Eintrag koppelt (falls nötig) und verbindet |
 | | Lautsprecher entfernen | Gekoppelten Lautsprecher vergessen |
-| Netzwerk | WLAN suchen | Liste der erreichbaren SSIDs; gespeicherte WLANs sind markiert; unbekannte WLANs werden in der nächsten Ausbaustufe über einen Setup-Hotspot eingerichtet |
+| Netzwerk | Netzwerkinfos | Übersicht von LAN, WLAN, lokalen IPv4-Adressen, Gateway, DNS, Signal, Access-Point-Status und Clientzahl; ▲/▼ scrollen, E aktualisieren, B schließen – **nur lesend** |
+| | WLAN suchen | Liste der erreichbaren SSIDs; gespeicherte WLANs sind markiert; unbekannte WLANs werden in der nächsten Ausbaustufe über einen Setup-Hotspot eingerichtet |
 | | Gespeicherte WLANs | Bekannte Profile auswählen und verbinden; der Netzwerkwechsel kann die SSH-Verbindung unterbrechen |
 | | Access Point → AP starten | Startet `Proximus-Setup` (ohne LAN/Internet) und zeigt den **WLAN-QR-Code** |
 | | Access Point → Passwort anzeigen | Zeigt QR-Code für das **aktive** Setup-WLAN; E schaltet auf Passwort im Klartext um |

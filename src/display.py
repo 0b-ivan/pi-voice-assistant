@@ -1229,7 +1229,7 @@ def render_people(display, view, info=None):
             # Full AP station MACs and WPA2 passwords must fit in 240px.
             size = 15
             if ((title == 'HOTSPOT BEREIT' and label.startswith('Code: '))
-                    or title == 'AP CLIENTS'):
+                    or title in ('AP CLIENTS', 'NETZWERKINFO')):
                 size = next((v for v in (15, 14, 13, 12, 11, 10)
                              if draw.textlength(label, font=font(v)) <= 197), 10)
             draw.text((28, y), label, font=font(size),
@@ -1240,7 +1240,9 @@ def render_people(display, view, info=None):
         draw.text((14, 203), 'Profil löschen?', font=font(12), fill='white')
         _right(draw, 226, 214, 'E = Ja · B = Nein', 11, (255, 210, 210))
     else:
-        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+        footer = ('▲▼ scroll · E: Neu · B: zurück' if title == 'NETZWERKINFO'
+                  else '▲▼ wählen · E: OK · B: zurück')
+        draw.text((12, 209), footer, font=font(11), fill=(145, 155, 165))
     display.image(image, 180)
 
 

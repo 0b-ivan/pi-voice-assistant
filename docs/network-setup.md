@@ -15,6 +15,22 @@ Entropie, 15 Minuten Gültigkeit). **Passwortlose APs sind nicht vorgesehen**:
 Auf der lokalen Landingpage werden später Zugangsdaten für das Heim-WLAN
 eingegeben. Der QR-Code darf nicht öffentlich gezeigt werden.
 
+## Netzwerkstatus direkt am PiTFT
+
+Unter **Netzwerk → Netzwerkinfos** öffnet Proximus eine kompakte, scrollbar
+lesbare Übersicht. Angezeigt werden – soweit verfügbar – LAN- und WLAN-Status,
+IPv4-Adresse inklusive Netzmaske, Gateway, DNS, aktuelle WLAN-SSID und
+Signalstärke. Im Setup-AP-Modus werden stattdessen die AP-SSID, Portal-IP
+und die Zahl aktuell verbundener WLAN-Clients ergänzt.
+
+Die Informationen kommen ausschließlich aus lesenden NetworkManager-Abfragen
+(`nmcli device show`), `iw dev wlan0 link` und dem bestehenden privaten
+AP-Clientsnapshot. **Keine Netzwerksuche, keine Konfigurationsänderung, keine
+passwortbezogenen Zugriffe, kein Cloud-Aufruf.** Die Abfrage erfolgt einmal
+beim Öffnen und erneut nur auf Tastendruck; kein Hintergrund-Polling.
+Mit ▲/▼ scrollen, **E** aktualisieren und **B** schließen. Wenn Ethernet
+oder WLAN fehlen, bleibt die Seite verfügbar und zeigt den Teilstatus.
+
 ## Menü auf dem 240×240 PiTFT
 
 Unter **Netzwerk → Access Point** liegen folgende Aktionen:

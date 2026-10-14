@@ -123,6 +123,37 @@ class ControllerMenuTests(unittest.TestCase):
         self.c.menu.back(self.now)
         self.assertEqual(self.c.menu.group, None)
 
+    def test_network_info_opens_refreshes_and_closes_without_network_changes(self):
+        self.c.menu.select('net_info')
+        initial = ["LAN: verbunden", "LAN-IP: 192.168.1.38/24",
+                   "WLAN: getrennt", "DNS: 192.168.1.1"]
+        with patch('ptt.network_info.rows', return_value=initial) as collector, \
+             patch.object(self.c, '_wifi_job', side_effect=lambda fn: fn()):
+            self.press(down='E')
+            self.assertFalse(self.c.menu.open)
+            self.assertEqual(self.c.picker['action'], 'network_info')
+            self.assertEqual(self.c.picker['title'], 'NETZWERKINFO')
+            self.assertIn('LAN-IP: 192.168.1.38/24',
+                          [x[1] for x in self.c.picker['items']])
+            self.press(down='E')
+            self.assertEqual(collector.call_count, 2)
+            self.press(down='B')
+            self.assertIsNone(self.c.picker)
+        self.assertNotIn('192.168.1.38', self.status_path.read_text())
+
+    def test_network_info_closed_during_async_fetch_does_not_reopen(self):
+        self.c.picker = dict(action='network_info', title='NETZWERKINFO',
+                             index=0, items=[('loading', 'Lade Netzwerkdaten...')])
+        tasks = []
+        with patch.object(self.c, '_wifi_job',
+                          side_effect=lambda fn: tasks.append(fn)):
+            self.c._network_info_refresh(self.c.picker)
+        self.c._picker_buttons(confirm=False)
+        self.assertIsNone(self.c.picker)
+        with patch('ptt.network_info.rows', return_value=['LAN: verbunden']):
+            tasks[0]()
+        self.assertIsNone(self.c.picker)
+
     def test_access_point_submenu_navigation_and_back(self):
         menu = Menu()
         menu.select('hotspot')
