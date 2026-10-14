@@ -122,12 +122,16 @@ def server_status(env=None, opener=None):
             if isinstance(updates.get(k), int)}
 
 
+QUIET_POLL_SECONDS = 2.0
+
+
 class Watch:
     """Calls ``measure`` every ``interval`` seconds in a daemon thread."""
 
     def __init__(self, measure, interval, first_delay=0.0, name='watch'):
         self.measure, self.interval, self.first_delay = measure, interval, first_delay
         self.result, self.updated_at = None, None
+        self.quiet = None       # callable: True while the unit sleeps (no measuring)
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
 
     def start(self):
@@ -146,6 +150,9 @@ class Watch:
     def _run(self):
         time.sleep(self.first_delay)
         while True:
+            if self.quiet is not None and self.quiet():
+                time.sleep(QUIET_POLL_SECONDS)   # deep standby: measure after waking
+                continue
             try:
                 self.result = self.measure()
                 self.updated_at = time.time()

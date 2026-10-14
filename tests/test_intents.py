@@ -155,7 +155,9 @@ class AnswerTests(unittest.TestCase):
 
     def test_status_battery_identity(self):
         snapshot = dict(battery_pct=83, battery_charging=True, temp_c=45, server="ok")
-        self.assertTrue(intents.answer("status", self.NOW, snapshot).startswith("Status nominal."))
+        import system_status
+        self.assertTrue(intents.answer("status", self.NOW, snapshot)
+                        .startswith(system_status.STATUS_OPEN['servitor']))
         self.assertEqual(intents.answer("battery", self.NOW, snapshot),
                          "Energiespeicher 83 Prozent. Ladung aktiv.")
         self.assertEqual(intents.answer("battery", self.NOW, {}), "Energiedaten nicht verfügbar.")

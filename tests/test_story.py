@@ -453,6 +453,22 @@ class ControllerStoryTests(unittest.TestCase):
         self.assertIsNone(self.c.story)
         self.assertEqual(self.events('story_stopped')[-1]['reason'], 'new_turn')
 
+    def test_answer_in_parts_without_story_state_plays_and_ends_quietly(self):
+        # A long fixed answer (status) from the server: audio parts, no story.
+        paths = []
+        for index in range(3):
+            path = Path(self.tmp.name) / f'answer-{index}.wav'
+            path.write_bytes(b'x')
+            paths.append(str(path))
+            self.c._remote_progress(dict(event='audio', part=index, parts=3, path=str(path),
+                                         text=f'Teil {index}.', duration_ms=900))
+        self.run_ticks()
+        self.assertEqual([c.args[0] for c in self.speech.play.call_args_list], paths)
+        self.speech.start.assert_not_called()                 # no "Geschichte abgebrochen"
+        self.assertFalse(self.events('story_finished')[-1]['failed'])
+        self.assertEqual(FakeStoryJob.made, [])               # nothing fetched afterwards
+        self.assertFalse(any(Path(p).exists() for p in paths))  # played parts cleaned up
+
     def test_failure_is_reported_once_and_never_restarts(self):
         FakeStoryJob.fail_at = 2
         self.start_story(20)

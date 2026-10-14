@@ -407,6 +407,8 @@ class FakeBus:
 
     def read_byte_data(self, address, register):
         assert address == 0x57
+        if register not in self.registers:
+            raise OSError('I2C register unsupported')
         return self.registers[register]
 
     def write_byte_data(self, *args):  # must never be called: read-only
@@ -425,7 +427,7 @@ class BatteryTests(unittest.TestCase):
         bus = FakeBus(pisugar(3834, 80))
         battery = display.Battery(bus_factory=lambda: bus).read()
         self.assertEqual(battery, dict(percent=80, mv=3834, plugged=True, charging=True,
-                                       board_c=35))
+                                       board_c=35, auto_power_on=True))
         self.assertTrue(bus.closed)
         self.assertEqual(bus.writes, [])
 

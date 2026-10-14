@@ -43,6 +43,29 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('systemctl restart pi-display.service', installer)
 
 
+    def test_every_install_copies_one_file_to_one_target(self):
+        """A stray continuation line turns the last target into a directory
+        and aborts the installer half-way (seen on the Pi)."""
+        import shlex
+        for script in ('install-voice-service.sh', 'install-display.sh'):
+            text = (ROOT / 'scripts' / script).read_text().replace('\\\n', ' ')
+            for line in text.splitlines():
+                words = shlex.split(line, comments=True)
+                if not words or words[0] != 'install':
+                    continue
+                args, skip = [], False
+                for word in words[1:]:
+                    if skip:
+                        skip = False
+                    elif word in ('-m', '-o', '-g'):
+                        skip = True
+                    elif word == '-d':
+                        break
+                    elif not word.startswith('-'):
+                        args.append(word)
+                else:
+                    self.assertEqual(len(args), 2, f'{script}: {line.strip()}')
+
     def test_hotspot_deploy_checks_running_ap_and_qr_dependency(self):
         installer = (ROOT / 'scripts' / 'install-voice-service.sh').read_text()
         self.assertIn('systemctl is-active --quiet proximus-setup.service', installer)

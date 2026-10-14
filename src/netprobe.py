@@ -67,11 +67,11 @@ def server_state(env=None):
 class ServerProbe:
     """Polls /health in a daemon thread so a slow server never stalls frames."""
     def __init__(self, interval=SERVER_PROBE_INTERVAL_SECONDS, probe=None):
-        import threading
         self.interval = interval
         self.probe = probe or server_state
         self.state = None
         self.misses = 0         # failed probes in a row while the state is still 'ok'
+        self.quiet = None       # callable: True while the unit sleeps (no probing)
         self._thread = threading.Thread(target=self._run, name='server-probe', daemon=True)
 
     def start(self):
@@ -91,9 +91,17 @@ class ServerProbe:
 
     def _run(self):
         while True:
+            if self.quiet is not None and self.quiet():
+                # Deep standby: no network traffic, so WLAN can doze; back
+                # within QUIET_POLL_SECONDS of waking up.
+                time.sleep(QUIET_POLL_SECONDS)
+                continue
             time.sleep(self.step())
 
 
+
+
+QUIET_POLL_SECONDS = 2.0
 
 
 def network_up():

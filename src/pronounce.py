@@ -24,6 +24,11 @@ import unicodedata
 RULES = (
     # espeak: 'ˈɔmnɪsˌiːɑː' (OM-nissi-a); lore: om-NISS-i-ah -> 'ɔmnˈɪsiːˈɑː'
     (re.compile(r'\bOmnissiahs?\b', re.IGNORECASE), 'Omnissi-ah'),
+    # espeak: 'piː zuːɡaːɾ'; the battery board is "Pai-Schugger"
+    (re.compile(r'\bPi ?Sugar\b', re.IGNORECASE), 'Pai-Schugger'),
+    # A German word glued to "software" makes espeak read the whole compound
+    # as English ("Gerätesoftware": 'dʒɛɹɪtɛsɒftweə'): hyphenate it.
+    (re.compile(r'(?<=[a-zäöüß])software\b'), '-Software'),
 )
 
 # Word -> IPA as espeak writes it (checked against Piper's phoneme map).

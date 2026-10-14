@@ -145,6 +145,33 @@ Die allerersten Kernelmeldungen direkt nach dem Einschalten werden weiterhin nic
 
 Beim Morgenbericht und bei Wetterfragen setzt `ptt.py` `weather_day` (0 = heute … 4) in `display-status.json`; `display.py` zeichnet dann mit 8 Bildern pro Sekunde `render_weather` aus `/run/pi-ptt/display-weather.json` (die vom Sprachdienst auf dem Gedächtnis-Stick gehaltene Fünf-Tage-Vorhersage). Oben „AUSPEX · WETTERDATEN“ (Sprechstil BILLY: „WETTER“) und der Abrufzeitpunkt, links das Piktogramm (24×24 Pixel, dreifach skaliert, mit Scanlines), rechts Tag, Temperatur, Spanne, Wetterlage und Regenwahrscheinlichkeit, unten der Fünf-Tage-Streifen. Die Vorschau ist mit dem Display-Code gerendert, kein Foto. [Architektur](architecture.md#morgenlitanei-und-wetter).
 
+## CPU-Profil auf dem Display
+
+In der Kopfzeile, links neben CPU-Temperatur und Akku, steht ein kleines Schild mit dem CPU-Profil, das **tatsächlich läuft**, nicht nur dem im Menü gewählten (auf allen Live-Ansichten, auch Wetter und Ruhe). `display.py` liest dazu alle 5 s (zusammen mit Akku und `vcgencmd get_throttled`) read-only über [`src/cpu_state.py`](../src/cpu_state.py): Governor, aktuelle Frequenz und die vom Kernel erlaubte Höchstfrequenz (`cpuinfo_max_freq`/`scaling_max_freq` von `policy0`). `vcgencmd measure_clock arm` wird nur aufgerufen, wenn die Grenze über dem Standardtakt liegt.
+
+| Profil | Governor | Servitor | Billy | Schild |
+|---|---|---|---|---|
+| ECO | `powersave` | auf 70 % gedimmt, Auge atmet langsam (5 s) und schwach, Litaneien gedämpft, nur 2 Bilder/s | ruhig geradeaus, langsames Blinzeln | `ECO` grün |
+| BALANCED | `ondemand`/`schedutil`/`conservative` | unverändert | unverändert | kein Schild |
+| POWER | `performance` | Auge kräftiger und schneller (2,2 s), Litaneien heller | wach: weit geöffnete Augen, schnellere Blicke, warmer Rahmen | `PWR` orange |
+| Übertaktet | Kernel-Grenze über Standardtakt | **goldenes Auge**, im Leerlauf goldene Litaneien („MOTIVKRAFT ERHOEHT“, „OMNISSIAH SEGNET“ …) | **Doom-Gottmodus**: das originale `god`-Gesicht mit goldenen Augen, die leicht pulsieren; beim Sprechen derselbe Mund wie sonst, goldener Rahmen | `OC` gold |
+
+- **Übertaktet** gilt nur, wenn die vom Kernel erlaubte Höchstfrequenz über dem Standardtakt des Boards liegt (Pi Zero 2 W: 1000 MHz, aus `/proc/device-tree/model`; andere Boards zeigen nie Gold, Override `PI_DISPLAY_CPU_STOCK_KHZ`). `arm_freq=1200` in `config.txt` allein reicht nicht. Unter `performance` muss zusätzlich `measure_clock arm` über dem Standardtakt liegen. `powersave` auf einem übertakteten Pi zeigt ECO.
+- **Warnungen gehen vor:** Unterspannung oder Drosselung *jetzt* (`get_throttled` Bits 0–3) ersetzen den Profilnamen im Schild (`UV` rot, `DRS` gelb), schalten Gold ab und stehen im Leerlauf in der Zeile unter Schädel/Gesicht. Sind die Firmware-Flags nicht lesbar, wird über dem Standardtakt `?` gezeigt, kein Gold.
+- **Wahl ≠ Wirklichkeit:** Läuft ein anderer Governor als gewählt (z. B. POWER gewählt, Akku-Standby hält `powersave`), bekommt das Schild einen gelben Rahmen und zeigt das echte Profil (bei NORMAL dann `NRM`).
+- Hört Proximus zu, denkt oder spricht er, behalten die Litaneien und das zweite Auge ihre Statusfarbe; nur das Auge bleibt golden. Billys Schmerz-, Grinse-, Wut- und Seitenblick-Gesichter bleiben auch im Gottmodus erhalten; die kurze Gottmodus-Animation beim Anstecken des Netzteils funktioniert weiter.
+- Ressourcen: goldene Augenbilder (12 Stufen) und Billys Gottmodus-Pulsbilder werden beim ersten Gebrauch einmal berechnet und gecacht; gezeichnet wird nur, wenn sich etwas Sichtbares ändert, das Teilbild-Update (`PartialDisplay`) bleibt.
+
+Die Schädelgrafik liegt in `assets/display/servo-skull.png`; `install-voice-service.sh` installiert sie nach `PI_DISPLAY_SKULL` (Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`). Beim goldenen Auge wird auch der rot glühende Rand der Augenhöhle zu Messing, damit kein roter Ring um das Gold bleibt; die übrigen roten Lichter der Grafik bleiben rot.
+
+## Netzteil an und ab
+
+Steckt man das Netzteil an oder zieht es ab, zeigt das Display 2,5 s lang eine Karte statt Schädel oder Gesicht: ein Stecker in der Steckdose mit Blitz und „NETZTEIL VERBUNDEN · 80 % · lädt“ (cyan) bzw. ein Akku mit Füllstand, daneben der abgezogene Stecker, und „AKKUBETRIEB · 64 % · Netzteil getrennt“ (gelb, ab 15 % rot). `display.py` liest dafür jede Sekunde nur das Netzteil-Bit des PiSugar (ein Register, `power.Battery.plugged`), die Karte erscheint also binnen etwa einer Sekunde; Akkustand und Ladezustand werden im selben Moment frisch gelesen. Kopf- und Fußzeile bleiben, eine Lautstärkeanzeige hat Vorrang. Bei Billy folgt nach der Karte wie bisher der kurze Gottmodus-Blick. Bei dunklem Bildschirm (Ruhe, Standby, „Display aus“) erscheint keine Karte nachträglich.
+
+## Menü
+
+Das Menü zeichnet [`render_menu`](../src/display.py): oben „MENÜ“ bzw. „MENÜ › GRUPPE“, acht Zeilen à 19 Pixel, auf der obersten Ebene je ein Symbol (Gesicht, Sprechblase, Funkwellen, Lautsprecher, Blitz, Person, Zahnrad, Kreuz) und rechts der wichtigste Zustand der Gruppe. Werte stehen rechts und kürzen notfalls die Bezeichnung mit „…“, nie umgekehrt; längere Listen haben rechts einen Scrollbalken. Die Fußzeile erklärt den markierten Eintrag (`menu.HINTS`), darunter klein die Tastenbelegung; „Ausschalten“ ist rot. `Energie → Akku & Strom` öffnet eine Seite (Akku, Versorgung, Verbrauch, Akkumodul, CPU mit Takt, gewähltes Profil wenn abweichend, CPU-Temperatur, Drosselung) aus den eigenen Messwerten des Displays; jede Taste führt zurück. Struktur und Einträge: [Bedienung](button-controls.md#menü-auf-dem-pitft).
+
 ## Ruhe und Schlaf
 
 `ptt.py` kennt drei Stufen und schreibt sie als `power` in `display-status.json`:
@@ -153,7 +180,7 @@ Beim Morgenbericht und bei Wetterfragen setzt `ptt.py` `weather_day` (0 = heute 
 |---|---|---|---|
 | `awake` | – | Schädel mit pulsierendem Auge, Litaneien, zweites Auge in Statusfarbe | normal |
 | `rest` | 30 s (`PTT_REST_SECONDS`) | auf 35 % abgedunkelt, rotes Auge schwach und ruhig, zweites Auge aus, keine Litaneien; Neuzeichnen etwa einmal pro Minute (Uhr, Akku, Alarm) | 30 % |
-| `sleep` | 10 min (`PTT_SLEEP_SECONDS`) | Hintergrundbeleuchtung aus, kein Rendern | aus |
+| `sleep` | 10 min (`PTT_SLEEP_SECONDS`) | Hintergrundbeleuchtung aus, kein Rendern, keine Prüfprozesse (nur die Statusdatei, alle 0,5 s) | aus |
 
 Beim Aufwachen aus dem Schlaf sagt Proximus kurz an, dass er erwacht (je nach Lore-Stufe, z. B. „Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.“; vorgefertigter Clip wie bei den Alarmen). Weckt ihn das Aktivierungswort, hört er erst nach dieser Ansage zu. Nach Druck auf die Sprechtaste, bei Alarmen und Statusansagen entfällt sie.
 

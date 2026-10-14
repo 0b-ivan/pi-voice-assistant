@@ -19,9 +19,15 @@ import agenda as agenda_feed
 import alarm_audio
 import audio_output
 import bluetooth
+import battery_standby
+import cpu_modes
+import cpu_state
 import boardled
 import cue as cue_sound
 import device_control
+import energy
+import pisugar_client
+import pisugar_button
 import enroll
 import journeys as journey_feed
 import people
@@ -44,7 +50,7 @@ import network_control
 import network_info
 import hotspot_control
 import hotspot_config as ap_config
-from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
+from menu import GROUPS as MENU_GROUPS, PAGES as MENU_PAGES, Menu
 from remote_turn import (RemoteCapableSpeech, RemoteSpeakUplink, RemoteStoryUplink,
                          RemoteTurnJob, RemoteTurnUplink, load_remote_config, story_timeout)
 from protocol import ClientSession, MIN_TURN_SECONDS
@@ -165,7 +171,7 @@ DISPLAY_STATUS_VALUES = {
     'last_route': {'server', 'pi'},
     'last_llm': {'openrouter', 'offline', 'intent'},
     'volume_limit': {'min', 'max'},
-    'menu_page': {'list', 'info'},
+    'menu_page': {'list', *MENU_PAGES.values()},
     'opt_server': {'on', 'off', 'none'},
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
@@ -197,6 +203,8 @@ DISPLAY_STATUS_VALUES = {
     'mood': set(EMOTIONS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
+    'opt_power_notices': {'on', 'off'},
+    'opt_cpu': set(cpu_modes.MODES),
     'opt_llm': set(LLM_MODES),
     'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
@@ -211,6 +219,7 @@ LED_LOCAL = (255, 120, 0)        # processing on the Pi (display: LOKAL, amber)
 LED_SPEAKING = (255, 100, 0)
 LED_MENU = (150, 0, 255)
 LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
+STANDBY_LOOP_SECONDS = 0.2   # main loop period in manual (PiSugar) standby
 SHIM_RETRY_SECONDS = 2.0        # reconnect the Button SHIM after an I2C error ...
 SHIM_RETRY_MAX_SECONDS = 60.0   # ... backing off to this while it keeps failing
 WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
@@ -768,15 +777,26 @@ class VoiceController:
         self.mood_shown = None
         self._apply_voice_effect()
         self.battery = None      # power.Battery reading, refreshed by main()
+        self.pisugar_poller = None  # vendor telemetry only if socket explicitly enabled
         self.throttled = None
         self.remote_failed = False
         self.server_probe = None  # netprobe.ServerProbe when a server is configured
         self.alarms = AlarmMonitor()
         self.alarms_enabled = self.config.alarms
+        # Routine mains/battery change chatter is opt-in. Critical warnings
+        # and the existing shutdown policy never depend on this preference.
+        self.power_notices = saved.get('power_notices') == 'on'
         self.alarm_queue = []    # sentences waiting until the unit is idle
         self.wlan_on = True
         self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
         self.power = 'awake'
+        self.manual_standby = False  # PiSugar function-button latch, not Linux poweroff
+        configured_mode = saved.get('cpu_mode')
+        self.cpu_mode = (configured_mode if configured_mode in cpu_modes.MODES
+                         else 'balanced')
+        self.cpu_mode_explicit = configured_mode in cpu_modes.MODES
+        self.cpu_mode_busy = False
+        self.cpu_mode_result = None     # (mode, ok, message, announce) from the worker
         self.last_activity = time.monotonic()
         self.rest_after = self.config.rest_seconds
         self.sleep_after = self.config.sleep_seconds
@@ -1068,6 +1088,8 @@ class VoiceController:
                                opt_emotions='on' if self.mood.enabled else 'off',
                                opt_wlan='on' if self.wlan_on else 'off',
                                opt_alarms='on' if self.alarms_enabled else 'off',
+                               opt_power_notices='on' if self.power_notices else 'off',
+                               opt_cpu=self.cpu_mode,
                                opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
                                opt_cue='none' if self.cue is None else
@@ -1107,6 +1129,25 @@ class VoiceController:
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
             return
+        if item == 'energy_status':
+            self._publish_menu()      # the display shows the energy page
+            return
+        if item == 'energy_config':
+            vendor = (self.pisugar_poller.snapshot()
+                      if self.pisugar_poller is not None else {})
+            self._say(energy.config(dict(self.status_snapshot(), **vendor), self.style))
+            self._publish_menu()
+            return
+        if item == 'cpu_mode':
+            modes = cpu_modes.MODES
+            next_mode = modes[(modes.index(self.cpu_mode) + 1) % len(modes)]
+            self._set_cpu_mode(next_mode)
+            self._publish_menu()
+            return
+        if item == 'energy_shutdown':
+            self._say(self._device_command('shutdown'))  # existing 20 s confirmation / E
+            self._publish_menu()
+            return
         if item == 'server' and self.remote:
             self.remote_enabled = not self.remote_enabled
             self.recorder.uplink_enabled = self.remote_enabled
@@ -1140,6 +1181,8 @@ class VoiceController:
             event('menu', item='llm', value=self.llm_mode)
         elif item == 'wlan':
             self.set_wlan(not self.wlan_on)
+        elif item == 'power_notices':
+            self._set_power_notices(not self.power_notices)
         elif item == 'alarms':
             self.alarms_enabled = not self.alarms_enabled
             if not self.alarms_enabled:
@@ -1182,6 +1225,10 @@ class VoiceController:
                                     memory='on' if self.memory_present else 'off',
                                     maintenance='on' if self.maint.active else 'off',
                                     devctl='on', pending=self._device_pending_now(),
+                                    power_notices='on' if self.power_notices else 'off',
+                                    cpu_mode=self.cpu_mode, cpu=self._cpu_profile(),
+                                    **(self.pisugar_poller.snapshot()
+                                       if self.pisugar_poller is not None else {}),
                                     story='on',
                                     **(self.journeys.snapshot()
                                        if self.journeys is not None else {}),
@@ -1208,7 +1255,8 @@ class VoiceController:
         texts = self.alarms.update(snapshot, now,
                                    network=network if links else None,
                                    server=self.server_state() if links else 'off',
-                                   lore=self.style, internet=internet)
+                                   lore=self.style, internet=internet,
+                                   power_source_announcements=self.power_notices)
         texts += self._check_memory()
         notes, self.bt_notes = self.bt_notes, []
         texts += notes
@@ -1302,10 +1350,72 @@ class VoiceController:
             return None
         return self._device_command(op)
 
+    def _set_cpu_mode(self, mode, announce=True):
+        """Set the governor in a worker (systemctl must never block I2C or GPIO
+        polling); tick() takes the result on the main thread. ``announce``:
+        say so when it fails (not for the silent restore at start-up)."""
+        if mode not in cpu_modes.MODES or self.cpu_mode_busy or self.manual_standby:
+            event('cpu_mode', result='rejected', mode=mode)
+            return False
+        self.cpu_mode_busy = True
+
+        def worker():
+            try:
+                success, message = cpu_modes.set_mode(mode), None
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                success, message = False, str(exc)
+            self.cpu_mode_result = (mode, success, message, announce)
+
+        threading.Thread(target=worker, name='cpu-mode', daemon=True).start()
+        return True
+
+    def _take_cpu_mode_result(self):
+        """The worker's outcome, applied on the main thread."""
+        result, self.cpu_mode_result = self.cpu_mode_result, None
+        if result is None:
+            return
+        mode, success, message, announce = result
+        self.cpu_mode_busy = False
+        if success:
+            self.cpu_mode = mode
+            self.cpu_mode_explicit = True
+            self.settings.save(cpu_mode=mode)
+            event('cpu_mode', result='set', mode=mode)
+            self._publish_menu()
+            return
+        event('cpu_mode', result='failed', mode=mode,
+              **({'message': message} if message else {}))
+        if announce:
+            self.alarm_queue.append(device_control.failed_text(self.style))
+
+    def _cpu_profile(self):
+        """CPU profile really in effect (sysfs only, no subprocess), or None."""
+        try:
+            return cpu_state.classify(cpu_state.read(stock=cpu_state.board_stock_khz(),
+                                                     throttled=self.throttled,
+                                                     measure=False))['profile']
+        except Exception:  # noqa: BLE001 - status must never fail on it
+            return None
+
+    def _set_power_notices(self, enabled):
+        self.power_notices = bool(enabled)
+        self.settings.save(power_notices='on' if enabled else 'off')
+        event('energy', preference='power_notices', value='on' if enabled else 'off')
+        self._publish_menu()
+
     def _device_command(self, op):
         """A recognized command: ask (reboot/shutdown) or switch WLAN now."""
         wlan = 'on' if self.wlan_on else 'off'
-        text = device_control.reply(op, wlan, self.style)
+        text = device_control.reply(op, wlan, self.style, self.cpu_mode)
+        if op in ('cpu_eco', 'cpu_balanced', 'cpu_power'):
+            if op == f'cpu_{self.cpu_mode}':
+                return text                     # "bereits im …": nothing to switch
+            if not self._set_cpu_mode(op.removeprefix('cpu_')):
+                return device_control.failed_text(self.style)
+            return text
+        if op in ('power_notices_on', 'power_notices_off'):
+            self._set_power_notices(op == 'power_notices_on')
+            return text
         if op in device_control.CONFIRM_OPS:
             self.device_pending = op
             self.device_pending_until = time.monotonic() + device_control.CONFIRM_SECONDS
@@ -1351,6 +1461,10 @@ class VoiceController:
         self.turn_device_pending = None
         if op == 'sleep':
             self._device_arm(op)            # after the server's reply
+        elif op in ('cpu_eco', 'cpu_balanced', 'cpu_power'):
+            self._set_cpu_mode(op.removeprefix('cpu_'))
+        elif op in ('power_notices_on', 'power_notices_off'):
+            self._set_power_notices(op == 'power_notices_on')
         elif op in device_control.CONFIRM_OPS:
             if not (op == 'reboot' and self.maint.active):
                 self.device_pending = op
@@ -1489,7 +1603,7 @@ class VoiceController:
 
         def watch():
             while True:
-                if not self.bt_busy:
+                if not self.bt_busy and not self.manual_standby:
                     self._bt_refresh()
                 time.sleep(interval)
         threading.Thread(target=watch, name='bluetooth', daemon=True).start()
@@ -2811,10 +2925,20 @@ class VoiceController:
 
     def tick(self, gpio_pressed, shim_pressed, now, pitft_pressed=(False, False)):
         self._check_hotspot_picker(now)
+        self._take_cpu_mode_result()
         held = gpio_pressed or shim_pressed[0]
         action = self.ptt.update(held, now)
         commands = [name for i, name in enumerate('BCDE', 1)
                     if self.commands[name].update(shim_pressed[i], now) == 'start']
+        if self.manual_standby and not self.probe:
+            # Ignore PTT, SHIM, menu and wakeword while manually asleep.
+            # Hardware low-battery / undervoltage / thermal alarms may wake
+            # Proximus to announce the problem; shutdown_due is checked by
+            # check_alarms regardless of this gate.
+            self.ptt.resync(held, now)
+            if not CRITICAL_ALARMS.intersection(self.alarms.active):
+                return
+            self.pisugar_standby(now, reason='critical_alarm')
         if self.enroll is not None and not self.probe:
             if self.enroll.running:
                 # The session owns microphone and speaker; B cancels, E confirms.
@@ -3059,19 +3183,74 @@ class VoiceController:
         return (self.recorder.process is not None or self.job is not None
                 or self.speech.active or getattr(self.speech, 'synthesizing', False)
                 or self.menu.open or bool(self.alarm_queue) or self.maint.active
-                or self.people.active or self.story is not None)
+                or self.people.active or self.story is not None
+                or self.cpu_mode_busy)
+
+    def pisugar_standby(self, now, reason='button'):
+        """Single function-button tap toggles quiet *software* standby.
+
+        SSH, Wi-Fi and Linux stay alive. Only the PiSugar function button
+        wakes an otherwise quiet Proximus; safety-critical alarms override.
+
+        The tap means "quiet now": an ordinary answer, announcement, story,
+        recording or open menu is stopped. Refused only where stopping would
+        lose something important: a critical alarm, a confirmed reboot or
+        shutdown, maintenance or voice enrollment in progress.
+        """
+        if self.manual_standby:
+            self.manual_standby = False
+            self.last_activity = now
+            self._update_power(now, greet=False)
+            self.wake_resume_at = now + WAKE_ECHO_PAUSE
+            event('pisugar_standby', state='awake', reason=reason)
+            return True
+        blocker = self._standby_blocker()
+        if blocker is not None:
+            event('pisugar_standby', state='rejected', reason=blocker)
+            return False
+        interrupted = self._busy()
+        if interrupted:
+            self.cancel(False, now)          # speech, story, recording, server turn
+            self.alarm_queue = []            # only ordinary notices can be queued here
+            self.enroll_after_speech = None
+            if self.people.active:
+                self.people.close()
+                self._publish_people()
+        self.manual_standby = True
+        self._release_microphone()
+        self.menu.close()
+        self._publish_menu()
+        self._update_power(now, greet=False)
+        event('pisugar_standby', state='sleep', reason=reason, interrupted=interrupted)
+        return True
+
+    def _standby_blocker(self):
+        """Why manual standby must wait (a short reason for the journal), or None."""
+        if self.probe:
+            return 'probe'
+        if self.shutting_down or self.device_pending or self.device_after_speech:
+            return 'power_action'
+        if self.alarms_enabled and CRITICAL_ALARMS.intersection(self.alarms.active):
+            return 'critical_alarm'
+        if self.maint.active:
+            return 'maintenance'
+        if self.enroll is not None and getattr(self.enroll, 'running', False):
+            return 'enrollment'
+        if self.cpu_mode_busy:
+            return 'cpu_mode'
+        return None
 
     def _wake_up(self, now):
         self.last_activity = now
         self._update_power(now, False)
 
-    def _update_power(self, now, pressed=False):
+    def _update_power(self, now, pressed=False, greet=True):
         """awake -> rest -> sleep while nothing happens; any activity wakes."""
         quiet = now - self.last_activity
-        if pressed or self._busy():
+        if not self.manual_standby and (pressed or self._busy()):
             self.last_activity = now
         idle = now - self.last_activity
-        power = ('sleep' if idle >= self.sleep_after else
+        power = ('sleep' if self.manual_standby or idle >= self.sleep_after else
                  'rest' if idle >= self.rest_after else 'awake')
         if power == self.power:
             return
@@ -3086,18 +3265,21 @@ class VoiceController:
         elif previous == 'sleep':
             self.board_leds.restore()
             self.mood.woke_up(quiet, time.time())
-        if power == 'sleep' and self.sleep_wlan_off and self.wlan_on:
+        if (power == 'sleep' and not self.manual_standby
+                and self.sleep_wlan_off and self.wlan_on):
             self.wlan_slept = self.set_wlan(False)
         elif previous == 'sleep' and self.wlan_slept:
             self.wlan_slept = False
             self.set_wlan(True)
-        if previous == 'sleep' and self._idle() and not self.alarm_queue:
+        if previous == 'sleep' and greet and self._idle() and not self.alarm_queue:
             # Woken by a display/SHIM button: say so. Talking (PTT), alarms
             # and status replies already speak or listen; the wake word
             # greets on its own before listening.
             self._greet()
 
     def close(self):
+        if self.pisugar_poller is not None:
+            self.pisugar_poller.close()
         if self.wake is not None:
             self.wake.stop()
         stop_prepared_vosk()
@@ -3270,6 +3452,11 @@ def main():
                                  wake=wake, wake_word=wake_label, cue=acknowledge,
                                  config=config)
     controller_ref.append(controller)
+    if not args.probe and controller.cpu_mode_explicit:
+        # Restore the previously chosen profile after a normal service reboot.
+        controller._set_cpu_mode(controller.cpu_mode, announce=False)
+    if not args.probe:
+        controller.pisugar_poller = pisugar_client.Poller().start()
     if not args.probe and remote_config is not None and config.nightwatch:
         controller.nightwatch = nightwatch_client.Client(controller.memory, remote_config,
             start=config.night_start, end=config.night_end, idle_seconds=config.night_idle, log=event)
@@ -3291,15 +3478,23 @@ def main():
             controller.wlan_on = wlan_radio.wlan_blocked() is not True
     elif not args.probe:
         controller.wlan_on = wlan_radio.wlan_blocked() is not True
+    def quiet():
+        """Manual (PiSugar) standby: probes pause so WLAN and CPU can doze."""
+        return controller.manual_standby
+
+    def started(watch):
+        watch.quiet = quiet
+        return watch.start()
+
     if uplink_factory is not None:
         from netprobe import ServerProbe
-        controller.server_probe = ServerProbe(interval=15.0).start()
+        controller.server_probe = started(ServerProbe(interval=15.0))
     if not args.probe:
-        controller.internet_probe = InternetProbe().start()
-        controller.network_watch = sysmon.network_watch().start()
+        controller.internet_probe = started(InternetProbe())
+        controller.network_watch = started(sysmon.network_watch())
         if config.bluetooth:
             controller.start_bluetooth()
-        controller.update_watch = sysmon.update_watch().start()
+        controller.update_watch = started(sysmon.update_watch())
         if config.logwatch:
             def selftest_report(result):
                 event('selftest', findings=result['findings'], repairs=result['repairs'])
@@ -3307,8 +3502,21 @@ def main():
                                                     report=selftest_report).start()
     battery_monitor = Battery()
     next_power = 0.0
+    # Optional, battery-only root helper. systemctl runs off the GPIO loop.
+    # Never turn WLAN off merely because the automatic idle timer expired.
+    power_saver = None
+    if (not args.probe and os.environ.get('PISUGAR_BATTERY_SAVE', 'off')
+            .strip().lower() in ('on', '1', 'true', 'yes')):
+        power_saver = battery_standby.Supervisor(report=event).start()
     shim = None
     led = None
+    # Explicit opt-in: a monitor retries intermittent I2C failures with
+    # bounded backoff. A failed initial read can recover without restarting.
+    # First *successful* read always consumes stale startup taps.
+    tap_monitor = None
+    if (not args.probe and os.environ.get('PISUGAR_STANDBY_BUTTON', 'off')
+            .strip().lower() in ('on', '1', 'true', 'yes')):
+        tap_monitor = pisugar_button.TapMonitor()
     shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
 
     def open_shim(now):
@@ -3371,14 +3579,18 @@ def main():
                     controller.check_alarms(now)
                     next_power = now + 10.0
                 pressed = (False,) * 5
+                # Manual standby ignores the SHIM anyway (only the PiSugar
+                # button wakes): no I2C polling of it, a slow loop below.
+                resting = controller.manual_standby and not args.probe
                 if shim is None and shim_retry_at is not None and now >= shim_retry_at:
                     open_shim(now)
                 if shim is not None:
                     try:
                         if led is not None and led.error is not None:
                             raise led.error
-                        pressed = shim.read()
-                        if led is not None:
+                        if not resting:
+                            pressed = shim.read()
+                        if led is not None:             # writes only on a change
                             led.request(controller.color)
                     except OSError as exc:
                         event('shim_error', message=str(exc), fallback='GPIO17',
@@ -3386,13 +3598,54 @@ def main():
                         stop_shim()
                         controller.cancel(gpio_pressed, now)
                         shim_retry_at = now + SHIM_RETRY_SECONDS
+                if tap_monitor is not None:
+                    result = tap_monitor.poll(now)
+                    if result is not None:
+                        if result['state'] == 'error':
+                            # An unacknowledged tap is never used to toggle
+                            # standby. Retain the reader and retry after a
+                            # bounded delay; one EREMOTEIO is not permanent.
+                            event('pisugar_button_error', message=result['message'],
+                                  failures=result['failures'],
+                                  retry_seconds=result['retry_seconds'],
+                                  disabled=False)
+                            if result['should_wake'] and controller.manual_standby:
+                                # If the PiSugar bus stays down, wake the
+                                # assistant so GPIO17 and the SHIM are usable.
+                                controller.pisugar_standby(now, reason='i2c_unavailable')
+                        elif result['state'] == 'ready':
+                            event('pisugar_button_ready', address='0x57',
+                                  mode='software_standby',
+                                  discarded=result['ignored_startup_gesture'])
+                        else:
+                            if result['recovered_after']:
+                                event('pisugar_button_recovered',
+                                      after_errors=result['recovered_after'])
+                            gesture = result['gesture']
+                            if gesture:
+                                event('pisugar_button', gesture=gesture)
+                                if gesture == pisugar_button.SINGLE:
+                                    controller.pisugar_standby(now)
                 try:
                     controller.tick(gpio_pressed, pressed, now, pitft)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
                     event('error', message=str(exc))
                     controller.cancel(gpio_pressed or pressed[0], now)
-                stop.wait(0.01)
+                if power_saver is not None:
+                    # Losing PiSugar telemetry / returning to mains / alarms /
+                    # waking Proximus must all immediately request restoration.
+                    safe_battery = (controller.battery is not None
+                                    and controller.battery.get('plugged') is False)
+                    critical = bool(CRITICAL_ALARMS.intersection(controller.alarms.active))
+                    power_saver.request(controller.manual_standby and safe_battery
+                                        and not critical and not controller.shutting_down)
+                # 100 Hz while awake (buttons feel instant); 5 Hz in manual
+                # standby: the PiSugar latches its button, alarms run on their
+                # own 10 s timer, and every wake-up costs battery.
+                stop.wait(STANDBY_LOOP_SECONDS if resting else 0.01)
     finally:
+        if power_saver is not None:
+            power_saver.close()
         try:
             controller.close()
         finally:
