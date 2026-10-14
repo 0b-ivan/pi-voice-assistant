@@ -83,6 +83,8 @@ Auf dem Server sprechen beide Stimmen mit Piper `de_DE-thorsten-high`, ruhiger e
 
 `server/install-ct.sh` lädt das Modell (sha256-geprüft) und setzt `SERVITOR_HIGH_PIPER_MODEL` (früher `SERVITOR_NATURAL_PIPER_MODEL`, wird umbenannt). Ohne diese Variable und lokal auf dem Pi bleibt es bei Thorsten emotional mit `SERVITOR_FILTER_GRAPH` bzw. `NATURAL_FILTER_GRAPH`. Nach einem Wechsel die Alarm-Clips neu bauen (`alarm_audio.py build --force --prune`, ~40 min).
 
+Probetext für weitere Vergleiche: [voice-test-text.md](voice-test-text.md).
+
 Ausgewählt am 10.10.2026 nach Hörproben (Proximus: Variante „f + Filter“, Billy: „ruhig“). Verworfen: RVC mit einem Blazkowicz-Modell (Echtzeitfaktor ~1,6 auf CT 107, Speicher über 3 GB bei 9 s Audio, PR #80), `de_DE-mls-medium` (spricht kurze Sätze als Kauderwelsch, trainiert auf langen Hörbuchpassagen), karlsson und pavoque.
 
 ## Dynamischer Status auf SHIM E
