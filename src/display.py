@@ -171,6 +171,7 @@ def read_status(path=None):
                          ('opt_voice', ('servitor', 'natural')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
                          ('opt_llm', ('auto', 'free', 'local')),
+                         ('opt_cpu', ('eco', 'balanced', 'power')),
                          ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off')),
@@ -960,6 +961,9 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
 
 
 def _menu_value(item, status):
+    if item == 'cpu_mode':
+        return {'eco': 'ECO', 'balanced': 'NORMAL',
+                'power': 'POWER'}.get(status.get('opt_cpu'), '')
     if item == 'server':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
     if item == 'led':
