@@ -2431,8 +2431,14 @@ class VoiceController:
         # A remote failure may leave an unanswered, state-changing proposal.
         # Never allow button E / voice confirmation for inaudible details.
         if self.journeys.proposal is not None and len(text) > JOURNEY_LOCAL_MAX_CHARS:
-            self.journeys.cancel()
-            text = 'Fahrtvorschlag abgebrochen. Sprachserver nicht erreichbar.'
+            brief = journey_feed.brief_proposal_text(self.journeys.proposal,
+                                                     self.journeys.now(),
+                                                     JOURNEY_LOCAL_MAX_CHARS)
+            if brief is None:
+                self.journeys.cancel()
+                text = 'Fahrtvorschlag abgebrochen. Sprachserver nicht erreichbar.'
+            else:
+                text = brief
         available = _available_memory_kib()
         if available is not None and available < JOURNEY_LOCAL_MIN_AVAILABLE_KIB:
             event('journey', result='tts_low_memory', available_kib=available, reason=reason)
