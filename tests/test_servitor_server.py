@@ -730,16 +730,31 @@ class ServerTest(unittest.TestCase):
         line = self.service.journal.since(0)['lines'][-1]
         self.assertEqual((line['host'], line['unit']), ('wgz-pve-01', 'kernel'))
 
+    def test_journal_keeps_times_and_drops_colour_codes(self):
+        journal = self.service.journal
+        journal.add('\x1b[0;93m2026-10-14 19:15:33.070364312 [W:onnxruntime] Failed to persist\x1b[m')
+        journal.add('neighbour fe80::1c2b:3aff:fe11:22 reachable')
+        texts = [l['text'] for l in journal.since(0)['lines']]
+        self.assertEqual(texts, ['2026-10-14 19:15:33.070364312 [W:onnxruntime] Failed to persist',
+                                 'neighbour *:* reachable'])
+
     def test_journal_follows_journalctl_output(self):
         script = Path(self.tmp.name) / 'fake-journalctl'
-        script.write_text('#!/bin/sh\necho \'{"MESSAGE": "cron tick", "_SYSTEMD_UNIT": "cron.service"}\'\nsleep 30\n')
+        script.write_text('#!/bin/sh\necho \'{"MESSAGE": "cron tick", "_SYSTEMD_UNIT": "cron.service"}\'\n'
+                          'echo "No journal files were found." >&2\nsleep 30\n')
         script.chmod(0o755)
         ss.follow_system_journal(self.service.journal, [str(script)])
         for _ in range(50):
             if self.service.journal.since(0)['lines']:
                 break
             time.sleep(0.05)
-        self.assertEqual(self.service.journal.since(0)['lines'][0]['unit'], 'cron')
+        for _ in range(50):
+            if len(self.service.journal.since(0)['lines']) >= 2:
+                break
+            time.sleep(0.05)
+        lines = {l['unit']: l['text'] for l in self.service.journal.since(0)['lines']}
+        self.assertEqual(lines['cron'], 'cron tick')
+        self.assertEqual(lines['servitor-voice'], 'journalctl: No journal files were found.')
 
     def test_tee_fallback_without_journalctl(self):
         tee = ss.Tee(open(os.devnull, 'w'), self.service.journal)

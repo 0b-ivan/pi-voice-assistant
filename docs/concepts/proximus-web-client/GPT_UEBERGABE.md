@@ -1,6 +1,6 @@
 # Übergabe: Proximus-Web-Client (Vox-Terminal)
 
-Stand 14.10.2026, Branch `claude/wizardly-euler-ogqg5u` (Commit `3aa04d0`), noch
+Stand 14.10.2026, Branch `claude/wizardly-euler-ogqg5u` (letzter Code-Commit siehe `git log`), noch
 **kein PR** nach `main`. Bedienerdoku: [`docs/web-client.md`](../../web-client.md).
 
 ## Ziel
@@ -70,7 +70,29 @@ Umgesetzt:
   neueste Zeile oben; `flex: none` verhindert das frühere Zusammenstauchen.
 
 **Problem laut Bediener (noch offen): „Nach einiger Zeit sehe ich nur noch
-Litaneien“ – das Log muss funktionieren.** Hypothesen, in dieser Reihenfolge prüfen:
+Litaneien“ – das Log muss funktionieren.**
+
+**Diagnose vom 14.10.2026 auf CT 107 (Stand `3e55663` ausgerollt):**
+- `getent group systemd-journal` → `systemd-journal:x:999:` (Gruppe existiert).
+- `systemd-run --pipe --wait --uid=servitor -p SupplementaryGroups=systemd-journal journalctl -n 5 --merge --no-pager`
+  → **keine Ausgabe**.
+- `GET /v1/journal?after=0` liefert nur Zeilen der Units `servitor-voice` (und
+  Ausgaben des lokalen LLM), also nur, was als Benutzer `servitor` läuft.
+- **Schluss:** Der Dienst sieht nur sein eigenes Benutzer-Journal, nicht das
+  System-Journal. Daher kommen kaum echte Zeilen, und die Litaneien überwiegen.
+  Nächster Schritt: Rechte der Journal-Dateien im Container prüfen
+  (`ls -ln /var/log/journal /var/log/journal/* /run/log/journal 2>/dev/null`,
+  `journalctl --header | head`, `id servitor`), z. B. ob `system.journal`
+  der Gruppe `systemd-journal` gehört und Gruppen-Leserecht/ACL hat; in
+  unprivilegierten LXC-Containern sind die Dateien oft root:root 0640 ohne ACL.
+  Mögliche Lösungen: `setfacl -R -m g:systemd-journal:rX /var/log/journal`
+  plus Default-ACL (`-d`), oder `systemd-tmpfiles --create --prefix /var/log/journal`
+  (setzt die Journal-ACLs neu), danach Dienst neu starten und Befehl oben wiederholen.
+- Seit diesem Stand schreibt der Dienst Fehlermeldungen von `journalctl`
+  (stderr) als `journalctl: …` ins Log; ANSI-Farbcodes werden entfernt, und die
+  IPv6-Maskierung verschluckt keine Uhrzeiten mehr.
+
+Weitere Hypothesen, falls die Rechte stimmen:
 1. Auf CT 107 ausgerollt ist evtl. nicht der neueste Stand
    (`cat /opt/servitor-voice/DEPLOYED` muss `3aa04d0…` sein).
 2. Der Dienst sieht das Journal nicht: `sudo -u servitor journalctl -n 5 --merge`

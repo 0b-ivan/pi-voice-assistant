@@ -472,7 +472,9 @@ class Journal:
     ACCESS = re.compile(r'"(?:GET|POST|PUT|HEAD|DELETE|OPTIONS) /\S* HTTP/[\d.]+"'
                         r'|request timed out|turn aborted', re.IGNORECASE)
     IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}(\d{1,3})\b')
-    IPV6 = re.compile(r'\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{0,4}\b', re.IGNORECASE)
+    # At least three colons: '19:15:33' (a time) is no address, 'fe80::1:2' is.
+    IPV6 = re.compile(r'(?<![\w:])(?:[0-9a-f]{0,4}:){3,7}[0-9a-f]{0,4}(?![\w:])', re.IGNORECASE)
+    ANSI = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')   # colour codes (onnxruntime, llama.cpp)
 
     def __init__(self, size=300, clock=time.time):
         self.items = collections.deque(maxlen=size)
@@ -481,7 +483,7 @@ class Journal:
         self.lock = threading.Lock()
 
     def add(self, line, unit='', priority=6, at=None, host=''):
-        line = line.strip()
+        line = self.ANSI.sub('', line).strip()
         if not line or self.ACCESS.search(line):
             return
         line = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', line)
@@ -522,12 +524,19 @@ def follow_system_journal(journal, command=None):
                           '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
                           '_HOSTNAME,__REALTIME_TIMESTAMP']
 
+    def complain(stream):
+        # journalctl's own complaints ("No journal files were found", missing
+        # permissions) belong in the log too, not into nothing.
+        for line in stream:
+            journal.add(f'journalctl: {line}', 'servitor-voice', 4)
+
     def run():
         while True:
             try:
-                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       text=True, errors='replace',
                                       env=dict(os.environ, LC_ALL='C')) as proc:
+                    threading.Thread(target=complain, args=(proc.stderr,), daemon=True).start()
                     for raw in proc.stdout:
                         journal.add_journald(raw)
             except OSError as exc:
