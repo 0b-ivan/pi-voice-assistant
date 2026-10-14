@@ -20,7 +20,8 @@ import servitor_server as ss  # noqa: E402
 from test_servitor_server import FakePipeline, TOKEN  # noqa: E402
 from ptt import Recorder, VoiceController  # noqa: E402
 from remote_turn import (  # noqa: E402
-    NO_FALLBACK_CODES, RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config,
+    NO_FALLBACK_CODES, RemoteCapableSpeech, RemoteSpeakUplink, RemoteTurnJob,
+    RemoteTurnUplink, load_remote_config,
 )
 
 
@@ -96,6 +97,26 @@ class LiveServerCase(unittest.TestCase):
 
 
 class RemoteTurnTests(LiveServerCase):
+    def test_remote_speak_reuses_existing_authenticated_server_tts(self):
+        text = 'Nächste Straßenbahn vier, ab DJK-Sportzentrum 15 Uhr 19.'
+        uplink = RemoteSpeakUplink(self.config(), text, voice='natural')
+        job = RemoteTurnJob(uplink, self.client_dir, idle_timeout=60)
+        self.assertTrue(job.done.wait(10))
+        self.assertIsNone(job.error)
+        self.assertIsNone(job.transcript)  # No remote STT, LLM, speaker or personal status
+        self.assertEqual(self.pipeline.accepted, 0)
+        self.assertEqual(self.pipeline.voice, 'natural')
+        self.assertEqual(self.pipeline.render_voice, 'natural')
+        with wave.open(str(job.result['audio']), 'rb') as wav:
+            self.assertGreater(wav.getnframes(), 0)
+        self.assertEqual(job.result['host'], self.url.split('//')[1])
+
+    def test_remote_speak_refuses_unbounded_or_empty_text(self):
+        with self.assertRaises(ValueError):
+            RemoteSpeakUplink(self.config(), ' ')
+        with self.assertRaises(ValueError):
+            RemoteSpeakUplink(self.config(), 'x' * 1201)
+
     def test_streamed_turn_returns_playable_audio_and_progress(self):
         job = self.turn()
         self.assertIsNone(job.error)
