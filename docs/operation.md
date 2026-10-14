@@ -366,6 +366,82 @@ kein PiSugar-Hard-Poweroff, keine erfundenen mA- oder Laufzeitangaben.
 Aktivierungs-/Wiederherstellungslogik benötigt weiterhin einen echten
 Hardwaretest unter Akkubetrieb, bevor WLAN-Abschaltung freigegeben wird.
 
+### CPU-Profil selbst wählen und optional übertakten (Pi Zero 2 W)
+
+**Sofort umschaltbar:** Unter `Energie → CPU-Profil` auf dem 240×240
+PiTFT zwischen **ECO** (`powersave`), **NORMAL** (`ondemand`) und
+**POWER** (`performance`) durchschalten. Entsprechende lokale Sprachbefehle
+sind z. B. „Stell den CPU-Modus auf Eco“, „Stell den CPU-Modus auf
+Balanced“ und „Stell den CPU-Modus auf Power“. Keine andere Anfrage
+(z. B. „Übertakten“, „Overvoltage“) darf Boot- oder Spannungseinstellungen
+ändern. Der ausgewählte Governor wird in `/var/lib/pi-ptt/settings.json`
+gespeichert und nach einem regulären Dienststart wiederhergestellt. Eine
+fehlgeschlagene Umschaltung wird protokolliert und nicht gespeichert.
+Der Voice-Prozess hat kein Recht auf `/sys`: Eine sehr enge Polkit-Regel
+autorisiert ausschließlich die systemd-Instanzen
+`proximus-cpu-mode@eco/balanced/power.service`, und das root-owned
+Helper-Script ändert nur `scaling_governor`. **Der Power-Governor
+übertaktet nicht.** Er nutzt höchstens die gegenwärtig vom
+Kernel/Firmware erlaubte maximale Frequenz. Der Akku-Standby-Helper darf
+ihn vorübergehend mit `powersave` übersteuern und danach wieder
+zurücksetzen.
+
+Sofortige Kontrolle (einfaches Nachsehen ohne Neustart):
+
+```bash
+cat /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
+cat /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_max_freq
+vcgencmd measure_clock arm
+vcgencmd get_throttled
+vcgencmd measure_temp
+```
+
+**Echtes Übertakten und höhere Kernspannung** sind eine separate,
+**niemals** durch Sprachbefehl oder Menü ausgelöste Administratoraktion.
+Der Pi Zero 2 W hat ab Werk 1000 MHz; `arm_freq=1200` und
+`over_voltage=2` (+50 mV am oberen Firmware-Spannungsfenster)
+sind ein **experimentelles** Testprofil, **keine garantierte stabile
+Frequenz**. Bootloader/Firmware übernehmen diese Werte erst nach Reboot.
+Insbesondere `force_turbo=1` wird vermieden: Im Zusammenspiel mit
+Overvoltage kann das einen dauerhaften OC-Marker im SoC setzen.
+Zusätzliche GPU-/SDRAM-Übertaktung wird nicht vorgenommen.
+
+**Voraussetzungen:** volle PiSugar-Versorgung, ausreichende Kühlung,
+lokale physische Zugriffsmöglichkeit auf die microSD bei Bootfehlern,
+Backup des Systems, keine vorhandenen `arm_freq`-/`over_voltage`-
+Konflikte, Temperatur/Undervoltage vorab messen. Für den ersten
+Overclock-Test sollte **Netzbetrieb** verwendet werden, nicht ein Akku
+mit gleichzeitig ausgeschaltetem WLAN.
+
+```bash
+cd ~/pi-voice-energy-test
+python3 scripts/configure-overclock.py preview
+# Nur wenn du dieses Risiko bewusst akzeptierst:
+sudo python3 scripts/configure-overclock.py enable --accept-risk
+# Script sichert zuvor config.txt unter /boot/firmware/
+# Es rebootet NICHT automatisch!
+sudo reboot
+```
+
+Nach dem Reboot Frequenz, Temperatur, `get_throttled` und mehrere reale
+TTS/STT-Transaktionen prüfen. Bei Instabilität (Audio-Aussetzer,
+I²C-Fehler, Unterspannung, Temperatur-Throttling) sofort auf Stock
+zurückgehen. Solange der Pi noch bootet:
+
+```bash
+sudo python3 scripts/configure-overclock.py disable --accept-risk
+sudo reboot
+```
+
+Startet er nicht mehr, `config.txt` auf der microSD von einem anderen
+Rechner öffnen und nur den Block zwischen
+`# BEGIN PROXIMUS ZERO 2 W OVERCLOCK` und
+`# END PROXIMUS ZERO 2 W OVERCLOCK` entfernen. Ein vom Script
+angelegtes datiertes Backup von `config.txt` bleibt erhalten. Die
+Übertaktung ist unabhängig vom CPU-Governor wählbar: Wird der OC-Block
+entfernt, bleibt der Governor `power` innerhalb der Standardtaktgrenze.
+**Ohne Hardwaretests keine automatische OC-Freigabe oder Merge.**
+
 ### Optional: Einstellungen des offiziellen Power Managers auslesen
 
 `src/pisugar_client.py` kann `get`-Kommandos des [offiziellen
