@@ -50,7 +50,7 @@ button, input, select { font: inherit; color: inherit; }
 .sigil-numbers { font-family: var(--serif); font-weight: 700; fill: currentColor; }
 /* Mechanicus lettering for everything engraved on the casing. */
 .bar h1, .stage, .readout, .dial-head, .talk-main, .ask button, .dial-connect, .cancel,
-.log li::before, .log li.system, dialog h2, dialog label, .dial-token, .dial-foot, .litany,
+.log li::before, .log li.system, dialog h2, dialog label, .dial-token, .litany,
 .gauge-label {
   font-family: var(--serif); font-variant-numeric: lining-nums;
 }
@@ -319,7 +319,6 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   position: absolute; z-index: 0; left: 50%; top: 58%; width: 46%; aspect-ratio: 1; height: auto;
   transform: translate(-50%, -50%); color: var(--phosphor); opacity: .06;
 }
-.binary { margin: 0; text-align: center; font-size: .62rem; letter-spacing: .14em; color: var(--brass); opacity: .7; overflow-wrap: anywhere; }
 .grille {   /* speaker grille */
   height: 26px; margin: 0 28px; border-radius: 13px;
   background: radial-gradient(circle, #050605 0 2px, transparent 2.5px) 0 0 / 8px 8px, #1b1e18;
@@ -350,7 +349,6 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
 }
 .dial-connect .lamp { width: 14px; height: 14px; background: radial-gradient(circle at 35% 35%, #ffe0dc 0 15%, var(--red) 45%, #5a0d08); box-shadow: 0 0 10px var(--red), 0 0 0 2px #0008; animation: blink 1.2s steps(2, jump-none) infinite; }
 .dial-connect:disabled { opacity: .7; cursor: progress; }
-.dial-foot { margin: 0; text-align: center; font-size: .68rem; color: var(--muted); letter-spacing: .06em; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -424,7 +422,6 @@ button.secondary { background: none; color: var(--text); border-color: var(--edg
   padding: 4px 7px; border-radius: 4px; background: #111; color: var(--stencil);
   box-shadow: inset 0 0 0 1px #ffffff22;
 }
-.plate-num.small { font-size: .8rem; color: var(--signal); background: none; box-shadow: none; }
 .plate-text { flex: 1; font-family: var(--serif); font-weight: 700; letter-spacing: .2em; font-size: .78rem; color: var(--stencil); }
 .hw-label {
   display: block; margin-top: 4px; text-align: center; font-family: var(--serif); font-weight: 700;
@@ -489,12 +486,6 @@ button.secondary { background: none; color: var(--text); border-color: var(--edg
 .hw-bar i { width: 7px; height: 14px; border-radius: 1px; background: #2c2a1a; }
 .hw-bar i[data-on="true"] { background: var(--phosphor); box-shadow: 0 0 6px #8dff6a99; }
 .hw-bar i[data-on="true"]:nth-child(n+9) { background: var(--amber); box-shadow: 0 0 6px #ffb34799; }
-.warning {
-  margin: 0; padding: 6px 8px; border-radius: 4px; text-align: center; font-family: var(--serif); font-weight: 700;
-  font-size: .62rem; letter-spacing: .1em; color: #1a1708;
-  background: repeating-linear-gradient(-45deg, var(--signal) 0 10px, #d9b43a 10px 20px);
-  box-shadow: 0 1px 2px #000a;
-}
 
 /* Dial unit: on phones the hardware row sits above the form. */
 .dial-body, .dial-left { display: flex; flex-direction: column; gap: 14px; }

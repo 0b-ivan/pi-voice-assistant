@@ -106,7 +106,6 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
   `web/mechanicus.svg`), Zahnrad mit drei Sechsecken (Wasserzeichen im
   Anruf-Bildschirm), Zahnrad mit Dürers magischem Quadrat (dreht sich in der
   Kopfzeile, solange der Server arbeitet, und steht über dem leeren Protokoll).
-  Binärzeile unter dem Anruf-Gerät: „AVE OMNI“.
 - **Litaneien:** Die Wählsequenz folgt der Litanei der Zündung („Die Seele
   des Maschinengottes umgibt dich …“, „Lebe!“), der Zugang wird mit „Dignus
   est intrare“ gewährt, ein falscher Code mit „Im Namen des Omnissiah,
