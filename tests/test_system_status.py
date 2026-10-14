@@ -134,7 +134,20 @@ class StatusTextTests(unittest.TestCase):
 
     def test_processing_and_missing_data(self):
         self.assertEqual(self.status({}, processing=True), "Direktive in Bearbeitung.")
-        self.assertEqual(self.status({}), "Status nominal. Befehl erwartet.")
+        self.assertEqual(self.status({}), "Statusdaten nicht verfügbar.")
+
+    def test_unknown_network_readings_are_not_an_outage(self):
+        for level in ('off', 'light', 'full', 'billy_full'):
+            with self.subTest(lore=level):
+                result = ss.network_text({'server': 'ok', 'lore': level})
+                self.assertIn('Pi-Netzwerkdaten', result) if level != 'billy_full' else (
+                    self.assertIn('Netzwerkdaten des Pi fehlen', result))
+                self.assertNotIn('Internet nicht erreichbar', result)
+                self.assertNotIn('Noosphäre ist vermessen', result)
+        self.assertIn('Internetstatus nicht ermittelt',
+            ss.network_text({'wlan': 'on', 'server': 'ok'}))
+        self.assertIn('Internet erreichbar',
+            ss.network_text({'wlan': 'on', 'net_ms': 80}))
 
     def test_persona_and_voice_are_whitelisted(self):
         self.assertEqual(ss.sanitize_snapshot({"persona": "mensch", "voice": "natural"}),
