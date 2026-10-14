@@ -229,6 +229,50 @@ die automatische Notabschaltung. Bei I²C-Leseausfall wird kein Akkustand
 erfunden; der Linux-Poweroff-Befehl allein garantiert **keine** elektrische
 Abtrennung durch den PiSugar.
 
+### Opt-in: Software-Standby über die PiSugar-3-Funktionstaste
+
+**Hardwaretest vom 14.10.2026:** Ein kurzer Druck auf die separate
+**Funktionstaste** lieferte über I²C (`0x57`, Register `0x08`) den
+Wert `1` (zuvor `0`). Die PiSugar-Power-Taste bleibt unverändert.
+
+Die Implementierung ist **standardmäßig deaktiviert**. Nach einem separaten
+Test der Quittierung kann `/etc/pi-voice-assistant.env` enthalten:
+
+```text
+PISUGAR_STANDBY_BUTTON=on
+```
+
+Nach Installation des PR und anschließendem Neustart von `pi-ptt.service`
+bewirkt **ein kurzer Druck** Software-Standby, der nächste Druck weckt
+Proximus wieder. Doppelte und lange Funktionstastendrücke werden nur
+quittiert, nicht als Umschaltung interpretiert. Beim Dienststart wird ein
+möglicherweise noch gespeichertes Ereignis ohne Standby-Aktion gelöscht.
+
+Software-Standby: Display und Status-LED werden dunkel, Wakeword-Listener
+sowie normale Audio-/Tastenbedienung sind pausiert. **Linux, I²C, SSH,
+WLAN und der 5-V-Ausgang bleiben an** (auch bei konfigurierter automatischer
+WLAN-Abschaltung im normalen Idle-Sleep). Kritische Alarme wecken Proximus
+auf; die vorhandene lokale Notabschaltung bleibt unabhängig davon aktiv.
+Während Aufnahme, Sprachausgabe, laufenden Wartungsaktionen und noch
+bestätigungsbedürftigen Shutdowns wird ein Standby-Tap abgewiesen.
+Aufwachen per Taste ist absichtlich **lautlos**. Ein Dienstneustart führt
+zur normalen aktiven Betriebsart zurück.
+
+**Hardware-Sicherheitsgrenze:** PiSugar-3-Tap-Ereignisse sind gespeichert.
+Um einen erfolgreichen kurzen Druck zu quittieren, liest der Treiber
+`0x08`, setzt kurz Schreibfreigabe `0x0B=0x29`, schreibt die
+unteren zwei Bits von `0x08` auf null und setzt `0x0B=0x00`.
+Das ist die Sequenz des offiziellen `pisugar3.rs`-Treibers.
+**Keine** Ein-/Ausschalt-, Lade-, RTC- oder Watchdog-Register werden
+geschrieben. Fehlende Quittierung darf nie mehrfach Standby auslösen;
+bei einem I²C-Fehler wird die Integration bis zum Dienstneustart deaktiviert.
+Einen konkurrierenden offiziellen PiSugar-Tastenhandler nicht gleichzeitig
+betreiben.
+
+**Die Integration bleibt bis zu einem echten ACK-/Wake-Hardwaretest
+deaktiviert.** Software-Standby ist kein echter suspend-to-RAM-Modus
+und keine elektrische Stromabschaltung.
+
 ### Optional: Einstellungen des offiziellen Power Managers auslesen
 
 `src/pisugar_client.py` kann `get`-Kommandos des [offiziellen
