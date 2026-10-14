@@ -643,7 +643,13 @@ class ServerTest(unittest.TestCase):
         import re
         html = (ss.WEB / 'index.html').read_text()
         for name in re.findall(r'(?:src|href)="([^"]+)"', html):
-            self.assertIn(name, ss.WEB_FILES)
+            if not name.startswith('#'):          # sigils inside the page
+                self.assertIn(name, ss.WEB_FILES)
+        css = (ss.WEB / 'style.css').read_text()
+        for name in re.findall(r'url\("(/[^"]+)"\)', css):
+            self.assertIn(name, ss.WEB_FILES)       # fonts, the skull
+        for name, _ in ss.WEB_FILES.values():
+            self.assertTrue((ss.WEB / name).is_file(), name)
         script = (ss.WEB / 'app.js').read_text()
         # Turns plus the read-only token check of the call; never maintenance.
         for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):

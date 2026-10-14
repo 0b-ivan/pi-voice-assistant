@@ -98,6 +98,9 @@ WEB_FILES = {
     '/web/style.css': ('style.css', 'text/css; charset=utf-8'),
     '/web/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json'),
     '/web/servo-skull.png': ('../assets/display/servo-skull.png', 'image/png'),
+    '/web/mechanicus.svg': ('mechanicus.svg', 'image/svg+xml'),
+    '/web/fonts/schola-regular.woff2': ('fonts/schola-regular.woff2', 'font/woff2'),
+    '/web/fonts/schola-bold.woff2': ('fonts/schola-bold.woff2', 'font/woff2'),
 }
 WEB_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
            "media-src 'self' blob: data:; connect-src 'self'; worker-src 'self'; "

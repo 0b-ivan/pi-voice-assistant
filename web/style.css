@@ -1,8 +1,19 @@
 /* Vox terminal: an iron vox-caster with a phosphor tube. The chat is the tube,
    header and controls are the casing. Mobile first; desktop from 900px.
    data-state on #chat: idle, listen, work, speak. body[data-effects="off"]
-   drops grain, flicker and glitches; prefers-reduced-motion drops motion. */
+   drops grain, flicker and glitches; prefers-reduced-motion drops motion.
+   Lettering: Century Schoolbook like the Mechanicus transfers (TeX Gyre Schola,
+   GUST Font License, web/fonts/); the teleprinter text stays monospace. */
+@font-face {
+  font-family: "Schola"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/web/fonts/schola-regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Schola"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("/web/fonts/schola-bold.woff2") format("woff2");
+}
 :root {
+  --serif: "Schola", "Century Schoolbook", "TeX Gyre Schola", Georgia, serif;
   --bg: #0d0f0c;
   --iron-hi: #3a3f35;
   --iron: #262a22;
@@ -25,6 +36,14 @@
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
 body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
 button, input, select { font: inherit; color: inherit; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sigil-numbers { font-family: var(--serif); font-weight: 700; fill: currentColor; }
+/* Mechanicus lettering for everything engraved on the casing. */
+.bar h1, .stage, .readout, .dial-head, .talk-main, .ask button, .dial-connect, .cancel,
+.log li::before, .log li.system, dialog h2, dialog label, .dial-token, .dial-foot, .litany,
+.gauge-label {
+  font-family: var(--serif); font-variant-numeric: lining-nums;
+}
 :focus-visible { outline: 2px solid var(--phosphor); outline-offset: 2px; }
 
 /* --- casing -------------------------------------------------------------------- */
@@ -50,7 +69,14 @@ button, input, select { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 10px;
   padding: 8px calc(var(--gutter) + 12px); padding-top: max(8px, env(safe-area-inset-top));
 }
-.bar h1 { margin: 0; font-size: .95rem; letter-spacing: .28em; color: var(--phosphor); text-shadow: 0 0 8px #8dff6a66; white-space: nowrap; }
+.sigil {
+  flex: none; width: 26px; height: 26px; color: var(--brass);
+  filter: drop-shadow(0 1px 0 #ffffff22) drop-shadow(0 -1px 0 #000c);
+}
+.cogitator { display: none; flex: none; width: 22px; height: 22px; color: var(--amber); opacity: .25; }
+body[data-state="work"] .cogitator { opacity: 1; animation: spin 2.4s linear infinite; filter: drop-shadow(0 0 4px #ffb34788); }
+@keyframes spin { to { transform: rotate(1turn); } }
+.bar h1 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: .22em; color: var(--phosphor); text-shadow: 0 0 8px #8dff6a66; white-space: nowrap; }
 .bar h1 small { display: none; font-size: .65rem; letter-spacing: .2em; color: var(--muted); text-shadow: none; }
 .stage {
   display: none; flex: 1; min-width: 0; margin: 0; text-align: center; font-size: .72rem; letter-spacing: .18em;
@@ -77,7 +103,7 @@ button, input, select { font: inherit; color: inherit; }
 .gauge-ticks path { stroke: #4a463a; stroke-width: 2; }
 .gauge-needle { stroke: #1a1a1a; stroke-width: 2.5; stroke-linecap: round; transform-origin: 50px 52px; transform: rotate(-50deg); }
 .gauge-hub { fill: var(--brass); }
-.gauge-label { font-size: 9px; text-anchor: middle; fill: #2a2a22; letter-spacing: 1px; }
+.gauge-label { font-size: 9.5px; font-weight: 700; text-anchor: middle; fill: #2a2a22; letter-spacing: 1px; }
 .pill { display: none; font-size: .7rem; padding: 3px 8px; border: 1px solid var(--edge); border-radius: 99px; color: var(--muted); white-space: nowrap; }
 .pill[data-state="ok"] { color: var(--phosphor); border-color: var(--phosphor-dim); }
 .pill[data-state="loading"] { color: var(--amber); border-color: var(--amber); }
@@ -186,6 +212,9 @@ body[data-effects="off"] .scanlines::before { display: none; }
   display: none; position: absolute; left: 0; right: 0; bottom: 24px; margin: 0;
   padding: 0 14px; text-align: center; color: var(--phosphor-dim); font-size: .82rem; line-height: 1.6;
 }
+.hint p { margin: 0; }
+.hint-sigil { width: 64px; height: 64px; color: var(--phosphor-dim); opacity: .55; margin-bottom: 8px; }
+.litany { font-style: italic; font-size: .95rem; color: var(--phosphor); opacity: .75; margin-top: 4px; }
 .log:empty + .hint { display: block; }
 
 /* Power-on after the call connects. */
@@ -268,13 +297,26 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
     linear-gradient(180deg, var(--iron-hi), var(--iron) 35%, var(--iron-lo));
   box-shadow: inset 0 1px 0 #ffffff1c, 0 0 0 1px #000, 0 30px 60px #000c;
 }
+.dial-sigil {
+  position: absolute; top: -34px; left: 50%; width: 68px; height: 68px; margin-left: -34px;
+  color: var(--brass); border-radius: 50%;
+  background: radial-gradient(circle, var(--iron-hi), var(--iron-lo) 70%);
+  box-shadow: 0 0 0 3px #000, 0 6px 16px #000a;
+  filter: drop-shadow(0 1px 0 #ffffff22);
+}
+.dial-unit { margin-top: 34px; padding-top: 44px; }
+.dial-watermark {
+  position: absolute; z-index: 0; left: 50%; top: 58%; width: 46%; aspect-ratio: 1; height: auto;
+  transform: translate(-50%, -50%); color: var(--phosphor); opacity: .06;
+}
+.binary { margin: 0; text-align: center; font-size: .62rem; letter-spacing: .14em; color: var(--brass); opacity: .7; overflow-wrap: anywhere; }
 .grille {   /* speaker grille */
   height: 26px; margin: 0 28px; border-radius: 13px;
   background: radial-gradient(circle, #050605 0 2px, transparent 2.5px) 0 0 / 8px 8px, #1b1e18;
   box-shadow: inset 0 2px 4px #000, 0 1px 0 #ffffff14;
 }
 .dial-screen { height: clamp(220px, 40dvh, 320px); margin: 0 6px; }
-.dial-head { position: absolute; z-index: 1; top: 10px; left: 0; right: 0; margin: 0; text-align: center; font-size: .72rem; letter-spacing: .2em; color: var(--phosphor); text-shadow: 0 0 6px #8dff6a99; }
+.dial-head { position: absolute; z-index: 1; top: 10px; left: 0; right: 0; margin: 0; text-align: center; font-size: .74rem; font-weight: 700; letter-spacing: .1em; white-space: nowrap; color: var(--phosphor); text-shadow: 0 0 6px #8dff6a99; }
 .dial-screen .scope { top: 30px; height: 84px; }
 .dial-log {
   position: absolute; inset: 120px 0 0; margin: 0; padding: 0 16px 14px; list-style: none;
@@ -309,6 +351,7 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   .pill { display: inline-block; }
   .bar h1 small { display: inline; }
   .stage { display: block; }
+  .cogitator { display: block; }
   .bar .spacer, .readout { display: none; }
   .log { inset: calc(var(--scope) + 14px) 0 0; }
 }
@@ -334,7 +377,8 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   .ask input { padding: 14px 16px; }
   .ask button { padding: 0 22px; }
   .cancel { padding: 0 18px; }
-  .dial-unit { padding: 28px 26px 22px; }
+  .dial-unit { padding: 46px 26px 22px; }
+  .dial-head { font-size: .85rem; letter-spacing: .2em; }
 }
 
 /* --- settings dialog -------------------------------------------------------------- */

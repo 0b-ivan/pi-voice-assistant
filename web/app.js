@@ -10,6 +10,18 @@ const MAX_SECONDS = 29;             // SERVITOR_MAX_AUDIO_SECONDS is 30 by defau
 const MIN_SECONDS = 0.3;            // protocol.MIN_TURN_SECONDS is 0.2
 const STAGES = { recognize: 'ENTSCHLÜSSELE SIGNAL', think: 'MASCHINENGEIST DENKT',
                  synthesize: 'KODIERE ANTWORT', render: 'VOX-MODULATION' };
+// Litanies of the Cult Mechanicus. The Litany of Ignition (White Dwarf 67) and
+// the call and response from The Forges of Mars; Latin from the Mechanicus' High
+// Gothic tradition; the rest written for Proximus.
+const LITANY = {
+  ignition: ['Die Seele des Maschinengottes umgibt dich.', 'Die Macht des Maschinengottes erfüllt dich.',
+             'Der Hass des Maschinengottes treibt dich an.', 'Der Maschinengott schenkt dir Leben.'],
+  hint: ['Der Maschinengeist hört.', 'Mens sana in machina sano.',
+         'Zu jedem Problem liegt eine Lösung in der Anwendung der Tech-Lore.',
+         'Wissen ist heilig. Frage, und es wird dir gegeben.', 'Mit dem Segen des Omnissiah.',
+         'Gesegnet sei die Röhre, gesegnet der Draht, gesegnet der Strom dazwischen.'],
+};
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const IDLE = 'KANAL OFFEN', SENDING = 'SENDE …', UPLINK = 'ÜBERTRAGUNG', INCOMING = 'EINGEHENDE ÜBERTRAGUNG';
 const ERRORS = { no_speech: 'Keine Sprache erkannt.', too_short: 'Aufnahme zu kurz.',
                  too_large: 'Aufnahme zu lang.', llm: 'Sprachkern nicht erreichbar.',
@@ -49,6 +61,7 @@ function setStage(text, mode) {
   $('chat').dataset.state = mode;
   // Red lamp: lit while transmitting, blinking while the server works.
   $('lamp-tx').dataset.on = mode === 'listen' ? 'yes' : mode === 'work' ? 'blink' : 'no';
+  document.body.dataset.state = mode;   // the cogitator cog turns while the server works
   Vox.stateChanged(mode);
 }
 
@@ -527,27 +540,30 @@ async function dial(event) {
   $('dial-log').replaceChildren();
   const pace = state.effects && !reducedMotion.matches ? 1 : 0.15;
   Vox.sounds.click();
-  dialLine('Vox-Terminal erwacht. Weihrauch entzündet.');
-  await wait(600 * pace);
-  dialLine('Litanei der Verbindung rezitiert …');
+  dialLine('Läute die Große Glocke einmal. Weihrauch entzündet.');
+  await wait(700 * pace);
+  dialLine(LITANY.ignition[0]);
+  await wait(650 * pace);
+  dialLine(LITANY.ignition[1]);
   await wait(500 * pace);
   dialLine('Suche Trägersignal auf Kanal 107 …');
   Vox.sounds.tune(1.8);
   const [link] = await Promise.all([health(), wait(1800 * pace)]);
   if (link === 'down') {
     Vox.sounds.crackle();
-    dialLine('+++ KEIN TRÄGERSIGNAL +++ Servitor nicht erreichbar.', 'bad');
+    dialLine('+++ KEIN TRÄGERSIGNAL +++ Servitor nicht erreichbar. Klärung erforderlich.', 'bad');
     $('dial-connect').disabled = false;
     return;
   }
   Vox.sounds.crackle();
   dialLine(`Signal gefunden · Laufzeit ${Vox.live.latency} ms · Störungen hoch`);
   await wait(500 * pace);
+  dialLine(LITANY.ignition[2]);
   dialLine('Prüfe Vox-Code …');
   const verdict = await authorize(token);
   if (verdict !== 'ok') {
     Vox.sounds.squelch();
-    dialLine(verdict === 'denied' ? '+++ ZUGANG VERWEIGERT +++ Vox-Code ungültig.'
+    dialLine(verdict === 'denied' ? '+++ ZUGANG VERWEIGERT +++ Im Namen des Omnissiah, identifiziere dich.'
                                   : '+++ VERBINDUNG ABGERISSEN +++', 'bad');
     form.dataset.known = 'no';
     $('dial-connect').disabled = false;
@@ -558,16 +574,19 @@ async function dial(event) {
     store.set('servitor.token', $('dial-remember').checked ? token : null);
   }
   Vox.sounds.cant();
-  dialLine(link === 'loading' ? 'Maschinengeist erwacht noch. Geduld, Bediener.'
-                              : 'Maschinengeist antwortet.', 'good');
+  dialLine('Dignus est intrare. Vox-Code angenommen.', 'good');
+  await wait(600 * pace);
+  dialLine(link === 'loading' ? 'Der Maschinengeist erwacht noch. Geduld, Bediener.'
+                              : LITANY.ignition[3], 'good');
   await wait(700 * pace);
-  dialLine('VERBINDUNG STEHT.', 'good');
+  dialLine('LEBE! · VERBINDUNG STEHT.', 'good');
   await wait(400 * pace);
   connect();
 }
 
 function connect() {
   document.body.dataset.connected = 'yes';
+  $('hint-litany').textContent = pick(LITANY.hint);
   $('dial-connect').disabled = false;
   Vox.connect();
   $('lamp-link').dataset.on = Vox.live.link === 'ok' ? 'yes' : 'no';
@@ -579,12 +598,12 @@ function hangup() {
   cancel();
   Vox.sounds.squelch();
   Vox.disconnect();
-  addLog('system', '+++ Kanal getrennt +++');
+  addLog('system', '+++ Die Lebenden schwinden. Aber die Maschine besteht. +++');
   document.body.dataset.connected = 'no';
   $('lamp-link').dataset.on = 'no';
   $('dial-form').dataset.known = state.token ? 'yes' : 'no';
   $('dial-log').replaceChildren();
-  dialLine('Kanal 107 getrennt. Erneut anrufen?');
+  dialLine('Kanal 107 getrennt. Die Maschine besteht. Erneut anrufen?');
 }
 
 $('dial-form').addEventListener('submit', dial);

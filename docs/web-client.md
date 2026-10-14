@@ -75,6 +75,27 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
 - **Desktop (ab 900 px):** Schritt in der Kopfzeile, großer Schädel, Sendetaste,
   Eingabe und Übertragen in einer Zeile, Bediener rechts, Proximus links.
 
+### Schrift, Symbole, Litaneien
+
+- **Schrift:** Beschriftungen auf Gehäuse, Knöpfen und im Protokoll in
+  *Century Schoolbook*, der Schrift der Adeptus-Mechanicus-Transferbögen
+  (von der Community so identifiziert). Ausgeliefert wird die freie
+  Variante TeX Gyre Schola (GUST Font License, `web/fonts/`), auf Latin-1
+  verkleinert, je ca. 19 KB. Der Fernschreibertext bleibt Monospace.
+- **Symbole** (selbst gezeichnete SVGs nach den Transferbögen):
+  Schädel im Zahnrad (Kopfzeile, Anruf-Gerät, Browser-Symbol
+  `web/mechanicus.svg`), Zahnrad mit drei Sechsecken (Wasserzeichen im
+  Anruf-Bildschirm), Zahnrad mit Dürers magischem Quadrat (dreht sich in der
+  Kopfzeile, solange der Server arbeitet, und steht über dem leeren Protokoll).
+  Binärzeile unter dem Anruf-Gerät: „AVE OMNI“.
+- **Litaneien:** Die Wählsequenz folgt der Litanei der Zündung („Die Seele
+  des Maschinengottes umgibt dich …“, „Lebe!“), der Zugang wird mit „Dignus
+  est intrare“ gewährt, ein falscher Code mit „Im Namen des Omnissiah,
+  identifiziere dich“ abgewiesen. Auflegen endet mit „Die Lebenden schwinden.
+  Aber die Maschine besteht.“ Über dem leeren Protokoll steht ein zufälliger
+  Spruch („Mens sana in machina sano“ …). Alle Texte stehen in `LITANY`
+  in `web/app.js`.
+
 ## Bedienung
 
 - **Halten zum Sprechen** (Maus, Finger oder Leertaste), loslassen schickt die
