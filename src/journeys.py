@@ -914,6 +914,41 @@ def proposal_text(proposal, now):
     return question + " Ja oder Taste E."
 
 
+def brief_proposal_text(proposal, now, max_chars=170):
+    """Short but complete consent question for offline/low-memory TTS.
+
+    An abbreviated message is permitted only when the departure, action,
+    chosen calendar and volatile reminder warning still fit. Otherwise
+    return None: the caller must revoke the unheard proposal.
+    """
+    try:
+        option = proposal['option']
+        first = option['vehicles'][0]
+        label = first['label']
+        depart = clock(option['dep'], now)
+        arrive = f", an {clock(option['arr'], now)}" if option['arr'] else ''
+        intro = f"{label}, ab {depart}{arrive}. "
+        actions = set(proposal['actions'])
+        extras = []
+        if 'calendar' in actions:
+            extras.append(f"in Kalender {proposal['calendar'][1]} eintragen")
+        if 'remind' in actions:
+            alarm = proposal['alarm']
+            if alarm is None:
+                extras.append('hier am Gerät vor Abfahrt erinnern')
+            else:
+                extras.append(f"{clock(alarm, now)} hier am Gerät erinnern")
+        if not extras:
+            return None
+        message = intro + 'Soll ich ' + ' und '.join(extras) + '? '
+        if 'remind' in actions:
+            message += 'Neustart löscht die Erinnerung. '
+        message += 'Ja oder Taste E.'
+        return message if len(message) <= max_chars else None
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
 def reminder_text(option):
     first = option['vehicles'][0]
     if option['kind'] == 'departure':
