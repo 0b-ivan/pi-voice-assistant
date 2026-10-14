@@ -110,8 +110,8 @@
     <ol id="log" class="log" aria-live="polite"></ol>
     <div class="hint">
       <svg class="hint-sigil" aria-hidden="true"><use href="#cog-square"/></svg>
-      <p>Sendetaste halten und sprechen oder eine Nachricht tippen.</p>
-      <p id="hint-litany" class="litany">Der Maschinengeist hört.</p>
+      <p>Zum Sprechen die Sendetaste halten, zum Schreiben das Eingabefeld nutzen.</p>
+      <p id="hint-litany" class="litany">Der Maschinengeist lauscht.</p>
     </div>
     <div class="scanlines" aria-hidden="true"></div>
   </main>
@@ -149,7 +149,7 @@
     </button>
     <form id="ask" class="ask" autocomplete="off">
       <textarea id="question" name="question" rows="2" maxlength="500"
-                placeholder="An Proximus …" enterkeyhint="send" aria-label="Nachricht"></textarea>
+                placeholder="Nachricht an Proximus …" enterkeyhint="send" aria-label="Nachricht"></textarea>
       <button type="submit">SENDEN</button>
     </form>
     <button id="cancel" class="cancel" type="button" hidden>ABBRECHEN</button>
@@ -181,8 +181,8 @@
       </label>
       <label class="check"><input id="toggle" type="checkbox"> Antippen statt halten</label>
       <label class="check"><input id="effects" type="checkbox"> Vox-Effekte (Rauschen, Funkfilter, Störungen)</label>
-      <p class="note">Mikrofon nur über HTTPS oder localhost. Kein Gedächtnis,
-        kein Kalender, keine Gerätesteuerung: der Web-Client ist ein Gast.</p>
+      <p class="note">Das Mikrofon funktioniert nur über HTTPS oder localhost.
+        Der Web-Client hat keinen Zugriff auf Gerätesteuerung, Kalender oder das Pi-Gedächtnis.</p>
       <div class="row">
         <button id="logout" type="button" class="secondary">Abmelden</button>
         <button value="cancel" type="submit" class="secondary">Schließen</button>

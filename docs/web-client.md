@@ -62,12 +62,13 @@ Die Seite sieht aus wie ein Vox-Gerät des Imperiums: eisernes Gehäuse,
 Phosphor-Röhre, Lampen und Zeigerinstrument. Wer sie öffnet, **ruft Proximus
 über Vox an**:
 
-1. **Anruf-Bildschirm** mit Lautsprechergitter und Röhre. Vox-Code (Token)
-   eingeben oder hinterlegt lassen, dann „Verbindung herstellen“.
-2. **Wählsequenz** (ca. 4 s, mit Ton): Terminal erwacht, Litanei, Suche nach
-   dem Trägersignal (Rauschen mit Pfeifton), gemessene Signallaufzeit, Prüfung
-   des Vox-Codes über `GET /v1/status`, binharische Bestätigung. Ein falscher
-   Code ergibt „ZUGANG VERWEIGERT“, ein fehlender Server „KEIN TRÄGERSIGNAL“.
+1. **Anruf-Bildschirm:** Kennwort eingeben oder eine vorhandene Sitzung nutzen.
+   Optional kann stattdessen ein Server-Token verwendet werden. „Verbindung herstellen“ startet die Anwahl.
+2. **Wählsequenz:** Die Litanei begleitet die Verbindungssuche mit Rauschen
+   und Pfeifton. Die angezeigte Antwortzeit stammt von `/health`; sie ist
+   keine gemessene Funkfeldstärke. Die Anmeldung läuft über `/v1/login` oder
+   prüft einen Server-Token über `/v1/status`. Bei Fehlern erscheint eine
+   konkrete Meldung statt eines erfundenen Verbindungszustands.
 3. Die Röhre schaltet sich ein. Ein leises Rauschen zeigt den offenen Kanal an.
    ⏻ trennt den Kanal und führt zurück zum Anruf.
 
@@ -83,19 +84,22 @@ Im Betrieb:
 | Protokoll | `BEDIENER »` und `PROXIMUS »` wie ein Fernschreiber; Proximus' Zeilen tippen sich ein |
 
 Geräusche (alle im Browser erzeugt, nichts wird geladen): Klicken der
-Sendetaste, binharische Bitfolge beim Absenden (wie der Quittungston des Pi),
+Sendetaste, kurzer digitaler Quittungston beim Absenden,
 Trägerstoß vor jeder Antwort, Rauschschwanz am Ende. Proximus' Stimme läuft
-zusätzlich durch einen Funkfilter (Bandpass 320–3300 Hz, leichte Sättigung):
+zusätzlich durch einen milden Funkfilter (Hochpass 180 Hz, Tiefpass 5200 Hz,
+Präsenzanhebung und leichte Sättigung):
 Er klingt weit weg. Gelegentlich reißt das Bild kurz ab und knackt es.
 
 „Vox-Effekte“ in den Einstellungen schaltet Rauschen, Funkfilter, Störungen
 und Schreibmaschineneffekt ab; die Antworten bleiben gleich. Bei „Bewegung
 reduzieren“ im Betriebssystem entfallen alle Animationen.
 
-- **Mobil (unter 600 bzw. 900 px):** Der Schritt steht in der Röhre unter dem
-  Oszilloskop, das Eingabefeld liegt über einer großen Sendetaste.
-- **Desktop (ab 900 px):** Schritt in der Kopfzeile, großer Schädel, Sendetaste,
-  Eingabe und Senden in einer Zeile, Bediener rechts, Proximus links.
+- **Mobil (unter 900 px):** Der Status steht in der Röhre unter dem
+  Oszilloskop. Die Texteingabe nutzt die Breite; Sprachaufnahme, Senden
+  und Abbrechen teilen sich eine kompakte Bedienzeile.
+- **Desktop (ab 900 px):** Status in der Kopfzeile, großer Schädel,
+  separate Bedienleiste und Bedienteil rechts. Nachrichten erscheinen
+  als Dialog mit Bediener- und Proximus-Zeilen.
 
 ### Synchroner Fernschreiber und Bedienteil
 
@@ -121,7 +125,8 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
 Nur die lokalen Proximus-Dienste `servitor-voice.service` und
 `servitor-llm.service` liefern echte Journal-Einträge
 (`GET /v1/journal?after=N`, Token oder Sitzung, alle 2,5 s). Der Dienst
-liest es mit `journalctl -f` (Gruppe `systemd-journal`, die die Unit schon hat)
+liest es mit `journalctl -f -u servitor-voice.service -u servitor-llm.service`
+(Gruppe `systemd-journal`)
 und hält die letzten 300 Zeilen im Arbeitsspeicher. Zugriffszeilen des
 Webservers fehlen; IPv4- und IPv6-Adressen werden maskiert. Ohne `journalctl`
 (oder mit `SERVITOR_JOURNAL_SOURCE=own`) zeigt es nur die Ausgabe des Dienstes.
@@ -133,8 +138,8 @@ weitergelaufen ist als vorher.
 - **Desktop:** eigene Spalte rechts auf dem Röhrenbildschirm, der Chat links.
   **Handy:** hinter dem Chat; die Chat-Zeilen bleiben deckend.
 - Neueste Zeile oben, ältere blenden nach unten aus. Zeit, Dienst, Meldung
-  (`21:48:16 kernel Out of memory: …`, `19:41:36 servitor-voice READY
-  load_seconds=9.84`); Warnungen bernstein, Fehler rot.
+  (`19:41:36 servitor-voice READY load_seconds=9.84`);
+  Warnungen bernsteinfarben, Fehler rot.
 - Die Anzeige hält 60 echte Meldungen und höchstens drei Effektzeilen.
   Litaneien und Störungen kommen weiterhin alle 4–12 s; sie verdrängen keine
   echten Meldungen mehr, wenn das System ruhig ist.
@@ -145,14 +150,33 @@ weitergelaufen ist als vorher.
   verständliche Wörter. Nie während man sendet oder Proximus spricht. Im
   Journal steht dann „FREMDKANAL · unverständlich“.
 
+### Textstil für das Vox-Terminal
+
+Die Oberfläche verbindet imperiale Funk-Atmosphäre mit überprüfbaren Zuständen:
+
+- **Zustände:** Kurz und eindeutig („Server erreichbar“, „Anmeldung abgelaufen“,
+  „Verbindung getrennt“). Nur tatsächliche Messwerte anzeigen. Die Antwortzeit
+  von `/health` ist kein RF-Pegel.
+- **Fehler:** Zuerst die Ursache, dann eine praktikable Handlung
+  („Kennwort oder Token ungültig“, „Verbindung prüfen“). Keine vagen
+  Meldungen wie „Klärung erforderlich“.
+- **Litaneien:** Dürfen poetisch sein, müssen aber von echten Journal-Einträgen
+  unterscheidbar bleiben. Kein erfundenes Prüfergebnis und keine Behauptung,
+  Wartung oder Datenübertragung sei tatsächlich erfolgt.
+- **Funkstörungen/Fremdkanäle:** Sind ausdrücklich simulierte Effekte im Browser,
+  keine protokollierten Netzfehler. Alle 4–12 Sekunden höchstens eine
+  Litanei oder Störung, ohne echte Einträge zu verdrängen.
+- **Sprache:** Deutsch und knapp; etablierte Begriffe wie Vox, Omnissiah oder
+  Maschinengeist bleiben. Kein Modellname unter Antworten.
+
 ### Journal-Sicherheit und Abschaltung der Vollweiterleitung
 
 Die bisherige Weiterleitung mit `systemd-journal-upload` war zu breit:
 Sie übertrug sämtliche Host-/Pi-Systemmeldungen, darunter SSH, Kernel,
-andere Dienste und Proxmox-Verwaltung. **Diese Vollweiterleitung ist
-deaktiviert und darf nicht erneut installiert werden.**
+andere Dienste und Proxmox-Verwaltung. **Diese Vollweiterleitung muss auf den betroffenen Rechnern abgeschaltet
+werden und darf nicht erneut installiert werden.**
 
-Der Server liest jetzt nur `servitor-voice.service` und
+Der Fix-Branch beschränkt die Browseranzeige auf `servitor-voice.service` und
 `servitor-llm.service` aus dem lokalen Journal (`journalctl -u`).
 Zusätzlich verwirft eine Whitelist fremde Units und fremde Hostnamen.
 Der frühere Installer `deploy/journal-forward/install.sh` ist gesperrt.
@@ -217,8 +241,8 @@ zu `/health`, beim Senden und Empfangen den Sprachpegel.
 - **Frage tippen**: mobil über die volle Breite, zunächst zwei Zeilen; längere
   Texte vergrößern das Feld bis auf vier Zeilen. Darunter eine kompakte Zeile
   für Sprachaufnahme, Senden und gegebenenfalls Abbrechen. Enter sendet,
-  Shift+Enter fügt einen Zeilenumbruch ein. Die Frage geht denselben Weg wie ein erkannter Satz, nur ohne
-  Spracherkennung (`/v1/ask`, höchstens 500 Zeichen).
+  Shift+Enter fügt einen Zeilenumbruch ein. Die Frage geht denselben
+  Weg wie ein erkannter Satz, nur ohne Spracherkennung (`/v1/ask`, höchstens 500 Zeichen).
 - **Abbrechen** oder `Esc`: Aufnahme verwerfen, Anfrage abbrechen, Ausgabe stoppen.
 - **Einstellungen** (⚙): Persona (Servitor/Billy), Lore-Stufe, Stimme
   (Servitor/natürlich), Sprachkern (Auto/Frei/Lokal) – dieselben Werte wie im

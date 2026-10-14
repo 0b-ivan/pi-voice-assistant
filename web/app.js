@@ -16,17 +16,17 @@ const STAGES = { recognize: 'ENTSCHLÜSSELE SIGNAL', think: 'MASCHINENGEIST DENK
 const LITANY = {
   ignition: ['Die Seele des Maschinengottes umgibt dich.', 'Die Macht des Maschinengottes erfüllt dich.',
              'Der Hass des Maschinengottes treibt dich an.', 'Der Maschinengott schenkt dir Leben.'],
-  hint: ['Der Maschinengeist hört.', 'Mens sana in machina sano.',
-         'Zu jedem Problem liegt eine Lösung in der Anwendung der Tech-Lore.',
-         'Wissen ist heilig. Frage, und es wird dir gegeben.', 'Mit dem Segen des Omnissiah.',
-         'Gesegnet sei die Röhre, gesegnet der Draht, gesegnet der Strom dazwischen.'],
+  hint: ['Der Maschinengeist lauscht.', 'Mens sana in machina sana.',
+         'Wissen ist Werkzeug. Setze es mit Bedacht ein.',
+         'Wissen ist heilig. Stelle deine Frage.', 'Mit dem Segen des Omnissiah.',
+         'Gesegnet seien Leitung und Signal.'],
 };
 // Murmured in the background between the log lines.
 LITANY.journal = ['Ehre dem Omnissiah.', 'Die Lebenden schwinden. Aber die Maschine besteht.',
-  'Deus ex machina.', 'Mens sana in machina sano.', 'Gesegnet sei der Datenstrom.',
-  'Weihrauch nachgelegt. Reinheitssiegel geprüft.', 'Binärgebet an den Kogitator übermittelt.',
-  'Der Maschinengeist ist besänftigt.', 'Litanei der Prüfung: kein Fehler gefunden.',
-  'Das Fleisch ist schwach, der Code ist rein.', 'Öl gesalbt, Ventile gesegnet.',
+  'Deus ex machina.', 'Mens sana in machina sana.', 'Gesegnet sei der Datenstrom.',
+  'Möge Weihrauch die Schaltkreise schützen.', 'Litanei der unverfälschten Übertragung.',
+  'Möge der Maschinengeist Ruhe finden.', 'Fehler seien benannt, nicht verschwiegen.',
+  'Das Fleisch ist schwach. Der Stahl bleibt.', 'Öl für die Gelenke, Lobpreis für die Maschine.',
   'Die Seele des Maschinengottes umgibt dich.'];
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const IDLE = 'KANAL OFFEN', SENDING = 'SENDE …', UPLINK = 'ÜBERTRAGUNG', INCOMING = 'EINGEHENDE ÜBERTRAGUNG';
@@ -260,8 +260,8 @@ async function exchange(path, body, type) {
                  'X-Servitor-Status': statusHeader() },
     });
     if (!response.ok) {
-      const messages = { 401: 'Vox-Code abgelehnt.', 429: 'Zu viele Anfragen, kurz warten.',
-                         503: 'Server beschäftigt oder lädt noch.', 413: 'Zu lang.' };
+      const messages = { 401: 'Sitzung abgelaufen. Bitte neu anmelden.', 429: 'Zu viele Anfragen. Bitte kurz warten.',
+                         503: 'Sprachkern beschäftigt oder noch nicht bereit.', 413: 'Aufnahme oder Nachricht zu lang.' };
       addLog('error', messages[response.status] || `Serverfehler ${response.status}.`);
       if (response.status === 401) { state.session = false; hangup(); }
       return;
@@ -281,7 +281,7 @@ async function exchange(path, body, type) {
       }
     }
   } catch (error) {
-    if (error.name !== 'AbortError') addLog('error', `Verbindung abgerissen: ${error.message}`);
+    if (error.name !== 'AbortError') addLog('error', 'VOX-Verbindung unterbrochen. Anfrage erneut senden.');
     state.story = null;
   } finally {
     closeReply(reply);
@@ -729,7 +729,7 @@ async function pollJournal() {
     if (journal.controller !== controller) return;
     if (!response.ok) {
       journalStatus(response.status === 401
-        ? 'Journal: Anmeldung abgelaufen – neu verbinden.'
+        ? 'Journal: Anmeldung abgelaufen – bitte neu anmelden.'
         : `Journal nicht erreichbar (HTTP ${response.status}).`);
       return;
     }
@@ -743,7 +743,7 @@ async function pollJournal() {
     journal.seq = data.seq;
     journal.instance = data.instance || '';
     journalStatus(data.source?.error ? `Journal gestört: ${data.source.error}`
-      : data.source?.mode === 'own' ? 'Journal: nur Ausgaben des Sprachdienstes verfügbar.' : '');
+      : data.source?.mode === 'own' ? 'Journal: nur Meldungen des Sprachdienstes verfügbar.' : '');
   } catch {
     if (journal.controller === controller) journalStatus('Journal-Verbindung unterbrochen. Neuer Versuch läuft.');
   } finally {
@@ -756,8 +756,8 @@ function interference() {
   return pick([
     '░▒▓ NOOSPHÄRE-STÖRUNG ▓▒░',
     '··· SIGNAL VERZERRT ···',
-    '▚▚ TRÄGER DRIFT ▚▚',
-    '▒▒ DATENFRAGMENT VERWORFEN ▒▒',
+    '▚▚ TRÄGERDRIFT ▚▚',
+    '▒▒ FUNKRAUSCHEN ▒▒',
   ]);
 }
 
@@ -802,7 +802,7 @@ async function health() {
   const latency = Math.round(performance.now() - started);
   Object.assign(Vox.live, { link, latency });
   pill.dataset.state = link;
-  pill.textContent = link === 'ok' ? `Signal ${latency} ms` : link === 'loading' ? 'Servitor erwacht' : 'Kein Träger';
+  pill.textContent = link === 'ok' ? `Signal ${latency} ms` : link === 'loading' ? 'Sprachkern startet' : 'Kein Träger';
   $('lamp-link').dataset.on = link === 'ok' && Vox.connected ? 'yes' : 'no';
   return link;
 }
@@ -902,7 +902,7 @@ async function dial(event) {
   $('dial-log').replaceChildren();
   const pace = state.effects && !reducedMotion.matches ? 1 : 0.15;
   Vox.sounds.click();
-  dialLine('Läute die Große Glocke einmal. Weihrauch entzündet.');
+  dialLine('Litanei der Zündung beginnt.');
   await wait(700 * pace);
   dialLine(LITANY.ignition[0]);
   await wait(650 * pace);
@@ -913,12 +913,12 @@ async function dial(event) {
   const [link] = await Promise.all([health(), wait(1800 * pace)]);
   if (link === 'down') {
     Vox.sounds.crackle();
-    dialLine('+++ KEIN TRÄGERSIGNAL +++ Servitor nicht erreichbar. Klärung erforderlich.', 'bad');
+    dialLine('+++ KEIN TRÄGERSIGNAL +++ Proximus antwortet nicht. Verbindung prüfen.', 'bad');
     $('dial-connect').disabled = false;
     return;
   }
   Vox.sounds.crackle();
-  dialLine(`Signal gefunden · Laufzeit ${Vox.live.latency} ms · Störungen hoch`);
+  dialLine(`Server erreichbar · Antwortzeit ${Vox.live.latency} ms`);
   await wait(500 * pace);
   dialLine(LITANY.ignition[2]);
   dialLine('Prüfe Kennung …');
@@ -926,9 +926,9 @@ async function dial(event) {
   if (verdict !== 'ok') {
     Vox.sounds.squelch();
     const why = {
-      denied: '+++ ZUGANG VERWEIGERT +++ Im Namen des Omnissiah, identifiziere dich.',
+      denied: '+++ ZUGANG VERWEIGERT +++ Kennwort oder Token ungültig.',
       locked: '+++ GESPERRT +++ Zu viele Fehlversuche. 15 Minuten warten.',
-      unset: '+++ KENNWORT NICHT EINGERICHTET +++ SERVITOR_WEB_PASSWORD_HASH fehlt.',
+      unset: '+++ ANMELDUNG NICHT EINGERICHTET +++ Server-Konfiguration prüfen.',
     };
     dialLine(why[verdict] || '+++ VERBINDUNG ABGERISSEN +++', 'bad');
     form.dataset.known = 'no';
@@ -940,10 +940,10 @@ async function dial(event) {
   Vox.sounds.cant();
   dialLine('Dignus est intrare. Kennung angenommen.', 'good');
   await wait(600 * pace);
-  dialLine(link === 'loading' ? 'Der Maschinengeist erwacht noch. Geduld, Bediener.'
+  dialLine(link === 'loading' ? 'Sprachkern startet noch. Verbindung steht.'
                               : LITANY.ignition[3], 'good');
   await wait(700 * pace);
-  dialLine('LEBE! · VERBINDUNG STEHT.', 'good');
+  dialLine('LEBE! · VERBINDUNG HERGESTELLT.', 'good');
   await wait(400 * pace);
   connect();
 }
@@ -969,7 +969,7 @@ function hangup() {
   $('lamp-link').dataset.on = 'no';
   $('dial-form').dataset.known = state.token || state.session ? 'yes' : 'no';
   $('dial-log').replaceChildren();
-  dialLine('Kanal 107 getrennt. Die Maschine besteht. Erneut anrufen?');
+  dialLine('Verbindung getrennt. Erneut verbinden?');
 }
 
 $('dial-form').addEventListener('submit', dial);

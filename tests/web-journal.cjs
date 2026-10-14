@@ -3,12 +3,13 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname, '..');
 
 (async () => {
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    ...(process.env.CHROME_BIN ? { executablePath: process.env.CHROME_BIN } : {}),
     headless: true,
   });
   try {
@@ -18,8 +19,8 @@ const root = path.resolve(__dirname, '..');
     page.on('pageerror', error => errors.push(error.message));
     let status = 200, source = { mode: 'system', error: '' }, instance = 'first', seq = 2;
     let entries = [
-      { seq: 1, ts: 1792008000, host: 'ct107', unit: 'cron', text: 'Auftrag beendet', prio: 6 },
-      { seq: 2, ts: 1792008001, host: 'wgz-pve-01', unit: 'kernel', text: 'USB verbunden', prio: 6 },
+      { seq: 1, ts: 1792008000, host: 'ct107', unit: 'servitor-voice', text: 'Sprachkern geladen', prio: 6 },
+      { seq: 2, ts: 1792008001, host: 'ct107', unit: 'servitor-llm', text: 'Modell bereit', prio: 6 },
     ];
     let hold = false, release;
     await page.route('http://proximus.test/**', async route => {
@@ -53,7 +54,7 @@ const root = path.resolve(__dirname, '..');
     await page.goto('http://proximus.test/');
     await page.evaluate(async () => { Vox.connect(); await pollJournal(); });
     assert.equal(await page.locator('#journal [data-kind="log"]').count(), 2);
-    assert.match(await page.locator('#journal').innerText(), /wgz-pve-01 ▸ kernel USB verbunden/);
+    assert.match(await page.locator('#journal').innerText(), /servitor-llm Modell bereit/);
 
     // An extended quiet period with all types of effects must preserve real logs.
     await page.evaluate(() => {
@@ -79,9 +80,9 @@ const root = path.resolve(__dirname, '..');
     assert.equal(await page.locator('#journal [data-kind="status"]').count(), 0);
 
     instance = 'second'; seq = 4;
-    entries = [{ seq: 1, ts: 1792008002, host: 'pi-assistent', unit: 'pi-ptt', text: 'Pi sendet', prio: 6 }];
+    entries = [{ seq: 1, ts: 1792008002, host: 'ct107', unit: 'servitor-voice', text: 'Kanal neu verbunden', prio: 6 }];
     await page.evaluate(() => pollJournal());
-    assert.match(await page.locator('#journal').innerText(), /pi-assistent ▸ pi-ptt Pi sendet/);
+    assert.match(await page.locator('#journal').innerText(), /servitor-voice Kanal neu verbunden/);
     assert.equal(await page.evaluate(() => journal.instance), 'second');
 
     // A response from a disconnected channel cannot change the new channel's state.
@@ -113,7 +114,7 @@ const root = path.resolve(__dirname, '..');
     });
     await page.evaluate(() => { Vox.setEffects(false); document.body.dataset.effects = 'off'; });
     await page.waitForTimeout(800);
-    await page.screenshot({ path: process.env.JOURNAL_SCREENSHOT || '/private/tmp/proximus-web-journal-desktop.png' });
+    await page.screenshot({ path: process.env.JOURNAL_SCREENSHOT || path.join(os.tmpdir(), 'proximus-web-journal-desktop.png') });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => { state.session = true; });
     const field = page.locator('#question');
@@ -152,7 +153,12 @@ const root = path.resolve(__dirname, '..');
     await page.waitForTimeout(400);
     assert(await page.locator('#ask button').evaluate(e => e.getBoundingClientRect().bottom <= innerHeight));
     assert(await page.locator('#talk').evaluate(e => e.getBoundingClientRect().bottom <= innerHeight));
-    await page.screenshot({ path: '/private/tmp/proximus-web-journal-mobile.png' });
+    await page.screenshot({ path: path.join(os.tmpdir(), 'proximus-web-journal-mobile.png') });
+    // UI-Wording: keine erfundenen Messungen, Wartungsergebnisse oder binären Füllzeilen.
+    const source = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
+    assert(!source.includes('Störungen hoch'));
+    assert(!source.includes('Litanei der Prüfung: kein Fehler gefunden.'));
+    assert(source.includes('Kennwort oder Token ungültig.'));
     assert.deepEqual(errors, []);
     console.log('Browserprüfung bestanden: Journal, Wiederverbindung, Zeitlimit, Texteingabe und kompakte Bedienung bei fünf Mobilgrößen.');
   } finally { await browser.close(); }
