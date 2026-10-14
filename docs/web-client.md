@@ -114,18 +114,30 @@ reduzieren“ im Betriebssystem entfallen alle Animationen.
   Nummernschild, Lautstärke, Kennwort und Verbinden.
 - Fernschreiberschrift: Share Tech Mono (SIL OFL, `web/fonts/`).
 
-### Live-Journal hinter dem Chat
+### Live-Journal und Fremdkanal
 
-Hinter dem Protokoll laufen gedämpft die Logzeilen des Servers mit
-(`GET /v1/journal?after=N`, nur mit Token, alle 2,5 s; der Server sammelt
-seine letzten 300 Ausgabezeilen im Arbeitsspeicher, IPv4-Adressen nur mit
-dem letzten Teil, seine eigenen Journal- und Health-Abfragen nicht).
-JSON-Ereignisse erscheinen lesbar (`19:41:36 READY load_seconds=9.84`),
-Fehler und Rückfälle bernsteinfarben. Mit Vox-Effekten mischen sich alle
-4–12 s Litaneien („Ehre dem Omnissiah.“) und Noosphären-Störungen
-(„░▒▓ NOOSPHÄRE-STÖRUNG 0x3F7A ▓▒░“) darunter, und Bildstörungen reißen auch
-das Journal mit. Die Chat-Zeilen haben einen fast deckenden, leicht
-weichgezeichneten Hintergrund und bleiben davor gut lesbar.
+Die Logzeilen des Servers laufen mit (`GET /v1/journal?after=N`, Token oder
+Sitzung, alle 2,5 s; der Server sammelt seine letzten 300 Ausgabezeilen im
+Arbeitsspeicher, IPv4-Adressen nur mit dem letzten Teil, ohne seine eigenen
+Journal-, Sitzungs- und Health-Abfragen und ohne das Laden der Seitendateien).
+
+- **Desktop:** eigene Spalte rechts auf dem Röhrenbildschirm, der Chat links.
+  **Handy:** hinter dem Chat; die Chat-Zeilen bleiben deckend.
+- Neueste Zeile oben, ältere blenden nach unten aus. JSON-Ereignisse lesbar
+  (`19:41:36 READY load_seconds=9.84`), Zugriffe kurz (`POST /v1/ask → 200`),
+  Fehler und Rückfälle bernsteinfarben.
+- Mit Vox-Effekten: Litaneien und Noosphären-Störungen dazwischen, und etwa
+  alle 25–70 s rutscht ein **Fremdkanal** herein: im Browser erzeugtes
+  Sprechfunk-Gemurmel (wandernde Tonhöhe, Silben mit springenden Formanten,
+  schmalbandig verzerrt, mit Rauschen und Squelch), sprachähnlich, aber ohne
+  verständliche Wörter. Nie während man sendet oder Proximus spricht. Im
+  Journal steht dann „FREMDKANAL 6-32 · unverständlich“.
+
+### Zeigerinstrument
+
+S-Meter mit Skala 1–9: roter Bereich links für schwaches Signal, rechts
+stark. Im Ruhezustand zeigt es die Signalstärke aus der gemessenen Laufzeit
+zu `/health`, beim Senden und Empfangen den Sprachpegel.
 
 ### Schrift, Symbole, Litaneien
 

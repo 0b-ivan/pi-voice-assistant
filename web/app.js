@@ -653,8 +653,8 @@ function journalLine(text, kind) {
   const item = document.createElement('li');
   item.textContent = text;
   if (kind) item.className = kind;
-  list.append(item);
-  while (list.children.length > 90) list.firstElementChild.remove();
+  list.prepend(item);
+  while (list.children.length > 60) list.lastElementChild.remove();
 }
 
 function describe(entry) {
@@ -667,6 +667,9 @@ function describe(entry) {
       return `${time} ${String(data.event).toUpperCase()} ${rest.join(' ')}`;
     }
   } catch { /* a plain line */ }
+  // Access log: '*.*.*.7 "POST /v1/ask?format=opus HTTP/1.1" 200 -' -> 'POST /v1/ask → 200'
+  const access = entry.text.match(/"([A-Z]+) ([^ ?"]+)[^"]*" (\d{3})/);
+  if (access) return `${time} ${access[1]} ${access[2]} → ${access[3]}`;
   return `${time} ${entry.text}`;
 }
 
@@ -693,6 +696,11 @@ function interference() {
     `[${hex()}:${hex()}] ··· ▒▒▒▒ ··· DATENFRAGMENT VERWORFEN`,
   ]);
 }
+
+Vox.onCrosstalk = () => {
+  const channel = `${Math.floor(Math.random() * 9) + 1}-${Math.floor(Math.random() * 90) + 10}`;
+  journalLine(`▒▒ FREMDKANAL ${channel} ▒▒ unverständlich · Kennung fehlt`, 'crosstalk');
+};
 
 function startJournal() {
   stopJournal();

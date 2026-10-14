@@ -103,17 +103,20 @@ body[data-state="work"] .cogitator { opacity: 1; animation: spin 2.4s linear inf
   text-shadow: 0 0 6px currentColor;
 }
 .gauge {
-  flex: none; width: 52px; height: 31px;
+  flex: none; width: 52px; height: 33px;
   background: radial-gradient(ellipse at 50% 100%, #e9e2c6, #b9b195 70%);
   border-radius: 6px 6px 3px 3px; box-shadow: inset 0 0 4px #0009, 0 0 0 2px #0007;
 }
-.gauge-arc, .gauge-red, .gauge-ticks path { fill: none; stroke-width: 4; }
-.gauge-arc { stroke: #6f6a58; }
-.gauge-red { stroke: var(--red); }
-.gauge-ticks path { stroke: #4a463a; stroke-width: 2; }
-.gauge-needle { stroke: #1a1a1a; stroke-width: 2.5; stroke-linecap: round; transform-origin: 50px 52px; transform: rotate(-50deg); }
-.gauge-hub { fill: var(--brass); }
-.gauge-label { font-size: 9.5px; font-weight: 700; text-anchor: middle; fill: #2a2a22; letter-spacing: 1px; }
+.gauge-arc, .gauge-red { fill: none; stroke-width: 2.5; }
+.gauge-arc { stroke: #3d3a2e; }
+.gauge-red { stroke: var(--red); stroke-width: 4; }
+.gauge-ticks { fill: none; stroke: #3d3a2e; stroke-width: 1.2; }
+.gauge-scale { font-family: var(--serif); font-weight: 700; font-size: 6.5px; text-anchor: middle; fill: #3d3a2e; }
+/* S-meter: red = weak signal on the left, the needle swings right with strength. */
+.gauge-needle { stroke: #b3261e; stroke-width: 1.6; stroke-linecap: round; transform-origin: 50px 54px; transform: rotate(-85deg); }
+.gauge-hub { fill: #1a1a1a; stroke: var(--brass); stroke-width: 1.5; }
+.gauge-label { font-size: 6px; font-weight: 700; text-anchor: middle; fill: #3d3a2e; letter-spacing: 1.5px; }
+.gauge-bar .gauge-scale, .gauge-bar .gauge-label { display: none; }
 .pill { display: none; font-size: .7rem; padding: 3px 8px; border: 1px solid var(--edge); border-radius: 99px; color: var(--muted); white-space: nowrap; }
 .pill[data-state="ok"] { color: var(--phosphor); border-color: var(--phosphor-dim); }
 .pill[data-state="loading"] { color: var(--amber); border-color: var(--amber); }
@@ -208,14 +211,20 @@ body[data-effects="off"] .scanlines::before { display: none; }
 .journal {
   position: absolute; z-index: 0; inset: calc(var(--scope) + 28px) 0 0; margin: 0; padding: 6px 14px 14px;
   list-style: none; overflow: hidden; pointer-events: none;
-  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
-  font-size: .7rem; line-height: 1.35; color: var(--phosphor); opacity: .22;
+  /* Newest line on top: the chat grows from the bottom, the journal from the
+     top, so new log lines never hide behind the newest messages. */
+  display: flex; flex-direction: column; justify-content: flex-start; gap: 3px;
+  font-size: .74rem; line-height: 1.4; color: #a9d99a; opacity: .5; text-shadow: none;
   white-space: nowrap; text-overflow: ellipsis;
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22%);
-  mask-image: linear-gradient(to bottom, transparent, #000 22%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
 }
-.journal li { overflow: hidden; text-overflow: ellipsis; }
+.journal li:first-child { color: #d9ffc9; }
+/* flex: none - lines must never shrink as the journal fills (they used to
+   squash into each other the longer it ran). */
+.journal li { flex: none; overflow: hidden; text-overflow: ellipsis; }
 .journal li.warn { color: var(--amber); }
+.journal li.crosstalk { color: #c9b98a; letter-spacing: .08em; }
 .journal li.litany { font-family: var(--serif); font-style: italic; font-size: .8rem; color: #d9ffc9; letter-spacing: .04em; }
 .journal li.noise { color: #b9c9a6; letter-spacing: .12em; }
 body[data-effects="on"] .crt.glitch .journal { animation: tear .25s steps(3) 1; }   /* few lines: they sit at the bottom */
@@ -386,13 +395,21 @@ body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-event
   .bar { padding-top: 10px; padding-bottom: 10px; gap: 14px; }
   .bar h1 { font-size: 1.1rem; }
   .stage { font-size: .85rem; }
-  .gauge { width: 84px; height: 50px; }
+  .gauge { width: 84px; height: 54px; }
   .chat { margin-top: 20px; margin-bottom: 20px; }
   /* The whole skull, large and centered; the transcript runs over it. */
   .backdrop { width: auto; height: 108%; top: 50%; }
   .log { padding: 10px clamp(20px, 4vw, 64px) 20px; gap: 10px; }
-  .journal { padding: 10px 24px 20px; font-size: .76rem; }
-  .log li { max-width: min(78%, 1000px); font-size: 1.12rem; }
+  /* Desktop: the journal gets its own column on the right of the tube, the
+     transcript keeps the left; both stay on the same screen. */
+  .journal {
+    left: auto; right: 0; width: 34%; padding: 10px 26px 20px 12px;
+    white-space: normal; overflow-wrap: anywhere; font-size: .76rem; opacity: .62;
+    border-left: 1px dashed #8dff6a22;
+  }
+  .journal li { text-overflow: clip; }
+  .log { padding-right: calc(34% + 20px); }
+  .log li { max-width: min(86%, 1000px); font-size: 1.12rem; }
   .log li.you { align-self: flex-end; border-left: 0; border-right: 2px solid var(--amber); text-align: right;
                 background: linear-gradient(270deg, #040704f2, #040704dd 75%, #040704aa); }
   .controls {
@@ -520,7 +537,7 @@ button.secondary { background: none; color: var(--text); border-color: var(--edg
     margin: 14px calc(var(--gutter) + 9px) 20px 0; padding: 16px 16px 18px; border-radius: 12px;
     overflow-y: auto; box-shadow: inset 0 1px 0 #ffffff1c, 0 0 0 1px #000, 0 8px 24px #000c;
   }
-  .gauge-panel { width: 100%; height: auto; aspect-ratio: 100 / 60; flex: none; }
+  .gauge-panel { width: 100%; height: auto; aspect-ratio: 100 / 64; flex: none; }
   .panel .hw-knob { width: 50px; height: 50px; }
   .panel .hw-knob-cap::before { height: 24px; top: 4px; }
   .panel .hw-position { font-size: .58rem; letter-spacing: .02em; padding: 4px 1px; }

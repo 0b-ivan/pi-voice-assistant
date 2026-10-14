@@ -459,7 +459,8 @@ class Journal:
     client's background. IPv4 addresses keep only their last part, and its
     own polling is left out. Nothing here is written to disk."""
 
-    SKIP = ('/v1/journal', 'GET /health')
+    # Its own polling and the page's static files would drown the real events.
+    SKIP = ('/v1/journal', '/v1/session', 'GET /health', '"GET /web/', '"GET / HTTP')
     IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}(\d{1,3})\b')
 
     def __init__(self, size=300, clock=time.time):

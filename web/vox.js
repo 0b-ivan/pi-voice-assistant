@@ -17,6 +17,7 @@ const Vox = (() => {
   let connected = false;
   let glitchTimer = null;
   let fxUntil = 0;         // performance.now() until which effect sounds play
+  let crosstalkTimer = null;
 
   const canvases = [];
   const needle = { elements: [], value: 0 };
@@ -129,6 +130,64 @@ const Vox = (() => {
           freq: 900 + Math.random() * 3000, q: 1.5, at: at + Math.random() * 0.45, attack: 0.001 });
       }
     },
+    // Another channel bleeding in: speech-like but unintelligible. A buzzing
+    // glottal source (sawtooth with a wandering pitch) through two formant
+    // filters that jump from "vowel" to "vowel" in syllable rhythm, then the
+    // narrow, distorted band of a distant transmitter with hiss on top.
+    crosstalk(seconds = 1.4 + Math.random() * 2.2) {
+      if (!effects || !ctx) return;
+      audible(seconds + 0.3);
+      const start = ctx.currentTime + 0.05;
+      const end = start + seconds;
+      const voice = ctx.createOscillator();
+      voice.type = 'sawtooth';
+      const base = 95 + Math.random() * 90;   // a different speaker each time
+      for (let t = start; t < end; t += 0.09) {
+        voice.frequency.linearRampToValueAtTime(base * (0.85 + Math.random() * 0.35), t);
+      }
+      const breath = ctx.createBufferSource();
+      breath.buffer = noise; breath.loop = true;
+      const breathLevel = ctx.createGain();
+      breathLevel.gain.value = 0.25;
+      const syllables = ctx.createGain();
+      syllables.gain.setValueAtTime(0, start);
+      const f1 = ctx.createBiquadFilter(), f2 = ctx.createBiquadFilter();
+      f1.type = f2.type = 'bandpass'; f1.Q.value = 6; f2.Q.value = 9;
+      let t = start;
+      while (t < end - 0.08) {
+        const length = 0.09 + Math.random() * 0.16;
+        f1.frequency.setTargetAtTime(280 + Math.random() * 600, t, 0.02);
+        f2.frequency.setTargetAtTime(900 + Math.random() * 1500, t, 0.02);
+        syllables.gain.setTargetAtTime(0.6 + Math.random() * 0.4, t, 0.015);
+        syllables.gain.setTargetAtTime(0.05, t + length, 0.02);
+        t += length + (Math.random() < 0.18 ? 0.15 + Math.random() * 0.25 : 0.03);  // now and then a pause
+      }
+      syllables.gain.setTargetAtTime(0, end, 0.03);
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass'; band.frequency.value = 1300; band.Q.value = 0.9;
+      const shaper = ctx.createWaveShaper();
+      const curve = new Float32Array(512);
+      for (let i = 0; i < curve.length; i++) curve[i] = Math.tanh(4 * (i / 255.5 - 1));
+      shaper.curve = curve;
+      const level = ctx.createGain();
+      level.gain.value = 0.045;
+      // Fading in and out like a signal drifting across the band.
+      const drift = ctx.createGain();
+      drift.gain.setValueAtTime(0, start);
+      drift.gain.linearRampToValueAtTime(1, start + 0.25);
+      drift.gain.setValueAtTime(1, end - 0.3);
+      drift.gain.linearRampToValueAtTime(0, end);
+      voice.connect(syllables);
+      breath.connect(breathLevel).connect(syllables);
+      syllables.connect(f1); syllables.connect(f2);
+      f1.connect(band); f2.connect(band);
+      band.connect(shaper).connect(level).connect(drift).connect(analyser);
+      voice.start(start); voice.stop(end + 0.1);
+      breath.start(start, Math.random()); breath.stop(end + 0.1);
+      burst(0.4, { gain: 0.05, freq: 1500, q: 0.5, at: 0 });     // hiss as it comes in
+      sounds.crackle(seconds * Math.random());
+      burst(0.25, { gain: 0.07, freq: 1700, q: 0.6, at: seconds + 0.05 });  // and squelch as it goes
+    },
     // Searching the band: swept noise with a heterodyne whistle.
     tune(seconds = 1.8) {
       if (!effects || !ctx) return;
@@ -195,6 +254,21 @@ const Vox = (() => {
     }
     hiss(on && connected);
     scheduleGlitch();
+    scheduleCrosstalk();
+  }
+
+  // A foreign channel now and then while the line is open, never over the
+  // operator or Proximus.
+  function scheduleCrosstalk() {
+    clearTimeout(crosstalkTimer);
+    if (!effects || !connected) return;
+    crosstalkTimer = setTimeout(() => {
+      if (!live.mic && !live.speaking && live.state === 'idle') {
+        sounds.crosstalk();
+        if (api.onCrosstalk) api.onCrosstalk();
+      }
+      scheduleCrosstalk();
+    }, 25000 + Math.random() * 45000);
   }
 
   // --- interference on the screen --------------------------------------------------
@@ -306,11 +380,12 @@ const Vox = (() => {
     } else if (live.link === 'loading') target = 0.2;
     else target = 0;
     needle.value += (target - needle.value) * 0.25;
-    const angle = `rotate(${-50 + needle.value * 100}deg)`;
+    const angle = `rotate(${-85 + needle.value * 170}deg)`;   // S1 at the left end, S9 at the right
     for (const element of needle.elements) element.style.transform = angle;
   }
 
-  return {
+  const api = {
+    onCrosstalk: null,   // app.js notes it in the journal
     live,
     sounds,
     ensure,
@@ -319,8 +394,8 @@ const Vox = (() => {
     setEffects,
     get effects() { return effects; },
     get connected() { return connected; },
-    connect() { connected = true; hiss(true); scheduleGlitch(); },
-    disconnect() { connected = false; hiss(false); clearTimeout(glitchTimer); },
+    connect() { connected = true; hiss(true); scheduleGlitch(); scheduleCrosstalk(); },
+    disconnect() { connected = false; hiss(false); clearTimeout(glitchTimer); clearTimeout(crosstalkTimer); },
     stateChanged(mode) { live.state = mode; },
     // Everything Proximus and the terminal say goes through one volume control.
     setVolume(value) {
@@ -334,4 +409,5 @@ const Vox = (() => {
       requestAnimationFrame(draw);
     },
   };
+  return api;
 })();
