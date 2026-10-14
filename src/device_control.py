@@ -30,7 +30,7 @@ _CPU_SET = re.compile(r'\b(stell\w*|schalt\w*|setz\w*|wechsel\w*|aktivier\w*|nut
 _CPU_ECO = re.compile(r'\b(eco|spar ?modus|spar ?profil|energiespar\w*)\b')
 _CPU_BALANCED = re.compile(r'\b(normal|balanced|ausgeglichen|standard)\b')
 _CPU_POWER = re.compile(r'\b(power|performance|leistung|hochleistung)\b')
-_POWER_NOTICES = re.compile(r'\b(energie ?hinweise|energie ?meldungen|stromwechsel ?meldungen|strom ?hinweise|ladehinweise)\b')
+_POWER_NOTICES = re.compile(r'\b(energie ?hinweise|energie ?meldungen|stromwechsel ?meldungen|strom ?hinweise|ladehinweise|netzteil ?ansagen|netzteil ?hinweise)\b')
 _OFF = re.compile(r'\b(aus|ab|deaktivier\w*|abschalt\w*|ausschalt\w*|trenn\w*)\b')
 _ON = re.compile(r'\b(an|ein|aktivier\w*|einschalt\w*|anschalt\w*)\b')
 _SHUTDOWN = re.compile(
@@ -124,11 +124,11 @@ START = {
     'sleep': "Ruhemodus. Aktivierungswort bleibt aktiv.",
     'reboot': "Neustart eingeleitet.",
     'shutdown': "Einheit fährt herunter.",
-    'power_notices_on': "Stromwechselhinweise aktiviert. Kritische Warnungen bleiben aktiv.",
-    'power_notices_off': "Stromwechselhinweise deaktiviert. Kritische Warnungen bleiben aktiv.",
-    'cpu_eco': "CPU-Profil Eco wird aktiviert.",
-    'cpu_balanced': "CPU-Profil Balanced wird aktiviert.",
-    'cpu_power': "CPU-Profil Power wird aktiviert. Keine Übertaktung.",
+    'power_notices_on': "Netzteil-Ansagen aktiviert. Akkuwarnungen bleiben immer aktiv.",
+    'power_notices_off': "Netzteil-Ansagen deaktiviert. Akkuwarnungen bleiben immer aktiv.",
+    'cpu_eco': "Prozessor im Sparmodus.",
+    'cpu_balanced': "Prozessor im Normalmodus.",
+    'cpu_power': "Prozessor im Leistungsmodus. Ohne Übertaktung.",
 }
 START_FULL = {
     'sleep': "Ruhemodus. Der Maschinengeist schlummert, das Auspex wacht.",
@@ -141,14 +141,21 @@ START_BILLY = {
     'sleep': "Ich hau mich hin. Ruf mich, wenn was ist.",
     'reboot': "Ich starte neu. Bis gleich.",
     'shutdown': "Ich mach dann mal aus.",
-    'power_notices_on': "Ich melde normale Stromwechsel wieder. Wichtige Warnungen bleiben an.",
-    'power_notices_off': "Normale Stromwechsel sage ich nicht mehr an. Wichtige Warnungen bleiben an.",
-    'cpu_eco': "CPU auf Sparmodus. Ich schalte runter.",
-    'cpu_balanced': "CPU auf Normalmodus.",
-    'cpu_power': "CPU im Power-Modus. Ohne Übertaktung.",
+    'power_notices_on': "Ich sag wieder Bescheid, wenn das Netzteil kommt oder geht. "
+                        "Akkuwarnungen kommen sowieso.",
+    'power_notices_off': "Netzteil an und ab sag ich nicht mehr an. Akkuwarnungen kommen sowieso.",
+    'cpu_eco': "Ich schalte einen Gang runter und spare Strom.",
+    'cpu_balanced': "Zurück auf normales Tempo.",
+    'cpu_power': "Volle Leistung. Übertaktet wird aber nicht.",
 }
-ALREADY = {'wlan_off': "WLAN ist bereits deaktiviert.", 'wlan_on': "WLAN ist bereits aktiv."}
-ALREADY_BILLY = {'wlan_off': "WLAN ist schon aus.", 'wlan_on': "WLAN ist schon an."}
+ALREADY = {'wlan_off': "WLAN ist bereits deaktiviert.", 'wlan_on': "WLAN ist bereits aktiv.",
+           'cpu_eco': "Prozessor ist bereits im Sparmodus.",
+           'cpu_balanced': "Prozessor ist bereits im Normalmodus.",
+           'cpu_power': "Prozessor ist bereits im Leistungsmodus."}
+ALREADY_BILLY = {'wlan_off': "WLAN ist schon aus.", 'wlan_on': "WLAN ist schon an.",
+                 'cpu_eco': "Ich spare schon Strom.",
+                 'cpu_balanced': "Ich laufe schon im normalen Tempo.",
+                 'cpu_power': "Ich gebe schon Vollgas."}
 CANCELLED = "Abgebrochen."
 CANCELLED_BILLY = "Okay, lass ich."
 BUTTON_ONLY = "Stimme nicht erkannt. Bestätigen nur mit Taste E."
@@ -199,10 +206,12 @@ def failed_text(style='off'):
     return FAILED_BILLY if _billy(style) else FAILED
 
 
-def reply(op, wlan=None, style='off'):
-    """The sentence for a command turn: question, 'already', or what happens now."""
+def reply(op, wlan=None, style='off', cpu=None):
+    """The sentence for a command turn: question, 'already', or what happens now.
+    ``cpu``: the CPU profile chosen now (eco/balanced/power), if known."""
     if op in CONFIRM_OPS:
         return ask_text(op, style)
-    if (op == 'wlan_off' and wlan == 'off') or (op == 'wlan_on' and wlan == 'on'):
+    if ((op == 'wlan_off' and wlan == 'off') or (op == 'wlan_on' and wlan == 'on')
+            or (cpu is not None and op == f'cpu_{cpu}')):
         return already_text(op, style)
     return start_text(op, style)

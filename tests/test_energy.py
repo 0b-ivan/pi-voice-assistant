@@ -49,12 +49,12 @@ class DirectPiSugarTests(unittest.TestCase):
         self.assertEqual(snapshot['pisugar_soft_poweroff'], 'on')
         self.assertEqual(snapshot['pisugar_watchdog'], 'on')
         self.assertEqual(snapshot['output_current_ma'], 500)
-        self.assertIn('Ausgangsstrom 500 Milliampere', energy.detail(snapshot))
+        self.assertIn('Stromverbrauch 500 Milliampere', energy.detail(snapshot))
         self.assertEqual(snapshot['pisugar_charge_protection'], 'off')
         self.assertEqual(snapshot['pisugar_auto_power_on'], 'on')
         info = energy.config(snapshot)
-        self.assertIn('Akku Eingangsschutz deaktiviert', info)
-        self.assertIn('Hardware Watchdog aktiv', info)
+        self.assertIn('Ladeschutz aus', info)
+        self.assertIn('Absturzwächter aktiv', info)
 
     def test_auxiliary_i2c_failure_does_not_hide_core_battery_reading(self):
         reading = power.Battery(bus_factory=lambda: self.FakeBus(
@@ -80,8 +80,8 @@ class DirectPiSugarTests(unittest.TestCase):
                 self.assertNotIn('output_current_ma', reading)
                 snapshot = system_status.collect_snapshot(battery=reading)
                 self.assertNotIn('output_current_ma', snapshot)
-                self.assertNotIn('Ausgangsstrom 0', energy.detail(snapshot))
-                self.assertIn('nicht verfügbar', energy.current(snapshot))
+                self.assertNotIn('Stromverbrauch 0', energy.detail(snapshot))
+                self.assertIn('nicht messbar', energy.current(snapshot))
 
 
 class EnergyTextTests(unittest.TestCase):
@@ -90,35 +90,64 @@ class EnergyTextTests(unittest.TestCase):
         self.assertEqual(intents.match('was meldet PiSugar'), 'power_detail')
         self.assertEqual(intents.match('wie viel strom verbrauchst du'), 'power_current')
         self.assertEqual(intents.answer('power_current', None, dict(output_current_ma=500)),
-                         'Ausgangsstrom 500 Milliampere. Kein gemessener Akkustrom.')
+                         'Stromverbrauch 500 Milliampere.')
+        self.assertEqual(intents.answer('power_current', None,
+                                        dict(output_current_ma=500, persona='mensch')),
+                         'Ich ziehe gerade 500 Milliampere.')
         self.assertEqual(intents.match('Ist Soft Poweroff aktiv'), 'power_config')
         self.assertEqual(intents.match('PiSugar Konfiguration'), 'power_config')
         self.assertEqual(intents.match('wie lange hält der Akku'), 'power_runtime')
         self.assertEqual(intents.match('wie hoch ist der akkustand'), 'battery')
 
     def test_snapshot_never_invents_telemetry(self):
-        self.assertIn('nicht verfügbar', energy.detail({}))
+        self.assertIn('Keine Akkudaten', energy.detail({}))
         text = energy.detail(dict(battery_pct=82, battery_plugged=True,
                                   battery_charging=False, battery_mv=4110,
                                   pisugar_chip_c=37))
-        self.assertIn('82 Prozent', text)
-        self.assertIn('4,11 Volt', text)
-        self.assertIn('Chiptemperatur 37 Grad', text)
-        self.assertIn('nicht aktiv', text)
+        self.assertEqual(text, 'Energiespeicher 82 Prozent. Netzbetrieb, Ladung pausiert. '
+                               'Zellspannung 4,11 Volt. Akkumodul 37 Grad.')
         self.assertNotIn('Restlaufzeit', text)
         self.assertIn('nicht zuverlässig', energy.runtime(dict(battery_pct=80)))
-        self.assertIn('nicht verfügbar', energy.current({}))
+        self.assertIn('nicht messbar', energy.current({}))
+
+    def test_billy_talks_like_a_person(self):
+        snapshot = dict(battery_pct=82, battery_plugged=False, battery_mv=3910,
+                        output_current_ma=420, pisugar_chip_c=37, pisugar_watchdog='on',
+                        charge_restart_pct=70, charge_limit_pct=80)
+        self.assertEqual(energy.detail(snapshot, 'billy'),
+                         'Akku bei 82 Prozent. Ich laufe auf Akku. Die Zellspannung liegt bei '
+                         '3,91 Volt. Ich ziehe gerade 420 Milliampere. Das Akkumodul hat 37 Grad.')
+        self.assertIn('Ich lade zwischen 70 und 80 Prozent.', energy.config(snapshot, 'billy'))
+        self.assertIn('Der Absturzwächter passt auf.', energy.config(snapshot, 'billy'))
+        for text in (energy.detail(snapshot, 'billy'), energy.config(snapshot, 'billy'),
+                     energy.runtime(snapshot, 'billy'), energy.detail({}, 'billy')):
+            self.assertNotIn('Energiespeicher', text)
+            self.assertNotIn('Einheit', text)
+
+    def test_spoken_energy_texts_avoid_vendor_jargon(self):
+        snapshot = dict(battery_pct=80, battery_plugged=True, battery_charging=True,
+                        battery_mv=4020, output_current_ma=350, pisugar_chip_c=38,
+                        pisugar_firmware='1.0.6', charge_limit_pct=80, charge_restart_pct=70,
+                        safe_shutdown_pct=5, safe_shutdown_delay_s=30,
+                        pisugar_soft_poweroff='on', pisugar_charge_protection='on',
+                        pisugar_watchdog='off', pisugar_auto_power_on='off',
+                        pisugar_rtc_alarm='off')
+        for style in ('off', 'billy'):
+            for function in (energy.detail, energy.current, energy.config, energy.runtime):
+                text = function(snapshot, style)
+                for jargon in ('PiSugar', 'Watchdog', 'Poweroff', 'Power Manager', 'RTC',
+                               'Firmware', 'Hardware', 'Ausgangsstrom', 'Chiptemperatur'):
+                    self.assertNotIn(jargon, text, (style, function.__name__))
 
     def test_manager_config_missing_or_valid(self):
-        self.assertIn('nicht verfügbar', energy.config({}))
+        self.assertIn('nicht lesbar', energy.config({}))
         text = energy.config(dict(charge_restart_pct=70, charge_limit_pct=80,
                                   safe_shutdown_pct=3, safe_shutdown_delay_s=30,
                                   pisugar_soft_poweroff='off', pisugar_rtc_alarm='on'))
-        self.assertIn('70 bis 80 Prozent', text)
-        self.assertIn('Soft Poweroff ist deaktiviert', text)
-        self.assertIn('RTC Weckalarm aktiv', text)
-        self.assertIn('Power Manager Abschaltschwelle', text)
-        self.assertIn('Ladefenster', intents.answer('power_config', None,
+        self.assertEqual(text, 'Ladebereich 70 bis 80 Prozent. Sichere Abschaltung bei '
+                               '3 Prozent, nach 30 Sekunden. Warnung. Ausschalten per '
+                               'Software ist deaktiviert. Weckzeit gestellt.')
+        self.assertIn('Ladebereich', intents.answer('power_config', None,
                       dict(charge_restart_pct=70, charge_limit_pct=80)))
 
     def test_voice_commands_must_be_explicit(self):

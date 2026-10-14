@@ -74,7 +74,7 @@ class GovernorModesTests(unittest.TestCase):
             self.assertEqual(path.read_text(), 'ondemand')
 
     def test_menu_exposes_profile(self):
-        self.assertEqual(menu.label('cpu_mode'), 'CPU-Profil')
+        self.assertEqual(menu.label('cpu_mode'), 'CPU-Leistung')
         self.assertIn('cpu_mode', menu.entries('energy'))
 
     def test_voice_profiles_but_no_unsafe_voltage_changes(self):
@@ -134,3 +134,72 @@ class OverclockStagingTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ControllerCpuModeTests(unittest.TestCase):
+    """The governor switch runs in a worker; the main loop applies its result."""
+
+    def setUp(self):
+        import os
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import ptt
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = patch.dict(os.environ, {
+            'PTT_DISPLAY_STATUS_PATH': str(Path(tmp.name) / 'display.json'),
+            'PTT_DISPLAY_EVENT_PATH': str(Path(tmp.name) / 'event.json'),
+            'PTT_SETTINGS_FILE': str(Path(tmp.name) / 'settings.json')})
+        env.start()
+        self.addCleanup(env.stop)
+        ptt._display_status.clear()
+        recorder, speech = Mock(), Mock()
+        recorder.process = None
+        recorder.take_live_transcript.return_value = None
+        speech.active = speech.synthesizing = False
+        speech.poll.return_value = None
+        self.ptt = ptt
+        self.c = ptt.VoiceController(recorder, speech, .04, 30, remote=True)
+        self.output = StringIO()
+        context = redirect_stdout(self.output)
+        context.__enter__()
+        self.addCleanup(context.__exit__, None, None, None)
+
+    def switch(self, mode, result, announce=True):
+        with patch.object(cpu_modes, 'set_mode', side_effect=result), \
+                patch('threading.Thread') as thread:
+            self.assertTrue(self.c._set_cpu_mode(mode, announce))
+            thread.call_args.kwargs['target']()          # the worker, synchronously
+        self.assertTrue(self.c.cpu_mode_busy)               # until the main loop takes it
+        self.assertFalse(self.c._set_cpu_mode('eco'))       # one switch at a time
+        self.c.tick(False, (False,) * 5, 1.0)
+        self.assertFalse(self.c.cpu_mode_busy)
+
+    def test_success_is_applied_and_saved_on_the_main_loop(self):
+        self.switch('power', [True])
+        self.assertEqual(self.c.cpu_mode, 'power')
+        self.assertEqual(self.c.settings.load().get('cpu_mode'), 'power')
+        self.assertEqual(self.c.alarm_queue, [])
+        self.c.speech.start.assert_not_called()
+
+    def test_failure_is_said_once_but_not_at_start_up(self):
+        self.switch('power', OSError('denied'))
+        self.assertEqual(self.c.cpu_mode, 'balanced')
+        said = self.c.alarm_queue + [c.args[0] for c in self.c.speech.start.call_args_list]
+        self.assertEqual(said, [device_control.failed_text(self.c.style)])
+        failed = [line for line in self.output.getvalue().splitlines()
+                  if '"cpu_mode"' in line and '"failed"' in line]
+        self.assertEqual(len(failed), 1)                    # logged once, with the reason
+        self.assertIn('denied', failed[0])
+        self.c.alarm_queue = []
+        self.c.speech.start.reset_mock()
+        self.switch('eco', [False], announce=False)
+        self.assertEqual(self.c.alarm_queue, [])
+        self.c.speech.start.assert_not_called()
+
+    def test_voice_command_for_the_current_mode_switches_nothing(self):
+        self.c.cpu_mode = 'eco'
+        with patch.object(self.c, '_set_cpu_mode') as switch:
+            self.assertEqual(self.c._device_command('cpu_eco'),
+                             'Prozessor ist bereits im Sparmodus.')
+        switch.assert_not_called()

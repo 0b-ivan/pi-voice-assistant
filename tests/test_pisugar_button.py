@@ -211,17 +211,64 @@ class ManualStandbyTests(unittest.TestCase):
             wifi.assert_not_called()
             greet.assert_not_called()
 
-    def test_busy_controller_cannot_enter_standby(self):
+    def journal(self):
+        import json
+        return [json.loads(line) for line in self.output.getvalue().splitlines()
+                if line.startswith('{')]
+
+    def tap(self, c):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        self.output = StringIO()
+        with redirect_stdout(self.output), patch.object(c, '_release_microphone'):
+            return c.pisugar_standby(time.monotonic())
+
+    def test_ordinary_speech_is_stopped_and_standby_follows(self):
+        # Hardware test 14.10.2026: taps during long status or maintenance
+        # announcements were refused ("busy_or_critical").
         c = self.controller
-        c.recorder.process = Mock()  # recording / active request is never interrupted
-        self.assertFalse(c.pisugar_standby(time.monotonic()))
-        self.assertFalse(c.manual_standby)
+        c.speech.active = True
+        c.alarm_queue = ['Netzbetrieb. Energiespeicher 80 Prozent.']
+        self.assertTrue(self.tap(c))
+        self.assertTrue(c.manual_standby)
+        c.speech.stop.assert_called()
+        self.assertEqual(c.alarm_queue, [])
+        entry = [e for e in self.journal() if e.get('event') == 'pisugar_standby'][-1]
+        self.assertEqual((entry['state'], entry['interrupted']), ('sleep', True))
+
+    def test_recording_and_open_menu_are_stopped_too(self):
+        c = self.controller
+        c.recorder.process = Mock()
+        c.menu.show(0)
+        self.assertTrue(self.tap(c))
+        self.assertTrue(c.manual_standby)
+        c.recorder.finish.assert_called()
+        self.assertFalse(c.menu.open)
 
     def test_pending_shutdown_cannot_be_hidden(self):
         c = self.controller
         c.device_pending = 'shutdown'
-        self.assertFalse(c.pisugar_standby(time.monotonic()))
+        self.assertFalse(self.tap(c))
         self.assertEqual(c.power, 'awake')
+        self.assertEqual(self.journal()[-1]['reason'], 'power_action')
+
+    def test_critical_alarm_maintenance_and_enrollment_keep_it_awake(self):
+        c = self.controller
+        battery = c.alarms.states['battery']
+        for setup, reason in (
+                (lambda: setattr(battery, 'active', True), 'critical_alarm'),
+                (lambda: setattr(c.maint, 'active', True), 'maintenance'),
+                (lambda: setattr(c, 'enroll', Mock(running=True)), 'enrollment')):
+            with self.subTest(reason=reason):
+                c.speech.active = True
+                setup()
+                self.assertFalse(self.tap(c))
+                self.assertFalse(c.manual_standby)
+                self.assertEqual(self.journal()[-1]['reason'], reason)
+                c.speech.stop.assert_not_called()              # nothing was cut off
+                battery.active = False
+                c.maint.active = False
+                c.enroll = None
 
 
 if __name__ == '__main__':

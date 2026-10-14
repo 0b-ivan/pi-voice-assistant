@@ -38,6 +38,7 @@ import hmac
 import http.server
 import json
 import os
+import re
 from pathlib import Path
 import socketserver
 import subprocess
@@ -79,6 +80,41 @@ CLIP_MAX_SECONDS = 12
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 # TurnError codes caused by the input, not by the server (logwatch ignores them).
 OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
+
+
+# Fixed information answers the server may let the LLM say in fresh words
+# (llm.rephrase keeps every number). Not: questions waiting for a
+# confirmation, times, dates, stories, memory or device commands, and not
+# the status report: it must come fast (its wording varies on the Pi side).
+REPHRASED_INTENTS = ('battery', 'network', 'updates', 'hardware', 'power_detail',
+                     'power_config', 'power_runtime', 'power_current')
+# Long fixed answers are sent in parts: the first sentences play while the
+# rest is still being synthesized (Pis that queue parts: snapshot story=on).
+SPLIT_INTENTS = ('status', 'network', 'updates', 'hardware', 'selftest', 'power_detail',
+                 'power_config', 'power_runtime')
+FIRST_PART_CHARS = 45     # the first part: short, so the voice starts at once
+NEXT_PART_CHARS = 120
+
+
+def speech_parts(text, first=FIRST_PART_CHARS, following=NEXT_PART_CHARS):
+    """``text`` cut at sentence ends into parts of at least ``first``, then
+    ``following`` characters (the last may be shorter); one part if short."""
+    sentences = [s for s in re.split(r'(?<=[.!?])\s+', text.strip()) if s]
+    parts, current = [], ''
+    for sentence in sentences:
+        current = f'{current} {sentence}'.strip()
+        if len(current) >= (following if parts else first):
+            parts.append(current)
+            current = ''
+    if current:
+        if parts and len(current) < first:
+            parts[-1] = f'{parts[-1]} {current}'     # no tiny tail
+        else:
+            parts.append(current)
+    return parts or [text]
+if 'SERVITOR_REPHRASE_INTENTS' in os.environ:
+    REPHRASED_INTENTS = tuple(name.strip() for name in
+                              os.environ['SERVITOR_REPHRASE_INTENTS'].split(',') if name.strip())
 
 
 def device_mood(device, text=''):
@@ -245,6 +281,25 @@ class RealPipeline:
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
+    def rephrase(self, text, lore=None, persona=None, mode=None):
+        """A fixed answer in fresh words (llm.rephrase), or None to keep it:
+        switched off, "Sprachkern LOKAL", OpenRouter cooling down after a
+        failure, unreachable, too slow, or the facts changed."""
+        if os.environ.get('SERVITOR_REPHRASE', 'on').strip().lower() in ('off', '0', 'no',
+                                                                         'false'):
+            return None
+        if mode == 'local' or self.clock() < self.openrouter_retry_at:
+            return None
+        from llm import LLMError, rephrase
+        try:
+            result = rephrase(text, lore=lore, persona=persona)
+        except LLMError as exc:
+            print(json.dumps(dict(event='rephrase_failed', reason=str(exc))), flush=True)
+            return None
+        if result is None:
+            print(json.dumps(dict(event='rephrase_rejected')), flush=True)
+        return result
+
     def synthesize(self, text, voice='servitor'):
         """Both voices speak with thorsten-high (calm) when it is loaded, else
         with the Servitor speaker; the rendering makes Proximus or Billy."""
@@ -380,7 +435,7 @@ class Service:
         if answer == 'cancel':
             return device_control.cancelled_text(style)
         emit(dict(event='device', op=op))
-        return device_control.reply(op, device.get('wlan'), style)
+        return device_control.reply(op, device.get('wlan'), style, device.get('cpu_mode'))
 
     def _identify(self, audio, memory_copy, emit, voice=None):
         """Compare the turn's voice with the enrolled voiceprints; returns the
@@ -562,6 +617,29 @@ class Service:
         timings['story_section'] = round(time.monotonic() - started, 3)
         emit(dict(event='story', state=state))
 
+    def _speak_parts(self, parts, voice, fmt, emit, timings, temporary):
+        """Synthesize and send ``parts`` one after another as audio parts; the
+        Pi plays the first while the next is made."""
+        emit(dict(event='stage', stage='synthesize'))
+        for index, part in enumerate(parts):
+            started = time.monotonic()
+            try:
+                raw = self.pipeline.synthesize(part, voice)
+                temporary.append(raw)
+            except Exception as exc:
+                raise TurnError('synthesize', 'tts', str(exc)) from exc
+            try:
+                rendered = self.pipeline.render(raw, voice)
+                temporary.append(rendered)
+                data = self.pipeline.encode(rendered, fmt)
+                duration = wav_duration_ms(rendered)
+            except Exception as exc:
+                raise TurnError('render', 'dsp', str(exc)) from exc
+            timings[f'part{index}'] = round(time.monotonic() - started, 3)
+            emit(dict(event='audio', format=fmt, mime=FORMATS[fmt], duration_ms=duration,
+                      bytes=len(data), part=index, parts=len(parts), text=part,
+                      data=base64.b64encode(data).decode('ascii')))
+
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None, appointments_tomorrow=None,
                  voice=None, nightwatch_copy=None):
@@ -574,6 +652,7 @@ class Service:
         ``appointments``: today's calendar from the Pi (agenda.decode_header), or None."""
         timings = {}
         temporary = []
+        split = False         # a long fixed answer goes out in parts (SPLIT_INTENTS)
 
         def timed(name, function, *args):
             started = time.monotonic()
@@ -716,6 +795,19 @@ class Service:
                         snapshot['operator'] = memory_copy['speaker']  # recognized voice
                     answer = timed('intent', intents.answer, intent, self.now(), snapshot)
                     model = 'local/intent'
+                    rephrase = getattr(self.pipeline, 'rephrase', None)
+                    if intent in REPHRASED_INTENTS and rephrase is not None and answer:
+                        # Same facts, fresh words: the server has an LLM at hand.
+                        try:
+                            varied = timed('rephrase', rephrase, answer, snapshot.get('lore'),
+                                           snapshot.get('persona'), snapshot.get('llm_mode'))
+                        except Exception as exc:  # noqa: BLE001 - the fixed text still works
+                            print(json.dumps(dict(event='rephrase_failed', reason=str(exc))),
+                                  flush=True)
+                            varied = None
+                        if varied:
+                            answer, model = varied, 'local/intent+rephrase'
+                    split = intent in SPLIT_INTENTS and (device or {}).get('story') == 'on'
                 elif stories.request(text) is not None:
                     if (device or {}).get('story') != 'on':
                         # An older Pi would play only the last part: say so instead of
@@ -752,6 +844,13 @@ class Service:
                 upload_end = time.monotonic()
                 answer = text
             answer = answer.strip()[:self.config.max_text]
+            parts = speech_parts(answer) if split else [answer]
+            if len(parts) > 1:
+                self._speak_parts(parts, (device or {}).get('voice', 'servitor'), fmt, emit,
+                                  timings, temporary)
+                timings['server_total'] = round(time.monotonic() - upload_end, 3)
+                emit(dict(event='done', timings=timings))
+                return
             emit(dict(event='stage', stage='synthesize'))
             try:
                 voice = (device or {}).get('voice', 'servitor')

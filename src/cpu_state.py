@@ -11,6 +11,7 @@ reported as 'unknown' instead.
 Nothing here writes anywhere; reads are a few small sysfs files plus
 ``vcgencmd measure_clock arm`` only when an overclock is plausible.
 """
+import functools
 import os
 from pathlib import Path
 import subprocess
@@ -65,6 +66,12 @@ def stock_khz(model_path=MODEL, env=None):
     return None
 
 
+@functools.lru_cache(maxsize=1)
+def board_stock_khz():
+    """stock_khz() of this Pi, read once (the board does not change)."""
+    return stock_khz()
+
+
 def arm_clock_khz(run=subprocess.run):
     """``vcgencmd measure_clock arm`` in kHz, None if unavailable."""
     try:
@@ -76,11 +83,12 @@ def arm_clock_khz(run=subprocess.run):
     return hz // 1000 if hz > 0 else None
 
 
-def read(root=CPUFREQ, stock=None, throttled=None, run=subprocess.run):
+def read(root=CPUFREQ, stock=None, throttled=None, run=subprocess.run, measure=True):
     """Raw effective values: governor, cur/max kHz, measured arm clock, flags.
 
     ``throttled`` is the get_throttled value the caller already sampled (the
     display reads it for its power line), so it is not queried twice.
+    ``measure=False`` skips ``vcgencmd measure_clock`` (sysfs reads only).
     """
     governor = _read(root / 'scaling_governor')
     hardware_max = _khz(root / 'cpuinfo_max_freq')
@@ -88,7 +96,7 @@ def read(root=CPUFREQ, stock=None, throttled=None, run=subprocess.run):
     limit = min(v for v in (hardware_max, policy_max) if v) if hardware_max or policy_max else None
     state = dict(governor=governor, cur_khz=_khz(root / 'scaling_cur_freq'),
                  max_khz=limit, stock_khz=stock, arm_khz=None, throttled=throttled)
-    if stock and limit and limit > stock + MARGIN_KHZ:
+    if measure and stock and limit and limit > stock + MARGIN_KHZ:
         state['arm_khz'] = arm_clock_khz(run)    # only worth a subprocess here
     return state
 

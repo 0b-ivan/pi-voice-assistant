@@ -48,6 +48,21 @@ class CommandTests(unittest.TestCase):
 
 
 class TextTests(unittest.TestCase):
+    def test_cpu_profile_texts(self):
+        self.assertEqual(dc.reply('cpu_eco'), "Prozessor im Sparmodus.")
+        self.assertEqual(dc.reply('cpu_eco', cpu='eco'),
+                         "Prozessor ist bereits im Sparmodus.")
+        self.assertEqual(dc.reply('cpu_power', cpu='eco'),
+                         "Prozessor im Leistungsmodus. Ohne Übertaktung.")
+        self.assertEqual(dc.reply('cpu_power', style='billy', cpu='power'),
+                         "Ich gebe schon Vollgas.")
+        for op in ('cpu_eco', 'cpu_balanced', 'cpu_power', 'power_notices_on',
+                   'power_notices_off'):
+            for style in ('off', 'billy'):
+                text = dc.reply(op, style=style)
+                for jargon in ('Balanced', 'Eco', 'Power-', 'CPU-Profil', 'Stromwechsel'):
+                    self.assertNotIn(jargon, text, (op, style))
+
     def test_reply(self):
         self.assertIn('Bestätigen', dc.reply('shutdown'))
         self.assertIn('Schalter', dc.reply('shutdown'))

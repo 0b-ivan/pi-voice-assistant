@@ -1,5 +1,5 @@
 [Unit]
-Description=Reversible PiSugar battery standby policy (CPU and optional radios)
+Description=Reversible PiSugar battery standby policy (CPU, activity LED, optional radios)
 BindsTo=pi-ptt.service
 After=pi-ptt.service
 ConditionPathExists=/etc/proximus-battery-standby.env

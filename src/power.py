@@ -76,6 +76,19 @@ class Battery:
                     charging=plugged and bool(ctr1 & 0x40) and avg_percent < 100,
                     board_c=board, auto_power_on=bool(ctr1 & 0x10), **optional)
 
+    def plugged(self):
+        """Only the "power plugged" bit (one register): cheap enough to poll
+        every second, so the display notices the charger at once. None when
+        the PiSugar cannot be read."""
+        try:
+            bus = self._bus()
+            try:
+                return bool(bus.read_byte_data(PISUGAR3_ADDRESS, 0x02) & 0x80)
+            finally:
+                bus.close()
+        except (ImportError, OSError):
+            return None
+
 
 def throttled_flags(run=subprocess.run):
     """Firmware power flags (vcgencmd get_throttled), None if unavailable."""

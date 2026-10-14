@@ -32,6 +32,7 @@ class RootHelperTests(unittest.TestCase):
         self.patches = [
             patch.object(helper, 'CPU_ROOT', self.cpu),
             patch.object(helper, 'RFKILL_ROOT', self.rfkill),
+            patch.object(helper, 'LED_ROOT', self.root / 'leds'),
             patch.object(helper, 'STATE', self.state),
             patch.object(helper, 'battery_plugged', return_value=False),
         ]
@@ -71,6 +72,44 @@ class RootHelperTests(unittest.TestCase):
         (dev / 'type').write_text(kind)
         (dev / 'soft').write_text(soft)
         return dev
+
+    def act_led(self, trigger='mmc0', name='ACT'):
+        led = self.root / 'leds' / name
+        led.mkdir(parents=True)
+        (led / 'trigger').write_text(f'none timer [{trigger}] heartbeat')
+        (led / 'brightness').write_text('255')
+        return led
+
+    def test_activity_led_dark_in_standby_and_restored(self):
+        led = self.act_led()
+        helper.enter()
+        self.assertEqual((led / 'trigger').read_text().strip(), 'none')
+        self.assertEqual((led / 'brightness').read_text().strip(), '0')
+        helper.restore()
+        self.assertEqual((led / 'trigger').read_text().strip(), 'mmc0')
+        self.assertFalse(self.state.exists())
+
+    def test_activity_led_can_be_kept_and_old_name_works(self):
+        led = self.act_led(name='led0')
+        with patch.dict(os.environ, {'PROXIMUS_SAVE_LED': 'keep', 'PROXIMUS_SAVE_CPU': 'keep'}):
+            helper.enter()
+        self.assertIn('[mmc0]', (led / 'trigger').read_text())
+        self.assertFalse(self.state.exists())
+        helper.enter()
+        self.assertEqual((led / 'trigger').read_text().strip(), 'none')
+        with patch.dict(os.environ, {'PROXIMUS_SAVE_LED': 'blink'}):
+            helper.restore()
+            with self.assertRaises(ValueError):
+                helper.enter()
+
+    def test_tampered_led_state_is_refused(self):
+        self.act_led()
+        self.state.write_text('{"led": {"../../evil": "none"}}')
+        with self.assertRaises(RuntimeError):
+            helper.restore()
+        self.state.write_text('{"led": {"ACT": "x; rm"}}')
+        with self.assertRaises(RuntimeError):
+            helper.restore()
 
     def test_cpu_powersave_uses_available_governor_and_restores(self):
         policy = self.cpu_policy()

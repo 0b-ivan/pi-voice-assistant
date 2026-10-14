@@ -29,7 +29,7 @@ VOICE_EVENT_FILE = Path(
 )
 PROBE_INTERVAL_SECONDS = 2.0
 EVENT_INTERVAL_SECONDS = 0.1
-SLEEP_POLL_SECONDS = 0.3  # screen off: check for wake-ups less often
+SLEEP_POLL_SECONDS = 0.5  # screen off: only the status file, twice a second
 ERROR_HOLD_SECONDS = 3.0
 
 VOICE_EVENT_STATES = {
@@ -158,7 +158,7 @@ def read_status(path=None):
     if (isinstance(index, int) and not isinstance(index, bool)
             and (group is None or group in menu.GROUPS)
             and 0 <= index < len(menu.entries(group))
-            and value.get('menu_page') in ('list', 'info')):
+            and value.get('menu_page') in ('list', *menu.PAGES.values())):
         status['menu_index'] = index
         status['menu_page'] = value['menu_page']
         if group:
@@ -171,6 +171,7 @@ def read_status(path=None):
                          ('opt_emotions', ('on', 'off')), ('mood', MOODS),
                          ('opt_voice', ('servitor', 'natural')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
+                         ('opt_power_notices', ('on', 'off')),
                          ('opt_llm', ('auto', 'free', 'local')),
                          ('opt_cpu', ('eco', 'balanced', 'power')),
                          ('alarm', tuple(ALARMS)),
@@ -842,6 +843,81 @@ def _state_line(draw, state, info, details, light):
     draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=color)
 
 
+# --- Charger plugged in / pulled: a short pictogram ------------------------
+
+POWER_CARD_SECONDS = 2.5
+PLUG_POLL_SECONDS = 1.0
+PLUG_COLOR = (80, 210, 235)        # like the charging battery gauge
+UNPLUG_COLOR = (255, 180, 0)
+
+
+def _plug_pictogram(draw, cx, cy, color):
+    """Mains plug in its socket with a lightning bolt (charger connected)."""
+    # Socket on the right, plug body with two prongs entering it, cable left.
+    draw.rounded_rectangle((cx + 6, cy - 26, cx + 46, cy + 26), radius=8, outline=color, width=3)
+    draw.rounded_rectangle((cx - 30, cy - 18, cx + 2, cy + 18), radius=6, fill=color)
+    for dy in (-9, 6):
+        draw.rectangle((cx + 2, cy + dy, cx + 20, cy + dy + 3), fill=color)
+    draw.line((cx - 30, cy, cx - 44, cy, cx - 50, cy + 10, cx - 62, cy + 14), fill=color, width=4)
+    bolt = ((cx + 30, cy - 14), (cx + 20, cy + 3), (cx + 27, cy + 3), (cx + 23, cy + 16),
+            (cx + 36, cy - 3), (cx + 29, cy - 3))
+    draw.polygon(bolt, fill='white')
+
+
+def _battery_pictogram(draw, cx, cy, color, percent):
+    """Big battery with its charge, the plug pulled away (battery power)."""
+    left, right, top, bottom = cx - 34, cx + 26, cy - 18, cy + 18
+    draw.rounded_rectangle((left, top, right, bottom), radius=5, outline=color, width=3)
+    draw.rectangle((right + 2, cy - 7, right + 7, cy + 7), fill=color)
+    fill = round((right - left - 10) * max(0, min(100, percent or 0)) / 100)
+    if fill:
+        draw.rectangle((left + 5, top + 5, left + 5 + fill, bottom - 5), fill=color)
+    # The pulled plug beside it: grey head, prongs towards the battery, cable.
+    grey = (110, 115, 120)
+    draw.rounded_rectangle((cx + 48, cy + 8, cx + 62, cy + 24), radius=3, fill=grey)
+    for dy in (11, 18):
+        draw.rectangle((cx + 40, cy + dy, cx + 48, cy + dy + 2), fill=grey)
+    draw.line((cx + 62, cy + 16, cx + 70, cy + 16, cx + 74, cy + 26), fill=grey, width=3)
+
+
+def render_power_card(display, plugged, network, info=None):
+    """Charger connected or pulled: for POWER_CARD_SECONDS a big pictogram
+    with the battery state, same header and footer as the live screens."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    battery = info.get('battery') or {}
+    percent = battery.get('percent')
+    if plugged:
+        color, title = PLUG_COLOR, 'NETZTEIL VERBUNDEN'
+        _plug_pictogram(draw, 120, 104, color)
+        detail = ('lädt' if battery.get('charging') else 'voll') if battery else ''
+    else:
+        color = (255, 70, 70) if percent is not None and percent <= 15 else UNPLUG_COLOR
+        title = 'AKKUBETRIEB'
+        _battery_pictogram(draw, 112, 104, color, percent)
+        detail = 'Netzteil getrennt'
+    width = draw.textlength(title, font=font(15))
+    draw.text(((WIDTH - width) / 2, 146), title, font=font(15), fill=color)
+    line = ' · '.join(part for part in (f'{percent} %' if percent is not None else '', detail)
+                      if part)
+    if line:
+        width = draw.textlength(line, font=font(12))
+        draw.text(((WIDTH - width) / 2, 170), line, font=font(12), fill=(170, 175, 180))
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
+
+
+def plug_change(previous, current):
+    """True/False when the charger was connected/pulled between two polls,
+    None when nothing changed or a reading is missing."""
+    if previous is None or current is None or previous == current:
+        return None
+    return current
+
+
 WEATHER_FILE = Path(os.environ.get('PI_DISPLAY_WEATHER_FILE', '/run/pi-ptt/display-weather.json'))
 WEATHER_FPS = 8
 WEATHER_ACCENT = (255, 176, 0)     # amber, like the sun and the local status light
@@ -1412,48 +1488,194 @@ def render_maintenance(display, status, info=None):
     display.image(image, 180)
 
 
+MENU_ACCENT = (150, 120, 255)
+MENU_TEXT = (215, 220, 225)
+MENU_GREY = (145, 155, 165)
+MENU_ON = (120, 220, 160)
+MENU_DANGER = (255, 110, 90)
+MENU_ROW = 19          # eight rows between header and footer
+MENU_ROWS = 8
+
+
+def _menu_icon(draw, kind, x, y, color):
+    """12 x 12 pictogram of a top-level group, drawn with lines only."""
+    if kind == 'persona':                                   # face
+        draw.ellipse((x, y, x + 11, y + 11), outline=color)
+        draw.point(((x + 4, y + 4), (x + 7, y + 4)), fill=color)
+        draw.arc((x + 3, y + 4, x + 8, y + 9), 20, 160, fill=color)
+    elif kind == 'voice':                                   # speech bubble
+        draw.rounded_rectangle((x, y + 1, x + 11, y + 8), radius=2, outline=color)
+        draw.polygon(((x + 3, y + 8), (x + 3, y + 11), (x + 6, y + 8)), fill=color)
+    elif kind == 'network':                                 # wifi arcs
+        for r in (2, 5, 8):
+            draw.arc((x + 6 - r, y + 10 - r, x + 6 + r, y + 10 + r), 225, 315, fill=color)
+        draw.point((x + 6, y + 10), fill=color)
+    elif kind == 'audio':                                   # speaker
+        draw.polygon(((x, y + 4), (x + 3, y + 4), (x + 7, y), (x + 7, y + 11),
+                      (x + 3, y + 7), (x, y + 7)), outline=color)
+        draw.arc((x + 6, y + 2, x + 11, y + 9), 300, 60, fill=color)
+    elif kind == 'energy':                                  # lightning bolt
+        draw.polygon(((x + 7, y), (x + 2, y + 7), (x + 6, y + 7), (x + 4, y + 11),
+                      (x + 10, y + 4), (x + 6, y + 4)), fill=color)
+    elif kind == 'people':                                  # person
+        draw.ellipse((x + 3, y, x + 8, y + 5), outline=color)
+        draw.arc((x + 1, y + 6, x + 10, y + 15), 180, 360, fill=color)
+    elif kind == 'system':                                  # gear
+        draw.ellipse((x + 2, y + 2, x + 9, y + 9), outline=color)
+        for dx, dy in ((5, 0), (5, 10), (0, 5), (10, 5)):
+            draw.rectangle((x + dx, y + dy, x + dx + 1, y + dy + 1), fill=color)
+    elif kind == 'close':                                   # cross
+        draw.line((x + 2, y + 2, x + 9, y + 9), fill=color, width=2)
+        draw.line((x + 9, y + 2, x + 2, y + 9), fill=color, width=2)
+
+
+def _menu_summary(item, status):
+    """Short state of a top-level group, shown at its right edge, or ''."""
+    if item == 'persona':
+        return _menu_value('persona', status)
+    if item == 'energy':
+        return _menu_value('cpu_mode', status)
+    if item == 'network' and status.get('opt_wlan') == 'off':
+        return 'WLAN AUS'
+    return ''
+
+
+def _fit(draw, text, size, width):
+    """``text`` shortened with an ellipsis to fit ``width`` pixels."""
+    if draw.textlength(text, font=font(size)) <= width:
+        return text
+    while text and draw.textlength(text + '…', font=font(size)) > width:
+        text = text[:-1]
+    return text.rstrip() + '…'
+
+
 def render_menu(display, status, info=None):
-    """Menu list: PiTFT buttons move, SHIM E confirms, SHIM B closes."""
+    """Menu list: PiTFT buttons move, SHIM E confirms, SHIM B goes back.
+
+    Top level with pictograms and a short state per group; in a group the
+    title is "MENÜ › GROUP". Values sit right and never overlap the label;
+    a bar at the right edge shows where a longer list is scrolled; the
+    footer says what the selected row does."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
-    accent = (150, 120, 255)
     group = status.get('menu_group')
     right = 228
     if info.get('battery'):
         right = draw_battery(draw, 228, 14, info['battery']) - 8
-    # In a group the title is the group name; shrink it rather than run into the battery.
-    title = 'MENÜ' if group is None else menu.LABELS[group].upper()
-    size = next((n for n in (17, 15, 13) if 12 + draw.textlength(title, font=font(n)) <= right), 12)
-    draw.text((12, 12 + (17 - size) // 2), title, font=font(size), fill='white')
+    if group is None:
+        draw.text((12, 12), 'MENÜ', font=font(17), fill='white')
+    else:
+        trail = 'MENÜ ›' if group not in menu.PARENTS else '… ›'
+        draw.text((12, 16), trail, font=font(11), fill=MENU_GREY)
+        x = 16 + draw.textlength(trail, font=font(11))
+        title = menu.LABELS[group].upper()
+        size = next((n for n in (17, 15, 13) if x + draw.textlength(title, font=font(n)) <= right),
+                    12)
+        draw.text((x, 12 + (17 - size) // 2), _fit(draw, title, size, right - x), font=font(size),
+                  fill='white')
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
-    rows = [(item, menu.label(item, group)) for item in menu.entries(group)]
-    visible = 7  # scroll so the selection stays on screen
-    first = max(0, min(selected - 3, len(rows) - visible))
-    for row, (item, label) in enumerate(rows):
-        if not first <= row < first + visible:
+    rows = menu.entries(group)
+    first = max(0, min(selected - MENU_ROWS // 2 + 1, len(rows) - MENU_ROWS))
+    for row, item in enumerate(rows):
+        if not first <= row < first + MENU_ROWS:
             continue
-        y = 45 + (row - first) * 21
-        if row == selected:
-            draw.rectangle((10, y - 1, 230, y + 18), fill=(40, 32, 70))
-            draw.text((14, y), '›', font=font(15), fill=accent)
-        color = accent if row == selected else (215, 220, 225)
-        if item in menu.GROUPS and (group is None or menu.PARENTS.get(item) == group):
-            label += ' ›'
-        draw.text((28, y), label, font=font(15), fill=color)
-        value = _menu_value(item, status)
+        y = 44 + (row - first) * MENU_ROW
+        chosen = row == selected
+        if chosen:
+            draw.rectangle((10, y - 1, 229, y + MENU_ROW - 3), fill=(40, 32, 70))
+            draw.rectangle((10, y - 1, 11, y + MENU_ROW - 3), fill=MENU_ACCENT)
+        danger = item in menu.DANGER
+        color = MENU_DANGER if danger else MENU_ACCENT if chosen else MENU_TEXT
+        x = 16
+        if group is None:
+            _menu_icon(draw, item, 16, y + 2, color if chosen else MENU_GREY)
+            x = 34
+        value = (_menu_summary(item, status) if group is None
+                 else _menu_value(item, status))
+        arrow = menu.is_group(item, group)
+        end = 226 - (10 if arrow else 0)
         if value:
-            value_color = (120, 220, 160) if value == 'AN' else (170, 170, 170)
-            _right(draw, 226, y + 1, value, 13, value_color)
+            size = 11 if group is None else 12       # a group's state is only a hint
+            width = draw.textlength(value, font=font(size))
+            value_color = (MENU_ON if value == 'AN' else MENU_GREY if value in ('AUS', '—')
+                           else (190, 175, 255))
+            _right(draw, end, y + 2 + (12 - size), value, size, value_color)
+            end -= width + 6
+        draw.text((x, y), _fit(draw, menu.label(item, group), 14, end - x), font=font(14),
+                  fill=color)
+        if arrow:
+            draw.text((219, y), '›', font=font(14), fill=color)
+    if len(rows) > MENU_ROWS:                               # scroll position
+        top, height = 44, MENU_ROWS * MENU_ROW - 4
+        bar = max(12, height * MENU_ROWS // len(rows))
+        offset = (height - bar) * first // (len(rows) - MENU_ROWS)
+        draw.line((233, top, 233, top + height), fill=(55, 55, 60))
+        draw.rectangle((232, top + offset, 234, top + offset + bar), fill=MENU_GREY)
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
     if info.get('ap') is not None:
         ap = info['ap']
         label = 'AP: NEUER CLIENT' if ap['joined'] else f"AP AKTIV · {ap['count']} CLIENTS"
         draw.text((12, 209), label, font=font(11), fill=(180, 130, 255))
     else:
-        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+        item = rows[selected] if 0 <= selected < len(rows) else None
+        text = menu.hint(item, group) if item else None
+        draw.text((12, 203), _fit(draw, text or '▲▼ wählen · E: OK · B: zurück', 11, 216),
+                  font=font(11), fill=MENU_DANGER if item in menu.DANGER else MENU_GREY)
+        if text:
+            draw.text((12, 219), '▲▼ wählen · E: OK · B: zurück', font=font(10),
+                      fill=(95, 100, 110))
+    display.image(image, 180)
+
+
+def energy_rows(battery=None, cpu=None, temp=None, throttled=None, selected=None):
+    """Rows of the "Akku & Strom" page, from the display's own readings."""
+    rows = []
+    if battery:
+        volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
+        rows.append(('Akku', f"{battery['percent']} % · {volts} V", battery_color(battery)))
+        source = ('Netz · lädt' if battery['charging'] else
+                  'Netz · voll' if battery['plugged'] else 'Akkubetrieb')
+        rows.append(('Versorgung', source, MENU_TEXT))
+        if battery.get('output_current_ma'):
+            rows.append(('Verbrauch', f"{battery['output_current_ma']} mA", MENU_TEXT))
+        if battery.get('board_c') is not None:
+            rows.append(('Akkumodul', f"{battery['board_c']} °C", MENU_TEXT))
+    else:
+        rows.append(('Akku', 'keine Daten', MENU_DANGER))
+    names = {'eco': 'ECO', 'balanced': 'NORMAL', 'power': 'POWER',
+             'overclock': 'ÜBERTAKTET', 'unknown': '?'}
+    if cpu:
+        mhz = f" · {cpu['mhz']} MHz" if cpu.get('mhz') else ''
+        color = CPU_GOLD if cpu.get('profile') == 'overclock' else MENU_TEXT
+        rows.append(('CPU', names.get(cpu.get('profile'), '?') + mhz, color))
+        if selected and cpu.get('base') not in (None, 'unknown') and cpu['base'] != selected:
+            rows.append(('Gewählt', names[selected], CPU_MISMATCH))   # e.g. battery standby
+    if temp is not None:
+        rows.append(('CPU-Temp.', f'{temp} °C', (255, 120, 90) if temp >= 70 else MENU_TEXT))
+    warning = power_warning(throttled)
+    rows.append(('Drosselung', warning[0] if warning else 'keine',
+                 warning[1] if warning else MENU_ON))
+    return rows
+
+
+def render_energy(display, rows, info=None):
+    """The "Akku & Strom" page of the energy menu (E, B or ▲▼ return)."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    draw.text((12, 12), 'AKKU & STROM', font=font(17), fill='white')
+    _menu_icon(draw, 'energy', 214, 16, CPU_GOLD)
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    for row, (label, value, color) in enumerate(rows[:8]):
+        y = 46 + row * 18
+        draw.text((12, y), label, font=font(12), fill=(135, 145, 150))
+        _right(draw, 228, y, _fit(draw, value, 13, 140), 13, color)
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    draw.text((12, 209), 'E oder ▲▼: zurück', font=font(11), fill=MENU_GREY)
     display.image(image, 180)
 
 
@@ -1700,8 +1922,9 @@ def main():
     battery_monitor = Battery()
     battery = None
     throttled = None
-    cpu, cpu_stock = None, cpu_state.stock_khz()
+    cpu, cpu_stock = None, cpu_state.board_stock_khz()
     next_battery = 0.0
+    next_plug, plug_seen, power_card = 0.0, None, None   # (plugged, until)
     voice_state = None
     last_event = None
     error_until = None
@@ -1712,6 +1935,19 @@ def main():
 
     while True:
         now = time.monotonic()
+        status = read_status()
+        # Menu "Display aus" or the idle sleep stage: backlight off, no rendering
+        # and no probes (systemctl, ip, vcgencmd): only this file is watched.
+        lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
+        if lit != screen_lit:
+            backlight.value = lit
+            screen_lit = lit
+        if not lit:
+            previous_screen = None  # redraw at once when the screen comes back
+            plug_seen = None        # no late pictogram for a change while dark
+            next_probe = next_battery = 0.0   # fresh readings on wake-up
+            time.sleep(SLEEP_POLL_SECONDS)
+            continue
 
         if states is None or now >= next_probe:
             states = collect_system_states()
@@ -1727,6 +1963,19 @@ def main():
             except Exception:  # noqa: BLE001 - a status read must not stop the screen
                 cpu = None
             next_battery = now + BATTERY_SAMPLE_SECONDS
+
+        if now >= next_plug:
+            # One register each second: the charger shows at once, not after
+            # the next 5 s battery sample.
+            plugged_now = battery_monitor.plugged()
+            changed = plug_change(plug_seen, plugged_now)
+            if plugged_now is not None:
+                plug_seen = plugged_now
+            if changed is not None:
+                power_card = (changed, now + POWER_CARD_SECONDS)
+                battery = battery_monitor.read() or battery   # percent and charging now
+                next_battery = now + BATTERY_SAMPLE_SECONDS
+            next_plug = now + PLUG_POLL_SECONDS
 
         current_event = read_voice_event()
         if current_event is not None and current_event != last_event:
@@ -1773,16 +2022,6 @@ def main():
             ap_snapshot = hotspot_control.read_clients()
             next_ap_probe = now + 2.0
         ap = ap_screen_info(ap_snapshot)
-        status = read_status()
-        # Menu "Display aus" or the idle sleep stage: backlight off, no rendering.
-        lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
-        if lit != screen_lit:
-            backlight.value = lit
-            screen_lit = lit
-        if not lit:
-            previous_screen = None  # redraw at once when the screen comes back
-            time.sleep(SLEEP_POLL_SECONDS)
-            continue
         if status.get('enroll'):
             screen = ('enroll', tuple(sorted(status.items())), read_enroll_text(),
                       battery_view(battery))
@@ -1802,7 +2041,13 @@ def main():
                 render_maintenance(display, status, dict(battery=battery))
                 previous_screen = screen
         elif status.get('menu_index') is not None and states is not None and is_ready(states):
-            if status['menu_page'] == 'info':
+            if status['menu_page'] == 'energy':
+                rows = energy_rows(battery, cpu, temp, throttled, status.get('opt_cpu'))
+                screen = ('energy', tuple(rows))
+                if screen != previous_screen:
+                    render_energy(display, rows)
+                    previous_screen = screen
+            elif status['menu_page'] == 'info':
                 if info_rows is None or now >= next_info:
                     info_rows, next_info = (system_info_rows(battery=battery,
                                                              memory=status.get('memory')),
@@ -1852,7 +2097,15 @@ def main():
             persona_shown = persona
             weather_view = (read_weather() if status.get('weather_day') is not None
                             and info.get('volume') is None else None)
-            if weather_view is not None:
+            if power_card is not None and now >= power_card[1]:
+                power_card = None
+            if power_card is not None and info.get('volume') is None:
+                # Charger connected or pulled: a short pictogram over the live screen.
+                screen = ('power', power_card[0], states['network'], shown_info['battery'])
+                if screen != previous_screen:
+                    render_power_card(display, power_card[0], states['network'], info)
+                    previous_screen = screen
+            elif weather_view is not None:
                 # Morning report or a weather question: the forecast while it is said.
                 frame = int(now * WEATHER_FPS)
                 day = int(status['weather_day'])

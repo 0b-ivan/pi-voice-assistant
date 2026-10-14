@@ -47,7 +47,7 @@ class MenuTests(unittest.TestCase):
         menu.select('screen')
         menu.index = len(menu.items) - 1               # 'Zurück'
         self.assertIsNone(menu.confirm(0))
-        self.assertEqual((menu.group, menu.items[menu.index]), (None, 'device'))
+        self.assertEqual((menu.group, menu.items[menu.index]), (None, 'system'))
 
     def test_toggles_stay_open_and_timeout_closes(self):
         menu = Menu(timeout=15)
@@ -102,6 +102,7 @@ class ControllerMenuTests(unittest.TestCase):
     def test_pitft_opens_menu_and_e_toggles_server(self):
         self.press(pitft='D')
         self.assertEqual((self.status()['menu_index'], self.status()['menu_page']), (0, 'list'))
+        self.press(pitft='D')                          # 'Persönlichkeit' -> 'Sprache'
         self.press(down='E')                           # into 'Sprache'
         self.assertEqual(self.status()['menu_group'], 'voice')
         for _ in range(2):

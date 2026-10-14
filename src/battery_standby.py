@@ -69,7 +69,9 @@ class Supervisor:
                     with self._lock:
                         self.applied = desired
                     continue
-            self._wakeup.wait(5)
+                self._wakeup.wait(5)          # retry a failed systemctl call
+            else:
+                self._wakeup.wait()           # nothing to do: sleep until asked
             self._wakeup.clear()
 
     def close(self):

@@ -8,11 +8,15 @@ systemd ExecStop AND ExecStopPost restore original radio/governor state.
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
 CPU_ROOT = Path('/sys/devices/system/cpu/cpufreq')
 RFKILL_ROOT = Path('/sys/class/rfkill')
+LED_ROOT = Path('/sys/class/leds')
+ACT_LEDS = ('ACT', 'led0')      # the green activity LED (name differs by kernel)
+TRIGGER = re.compile(r'^[\w-]+$')
 STATE = Path('/run/proximus-battery-standby.json')
 PISUGAR = 0x57
 RFKILL = '/usr/sbin/rfkill'
@@ -48,6 +52,21 @@ def radio_device(kind):
     return radios[0] if len(radios) == 1 else None
 
 
+def act_led():
+    """The activity LED's sysfs folder, or None."""
+    for name in ACT_LEDS:
+        path = LED_ROOT / name
+        if (path / 'trigger').is_file():
+            return path
+    return None
+
+
+def active_trigger(path):
+    """The [selected] word of an LED's trigger file."""
+    match = re.search(r'\[([\w-]+)\]', (path / 'trigger').read_text())
+    return match.group(1) if match else None
+
+
 def save_state(data):
     STATE.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     tmp = STATE.with_suffix('.tmp')
@@ -74,6 +93,14 @@ def restore():
                 command(RFKILL, 'unblock', kind)
             except (OSError, subprocess.SubprocessError) as exc:
                 errors.append(f'{kind}: {exc}')
+    for name, trigger in state.get('led', {}).items():
+        if name not in ACT_LEDS or not TRIGGER.match(str(trigger)):
+            errors.append(f'invalid LED state {name!r}')
+            continue
+        try:
+            (LED_ROOT / name / 'trigger').write_text(trigger + '\n')
+        except OSError as exc:
+            errors.append(f'{name}: {exc}')
     for policy_name, governor in state.get('cpu', {}).items():
         if not policy_name.startswith('policy') or not policy_name[6:].isdigit():
             errors.append(f'invalid policy name {policy_name!r}')
@@ -100,6 +127,9 @@ def enter():
     modes = {name: os.environ.get('PROXIMUS_SAVE_' + name.upper(), 'keep').lower()
              for name in ('wlan', 'bluetooth')}
     cpu_mode = os.environ.get('PROXIMUS_SAVE_CPU', 'powersave').lower()
+    led_mode = os.environ.get('PROXIMUS_SAVE_LED', 'off').lower()
+    if led_mode not in ('keep', 'off'):
+        raise ValueError('PROXIMUS_SAVE_LED must be keep or off')
     if any(value not in ('keep', 'off') for value in modes.values()):
         raise ValueError('PROXIMUS_SAVE_WLAN/BLUETOOTH must be keep or off')
     if cpu_mode not in ('keep', 'powersave'):
@@ -112,7 +142,15 @@ def enter():
             modes['wlan'] = 'keep'
             print('WLAN kept: provisioning AP active')
 
-    state = {'cpu': {}, 'radios': {}}
+    state = {'cpu': {}, 'radios': {}, 'led': {}}
+    led = act_led() if led_mode == 'off' else None
+    if led is not None:
+        try:
+            trigger = active_trigger(led)
+        except OSError:
+            trigger = None
+        if trigger and trigger != 'none':
+            state['led'][led.name] = trigger
     for policy in sorted(CPU_ROOT.glob('policy*')):
         try:
             governor = (policy / 'scaling_governor').read_text().strip()
@@ -135,13 +173,16 @@ def enter():
         if soft == '0':
             state['radios'][kind] = 'unblocked'
 
-    if not state['cpu'] and not state['radios']:
+    if not state['cpu'] and not state['radios'] and not state['led']:
         return
     # Save before ANY modification. ExecStopPost can recover if ExecStart dies.
     save_state(state)
     try:
         for name in state['cpu']:
             (CPU_ROOT / name / 'scaling_governor').write_text('powersave\n')
+        for name in state['led']:        # dark: no SD-card blinking either
+            (LED_ROOT / name / 'trigger').write_text('none\n')
+            (LED_ROOT / name / 'brightness').write_text('0\n')
         # WLAN last: preserve remote access if an earlier action fails.
         for kind in ('bluetooth', 'wlan'):
             if kind in state['radios']:
@@ -152,7 +193,7 @@ def enter():
         finally:
             raise
     print('Battery standby applied: ' + ', '.join(
-        list(state['cpu']) + list(state['radios'])))
+        list(state['cpu']) + list(state['radios']) + list(state['led'])))
 
 
 if __name__ == '__main__':

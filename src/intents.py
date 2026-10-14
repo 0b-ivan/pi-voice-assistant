@@ -409,13 +409,13 @@ def answer(intent, now, snapshot=None, lore=None):
     if intent == 'status':
         return status_text(snapshot, lore=lore)
     if intent == 'power_current':
-        return energy.current(snapshot)
+        return energy.current(snapshot, lore)
     if intent == 'power_config':
-        return energy.config(snapshot)
+        return energy.config(snapshot, lore)
     if intent == 'power_detail':
-        return energy.detail(snapshot)
+        return energy.detail(snapshot, lore)
     if intent == 'power_runtime':
-        return energy.runtime(snapshot)
+        return energy.runtime(snapshot, lore)
     if intent == 'battery':
         sentence = battery_sentence(snapshot, lore)
         if sentence is None:
