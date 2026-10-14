@@ -20,6 +20,7 @@ import alarm_audio
 import audio_output
 import bluetooth
 import battery_standby
+import cpu_modes
 import boardled
 import cue as cue_sound
 import device_control
@@ -201,7 +202,8 @@ DISPLAY_STATUS_VALUES = {
     'mood': set(EMOTIONS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
-    'opt_power_notices': {'on', 'off'}, 
+    'opt_power_notices': {'on', 'off'},
+    'opt_cpu': set(cpu_modes.MODES), 
     'opt_llm': set(LLM_MODES),
     'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
@@ -787,6 +789,11 @@ class VoiceController:
         self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
         self.power = 'awake'
         self.manual_standby = False  # PiSugar function-button latch, not Linux poweroff
+        configured_mode = saved.get('cpu_mode')
+        self.cpu_mode = (configured_mode if configured_mode in cpu_modes.MODES
+                         else 'balanced')
+        self.cpu_mode_explicit = configured_mode in cpu_modes.MODES
+        self.cpu_mode_busy = False
         self.last_activity = time.monotonic()
         self.rest_after = self.config.rest_seconds
         self.sleep_after = self.config.sleep_seconds
@@ -1079,6 +1086,7 @@ class VoiceController:
                                opt_wlan='on' if self.wlan_on else 'off',
                                opt_alarms='on' if self.alarms_enabled else 'off',
                                opt_power_notices='on' if self.power_notices else 'off',
+                               opt_cpu=self.cpu_mode,
                                opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
                                opt_cue='none' if self.cue is None else
@@ -1126,6 +1134,12 @@ class VoiceController:
             vendor = (self.pisugar_poller.snapshot()
                       if self.pisugar_poller is not None else {})
             self._say(energy.config(dict(self.status_snapshot(), **vendor)))
+            self._publish_menu()
+            return
+        if item == 'cpu_mode':
+            modes = cpu_modes.MODES
+            next_mode = modes[(modes.index(self.cpu_mode) + 1) % len(modes)]
+            self._set_cpu_mode(next_mode)
             self._publish_menu()
             return
         if item == 'energy_shutdown':
@@ -1332,6 +1346,32 @@ class VoiceController:
         if op is None:
             return None
         return self._device_command(op)
+
+    def _set_cpu_mode(self, mode):
+        """Set governor in a worker; never block I2C or GPIO polling."""
+        if mode not in cpu_modes.MODES or self.cpu_mode_busy or self.manual_standby:
+            event('cpu_mode', result='rejected', mode=mode)
+            return False
+        self.cpu_mode_busy = True
+
+        def worker():
+            try:
+                success = cpu_modes.set_mode(mode)
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                event('cpu_mode', result='failed', mode=mode, message=str(exc))
+                success = False
+            if success:
+                self.cpu_mode = mode
+                self.cpu_mode_explicit = True
+                self.settings.save(cpu_mode=mode)
+                event('cpu_mode', result='set', mode=mode)
+                self._publish_menu()
+            elif not success:
+                event('cpu_mode', result='failed', mode=mode)
+            self.cpu_mode_busy = False
+
+        threading.Thread(target=worker, name='cpu-mode', daemon=True).start()
+        return True
 
     def _set_power_notices(self, enabled):
         self.power_notices = bool(enabled)
@@ -3110,7 +3150,8 @@ class VoiceController:
         return (self.recorder.process is not None or self.job is not None
                 or self.speech.active or getattr(self.speech, 'synthesizing', False)
                 or self.menu.open or bool(self.alarm_queue) or self.maint.active
-                or self.people.active or self.story is not None)
+                or self.people.active or self.story is not None
+                or self.cpu_mode_busy)
 
     def pisugar_standby(self, now, reason='button'):
         """Single function-button tap toggles quiet *software* standby.
@@ -3353,6 +3394,9 @@ def main():
                                  wake=wake, wake_word=wake_label, cue=acknowledge,
                                  config=config)
     controller_ref.append(controller)
+    if not args.probe and controller.cpu_mode_explicit:
+        # Restore the previously chosen profile after a normal service reboot.
+        controller._set_cpu_mode(controller.cpu_mode)
     if not args.probe:
         controller.pisugar_poller = pisugar_client.Poller().start()
     if not args.probe and remote_config is not None and config.nightwatch:
