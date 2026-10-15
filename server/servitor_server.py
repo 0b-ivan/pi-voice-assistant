@@ -728,6 +728,7 @@ class Service:
                     answer += (' Archivierte Aufträge finde ich nur mit der '
                                'vollständigen 24-stelligen Kennung.')
                 return answer
+            self.web_chats.set_focus(chat_id, principal, item['id'])
             return self._job_text(item)
 
         yesterday = bool(re.search(r'\bgestern\b', question, re.IGNORECASE))
@@ -772,7 +773,10 @@ class Service:
                     'ausdrücklich freigegebene technische Diagnoseergebnisse. '
                     'Über andere gespeicherte Inhalte kann ich nichts belegen.')
 
-        latest = self.web_chats.latest(chat_id, principal)
+        focus = self.web_chats.focus(chat_id, principal)
+        latest = ((self.web_chats.job(chat_id, principal, focus)
+                   or self.job_archive.get(focus)) if focus else None)
+        latest = latest or self.web_chats.latest(chat_id, principal)
         is_selftest = intents.match(question, persona) == 'selftest'
         hours = self._requested_hours(question)
         if hours is not None and (logs or is_selftest):
@@ -1405,6 +1409,10 @@ class Service:
                         emit(dict(event='mood', emotion=feeling))
                     # Facts/directives the model picked up are never spoken.
                     answer, learned = memory.split_learned(answer)
+                    if web_chat_id and web_context.claims_job_action(answer):
+                        # Nur der Server kennt Aufträge; eine Modellbehauptung
+                        # darüber („als erledigt markiert“) wird nicht gesendet.
+                        answer, model = web_context.JOB_ACTION_TEXT, 'local/diagnose'
                     if (memory_copy not in (None, NO_MEMORY)
                             and not memory.unknown_speaker(memory_copy)):
                         for op, value in learned:

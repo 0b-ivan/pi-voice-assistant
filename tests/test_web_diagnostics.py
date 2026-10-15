@@ -278,6 +278,39 @@ class WebDiagnosticTests(unittest.TestCase):
             web_diagnostics.read(now=190000, since=10, until=190000,
                                  capture=fake)
 
+    def test_line_budget_grows_with_window(self):
+        self.assertEqual(web_diagnostics.budget(3600), web_diagnostics.MIN_LINES)
+        self.assertEqual(web_diagnostics.budget(6 * 3600), 600)
+        self.assertEqual(web_diagnostics.budget(25 * 3600), web_diagnostics.MAX_LINES)
+        captured = []
+        def fake(cmd):
+            captured.append(cmd)
+            return b'', 0, False, False
+        web_diagnostics.read(now=100000, window=6 * 3600, capture=fake)
+        for command in captured:
+            self.assertEqual(command[command.index('-n') + 1], '601')
+        # 383 Zeilen in sechs Stunden (gemessen 15.10.2026) passen vollständig.
+        rows = [json.dumps(dict(_SYSTEMD_UNIT='servitor-voice.service',
+                                MESSAGE=json.dumps({'event': 'request'}), PRIORITY='6',
+                                __REALTIME_TIMESTAMP=str((80000 + i * 50) * 1000000)))
+                for i in range(383)]
+        def busy(cmd):
+            return ('' if '--system' in cmd else '\n'.join(rows)).encode(), 0, False, False
+        found, coverage = web_diagnostics.read(now=100000, window=6 * 3600, capture=busy)
+        self.assertEqual(len(found), 383)
+        self.assertFalse(coverage['limited'])
+
+    def test_model_claims_about_jobs_are_detected(self):
+        for invented in ('Auftrag 23183fb368fa53ef142350bd als erledigt markiert.',
+                         'Auftrag 1976f081ce6c709d02817097 abgebrochen.',
+                         'Die Prüfung wurde erfolgreich beendet.',
+                         'Diagnose 1976f081 läuft.'):
+            self.assertTrue(web_context.claims_job_action(invented), invented)
+        for harmless in ('Sprachserver erreichbar. Aktuelle Pi-Messwerte nicht verfügbar.',
+                         'Diese Einheit hat keine eigenen Sensoren.',
+                         'Es ist 22 Uhr 15.', ''):
+            self.assertFalse(web_context.claims_job_action(harmless), harmless)
+
     def test_previous_snapshot_is_never_used(self):
         def fake(command):
             return b'', 0, False, False
@@ -431,6 +464,18 @@ class DiagnosisServiceTests(unittest.TestCase):
         reply = service.diagnostic_text('Logs der letzten 48 Stunden', chat, self.principal)
         self.assertIn('höchstens 24', reply)
 
+    def test_follow_up_refers_to_last_queried_job(self):
+        first, chat = self.service()
+        with mock.patch.object(web_diagnostics, 'read',
+                               return_value=([], self.coverage)):
+            first.diagnostic_text('Selbsttest', chat, self.principal)
+            job = self.wait(first, chat)
+        restarted, fresh = self.service()
+        restarted.diagnostic_text('Prüfe Auftrag: ' + job['id'], fresh, self.principal)
+        reply = restarted.diagnostic_text('fehler behoben ?', fresh, self.principal)
+        self.assertIn(job['id'], reply)
+        self.assertNotIn('kein Diagnoseauftrag', reply)
+
     def test_default_window_is_configurable(self):
         with self.assertRaises(ValueError):
             ss.Config(dict(self.env, SERVITOR_DIAGNOSE_HOURS='0'))
@@ -563,6 +608,19 @@ class WebHTTPTests(unittest.TestCase):
         self.assertNotIn('Dienstaufzeichnungen nicht', events[1]['text'])
         status, _ = self.ask(chat, 'prüfe auftrag:' + job['id'], browser='b' * 32)
         self.assertEqual(status, 409)
+
+    def test_model_cannot_invent_job_actions(self):
+        chat = self.new()
+        self.pipe.suffix = ' Auftrag 1976f081ce6c709d02817097 als erledigt markiert.'
+        status, events = self.ask(chat, 'los')
+        self.assertEqual(status, 200)
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual(reply['text'], web_context.JOB_ACTION_TEXT)
+        self.assertEqual(reply['model'], 'local/diagnose')
+        self.pipe.suffix = ''
+        status, events = self.ask(chat, 'Wie spät ist es auf dem Mars?')
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertNotEqual(reply['text'], web_context.JOB_ACTION_TEXT)
 
     def test_web_speicherkern_does_not_claim_private_archives(self):
         chat = self.new()
