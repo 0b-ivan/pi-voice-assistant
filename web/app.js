@@ -297,6 +297,7 @@ async function exchange(path, body, type) {
         if (line) reply = handle(JSON.parse(line), reply);
       }
     }
+    if (needsVoice(reply)) await speak(reply, controller.signal);
   } catch (error) {
     if (error.name !== 'AbortError') addLog('error', 'VOX-Verbindung unterbrochen. Anfrage erneut senden.');
     state.story = null;
@@ -316,9 +317,12 @@ function handle(event, reply) {
     case 'transcript':
       addLog('you', event.text);
       break;
-    case 'reply':
+    case 'reply': {
       closeReply(reply);           // a story's previous section
-      return addReply(event.text);  // which language model answered stays off screen
+      const next = addReply(event.text);  // which language model answered stays off screen
+      next.spoken = event.model !== 'local/diagnose';   // diagnosis answers come without sound
+      return next;
+    }
     case 'audio':
       // A part names its own text; a single answer speaks the whole reply.
       player.add(event.data, event.mime, reply, event.text || (reply && reply.text),
@@ -331,7 +335,7 @@ function handle(event, reply) {
       player.stop();
       break;
     case 'done':
-      closeReply(reply);
+      if (!needsVoice(reply)) closeReply(reply);   // exchange() voices it first
       break;
     case 'error':
       addLog('error', ERRORS[event.code] || event.message || 'Fehler.');
@@ -341,6 +345,52 @@ function handle(event, reply) {
       break;   // memory, session, mood, show, enroll ...: Pi matters
   }
   return reply;
+}
+
+// Diagnosis answers and finished results come as text only: /v1/speak voices them
+// with the selected voice. Without sound (error, cancel) the text still appears.
+function needsVoice(reply) {
+  return Boolean(reply && !reply.closed && !reply.spoken && reply.queued === 0);
+}
+
+// Job IDs stay on screen; spoken they would only be a string of hex digits.
+const JOB_ID = /\s+(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,24}\b/gi;
+
+async function speak(reply, signal) {
+  reply.spoken = true;
+  try {
+    const response = await fetch(`/v1/speak?format=${FORMAT}`, {
+      method: 'POST', signal, cache: 'no-store',
+      body: JSON.stringify({ text: reply.text.replace(JOB_ID, '') }),
+      headers: { ...authHeaders(), 'Content-Type': 'application/json',
+                 'X-Servitor-Status': statusHeader() },
+    });
+    if (!response.ok) return;
+    for (const line of (await response.text()).split('\n')) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      // /v1/speak answers in one part: the teleprinter types the full text with IDs.
+      if (event.event === 'audio') player.add(event.data, event.mime, reply, reply.text, event.duration_ms || 0);
+    }
+  } catch (error) {
+    if (error.name !== 'AbortError') addLog('error', 'Diagnose konnte nicht vorgelesen werden.');
+  }
+}
+
+async function speakResult(reply) {
+  // A question or recording in progress has the line: the result is only shown.
+  if (state.request || state.recording) { closeReply(reply); return; }
+  const controller = new AbortController();
+  state.request = controller;
+  $('talk').disabled = true;
+  $('cancel').hidden = false;
+  try {
+    await speak(reply, controller.signal);
+  } finally {
+    closeReply(reply);
+    if (state.request === controller) state.request = null;
+    idle();
+  }
 }
 
 async function continueStory(previous) {
@@ -609,7 +659,7 @@ function applyDiagnosticEvents(data, chatId = state.conversation) {
     };
     if (item.stage === 'diagnose_done') {
       const reply = addReply(item.text || 'Prüfung abgeschlossen, aber kein Ergebnistext verfügbar.');
-      closeReply(reply);
+      speakResult(reply);
       addLog('system', 'Diagnose ' + short + ' abgeschlossen · Ergebnis angezeigt');
       confirmDiagnostic(item.id, chatId);
     } else if (item.stage === 'diagnose_failed') {

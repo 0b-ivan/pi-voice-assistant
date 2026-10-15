@@ -16,6 +16,11 @@ const root = path.resolve(__dirname, '..');
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
     const errors = [];
     const asks = [];
+    const speaks = [];
+    let askBody = '{"event":"reply","text":"Verstanden."}\n{"event":"done"}\n';
+    // 0.01 s silence as a playable WAV part.
+    const silence = Buffer.concat([Buffer.from('524946462c0000005741564566' + '6d7420100000000100010080' +
+      '3e0000007d0000020010006461746108000000', 'hex'), Buffer.alloc(8)]).toString('base64');
     page.on('pageerror', error => errors.push(error.message));
     let status = 200, source = { mode: 'system', error: '' }, instance = 'first', seq = 2;
     let entries = [
@@ -39,8 +44,13 @@ const root = path.resolve(__dirname, '..');
       if (url.pathname === '/v1/session') return route.fulfill({ json: { ok: false, password: true } });
       if (url.pathname === '/v1/ask') {
         asks.push(JSON.parse(route.request().postData()));
+        return route.fulfill({ contentType: 'application/x-ndjson', body: askBody });
+      }
+      if (url.pathname === '/v1/speak') {
+        speaks.push(JSON.parse(route.request().postData()));
         return route.fulfill({ contentType: 'application/x-ndjson',
-          body: '{"event":"reply","text":"Verstanden."}\n{"event":"done"}\n' });
+          body: JSON.stringify({ event: 'audio', format: 'wav', mime: 'audio/wav',
+                                 duration_ms: 10, data: silence }) + '\n{"event":"done"}\n' });
       }
       const relative = url.pathname === '/' ? 'web/index.html'
         : url.pathname === '/web/servo-skull.png' ? 'assets/display/servo-skull.png'
@@ -175,6 +185,28 @@ const root = path.resolve(__dirname, '..');
     assert.equal(asks[0].text, 'Erste Zeile\nZ');
     assert.equal(await field.inputValue(), '');
     assert.equal(await page.evaluate(() => state.recording), null);
+    assert.equal(speaks.length, 0);   // an answer with its own voice is not voiced again
+
+    // Diagnosis answers and finished results arrive as text only: the client voices
+    // them via /v1/speak, without the job ID, while the screen keeps the ID.
+    askBody = '{"event":"reply","text":"Prüfauftrag 1976f081ce6c709d02817097 abgeschlossen.",'
+      + '"model":"local/diagnose"}\n{"event":"done"}\n';
+    await field.fill('Prüfe Auftrag: 1976f081ce6c709d02817097');
+    await field.press('Enter');
+    await page.waitForFunction(() => !state.request);
+    assert.equal(speaks.length, 1);
+    assert.equal(speaks[0].text, 'Prüfauftrag abgeschlossen.');
+    await page.waitForFunction(() => $('log').innerText.includes('Prüfauftrag 1976f081ce6c709d02817097 abgeschlossen.'));
+    await page.evaluate(() => {
+      state.conversation = 'chat-1';
+      applyDiagnosticEvents({ events: [{ seq: 1, id: 'abcd1234abcd1234abcd1234',
+                                         stage: 'diagnose_done', text: 'Keine Fehler belegt.' }] }, 'chat-1');
+    });
+    await page.waitForFunction(() => !state.request);
+    assert.equal(speaks.length, 2);
+    assert.equal(speaks[1].text, 'Keine Fehler belegt.');
+    await page.waitForFunction(() => $('log').innerText.includes('Keine Fehler belegt.'));
+    askBody = '{"event":"reply","text":"Verstanden."}\n{"event":"done"}\n';
 
     for (const [width, height] of [[320, 568], [390, 844], [430, 932], [844, 390], [390, 440]]) {
       await page.setViewportSize({ width, height });
