@@ -1411,8 +1411,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not is_selftest and latest is None:
             return False
         follows = bool(re.search(
-            r'\\b(protokoll|fehler|fehlermeldungen|selbsttest|prüfung|'
-            r'ergebnis|fertig|inzwischen)\\b', question, re.IGNORECASE))
+            r'\b(protokoll|fehler|fehlermeldungen|selbsttest|prüfung|'
+            r'ergebnis|fertig|inzwischen)\b', question, re.IGNORECASE))
         if not is_selftest and not follows:
             return False
         if is_selftest:
@@ -1432,7 +1432,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         payload = [dict(event='transcript', text=question),
                    dict(event='reply', text=answer, model='local/diagnose'),
                    dict(event='done', timings={})]
-        body = ''.join(json.dumps(item, ensure_ascii=False) + '\\n' for item in payload).encode()
+        body = ''.join(json.dumps(item, ensure_ascii=False) + '\n' for item in payload).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/x-ndjson')
         self.send_header('Cache-Control', 'no-store')
