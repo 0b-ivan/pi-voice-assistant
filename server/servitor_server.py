@@ -683,8 +683,20 @@ class Service:
         return f"Prüfauftrag {latest['id']} ist {latest['status']}; kein belegter Befund vorhanden."
 
     def _run_diagnosis(self, chat_id, principal, job_id, persona):
-        update = lambda status, stage, **fields: self.web_chats.job_update(
-            chat_id, principal, job_id, status, stage, **fields)
+        def update(status, stage, **fields):
+            accepted = self.web_chats.job_update(
+                chat_id, principal, job_id, status, stage, **fields)
+            if accepted:
+                # Public-safe metadata, never model prompts, log excerpts or
+                # private messages. Job ID links work trace to delivery.
+                trace = dict(event='processing', job=job_id, step=stage, status=status)
+                for key in ('read', 'discarded', 'limited', 'categories', 'services'):
+                    if key in fields:
+                        trace[key] = fields[key]
+                self.journal.add(json.dumps(trace, ensure_ascii=False),
+                                 unit='servitor-voice',
+                                 priority=4 if status == 'fehlgeschlagen' else 6)
+            return accepted
         if not update('läuft', 'diagnose_running'):
             return
         try:
