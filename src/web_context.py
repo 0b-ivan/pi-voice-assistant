@@ -5,6 +5,8 @@ flüchtigen Thread-Schema, niemals eine Personen-/Profil-ID. Kein USB-Stick,
 kein memory.json und keine Übertragung in persönliche Pi-Konversationen.
 Alle Zugriffe sind an die jeweilige authentifizierte Browser-Capability
 gebunden; ein anderer Browser kann nicht über eine Gesprächs-ID mitlesen.
+Nur Kennung, Status und Befund der Diagnoseaufträge überdauern einen
+Neustart, über das optionale Archiv in src/web_jobs.py.
 """
 import re
 import secrets
@@ -25,8 +27,8 @@ class MissingChat(ValueError):
 
 
 class WebConversations:
-    def __init__(self, clock=time.time):
-        self.clock = clock
+    def __init__(self, clock=time.time, archive=None):
+        self.clock, self.archive = clock, archive
         self.lock = threading.RLock()
         self.chats = {}
 
@@ -91,6 +93,10 @@ class WebConversations:
         chat['events'] = chat['events'][-MAX_EVENTS:]
         return event
 
+    def _keep(self, job):
+        if self.archive is not None:
+            self.archive.record(job)
+
     def job_start(self, chat_id, principal, period):
         with self.lock:
             chat = self._get(chat_id, principal)
@@ -108,6 +114,7 @@ class WebConversations:
             chat['jobs'].append(job)
             chat['jobs'] = chat['jobs'][-MAX_JOBS:]
             self._event(chat, job, 'diagnose_start', period=period)
+            self._keep(job)
             return dict(job), True
 
     def job_update(self, chat_id, principal, job_id, status, stage, **fields):
@@ -122,12 +129,15 @@ class WebConversations:
             if status not in {'gestartet', 'läuft'} | FINAL:
                 raise ValueError('invalid job status')
             job['status'] = status
+            changed = status in FINAL or status == 'läuft' and job['started'] is None
             if status == 'läuft' and job['started'] is None:
                 job['started'] = self.clock()
             if status in FINAL:
                 job['finished'] = self.clock()
             if 'report' in fields:
                 job['report'] = fields.pop('report')
+            if changed:  # nur Statuswechsel, nicht jeder Zwischenschritt
+                self._keep(job)
             # Every event is scoped, monotonic and replayable. The browser
             # deduplicates by sequence across reconnections.
             self._event(chat, job, stage, status=status, **fields)
@@ -178,6 +188,7 @@ class WebConversations:
                     job['status'] = 'abgebrochen'
                     job['finished'] = self.clock()
                     self._event(chat, job, 'diagnose_cancel', status='abgebrochen')
+                    self._keep(job)
             return True
 
     def close(self, chat_id, principal):

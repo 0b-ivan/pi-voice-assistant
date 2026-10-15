@@ -17,7 +17,8 @@ import logwatch
 UNITS = ('servitor-voice.service', 'servitor-llm.service')
 SYSTEM_SOURCE = 'ct107_system'
 SYSTEM_LABEL = 'CT 107 (Systemjournal)'
-WINDOW = 7200
+WINDOW = 7200          # Standard; SERVITOR_DIAGNOSE_HOURS oder die Frage ändern ihn
+MAX_WINDOW = 25 * 3600  # ein Kalendertag kann wegen der Zeitumstellung 25 Stunden haben
 MAX_LINES = 120
 MAX_BYTES = 65536
 TIMEOUT = 8
@@ -125,13 +126,12 @@ def _scope(command, source, since, now, capture, hostname):
                          if incomplete else None)
 
 
-def read(now=None, capture=_capture, since=None, until=None):
+def read(now=None, capture=_capture, since=None, until=None, window=None):
     """Nur zwei festgelegte Quellen. Optionaler Tageszeitraum wird serverseitig erstellt."""
     now = time.time() if now is None else now
     end = int(now if until is None else until)
-    since = int(end - WINDOW if since is None else since)
-    # Ein Kalendertag kann wegen der Zeitumstellung 25 Stunden haben.
-    if not 0 < end - since <= 25 * 3600 or end > now + 60:
+    since = int(end - (window or WINDOW) if since is None else since)
+    if not 0 < end - since <= MAX_WINDOW or end > now + 60:
         raise ValueError('Diagnosezeitraum außerhalb des erlaubten Bereichs')
     args = ['--no-pager', '-q', '-o', 'json',
             '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'

@@ -326,9 +326,17 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   einer pro Tab zufällig erzeugten Kennung, die nur mit gültigem API-Token
   akzeptiert wird. Zwei verschiedene Kennungen teilen keinen Kontext.
 - Gespräch und Jobs haben ein hartes RAM-Ablaufdatum von zwölf Stunden.
-  Abmelden löscht den Login-Kontext; Serverneustart verwirft alle Webgespräche
-  und laufenden Jobs. Der Browser zeigt dann einen ausdrücklich fehlenden
-  Auftrag an; es wird niemals still ein vermeintlich fertiger Befund gezeigt.
+  Abmelden löscht den Login-Kontext; Serverneustart verwirft alle Webgespräche.
+  Der Browser zeigt dann einen ausdrücklich fehlenden Auftrag an; es wird
+  niemals still ein vermeintlich fertiger Befund gezeigt.
+- **Auftragsarchiv:** Kennung, Zeitraum, Status, Zeiten und die
+  deterministische Zusammenfassung jedes Diagnoseauftrags stehen zusätzlich in
+  `diagnose-jobs.json` im systemd-`StateDirectory` (`/var/lib/servitor-voice`,
+  Rechte 0600), sieben Tage lang, höchstens 200 Aufträge. Keine Fragen,
+  Antworten, Logauszüge, Modelltexte oder Browserkennungen. Ein Auftrag, der
+  beim Neustart noch lief, gilt danach als „durch einen Neustart unterbrochen“.
+  `SERVITOR_DIAGNOSE_ARCHIVE` setzt einen anderen Pfad, `off` schaltet das
+  Archiv ab; ohne `StateDirectory` (lokale Entwicklung) bleibt alles im RAM.
 - Ein Web-Selbsttest startet einen eigenen, **rein lesenden** Diagnoseauftrag.
   `src/web_diagnostics.py` fragt in zwei festen, begrenzten
   `journalctl`-Abfragen die Proximus-Units `servitor-voice.service` und
@@ -342,6 +350,12 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   oder Geheimnisse an Browser oder Modell. Fehlende Rechte, Trunkierung oder
   unklare Hostzuordnung sind ausdrücklich keine Entwarnung. **Keine**
   Wartungsaktionen, Reparaturen oder freien Shellbefehle im Webpfad.
+- Der Standardzeitraum von zwei Stunden lässt sich mit
+  `SERVITOR_DIAGNOSE_HOURS` (1–24) in `/etc/servitor-voice.env` ändern. Eine
+  Frage wie „Logs der letzten 6 Stunden“ oder „Selbsttest der letzten zwölf
+  Stunden“ gilt nur für diesen Auftrag; mehr als 24 Stunden lehnt Proximus ab
+  und verweist auf „Logs von gestern“. Die Grenze von 120 Zeilen je Quelle
+  bleibt; ein längerer Zeitraum wird dadurch eher als unvollständig ausgewiesen.
 - Klassifikation und Wiederherstellungsbelege kommen deterministisch von
   `src/logwatch.py`. Erst danach darf eine Modellinterpretation erfolgen;
   sie ist als Hypothese markiert. Rohtranskripte, Logfreitext und Secrets
@@ -354,8 +368,11 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   lässt sich über den Ereigniszähler wieder aufnehmen.
 - Auftragsfragen mit vollständiger Kennung oder eindeutigem Präfix ab acht
   Hex-Zeichen werden direkt gegen die **eigene** RAM-Sitzung aufgelöst, niemals
-  aus dem LLM oder dem Journal geraten. Andere Browsergespräche und Aufträge
-  vor einem Serverneustart sind nicht abfragbar.
+  aus dem LLM oder dem Journal geraten. Danach sucht der Server im
+  Auftragsarchiv, dort aber nur mit der **vollständigen** 24-stelligen Kennung:
+  Sie ist eine 96-Bit-Zufallszahl, die nur dem auslösenden Browser angezeigt
+  wurde, und gilt deshalb nach Neustart und neuer Anmeldung als Berechtigung
+  für Status und Zusammenfassung, nicht für Ereignisse oder Empfangsbestätigung.
 - Fragen nach den **Logs von gestern** lösen einen gesonderten, lesenden
   Diagnoseauftrag für den gestrigen Kalendertag in der konfigurierten Zeitzone
   aus. Beide Journalabfragen bleiben hart begrenzt; bei mehr als 120 Zeilen
