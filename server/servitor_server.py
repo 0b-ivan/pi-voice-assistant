@@ -1510,6 +1510,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(404, dict(error='Gespräch nicht vorhanden'))
         return self._json(200, data, {'Cache-Control': 'no-store'})
 
+    def _web_job_ack(self):
+        self.close_connection = True
+        principal = self._browser_principal()
+        if not self._web_authorized() or not principal:
+            return self._json(401, dict(error='unauthorized'))
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+            if not 0 < length <= 512:
+                raise ValueError('length')
+            request = json.loads(self.rfile.read(length))
+            chat_id, job_id = request['conversation'], request['job']
+            if not all(isinstance(v, str) and 0 < len(v) <= 96
+                       for v in (chat_id, job_id)):
+                raise ValueError('ids')
+            accepted = self.service.web_chats.acknowledge(chat_id, principal, job_id)
+        except (ValueError, TypeError, KeyError):
+            return self._json(400, dict(error='ungültige Empfangsbestätigung'))
+        except web_context.MissingChat:
+            return self._json(404, dict(error='Gespräch nicht gefunden'))
+        if accepted:
+            self.service.journal.add(
+                json.dumps(dict(event='processing', job=job_id,
+                                step='diagnose_delivered', status='confirmed')),
+                unit='servitor-voice')
+        return self._json(200, dict(ok=True, newly_confirmed=accepted),
+                          {'Cache-Control': 'no-store'})
+
     def _diagnostic_reply(self, question, chat_id, principal, persona):
         answer = self.service.diagnostic_text(question, chat_id, principal, persona)
         if answer is None:
@@ -1847,6 +1874,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._logout()
         if url.path == '/v1/web/conversation':
             return self._new_conversation()
+        if url.path == '/v1/web/ack':
+            return self._web_job_ack()
         if url.path == '/v1/hello':
             return self._hello()
         if url.path == '/v1/message':
