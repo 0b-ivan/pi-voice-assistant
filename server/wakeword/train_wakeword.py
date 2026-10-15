@@ -9,16 +9,25 @@ trained here, so the result is a drop-in <word>.onnx for PTT_WAKE_WORD.
   python train_wakeword.py train    # fit the classifier, report, export ONNX
 
 Data comes from download.sh (Piper voices, openWakeWord ACAV100M negative
-features, validation set, MIT impulse responses). Some voices and speakers
-are held out for testing. Nothing here touches the running services; run it
-with nice so Proximus keeps answering.
+features, validation set, MIT impulse responses). Synthetic held-out voices
+are validation data. Real recordings use the verified Nightwatch session
+manifest; their final test split is never loaded during training. Nothing
+here touches the running services. Resource isolation is a separate next step.
 """
 import argparse
+import hashlib
 import json
+import os
 from pathlib import Path
+import sys
+import tempfile
 import time
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+from nightwatch import atomic_json
+from nightwatch_training import read_plan, validate_plan, verified_recordings
 
 ROOT = Path('/opt/servitor-voice/train')  # --root overrides (e.g. smoke tests)
 RATE = 16000
@@ -48,14 +57,14 @@ SENTENCES = (
     'Das kostet zwanzig Prozent mehr.', 'Ruf mich später an.', 'Gute Nacht.',
 )
 TRAIN_VOICES = {   # file stem: (speaker range or None, weight)
-    'de_DE-mls-medium': (range(0, 200), 6), 'de_DE-thorsten_emotional-medium': (range(0, 8), 2),
+    'de_DE-thorsten_emotional-medium': (range(0, 8), 2),
     'de_DE-eva_k-x_low': (None, 1), 'de_DE-kerstin-low': (None, 1),
     'de_DE-pavoque-low': (None, 1), 'de_DE-thorsten-medium': (None, 1),
     'en_US-libritts_r-medium': (range(0, 800), 3), 'en_GB-vctk-medium': (range(0, 100), 1),
     'nl_NL-mls-medium': (range(0, 45), 2),
 }
 TEST_VOICES = {
-    'de_DE-mls-medium': (range(200, 236), 3), 'de_DE-karlsson-low': (None, 1),
+    'de_DE-karlsson-low': (None, 1),
     'de_DE-ramona-low': (None, 1), 'en_US-libritts_r-medium': (range(800, 904), 1),
     'en_GB-vctk-medium': (range(100, 109), 1), 'nl_NL-mls-medium': (range(45, 52), 1),
 }
@@ -282,27 +291,110 @@ def build(args):
               args.negatives // 8, 1, False, rng, rirs, babble, features)
 
 
+def file_hash(path):
+    with Path(path).open('rb') as source:
+        return hashlib.file_digest(source, 'sha256').hexdigest()
+
+
+def save_features(path, values):
+    """An interrupted build cannot leave a partially written NumPy file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.features-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            np.save(out, values, allow_pickle=False)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def test_window(pcm):
+    """Deterministic, unaugmented feature probe; not a Pi streaming measurement."""
+    clip = np.frombuffer(pcm, dtype='<i2')
+    out = np.zeros(WINDOW, dtype=np.int16)
+    end = WINDOW - RATE // 10
+    clip = clip[-end:]
+    out[end - len(clip):end] = clip
+    return out
+
+
 def build_real(args):
-    """The operator's own recordings (enrollment, proximus/voice/wake/*.wav):
-    each clip in many augmented variants; every fifth clip is held out."""
+    """Separate complete sessions before augmentation; commit the index last."""
+    plan = read_plan(args.manifest)
+    if not plan['positive_split_ready']:
+        raise ValueError('more independent train/validation/test sessions are required')
+    clips = verified_recordings(args.real, plan)
+    if not 1 <= args.copies <= 200:
+        raise ValueError('copies must be between 1 and 200')
     rng = np.random.default_rng(args.seed)
     rirs = load_rirs()
+    meta = dict(version=1, plan=plan, seed=args.seed, copies=args.copies, files={},
+                test_augmented=False, selection_split='validation', selection_used_test=False,
+                frontend_sha256={name: file_hash(ROOT / 'models' / name) for name in
+                                 ('melspectrogram.onnx', 'embedding_model.onnx')})
     features = Features()
-    clips = []
-    for path in sorted(Path(args.real).glob('*.wav')):
-        data, rate = read_wav(path)
-        if rate == RATE and len(data):
-            clips.append(data * 32767)
-    if not clips:
-        raise SystemExit(f'no 16 kHz WAV files in {args.real}')
-    test = clips[::5]
-    train = [clip for i, clip in enumerate(clips) if i % 5]
-    for name, chosen, copies in (('positive_real', train, args.copies),
-                                 ('positive_real_test', test, 4)):
-        out = np.stack([features(augment(clip, rng, rirs, [], True))
-                        for clip in chosen for _ in range(copies)]).astype(np.float16)
-        np.save(ROOT / 'features' / f'{name}.npy', out[rng.permutation(len(out))])
-        print(f'{name}: {len(chosen)} clips -> {out.shape}', flush=True)
+    for split, copies in (('train', args.copies), ('validation', 4), ('test', 1)):
+        values = []
+        for row, pcm in clips[split]:
+            for _ in range(copies):
+                window = (test_window(pcm) if split == 'test' else
+                          augment(np.frombuffer(pcm, dtype='<i2').astype(np.float32),
+                                  rng, rirs, [], True))
+                values.append(features(window))
+        out = np.stack(values).astype(np.float16)
+        path = ROOT / 'features' / f'positive_real_{split}.npy'
+        save_features(path, out)
+        meta['files'][split] = dict(sha256=file_hash(path), rows=len(out),
+                                   clips=[row['sha256'] for row, _ in clips[split]])
+        print(f'{split}: {len(clips[split])} clips -> {out.shape}', flush=True)
+    if meta['frontend_sha256'] != {name: file_hash(ROOT / 'models' / name)
+                                  for name in meta['frontend_sha256']}:
+        raise ValueError('frontend changed during feature extraction')
+    atomic_json(ROOT / 'features' / 'real_manifest.json', meta)
+
+
+def load_real_training(folder):
+    """Only load training/validation; never read the final test feature file."""
+    folder = Path(folder)
+    index = folder / 'real_manifest.json'
+    if not index.exists():
+        if any(folder.glob('positive_real*.npy')):
+            raise ValueError('legacy real features: rebuild with the session manifest')
+        return None, None, None
+    if index.stat().st_size > 512 * 1024:
+        raise ValueError('real feature index too large')
+    meta = json.loads(index.read_text())
+    if not isinstance(meta, dict) or meta.get('version') != 1 \
+            or meta.get('selection_split') != 'validation' \
+            or meta.get('selection_used_test') is not False or meta.get('test_augmented') is not False:
+        raise ValueError('invalid real feature index')
+    plan = validate_plan(meta.get('plan'))
+    if not plan['positive_split_ready'] or type(meta.get('copies')) is not int \
+            or not 1 <= meta['copies'] <= 200:
+        raise ValueError('real feature split is not ready')
+    current = {name: file_hash(folder.parent / 'models' / name) for name in
+               ('melspectrogram.onnx', 'embedding_model.onnx')}
+    if meta.get('frontend_sha256') != current:
+        raise ValueError('real features were built with a different frontend')
+    loaded = []
+    for split, copies in (('train', meta['copies']), ('validation', 4)):
+        info = meta.get('files', {}).get(split, {})
+        expected = [row['sha256'] for row in plan['manifest'] if row['split'] == split]
+        path = folder / f'positive_real_{split}.npy'
+        if info.get('clips') != expected or info.get('rows') != len(expected) * copies \
+                or path.stat().st_size > len(expected) * copies * 16 * 96 * 2 + 65536 \
+                or file_hash(path) != info.get('sha256'):
+            raise ValueError('real feature content or clip identity changed')
+        values = np.load(path, allow_pickle=False)
+        if values.shape != (info['rows'], 16, 96) or values.dtype != np.float16 \
+                or not np.isfinite(values).all():
+            raise ValueError('invalid real feature values')
+        loaded.append(values)
+    return *loaded, plan
 
 
 def make_model(torch):
@@ -328,6 +420,14 @@ def false_positives_per_hour(scores, threshold, patience=2, cooldown_blocks=25):
     return hits / (len(scores) * 0.08 / 3600)
 
 
+def validation_threshold(positive, negative, max_fph):
+    """Compare unrounded rates; reporting precision must not relax a budget."""
+    rates = {t: false_positives_per_hour(negative, t) for t in THRESHOLDS}
+    threshold = next((t for t in THRESHOLDS if rates[t] <= max_fph), None)
+    recall = float((positive >= threshold).mean()) if threshold is not None else 0.0
+    return threshold, recall, rates
+
+
 def train(args):
     import torch
     torch.set_num_threads(args.threads)
@@ -336,14 +436,16 @@ def train(args):
     feat = ROOT / 'features'
     pos = torch.from_numpy(np.load(feat / 'positive_train.npy').astype(np.float32))
     adv = torch.from_numpy(np.load(feat / 'adversarial.npy').astype(np.float32))
-    pos_test = torch.from_numpy(np.load(feat / 'positive_test.npy').astype(np.float32))
+    pos_validation = torch.from_numpy(np.load(feat / 'positive_test.npy').astype(np.float32))
     # The operator's voice (build_real), if recorded: half of every positive batch.
-    real = real_test = None
-    if (feat / 'positive_real.npy').is_file():
-        real = torch.from_numpy(np.load(feat / 'positive_real.npy').astype(np.float32))
-        real_test = torch.from_numpy(np.load(feat / 'positive_real_test.npy').astype(np.float32))
-        print(f'real recordings: {len(real)} train, {len(real_test)} test windows', flush=True)
-    adv_test = torch.from_numpy(np.load(feat / 'adversarial_test.npy').astype(np.float32))
+    real_values, validation_values, real_plan = load_real_training(feat)
+    real = real_validation = None
+    if real_plan is not None:
+        real = torch.from_numpy(real_values.astype(np.float32))
+        real_validation = torch.from_numpy(validation_values.astype(np.float32))
+        print(f'real recordings: {len(real)} train, {len(real_validation)} validation windows; '
+              'final test is not loaded', flush=True)
+    adv_validation = torch.from_numpy(np.load(feat / 'adversarial_test.npy').astype(np.float32))
     acav = np.load(ROOT / 'data' / 'openwakeword_features_ACAV100M_2000_hrs_16bit.npy', mmap_mode='r')
     validation = np.load(ROOT / 'data' / 'validation_set_features.npy', mmap_mode='r')
     print(f'positives {len(pos)}, adversarial {len(adv)}, ACAV {acav.shape}, '
@@ -400,31 +502,25 @@ def train(args):
         scheduler.step()
         if step % args.eval_every == 0 or step == args.steps:
             # With recordings of the operator, choose by recall on their voice.
-            positive = scores(real_test) if real_test is not None else scores(pos_test)
-            adversarial = scores(adv_test)
+            positive = scores(real_validation) if real_validation is not None else scores(pos_validation)
+            adversarial = scores(adv_validation)
             val = validation_scores()
-            fph = {t: round(false_positives_per_hour(val, t), 2) for t in THRESHOLDS}
             # Lowest threshold that keeps false alarms within budget, and the
             # recall there: models are compared at their own usable threshold.
-            usable = next((t for t in THRESHOLDS if fph[t] <= args.max_fph), None)
-            recall = float((positive >= usable).mean()) if usable is not None else 0.0
+            usable, recall, fph = validation_threshold(positive, val, args.max_fph)
             report = dict(step=step, loss=round(float(loss), 4),
+                          selection_split='validation', selection_used_test=False,
                           recall_at_0_5=round(float((positive >= 0.5).mean()), 3),
                           threshold=usable, recall_at_threshold=round(recall, 3),
                           adversarial_hit_rate=round(float((adversarial >= (usable or 0.5)).mean()), 3),
-                          false_positives_per_hour={str(t): fph[t] for t in (0.5, 0.7, 0.9, 0.98)})
+                          false_positives_per_hour={str(t): round(fph[t], 2) for t in (0.5, 0.7, 0.9, 0.98)})
             print(json.dumps(report), flush=True)
             if usable is not None and (best is None or recall > best[0]):
                 best = (recall, report)
                 torch.save(model.state_dict(), ROOT / f'{WORD}.pt')
     if best is None:
-        print('no checkpoint met the false-alarm budget; saving the last one', flush=True)
-        torch.save(model.state_dict(), ROOT / f'{WORD}.pt')
-    else:
-        print('best:', json.dumps(best[1]), flush=True)
-        (ROOT / f'{WORD}.json').write_text(json.dumps(dict(
-            threshold=best[1]['threshold'], recall=best[1]['recall_at_threshold'],
-            step=best[1]['step'])) + '\n')
+        raise SystemExit('no checkpoint met the false-alarm budget; no candidate exported')
+    print('best:', json.dumps(best[1]), flush=True)
     model.load_state_dict(torch.load(ROOT / f'{WORD}.pt'))
     model.eval()
     exported = torch.nn.Sequential(model, torch.nn.Sigmoid())
@@ -432,6 +528,15 @@ def train(args):
                       input_names=['x'], output_names=['score'],
                       dynamic_axes={'x': {0: 'batch'}, 'score': {0: 'batch'}}, opset_version=17,
                       dynamo=False)  # classic exporter: needs only the onnx package
+    atomic_json(ROOT / f'{WORD}.json', dict(
+        version=2, threshold=best[1]['threshold'],
+        validation_recall=best[1]['recall_at_threshold'], step=best[1]['step'],
+        selection_split='validation', selection_used_test=False,
+        dataset_id=real_plan['dataset_id'] if real_plan else None,
+        model_sha256=file_hash(ROOT / f'{WORD}.onnx'),
+        validation_sha256=[row['sha256'] for row in real_plan['manifest']
+                           if row['split'] == 'validation'] if real_plan else [],
+        limits=['Training/Validierung; kein unabhängiger Pi-Abschlusstest.']))
     print(f'exported {ROOT / f"{WORD}.onnx"}', flush=True)
 
 
@@ -441,6 +546,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('step', choices=('build', 'real', 'train'))
     parser.add_argument('--real', type=Path, help='folder with the operator\'s recordings')
+    parser.add_argument('--manifest', type=Path, help='verified Nightwatch recording manifest')
     parser.add_argument('--copies', type=int, default=60, help='augmented variants per real clip')
     parser.add_argument('--positives', type=int, default=12000)
     parser.add_argument('--negatives', type=int, default=10000)
@@ -454,6 +560,8 @@ def main():
     parser.add_argument('--root', type=Path, default=ROOT,
                         help='working directory; data/voices/rir/models are taken from the default root')
     args = parser.parse_args()
+    if args.step == 'real' and (args.real is None or args.manifest is None):
+        parser.error('real requires --real and --manifest')
     data_root = ROOT
     ROOT = args.root
     for sub in ('data', 'voices', 'rir', 'models'):
@@ -461,7 +569,10 @@ def main():
         if ROOT != data_root and not link.exists():
             ROOT.mkdir(parents=True, exist_ok=True)
             link.symlink_to(data_root / sub)
-    {'build': build, 'real': build_real, 'train': train}[args.step](args)
+    try:
+        {'build': build, 'real': build_real, 'train': train}[args.step](args)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        parser.error(str(error))
 
 
 if __name__ == '__main__':

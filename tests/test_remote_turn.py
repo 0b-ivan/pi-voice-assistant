@@ -19,8 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import servitor_server as ss  # noqa: E402
 from test_servitor_server import FakePipeline, TOKEN  # noqa: E402
 from ptt import Recorder, VoiceController  # noqa: E402
+import protocol  # noqa: E402
 from remote_turn import (  # noqa: E402
-    NO_FALLBACK_CODES, RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config,
+    NO_FALLBACK_CODES, RemoteCapableSpeech, RemoteSpeakUplink, RemoteTurnJob,
+    RemoteTurnUplink, load_remote_config,
 )
 
 
@@ -96,6 +98,26 @@ class LiveServerCase(unittest.TestCase):
 
 
 class RemoteTurnTests(LiveServerCase):
+    def test_remote_speak_reuses_existing_authenticated_server_tts(self):
+        text = 'Nächste Straßenbahn vier, ab DJK-Sportzentrum 15 Uhr 19.'
+        uplink = RemoteSpeakUplink(self.config(), text, voice='natural')
+        job = RemoteTurnJob(uplink, self.client_dir, idle_timeout=60)
+        self.assertTrue(job.done.wait(10))
+        self.assertIsNone(job.error)
+        self.assertIsNone(job.transcript)  # No remote STT, LLM, speaker or personal status
+        self.assertEqual(self.pipeline.accepted, 0)
+        self.assertEqual(self.pipeline.voice, 'natural')
+        self.assertEqual(self.pipeline.render_voice, 'natural')
+        with wave.open(str(job.result['audio']), 'rb') as wav:
+            self.assertGreater(wav.getnframes(), 0)
+        self.assertEqual(job.result['host'], self.url.split('//')[1])
+
+    def test_remote_speak_refuses_unbounded_or_empty_text(self):
+        with self.assertRaises(ValueError):
+            RemoteSpeakUplink(self.config(), ' ')
+        with self.assertRaises(ValueError):
+            RemoteSpeakUplink(self.config(), 'x' * 1201)
+
     def test_streamed_turn_returns_playable_audio_and_progress(self):
         job = self.turn()
         self.assertIsNone(job.error)
@@ -185,11 +207,11 @@ class RemoteTurnTests(LiveServerCase):
         self.assertEqual(job.error_code, 'no_speech')
         self.assertFalse(job.fallback_allowed)
 
-    def test_upload_limits_still_fall_back_locally(self):
+    def test_short_upload_is_final_but_oversized_audio_still_falls_back(self):
         for code in ('too_short', 'too_large'):
             job = RemoteTurnJob.__new__(RemoteTurnJob)
             job.error, job.error_code = 'limit', code
-            self.assertTrue(job.fallback_allowed)
+            self.assertEqual(job.fallback_allowed, code == 'too_large')
 
     def test_stalled_connect_is_cancelled_on_timeout(self):
         release = threading.Event()
@@ -264,6 +286,24 @@ class RemoteTurnTests(LiveServerCase):
         self.assertEqual(job.error_code, 'unauthorized')
         self.assertTrue(job.fallback_allowed)
 
+    def test_cancel_during_readline_ends_quietly(self):
+        # http.client raises AttributeError when cancel() closed the response
+        # under a running readline() (pi-ptt journal 10.10. 19:20 and 20:19).
+        uplink = Mock()
+        uplink.config.response_timeout = 5
+        job = RemoteTurnJob.__new__(RemoteTurnJob)
+
+        def responses():
+            job.cancelled = True
+            raise AttributeError("'NoneType' object has no attribute 'peek'")
+            yield
+
+        uplink.responses = responses
+        RemoteTurnJob.__init__(job, uplink, self.client_dir)
+        self.assertTrue(job.done.wait(5))
+        self.assertIsNone(job.result)
+        uplink.close.assert_called()
+
     def test_cancel_during_upload_stops_cleanly(self):
         uplink = RemoteTurnUplink(self.config())
         uplink.accept_pcm(b'\0' * 3200)
@@ -311,8 +351,10 @@ class RecorderUplinkTests(unittest.TestCase):
                 uplink_factory = None if uplink is None else (lambda: uplink)
                 recorder = Recorder(tmp, 'dev', 1, live_vosk_factory=factory,
                                     uplink_factory=uplink_factory)
-                with patch('ptt.subprocess.Popen'), patch.object(Recorder, '_pump_live_audio'):
+                with patch('ptt.subprocess.Popen') as popen:
+                    popen.return_value.stdout.read.side_effect = [b'a' * 3200, b'b' * 3200, b'']
                     recorder.start()
+                    recorder._pump_thread.join(1)
                 self.assertEqual(factory.call_count, expected_calls)
 
 
@@ -575,7 +617,7 @@ class LocalIntentTests(RemoteControllerTests):
             self.finish(job)
         worker.assert_not_called()  # no LLM job
         spoken = self.speech.start.call_args.args[0]
-        self.assertTrue(spoken.startswith('Zeitindex:'))
+        self.assertRegex(spoken, r'^(Zeitindex:|Es ist) \d+ Uhr')
         response = next(e for e in self.events() if e['event'] == 'llm_response')
         self.assertEqual(response['model'], 'local/intent')
 
@@ -603,12 +645,22 @@ class LocalIntentTests(RemoteControllerTests):
 
         config = load_remote_config({'ASSISTANT_BASE_URL': 'http://h:1', 'ASSISTANT_TOKEN': 'x' * 40})
         uplink = RemoteTurnUplink(config, connect=lambda u, _t: Recording(u),
-                                  status={'battery_pct': 83}, agenda='W10=')
+                                  status={'battery_pct': 83}, agenda='W10=', agenda_tomorrow='W10=')
         uplink.cancel()
         uplink.thread.join(5)
         uplink._request('http://h:1')
         self.assertEqual(json.loads(sent['X-Servitor-Status']), {'battery_pct': 83})
         self.assertEqual(sent['X-Servitor-Agenda'], 'W10=')   # Pi's appointments go along
+        self.assertEqual(sent['X-Servitor-Agenda-Tomorrow'], 'W10=')
+
+        # A long snapshot is trimmed to what the server accepts, routing kept.
+        uplink.status = dict(devctl='on', trip='on', memory='on',
+                             log_last={f'code{i}': 1760446400.123456 for i in range(60)})
+        uplink._request('http://h:1')
+        self.assertLessEqual(len(sent['X-Servitor-Status']), protocol.STATUS_HEADER_MAX)
+        self.assertEqual({k: v for k, v in json.loads(sent['X-Servitor-Status']).items()
+                          if k in ('devctl', 'trip', 'memory')},
+                         dict(devctl='on', trip='on', memory='on'))
 
 
 if __name__ == '__main__':

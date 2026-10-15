@@ -19,27 +19,45 @@ import agenda as agenda_feed
 import alarm_audio
 import audio_output
 import bluetooth
+import battery_standby
+import cpu_modes
+import cpu_state
 import boardled
 import cue as cue_sound
 import device_control
+import energy
+import pisugar_client
+import pisugar_button
 import enroll
+import journeys as journey_feed
 import people
 import logwatch
 import maintenance
 import memory as memory_core
+import story as stories
 import sysmon
-from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, WAKE_PHRASES, AlarmMonitor,
+import variants
+import voice_enroll
+import voice_profile
+from alarms import (ALARMS, SHUTDOWN_FAILED, SHUTDOWN_NOW, AlarmMonitor, wake_phrase,
                     shutdown_text,
                     memory_phrase)
 from endpoint import Endpointer
 from netprobe import InternetProbe, network_up
 import weather
 import wlan as wlan_radio
-from menu import GROUPS as MENU_GROUPS, ITEMS as MENU_ITEMS, Menu
-from remote_turn import RemoteCapableSpeech, RemoteTurnJob, RemoteTurnUplink, load_remote_config
-from protocol import ClientSession
+import network_control
+import network_info
+import hotspot_control
+import hotspot_config as ap_config
+from menu import GROUPS as MENU_GROUPS, PAGES as MENU_PAGES, Menu
+from remote_turn import (RemoteCapableSpeech, RemoteSpeakUplink, RemoteStoryUplink,
+                         RemoteTurnJob, RemoteTurnUplink, load_remote_config, story_timeout)
+from protocol import ClientSession, MIN_TURN_SECONDS
 import datetime
 import intents
+import nightwatch
+import nightwatch_client
 from power import Battery, throttled_flags
 from ptt_config import LLM_MODES, ConfigError, PttConfig
 from system_status import collect_snapshot, phrase_style, status_text
@@ -56,7 +74,7 @@ from voice_controls import ResidentSpeechOutput, SpeechOutput, TranscriptionJob,
 DISPLAY_EVENTS = {
     'stt_loading', 'stt_ready', 'stt_live_error', 'stt_error',
     'tts_loading', 'tts_ready', 'tts_error',
-    'waiting_for_release', 'recording', 'capture_ready', 'processing',
+    'waiting_for_release', 'recording', 'capture_ready', 'capture_discarded', 'processing',
     'transcript', 'transcript_discarded', 'cancelled', 'busy',
     'llm_start', 'llm_response', 'llm_discarded', 'llm_error',
     'status', 'speech_started', 'speech_finished', 'speech_error',
@@ -64,6 +82,39 @@ DISPLAY_EVENTS = {
 }
 DISPLAY_ERROR_EVENTS = {'stt_error', 'llm_error', 'tts_error', 'speech_error'}
 DISPLAY_ERROR_HOLD_SECONDS = 3.0
+# Resident Piper plus wake-word recognition must not exhaust Pi Zero 2 W RAM.
+JOURNEY_LOCAL_MIN_AVAILABLE_KIB = 140 * 1024
+JOURNEY_LOCAL_MAX_CHARS = 170
+
+
+def _available_memory_kib():
+    """MemAvailable from the kernel, not inaccurate RSS sums or free alone."""
+    try:
+        with open('/proc/meminfo', encoding='ascii') as source:
+            for line in source:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _short_journey_fallback(text, max_chars=JOURNEY_LOCAL_MAX_CHARS):
+    """Never send an unbounded, server-failed response through resident Piper."""
+    text = ' '.join(text.split())
+    if len(text) <= max_chars:
+        return text
+    parts = text.split('. ')
+    chosen = []
+    for part in parts:
+        sentence = part.rstrip('.')
+        candidate = '. '.join(chosen + [sentence]) + '.'
+        if len(candidate) > max_chars:
+            break
+        chosen.append(sentence)
+    return ('. '.join(chosen) + '.') if chosen else (
+        text[:max_chars - 1].rsplit(' ', 1)[0].rstrip(' ,.;:') + '.')
+
 _display_last_error_at = None
 
 
@@ -120,7 +171,7 @@ DISPLAY_STATUS_VALUES = {
     'last_route': {'server', 'pi'},
     'last_llm': {'openrouter', 'offline', 'intent'},
     'volume_limit': {'min', 'max'},
-    'menu_page': {'list', 'info'},
+    'menu_page': {'list', *MENU_PAGES.values()},
     'opt_server': {'on', 'off', 'none'},
     'opt_led': {'on', 'off'},
     'screen': {'on', 'off'},
@@ -129,7 +180,10 @@ DISPLAY_STATUS_VALUES = {
     'opt_bt': {'on', 'off', 'none'},
     'menu_group': {'top', *MENU_GROUPS},
     'maint': {'on', 'off'},
-    'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth'},
+    'enroll': {'intro', 'wake', 'ask', 'process', 'done', 'auth', 'voice', 'baseline',
+               'confirm', 'check'},
+    'enroll_cond': {'near', 'far', 'quiet'},
+    'enroll_check': {'on', 'off'},
     'people': {'on', 'off'},
     'people_rev': set(range(10000)),
     'enroll_rec': {'on', 'off'},
@@ -149,6 +203,8 @@ DISPLAY_STATUS_VALUES = {
     'mood': set(EMOTIONS),
     'opt_wlan': {'on', 'off'},
     'opt_alarms': {'on', 'off'},
+    'opt_power_notices': {'on', 'off'},
+    'opt_cpu': set(cpu_modes.MODES),
     'opt_llm': set(LLM_MODES),
     'alarm': set(ALARMS),
     'wake_word': set(WAKE_LABELS.values()),
@@ -163,6 +219,7 @@ LED_LOCAL = (255, 120, 0)        # processing on the Pi (display: LOKAL, amber)
 LED_SPEAKING = (255, 100, 0)
 LED_MENU = (150, 0, 255)
 LED_PULSE_SECONDS = 0.6          # bright/dim half period while processing
+STANDBY_LOOP_SECONDS = 0.2   # main loop period in manual (PiSugar) standby
 SHIM_RETRY_SECONDS = 2.0        # reconnect the Button SHIM after an I2C error ...
 SHIM_RETRY_MAX_SECONDS = 60.0   # ... backing off to this while it keeps failing
 WLAN_GRACE_SECONDS = 60.0       # no link alarms while WLAN reconnects
@@ -188,6 +245,9 @@ def llm_kind(model):
     if model == 'local/intent':
         return 'intent'
     return 'offline' if model.startswith('local/') else 'openrouter'
+
+
+BEEP_SETTLE = 0.3   # start value (concept stimm-einlernen, section 3); longer with echo
 
 
 class EnrollIO:
@@ -237,7 +297,10 @@ class EnrollIO:
         self._play(path)
 
     def beep(self):
+        """The beep, then BEEP_SETTLE of silence: the recording starts only
+        once the beep has died away (no beep or echo in the clip)."""
         self._play(self.beep_path, 5)
+        time.sleep(BEEP_SETTLE)
 
     def record(self, path, seconds, attempts=6):
         """Record; while the capture device is still busy (e.g. the wake-word
@@ -270,11 +333,41 @@ class EnrollIO:
     def voiceprint(self, pcm):
         return enroll.voiceprint(pcm)
 
-    def publish(self, stage=None, step=None, total=None, rec=None):
-        publish_display_status(enroll=stage, enroll_step=step if stage else None,
-                               enroll_total=total if stage else None,
-                               enroll_rec=(('on' if rec else 'off') if rec is not None else None)
-                               if stage else None)
+    def clip(self, pcm):
+        return enroll.clip(pcm)
+
+    _UNSET = object()
+
+    def publish(self, stage=_UNSET, step=_UNSET, total=_UNSET, rec=_UNSET, condition=_UNSET,
+                text=_UNSET, checking=_UNSET):
+        """Display state of a session; fields left out keep their value, the
+        sentence to read goes to a separate RAM file (display-enroll.json)."""
+        unset = EnrollIO._UNSET
+        if stage is None:
+            fields = dict(enroll=None, enroll_step=None, enroll_total=None, enroll_rec=None,
+                          enroll_cond=None, enroll_check=None)
+            text = ''
+        else:
+            fields = {}
+            if stage is not unset:
+                fields['enroll'] = stage
+            if step is not unset:
+                fields['enroll_step'] = step
+            if total is not unset:
+                fields['enroll_total'] = total
+            if rec is not unset:
+                fields['enroll_rec'] = None if rec is None else ('on' if rec else 'off')
+            if condition is not unset:
+                fields['enroll_cond'] = condition
+            if checking is not unset:
+                fields['enroll_check'] = 'on' if checking else None
+        if text is not unset:
+            path = self.runtime / 'display-enroll.json'
+            try:
+                people.write_view(path, dict(text=str(text or '')[:200]))
+            except OSError:
+                pass
+        publish_display_status(**fields)
 
 
 def publish_display_status(**fields):
@@ -322,7 +415,7 @@ def publish_display_status(**fields):
             pass
 
 
-def event(name, **fields):
+def event(name, /, **fields):
     print(json.dumps(dict(version=1, event=name, **fields)), flush=True)
     publish_display_event(name)
 
@@ -405,11 +498,13 @@ class Recorder:
         self._capture_rate = 48000
         self._capture_channels = 2
         self._live_recognizer = None
+        self._discard_capture = False
         self._endpoint = None  # set for wake-word recordings without a button
         self.endpoint_result = None
 
-    def _pump_live_audio(self, proc, recognizer, uplink=None):
+    def _pump_live_audio(self, proc, recognizer, uplink=None, factory=None):
         recognizer_ok = recognizer is not None
+        buffered = bytearray()
         try:
             with self.raw.open('wb') as sink:
                 while True:
@@ -421,6 +516,22 @@ class Recorder:
                         self.endpoint_result = self._endpoint.feed(chunk)
                     if uplink is not None:
                         uplink.accept_pcm(chunk)
+                    if factory is not None and not self._discard_capture:
+                        buffered.extend(chunk)
+                        if len(buffered) < int(16000 * 2 * MIN_TURN_SECONDS):
+                            continue
+                        try:
+                            recognizer = self._live_recognizer = factory()
+                            recognizer_ok = True
+                            if self._discard_capture:
+                                if hasattr(recognizer, 'cancel'):
+                                    recognizer.cancel()
+                                recognizer_ok = False
+                        except (OSError, TranscriptionError) as exc:
+                            self._live_error = str(exc)
+                        factory = None
+                        chunk = bytes(buffered)
+                        buffered.clear()
                     if recognizer_ok:
                         try:
                             recognizer.accept_pcm(chunk)
@@ -457,6 +568,7 @@ class Recorder:
         self.partial.unlink(missing_ok=True)
         self._live_result = None
         self._live_error = None
+        self._discard_capture = False
         self._pump_thread = None
         self.drop_uplink()
         self._endpoint = Endpointer() if auto_stop else None
@@ -473,13 +585,10 @@ class Recorder:
         # The server recognizes the stream; shadowing it with local Vosk costs
         # the Pi CPU, swap and ~1 s finalize. The fallback transcribes the WAV.
         recognizer = None
-        if self.live_vosk_factory is not None and uplink is None:
-            try:
-                recognizer = self.live_vosk_factory()
-            except (OSError, TranscriptionError) as exc:
-                self._live_error = str(exc)
-
-        if recognizer is not None or uplink is not None or auto_stop:
+        factory = self.live_vosk_factory if uplink is None else None
+        # Start capturing immediately, but load Vosk only after enough audio
+        # exists to form a turn. The initial PCM is retained and fed in full.
+        if factory is not None or uplink is not None or auto_stop:
             self._live_recognizer = recognizer
             self._capture_rate = 16000
             self._capture_channels = 1
@@ -490,15 +599,15 @@ class Recorder:
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
             self._pump_thread = threading.Thread(
                 target=self._pump_live_audio,
-                args=(self.process, recognizer, uplink),
-                name='vosk-live' if recognizer is not None else 'capture-pump',
+                args=(self.process, recognizer, uplink, factory),
+                name='vosk-live' if factory is not None else 'capture-pump',
                 daemon=True,
             )
             self._pump_thread.start()
             fields = dict(remote=True) if uplink is not None else {}
             if auto_stop:
                 fields['trigger'] = 'wake'
-            stt = 'vosk-live' if recognizer is not None else 'remote' if uplink is not None else 'file'
+            stt = 'vosk-live' if factory is not None else 'remote' if uplink is not None else 'file'
             event('recording', stt=stt, sample_rate=16000, channels=1, **fields)
             return
 
@@ -515,6 +624,7 @@ class Recorder:
         proc, self.process = self.process, None
         if proc is None:
             return None
+        self._discard_capture = not publish
         try:
             interrupted = proc.poll() is None
             if interrupted:
@@ -545,9 +655,13 @@ class Recorder:
             rate = self._capture_rate
             channels = self._capture_channels
             frame_bytes = channels * 2
-            min_frames = rate // 10
+            min_frames = int(rate * MIN_TURN_SECONDS)
             max_frames = (math.ceil(self.limit) + 1) * rate
             size = self.raw.stat().st_size
+            if 0 < size < min_frames * frame_bytes and not size % frame_bytes:
+                self.drop_uplink()
+                event('capture_discarded', reason='too_short')
+                return None
             if (
                 size % frame_bytes
                 or not min_frames * frame_bytes <= size <= max_frames * frame_bytes
@@ -663,15 +777,26 @@ class VoiceController:
         self.mood_shown = None
         self._apply_voice_effect()
         self.battery = None      # power.Battery reading, refreshed by main()
+        self.pisugar_poller = None  # vendor telemetry only if socket explicitly enabled
         self.throttled = None
         self.remote_failed = False
         self.server_probe = None  # netprobe.ServerProbe when a server is configured
         self.alarms = AlarmMonitor()
         self.alarms_enabled = self.config.alarms
+        # Routine mains/battery change chatter is opt-in. Critical warnings
+        # and the existing shutdown policy never depend on this preference.
+        self.power_notices = saved.get('power_notices') == 'on'
         self.alarm_queue = []    # sentences waiting until the unit is idle
         self.wlan_on = True
         self.link_grace_until = 0.0  # link alarms wait while WLAN reconnects
         self.power = 'awake'
+        self.manual_standby = False  # PiSugar function-button latch, not Linux poweroff
+        configured_mode = saved.get('cpu_mode')
+        self.cpu_mode = (configured_mode if configured_mode in cpu_modes.MODES
+                         else 'balanced')
+        self.cpu_mode_explicit = configured_mode in cpu_modes.MODES
+        self.cpu_mode_busy = False
+        self.cpu_mode_result = None     # (mode, ok, message, announce) from the worker
         self.last_activity = time.monotonic()
         self.rest_after = self.config.rest_seconds
         self.sleep_after = self.config.sleep_seconds
@@ -684,7 +809,16 @@ class VoiceController:
         self.weather_hide_at = None        # ... until then (after the answer was said)
         self.turn_weather_day = None       # server asked to show it with its answer
         self.agenda = agenda_feed.Agenda()  # CALDAV_*; refreshed by a thread (main)
+        # Trams/trains with optional reminder and calendar entry (journeys.py);
+        # None when TRANSIT_ENABLED=off. One controller for both speech paths.
+        self.journeys = journey_feed.Journeys.from_env(self.agenda, log=event)
+        self.turn_trip = None              # journey proposal taken by the current turn
+        self.journey_step = None           # journeys.Step of a running background job
+        self.journey_speak_config = None   # remote /v1/speak, assigned by main()
+        self.journey_speech_text = None    # answer pending remote audio synthesis
         self.memory = memory_core.MemoryCore()
+        self.nightstore = nightwatch.Store(self.memory)
+        self.nightwatch = None
         self.memory_present = self.memory.present()
         try:  # restart: neutral, with a faint echo of the newest remembered turns
             data = self.memory.load() if self.memory_present else None
@@ -692,17 +826,27 @@ class VoiceController:
         except (OSError, ValueError, AttributeError):
             pass
         self.turn_transcript = None
+        self.turn_guest = False            # voice not recognized as an enrolled person
+        # A running long story (story.StoryRun, RAM only) and, with a server,
+        # how to ask it for the next section (set by main()).
+        self.story = None
+        self.story_uplink_factory = None
         self.network_watch = self.update_watch = None  # sysmon watches, started by main()
         self.logwatch = None  # logwatch.LogWatch (self-test), started by main()
         self.maint = maintenance.Mode()
         self.enroll = None                 # running enroll.Session or people.Flow
         self.people = people.Browser()
+        self.trust = memory_core.Trust()   # operator status between sure identifications
         self.board_leds = boardled.BoardLeds()
         self.bt = None                     # bluetooth.Bluetooth, started by main()
         self.bt_wanted = True              # reconnect the paired speaker automatically
         self.bt_busy = False               # scan/pair running in a thread
         self.bt_notes = []                 # sentences from the Bluetooth thread
+        self.wifi = network_control.Wifi()
+        self.wifi_busy = False
+        self.wifi_notes = []               # sentences from the NetworkManager worker
         self.picker = None                 # dict(title, items=[(mac, name)], index, action)
+        self.hotspot_next_check = 0.0     # private file liveness, once per second
         self.people_rev = 0
         self.enroll_after_speech = None    # 'enroll'/'refine': start once the reply is spoken
         # Spoken device commands (device_control): a reboot/shutdown waiting for
@@ -761,6 +905,15 @@ class VoiceController:
             return {}
         emotion, level = self.mood.current(time.time())
         return dict(mood=emotion, mood_level=round(level * 100))
+
+    def memory_context(self):
+        """Memory copy for the server, with the person the Pi still vouches
+        for (memory.Trust); None without the stick."""
+        context = self.memory.context()
+        trusted = self.trust.current()
+        if context is not None and trusted and context.get('voiceprints'):
+            context = dict(context, trusted=trusted)
+        return context
 
     def turn_snapshot(self, text=None):
         """Status for one LLM turn: the snapshot plus whether Proximus may refuse."""
@@ -827,7 +980,10 @@ class VoiceController:
             event('device', op=self.device_after_speech, result='cancelled')
             self.device_after_speech = None
         self.device_pending = None
+        if self.journeys is not None:
+            self.journeys.cancel()
         self.listen_after_greeting = False
+        self._drop_story('button')
         self.speech.stop()
         self.speech_started_at = None
         self.recorder.finish('cancel', publish=False)
@@ -843,6 +999,9 @@ class VoiceController:
     def stop_by_voice(self):
         """"Stop", "Sei still", "Klappe halten" ...: no answer, drop announcements
         that were waiting, back to idle (the wake word listens again)."""
+        self._drop_story('voice')
+        if self.journeys is not None:
+            self.journeys.cancel()
         self.speech.stop()
         self.speech_started_at = None
         self.alarm_queue = []
@@ -867,11 +1026,18 @@ class VoiceController:
         # This turn may answer a pending reboot/shutdown question; either way
         # the question is used up (anything else drops it).
         self.turn_device_pending = self._device_take_pending()
+        # Same for an open journey proposal: only this turn may answer it.
+        if (self.journeys is not None and self.journeys.proposal is not None
+                and self.journeys.proposal.get('expires') is None):
+            # A new PTT interrupts the announcement: it must not confirm it.
+            self.journeys.cancel()
+        self.turn_trip = self.journeys.take() if self.journeys is not None else None
         self.turn_weather_day = None
         if self.cue is not None and self.cue.play():
             event('cue')
         self.turn_released_at = time.monotonic()
         self.turn_llm = None
+        self.turn_guest = False
         if uplink is not None:
             if uplink.error is None:
                 self.remote_capture = capture
@@ -922,6 +1088,8 @@ class VoiceController:
                                opt_emotions='on' if self.mood.enabled else 'off',
                                opt_wlan='on' if self.wlan_on else 'off',
                                opt_alarms='on' if self.alarms_enabled else 'off',
+                               opt_power_notices='on' if self.power_notices else 'off',
+                               opt_cpu=self.cpu_mode,
                                opt_llm=self.llm_mode,
                                opt_led='on' if self.led_enabled else 'off',
                                opt_cue='none' if self.cue is None else
@@ -932,7 +1100,7 @@ class VoiceController:
 
     def _menu_confirm(self, now):
         item = self.menu.confirm(now)
-        if item in ('enroll', 'refine'):
+        if item in ('enroll', 'refine', 'facts', 'wake_rec'):
             self._publish_menu()
             self._start_enroll(item)
             return
@@ -944,8 +1112,41 @@ class VoiceController:
             self._bluetooth_item(item)
             self._publish_menu()
             return
+        if item == 'net_info':
+            self._network_info_item()
+            self._publish_menu()
+            return
+        if item in ('wifi_scan', 'wifi_saved'):
+            self._wifi_item(item)
+            self._publish_menu()
+            return
+        if item in ('wifi_hotspot_start', 'wifi_hotspot_show',
+                    'wifi_hotspot_rotate', 'wifi_hotspot_stop',
+                    'wifi_hotspot_clients'):
+            self._wifi_hotspot_item(item)
+            self._publish_menu()
+            return
         if item == 'maintenance':
             self._maintenance_op('enter', speak=True)
+            return
+        if item == 'energy_status':
+            self._publish_menu()      # the display shows the energy page
+            return
+        if item == 'energy_config':
+            vendor = (self.pisugar_poller.snapshot()
+                      if self.pisugar_poller is not None else {})
+            self._say(energy.config(dict(self.status_snapshot(), **vendor), self.style))
+            self._publish_menu()
+            return
+        if item == 'cpu_mode':
+            modes = cpu_modes.MODES
+            next_mode = modes[(modes.index(self.cpu_mode) + 1) % len(modes)]
+            self._set_cpu_mode(next_mode)
+            self._publish_menu()
+            return
+        if item == 'energy_shutdown':
+            self._say(self._device_command('shutdown'))  # existing 20 s confirmation / E
+            self._publish_menu()
             return
         if item == 'server' and self.remote:
             self.remote_enabled = not self.remote_enabled
@@ -980,6 +1181,8 @@ class VoiceController:
             event('menu', item='llm', value=self.llm_mode)
         elif item == 'wlan':
             self.set_wlan(not self.wlan_on)
+        elif item == 'power_notices':
+            self._set_power_notices(not self.power_notices)
         elif item == 'alarms':
             self.alarms_enabled = not self.alarms_enabled
             if not self.alarms_enabled:
@@ -1022,6 +1225,13 @@ class VoiceController:
                                     memory='on' if self.memory_present else 'off',
                                     maintenance='on' if self.maint.active else 'off',
                                     devctl='on', pending=self._device_pending_now(),
+                                    power_notices='on' if self.power_notices else 'off',
+                                    cpu_mode=self.cpu_mode, cpu=self._cpu_profile(),
+                                    **(self.pisugar_poller.snapshot()
+                                       if self.pisugar_poller is not None else {}),
+                                    story='on',
+                                    **(self.journeys.snapshot()
+                                       if self.journeys is not None else {}),
                                     **self._mood_fields(),
                                     **(self.logwatch.snapshot_fields()
                                        if self.logwatch is not None else {})))
@@ -1045,10 +1255,13 @@ class VoiceController:
         texts = self.alarms.update(snapshot, now,
                                    network=network if links else None,
                                    server=self.server_state() if links else 'off',
-                                   lore=self.style, internet=internet)
+                                   lore=self.style, internet=internet,
+                                   power_source_announcements=self.power_notices)
         texts += self._check_memory()
         notes, self.bt_notes = self.bt_notes, []
         texts += notes
+        wifi_notes, self.wifi_notes = self.wifi_notes, []
+        texts += wifi_notes
         maintenance_texts = self._check_maintenance()  # spoken even with alarms muted
         if self.power != 'sleep':  # maintenance can wait until someone is around
             # Wall clock: the last announcement survives service restarts.
@@ -1137,10 +1350,72 @@ class VoiceController:
             return None
         return self._device_command(op)
 
+    def _set_cpu_mode(self, mode, announce=True):
+        """Set the governor in a worker (systemctl must never block I2C or GPIO
+        polling); tick() takes the result on the main thread. ``announce``:
+        say so when it fails (not for the silent restore at start-up)."""
+        if mode not in cpu_modes.MODES or self.cpu_mode_busy or self.manual_standby:
+            event('cpu_mode', result='rejected', mode=mode)
+            return False
+        self.cpu_mode_busy = True
+
+        def worker():
+            try:
+                success, message = cpu_modes.set_mode(mode), None
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                success, message = False, str(exc)
+            self.cpu_mode_result = (mode, success, message, announce)
+
+        threading.Thread(target=worker, name='cpu-mode', daemon=True).start()
+        return True
+
+    def _take_cpu_mode_result(self):
+        """The worker's outcome, applied on the main thread."""
+        result, self.cpu_mode_result = self.cpu_mode_result, None
+        if result is None:
+            return
+        mode, success, message, announce = result
+        self.cpu_mode_busy = False
+        if success:
+            self.cpu_mode = mode
+            self.cpu_mode_explicit = True
+            self.settings.save(cpu_mode=mode)
+            event('cpu_mode', result='set', mode=mode)
+            self._publish_menu()
+            return
+        event('cpu_mode', result='failed', mode=mode,
+              **({'message': message} if message else {}))
+        if announce:
+            self.alarm_queue.append(device_control.failed_text(self.style))
+
+    def _cpu_profile(self):
+        """CPU profile really in effect (sysfs only, no subprocess), or None."""
+        try:
+            return cpu_state.classify(cpu_state.read(stock=cpu_state.board_stock_khz(),
+                                                     throttled=self.throttled,
+                                                     measure=False))['profile']
+        except Exception:  # noqa: BLE001 - status must never fail on it
+            return None
+
+    def _set_power_notices(self, enabled):
+        self.power_notices = bool(enabled)
+        self.settings.save(power_notices='on' if enabled else 'off')
+        event('energy', preference='power_notices', value='on' if enabled else 'off')
+        self._publish_menu()
+
     def _device_command(self, op):
         """A recognized command: ask (reboot/shutdown) or switch WLAN now."""
         wlan = 'on' if self.wlan_on else 'off'
-        text = device_control.reply(op, wlan, self.style)
+        text = device_control.reply(op, wlan, self.style, self.cpu_mode)
+        if op in ('cpu_eco', 'cpu_balanced', 'cpu_power'):
+            if op == f'cpu_{self.cpu_mode}':
+                return text                     # "bereits im …": nothing to switch
+            if not self._set_cpu_mode(op.removeprefix('cpu_')):
+                return device_control.failed_text(self.style)
+            return text
+        if op in ('power_notices_on', 'power_notices_off'):
+            self._set_power_notices(op == 'power_notices_on')
+            return text
         if op in device_control.CONFIRM_OPS:
             self.device_pending = op
             self.device_pending_until = time.monotonic() + device_control.CONFIRM_SECONDS
@@ -1186,6 +1461,10 @@ class VoiceController:
         self.turn_device_pending = None
         if op == 'sleep':
             self._device_arm(op)            # after the server's reply
+        elif op in ('cpu_eco', 'cpu_balanced', 'cpu_power'):
+            self._set_cpu_mode(op.removeprefix('cpu_'))
+        elif op in ('power_notices_on', 'power_notices_off'):
+            self._set_power_notices(op == 'power_notices_on')
         elif op in device_control.CONFIRM_OPS:
             if not (op == 'reboot' and self.maint.active):
                 self.device_pending = op
@@ -1324,7 +1603,7 @@ class VoiceController:
 
         def watch():
             while True:
-                if not self.bt_busy:
+                if not self.bt_busy and not self.manual_standby:
                     self._bt_refresh()
                 time.sleep(interval)
         threading.Thread(target=watch, name='bluetooth', daemon=True).start()
@@ -1402,21 +1681,314 @@ class VoiceController:
             self.picker = dict(title='ENTFERNEN', items=paired, index=0, action='forget')
             self._publish_picker()
 
+    def _wifi_hotspot_item(self, item):
+        """The Access Point sub-menu: local controls, no credentials in logs."""
+        if item == 'wifi_hotspot_clients':
+            self.picker = dict(title='AP CLIENTS', action='wifi_clients',
+                               items=[('empty', 'Suche ...')], index=0)
+            self.hotspot_next_check = 0
+            self._check_hotspot_picker(time.monotonic())
+            self._publish_picker()
+            return
+        if self.wifi_busy:
+            self.wifi_notes.append(network_control.BUSY)
+            return
+        showing = item != 'wifi_hotspot_stop'
+        starts = item in ('wifi_hotspot_start', 'wifi_hotspot_rotate')
+        rotates = item == 'wifi_hotspot_rotate'
+        if starts and not self.wlan_on and not hotspot_control.is_active():
+            self.wifi_notes.append(network_control.RADIO_OFF)
+            return
+
+        picker = None
+        if showing:
+            picker = dict(title='ACCESS POINT', action='wifi_setup',
+                          items=[('loading', 'Bitte warten')], index=0)
+        self.picker = picker
+        self._publish_picker()
+
+        def work():
+            if item == 'wifi_hotspot_stop':
+                stopped = hotspot_control.control('stop')
+                if not stopped or hotspot_control.is_active():
+                    event('wifi', result='setup_stop_failed')
+                    self.wifi_notes.append('Access Point konnte nicht beendet werden.')
+                else:
+                    event('wifi', result='setup_stopped')
+                    self.wifi_notes.append('Access Point beendet.')
+                return
+
+            was_active = hotspot_control.is_active()
+            if rotates and was_active and not hotspot_control.control('stop'):
+                event('wifi', result='setup_rotate_failed')
+                self.wifi_notes.append('Passwort konnte nicht erneuert werden.')
+                if self.picker is picker:
+                    picker['items'] = [('error', 'Passwort nicht erneuert')]
+                    self._publish_picker()
+                return
+
+            # Showing credentials never starts a stopped hotspot; starting and
+            # rotating may start only the approved systemd unit via Polkit.
+            if item == 'wifi_hotspot_show' and not was_active:
+                if self.picker is picker:
+                    picker['title'] = 'ACCESS POINT AUS'
+                    picker['items'] = [('off', 'Erst AP starten')]
+                    self._publish_picker()
+                return
+            if starts and (rotates or not was_active) and not hotspot_control.control('start'):
+                event('wifi', result='setup_failed')
+                if self.picker is picker:
+                    picker['title'] = 'HOTSPOT FEHLER'
+                    picker['items'] = [('error', 'AP-Start fehlgeschlagen')]
+                    self._publish_picker()
+                return
+
+            info = None
+            # Starting the service is asynchronous. Poll its private info file;
+            # don't expose old data if the service has stopped.
+            for _ in range(100):
+                if self.picker is not picker:
+                    return
+                if hotspot_control.is_active():
+                    info = hotspot_control.read_info()
+                    if info:
+                        break
+                time.sleep(.2)
+            if self.picker is not picker:
+                return
+            if info:
+                picker['title'] = 'HOTSPOT BEREIT'
+                picker['items'] = [
+                    ('ssid', 'SSID: ' + info['ssid']),
+                    ('pw', 'Code: ' + info['password']),
+                    ('url', 'Web: ' + ap_config.ADDRESS)]
+                picker['index'] = 1
+                picker['page'] = 'wifi_qr'
+                picker['ssid'] = info['ssid']
+                picker['password'] = info['password']
+                picker['expires_at'] = info['expires_at']
+                event('wifi', result='setup_ready', existing=was_active, rotated=rotates)
+            else:
+                picker['title'] = 'HOTSPOT FEHLER'
+                picker['items'] = [('error', 'Keine Zugangsdaten')]
+                picker['index'] = 0
+                event('wifi', result='setup_unavailable')
+            # Secret only in the owner-readable display-people.json file.
+            self._publish_picker()
+
+        self._wifi_job(work)
+
+    def _wifi_job(self, work):
+        """Keep nmcli/DBus and radio scans out of the 10-ms button loop."""
+        if self.wifi_busy:
+            return False
+        self.wifi_busy = True
+
+        def run():
+            try:
+                work()
+            except (network_control.WifiError, OSError, ValueError) as exc:
+                event('wifi', result='error', reason=str(exc))
+                self.wifi_notes.append(network_control.FAILED)
+            finally:
+                self.wifi_busy = False
+
+        threading.Thread(target=run, name='wifi-job', daemon=True).start()
+        return True
+
+    def _network_info_item(self):
+        """Open local on-demand network diagnostics; no active scan or polling."""
+        picker = dict(title='NETZWERKINFO', action='network_info',
+                      items=[('loading', 'Lade Netzwerkdaten...')], index=0)
+        self.picker = picker
+        self._publish_picker()
+        self._network_info_refresh(picker)
+
+    def _network_info_refresh(self, picker):
+        """E refreshes in the NM worker, leaving GPIO/PTT responsive."""
+        if self.wifi_busy:
+            picker['items'] = [('busy', 'Netzwerk belegt – E: neu')]
+            picker['index'] = 0
+            self._publish_picker()
+            return
+        picker['items'] = [('loading', 'Lade Netzwerkdaten...')]
+        picker['index'] = 0
+        self._publish_picker()
+
+        def work():
+            labels = network_info.rows(self.wifi)
+            if self.picker is not picker:
+                return
+            picker['items'] = [(str(n), label) for n, label in enumerate(labels)]
+            picker['index'] = 0
+            self._publish_picker()
+        self._wifi_job(work)
+
+    def _wifi_item(self, item):
+        if not self.wifi.available():
+            self.wifi_notes.append(network_control.UNAVAILABLE)
+            return
+        if self.wifi_busy:
+            self.wifi_notes.append(network_control.BUSY)
+            return
+        if not self.wlan_on:
+            self.wifi_notes.append(network_control.RADIO_OFF)
+            return
+        picker = dict(title='WLAN SUCHEN' if item == 'wifi_scan' else 'WLAN GESPEICHERT',
+                      action='wifi_pick', items=[], index=0, profiles={})
+        self.picker = picker
+        self._publish_picker()
+
+        def work():
+            # wlan0 is in AP mode while the setup hotspot runs: a station scan
+            # fails there, and activating a profile would silently kill the AP
+            # while its QR code is still shown.
+            if hotspot_control.is_active():
+                if self.picker is picker:
+                    self.picker = None
+                    self._publish_picker()
+                self.wifi_notes.append(network_control.AP_ACTIVE)
+                return
+            profiles = self.wifi.saved()
+            if item == 'wifi_scan':
+                aps = self.wifi.scan()
+                names = {p['ssid']: p['uuid'] for p in profiles}
+                items = [(ssid, f"{ssid} {signal}%{' ✓' if ssid in names else ''}")
+                         for ssid, signal in aps]
+            else:
+                # Several saved profiles may share an SSID (guest/priority/etc.).
+                # Address them by UUID so the selected row is unambiguous.
+                names = {p['uuid']: p['uuid'] for p in profiles}
+                items = [(p['uuid'], p['name'] + ' ✓') for p in profiles]
+            if self.picker is not picker:
+                return
+            picker['items'] = items
+            picker['profiles'] = names
+            picker['title'] = 'WLAN-NETZE' if item == 'wifi_scan' else 'WLAN GESPEICHERT'
+            picker['index'] = min(picker['index'], len(items))
+            self._publish_picker()
+            if not items:
+                self.wifi_notes.append(network_control.NO_NETWORKS)
+
+        self._wifi_job(work)
+
+    def _wifi_pick(self, picker, confirm):
+        if not confirm or picker['index'] >= len(picker['items']):
+            return
+        ssid, _label = picker['items'][picker['index']]
+        uuid = picker['profiles'].get(ssid)
+        if not uuid:
+            self.wifi_notes.append(network_control.NOT_SAVED)
+            event('wifi', result='not_saved')
+            return
+        if self.wifi_busy:
+            self.wifi_notes.append(network_control.BUSY)
+            return
+
+        # The connection may change our SSH route. Roll back on activation
+        # failure; hotspot provisioning and more advanced checkpoints follow
+        # in the next PR. No new password is accepted by the voice service.
+        self.link_grace_until = time.monotonic() + WLAN_GRACE_SECONDS
+
+        def work():
+            if hotspot_control.is_active():
+                self.wifi_notes.append(network_control.AP_ACTIVE)
+                event('wifi', result='setup_active')
+                return
+            connected = self.wifi.connect(uuid)
+            event('wifi', result='connected' if connected else 'already_connected')
+            self.wifi_notes.append(network_control.CONNECTED if connected
+                                   else network_control.ALREADY_CONNECTED)
+        self._wifi_job(work)
+
     def _publish_picker(self):
         path = self.config.runtime_dir / 'display-people.json'
         if self.picker:
             items = [name[:24] for _, name in self.picker['items']] + ['Zurück']
+            if self.picker.get('page') == 'wifi_qr':
+                view = dict(page='wifi_qr', title='WLAN VERBINDEN',
+                            ssid=self.picker['ssid'], password=self.picker['password'],
+                            expires_at=self.picker['expires_at'],
+                            index=0, person='', items=[])
+            else:
+                view = dict(page='list', index=self.picker['index'], items=items,
+                            person='', title=self.picker['title'])
+                if self.picker.get('password'):
+                    view['expires_at'] = self.picker['expires_at']
             try:
-                people.write_view(path, dict(page='list', index=self.picker['index'], items=items,
-                                             person='', title=self.picker['title']))
+                people.write_view(path, view)
+            except OSError:
+                pass
+        elif not self.people.active:
+            # The shared picker file may contain a session WPA2 key. Destroy
+            # it as soon as the view is closed (B/E), not just at reboot.
+            try:
+                path.unlink(missing_ok=True)
             except OSError:
                 pass
         self.people_rev = (self.people_rev + 1) % 10000
         publish_display_status(people='on' if self.picker else 'off', people_rev=self.people_rev)
 
+    def _check_hotspot_picker(self, now):
+        """Clear expired or externally stopped AP keys, without blocking GPIO.
+
+        The setup unit removes its RAM info file on exit. Poll the private
+        file only once a second while credentials are actually displayed.
+        The display also validates the expiry independently on every redraw.
+        """
+        picker = self.picker
+        if not picker or now < self.hotspot_next_check:
+            return
+        if picker.get('action') == 'wifi_clients':
+            self.hotspot_next_check = now + 2.0
+            snapshot = hotspot_control.read_clients()
+            entries = ([] if snapshot is None else snapshot['clients'])
+            items = [(x['mac'],
+                      x['mac'] + (' ' + str(x['signal_dbm']) if x['signal_dbm'] is not None else ''))
+                     for x in entries]
+            if not items:
+                items = [('empty', 'Keine verbundenen Geräte' if snapshot else 'AP aus')]
+            if picker.get('items') != items:
+                picker['items'] = items
+                picker['index'] = min(picker['index'], len(items))
+                self._publish_picker()
+            return
+        if picker.get('action') != 'wifi_setup' or not picker.get('password'):
+            return
+        self.hotspot_next_check = now + 1.0
+        fresh = hotspot_control.read_info()
+        if (fresh is None or fresh['password'] != picker['password']
+                or fresh['expires_at'] != picker['expires_at']):
+            self.picker = None
+            self._publish_picker()
+            event('wifi', result='setup_view_expired')
+
     def _picker_buttons(self, confirm):
-        picker, self.picker = self.picker, None
+        picker = self.picker
+        if picker['action'] == 'network_info':
+            if confirm and picker['index'] < len(picker['items']):
+                self._network_info_refresh(picker)
+            else:
+                self.picker = None
+                self._publish_picker()
+            return
+        if (picker['action'] == 'wifi_setup' and confirm
+                and picker.get('page') in ('wifi_qr', 'list')
+                and 'password' in picker):
+            # E toggles QR scan and the manual text credentials. B closes.
+            picker['page'] = ('list' if picker['page'] == 'wifi_qr'
+                              else 'wifi_qr')
+            self._publish_picker()
+            return
+        self.picker = None
         index = picker['index']
+        if picker['action'] == 'wifi_pick':
+            self._wifi_pick(picker, confirm)
+            self._publish_picker()
+            return
+        if picker['action'] == 'wifi_setup':
+            self._publish_picker()
+            return
         if confirm and index < len(picker['items']):
             mac, name = picker['items'][index]
             if picker['action'] == 'pair':
@@ -1510,9 +2082,47 @@ class VoiceController:
         if self.menu.open:
             self.menu.close()
             self._publish_menu()
-        self.enroll = enroll.Session(self.memory, EnrollIO(config=self.config), mode=mode, target=target)
+        io = EnrollIO(config=self.config)
+        if mode == 'wake_rec':
+            self.enroll = enroll.Session(self.memory, io, mode='wake')
+        elif mode == 'facts':
+            self.enroll = voice_enroll.VoiceSession(self.memory, io, mode='facts')
+        elif mode == 'refine':
+            person = self._enroll_target(target)
+            if person is None:
+                return
+            self.enroll = voice_enroll.VoiceSession(self.memory, io, mode='add', target=person)
+        else:
+            self.enroll = voice_enroll.VoiceSession(
+                self.memory, io, mode='new',
+                baseline=os.environ.get('PTT_ENROLL_BASELINE', 'off') == 'on')
         event('enroll', state='start', mode=mode)
         self.enroll.start()
+
+    def _enroll_target(self, name=None):
+        """{name, profile_id} of the person whose voice is recorded again: the
+        one chosen (and authenticated) in "Personen", else the only one known."""
+        names = [person for person, _ in self.memory.people()]
+        v2 = {p['name']: p['profile_id'] for p in self.voice_profiles()}
+        if name is None:
+            known = sorted(set(names) | set(v2))
+            if not known:
+                self._say(enroll.NO_PROFILE)
+                return None
+            if len(known) > 1:
+                self._say(enroll.CHOOSE_PERSON)
+                return None
+            name = known[0]
+        profile = self.memory.profile(name) or {}
+        return dict(name=name, profile_id=profile.get('profile_id') or v2.get(name))
+
+    def _offer_enroll(self):
+        """A spoken "lerne mich kennen" only opens the menu at "Stimme
+        kennenlernen": button E starts, a voice alone never changes a profile."""
+        if self.enroll is not None:
+            return
+        self.menu.select('enroll', time.monotonic())
+        self._publish_menu()
 
     def _check_memory(self):
         """Announce plugging or pulling the memory stick."""
@@ -1529,15 +2139,48 @@ class VoiceController:
             return []  # plugged but not readable yet: next check
         return [memory_phrase(present, (counts or {}).get('facts'), self.style)]
 
+    def _voice_unchecked(self):
+        """Local fallback with someone enrolled: no server checks the voice,
+        so the turn counts as a guest's (no personal data, no changes) -
+        unless the server identified the person surely a few minutes ago
+        (memory.Trust; not extended locally, so it runs out)."""
+        if self.trust.current():
+            return False
+        try:
+            return self.memory.present() and (bool(self.memory.people())
+                                              or bool(self.voice_profiles()))
+        except OSError:
+            return True
+
+    def voice_profiles(self):
+        """The v2 voice profiles on the stick ([] without stick)."""
+        if not self.memory.present():
+            return []
+        return voice_profile.ProfileStore(self.memory.voice_dir / 'profiles-v2').all()
+
+    def voice_core(self):
+        """Calibrated v2 profiles for the server, or None."""
+        try:
+            return voice_profile.voice_core(self.voice_profiles())
+        except OSError:
+            return None
+
+    def _turn_memory(self):
+        context = self.memory.context()
+        if self.turn_guest and context is not None:
+            return memory_core.guest_view(context, 'unverified')
+        return context
+
     def _memory_command(self, text):
         """Local fallback: memory commands answered and applied on the Pi."""
         command = memory_core.command(intents.normalize(text))
         if command is None:
             return None
         op, argument = command
-        context = self.memory.context()
+        context = self._turn_memory()
         reply = memory_core.reply(op, argument, context, self.style)
-        if context is not None and op in ('add_fact', 'add_directive', 'forget'):
+        if (context is not None and op in ('add_fact', 'add_directive', 'forget')
+                and not self.turn_guest):
             self.memory.apply(dict(op=op, text=argument))
             event('memory', op=op)
         return reply
@@ -1545,6 +2188,8 @@ class VoiceController:
     def _learn(self, reply):
         """Strip MERKE/DIREKTIVE lines from an LLM reply and store them."""
         spoken, learned = memory_core.split_learned(reply)
+        if self.turn_guest:
+            return spoken
         for op, value in learned:
             if self.memory.apply(dict(op=op, text=value)):
                 event('memory', op=op, learned=True)
@@ -1676,6 +2321,7 @@ class VoiceController:
             self.wake.stop()
 
     def _start_wake_recording(self):
+        self._drop_story('new_turn')   # a new request replaces the story
         self._release_microphone()
         self.speech_started_at = None
         self.recorder.start(auto_stop=True)
@@ -1684,7 +2330,7 @@ class VoiceController:
     def _greet(self):
         """Short prerecorded line when waking from sleep."""
         try:
-            self._say_alarm([WAKE_PHRASES.get(self.style, WAKE_PHRASES['light'])], source='wake')
+            self._say_alarm([wake_phrase(self.style)], source='wake')
             self.speech_started_at = time.monotonic()
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
@@ -1761,10 +2407,18 @@ class VoiceController:
 
     def _start_llm(self, text):
         self.turn_transcript = text
+        self.turn_guest = self._voice_unchecked()
         self.mood.hear(text, time.time())
         pending, self.turn_device_pending = self.turn_device_pending, None
+        trip, self.turn_trip = self.turn_trip, None
         # A pending question first: "abbrechen" is also a stop word.
         reply = self._device_turn(intents.normalize(text), pending, commands=False)
+        if reply is None and self.journeys is not None:
+            # Before stop words, the calendar intent and the LLM; no word limit.
+            request = self.journeys.parse(text, trip)
+            if request is not None:
+                self._journey_turn(request, trip, guest=self.turn_guest)
+                return
         if reply is None and intents.is_stop(text):
             self.stop_by_voice()
             return
@@ -1774,9 +2428,14 @@ class VoiceController:
             event('llm_response', text=reply, model='local/device')
             self._start_speech(reply, source='assistant', model='local/device')
             return
+        if enroll.command(intents.normalize(text)) and self.turn_guest:
+            # Nobody checked the voice: the menu "Kennenlernen" still works.
+            event('llm_response', text=memory_core.GUEST_TEXT, model='local/enroll')
+            self._start_speech(memory_core.GUEST_TEXT, source='assistant', model='local/enroll')
+            return
         if enroll.command(intents.normalize(text)):
             self.enroll_after_speech = enroll.command(intents.normalize(text))
-            reply = enroll.ANNOUNCE
+            reply = enroll.MENU_HINT
             event('llm_response', text=reply, model='local/enroll')
             self._start_speech(reply, source='assistant', model='local/enroll')
             return
@@ -1805,9 +2464,13 @@ class VoiceController:
             wait_network = False
         if intent is None and self.llm_mode == 'local':
             # The Pi's own LLM path is OpenRouter; "LOKAL" forbids it.
-            reply = ("Ohne Server kann ich gerade nicht nachdenken, Boss."
-                     if self.persona == 'mensch'
-                     else "Daten unzureichend. Lokaler Sprachkern nicht erreichbar.")
+            reply = variants.pick('local_none.' + self.persona, (
+                ("Ohne Server kann ich gerade nicht nachdenken.",
+                 "Der Server fehlt, und ohne ihn komme ich hier nicht weiter.")
+                if self.persona == 'mensch' else
+                ("Lokaler Sprachkern nicht erreichbar. Ohne Server ist keine Antwort möglich.",
+                 "Keine Antwort möglich. Lokaler Sprachkern nicht erreichbar, der Server "
+                 "fehlt.")))
             event('llm_response', text=reply, model='local/none')
             self._start_speech(reply, source='assistant', model='local/none')
             return
@@ -1818,10 +2481,19 @@ class VoiceController:
             day = None
             if intent in ('weather', 'briefing'):
                 snapshot['weather'] = self.weather.today()
-                day = intents.weather_day(text, datetime.date.today()) if intent == 'weather' else 0
+                day = (intents.weather_day(text, datetime.date.today()) if intent == 'weather'
+                       else intents.briefing_day(datetime.datetime.now()))
                 snapshot['weather_day'] = day
             if intent in ('calendar', 'briefing'):
-                snapshot['agenda'] = self.agenda.today()
+                calendar_day = intents.calendar_day(text, datetime.date.today()) if intent == 'calendar' else 0
+                snapshot['agenda_day'] = calendar_day
+                if self.turn_guest:
+                    snapshot['agenda'] = agenda_feed.DENIED
+                else:
+                    snapshot['agenda'] = (self.agenda.tomorrow() if calendar_day == 1
+                                          else self.agenda.today())
+            if intent.startswith('night_') or intent == 'briefing':
+                snapshot['nightwatch'] = self._local_night_view()
             reply = intents.answer(intent, datetime.datetime.now(), snapshot)
             self.turn_llm = 'intent'
             event('llm_response', text=reply, model='local/intent')
@@ -1830,7 +2502,15 @@ class VoiceController:
             if day is not None:
                 self._show_weather(day)
             return
-        context = self.memory.context()
+        story_request = stories.request(text)
+        if story_request is not None:
+            import lore as archive
+            state = stories.start(story_request, self.persona, self.lore,
+                                  archive.packet(text, self.persona, self.lore))
+            self._story_state(state, remote=False)
+            event('story_start', minutes=state['minutes'], ids=state['ids'], route='pi')
+            return
+        context = self._turn_memory()
         model = free_model() if self.llm_mode == 'free' else None
         reply_function = functools.partial(generate_reply, lore=self.lore,
                                            memory=context, model=model,
@@ -1842,6 +2522,91 @@ class VoiceController:
         self.job_stage = 'llm'
         self.job_started_at = time.monotonic()
         event('llm_start', model=configured_model())
+
+    def _journey_turn(self, request, taken, speaker=None, guest=False, proposal_id=None,
+                      button=False):
+        """Run one journey turn (journeys.py): speak at once or query in the background."""
+        step = self.journeys.turn(request, speaker=speaker, guest=guest, taken=taken,
+                                  proposal_id=proposal_id, button=button)
+        event('journey', request=request.get('type'), step=step.name)
+        if step.work is None:
+            self._journey_say(step.text)
+            return
+        self.journey_step = step
+        self.job = TranscriptionJob(lambda _unused: step.run(), None)
+        self.job_stage = 'journey'
+        self.job_started_at = time.monotonic()
+
+    def _journey_say(self, text):
+        if self.journeys.proposal is not None:
+            self.device_pending = None      # one open question for writing actions
+        self.turn_llm = 'intent'
+        event('llm_response', text=text, model='local/journey')
+        print(f'SERVITOR: {text}', flush=True)
+        if self.journey_speak_config is None:
+            self._journey_local_say(text, reason='offline')
+            return
+        try:
+            uplink = RemoteSpeakUplink(self.journey_speak_config, text, voice=self.voice)
+            self.job = RemoteTurnJob(uplink, self.config.runtime_dir, idle_timeout=60)
+        except (OSError, ValueError, RuntimeError) as exc:
+            event('journey', result='tts_remote_error', message=str(exc))
+            self._journey_local_say(text, reason='remote_setup')
+            return
+        self.journey_speech_text = text
+        self.job_stage = 'journey_tts'
+        self.job_started_at = time.monotonic()
+        event('journey', result='tts_remote_start', chars=len(text))
+
+    def _journey_local_say(self, text, reason):
+        # A remote failure may leave an unanswered, state-changing proposal.
+        # Never allow button E / voice confirmation for inaudible details.
+        if self.journeys.proposal is not None and len(text) > JOURNEY_LOCAL_MAX_CHARS:
+            brief = journey_feed.brief_proposal_text(self.journeys.proposal,
+                                                     self.journeys.now(),
+                                                     JOURNEY_LOCAL_MAX_CHARS)
+            if brief is None:
+                self.journeys.cancel()
+                text = 'Fahrtvorschlag abgebrochen. Sprachserver nicht erreichbar.'
+            else:
+                text = brief
+        available = _available_memory_kib()
+        if available is not None and available < JOURNEY_LOCAL_MIN_AVAILABLE_KIB:
+            event('journey', result='tts_low_memory', available_kib=available, reason=reason)
+            # No local model inference under memory pressure; the display/log
+            # records the condition and E cannot confirm an unheard proposal.
+            self.journeys.cancel()
+            return
+        short = _short_journey_fallback(text)
+        event('journey', result='tts_local_fallback', reason=reason,
+              available_kib=available, chars=len(short))
+        self._start_speech(short, source='assistant', model='local/journey')
+
+    def _journey_tts_done(self, job):
+        job.drain()
+        text, self.journey_speech_text = self.journey_speech_text, None
+        if job.cancelled:
+            event('journey', result='tts_cancelled')
+            self.journeys.cancel()
+            return
+        if job.error is not None or not (job.result or {}).get('audio'):
+            event('journey', result='tts_remote_failed',
+                  message=job.error or 'no audio', code=job.error_code)
+            self._journey_local_say(text or 'Fahrplanauskunft nicht verfügbar.',
+                                    reason='remote_failed')
+            return
+        try:
+            self._settle_cue()
+            display_progress('tts', 'playback')
+            self.speech.play(job.result['audio'], text=text)
+            self.speech_started_at = time.monotonic()
+            self._turn_spoken()
+            event('speech_started', source='remote', model='local/journey')
+            event('journey', result='tts_remote_play', host=job.result['host'])
+        except (OSError, RuntimeError, ValueError) as exc:
+            event('speech_error', message=str(exc))
+            self._journey_local_say(text or 'Fahrplanauskunft nicht verfügbar.',
+                                    reason='remote_playback_failed')
 
     def _settle_cue(self):
         """The playback device is not shared: let the cue end before speech."""
@@ -1857,6 +2622,27 @@ class VoiceController:
             self._turn_spoken()
         except (OSError, RuntimeError, ValueError) as exc:
             event('speech_error', message=str(exc))
+
+    def _local_night_view(self):
+        # A local fallback has no server-side voice verification. Keep this
+        # compatible with PR #100's explicit guest flag and enrolled profiles.
+        if getattr(self, 'turn_guest', False):
+            return dict(denied=True)
+        try:
+            if self.memory.present() and self.memory.people():
+                return dict(denied=True)
+        except (OSError, ValueError):
+            return dict(denied=True)
+        return self.nightstore.view()
+
+    def _remember_turn(self, question, answer, **fields):
+        # Night reports must not enter the personal history subsequently sent
+        # to OpenRouter in AUTO mode, including reports embedded in a briefing.
+        kind = intents.match(question, self.persona)
+        if getattr(self, 'turn_guest', False) \
+                or kind and (kind.startswith('night_') or kind == 'briefing'):
+            return
+        self.memory.remember_turn(question, answer, **fields)
 
     def _remote_progress(self, item):
         """Map server NDJSON events onto the existing journal/display events."""
@@ -1878,6 +2664,19 @@ class VoiceController:
             event('transcript', text=text, provider='remote')
             print(f'ERKANNT: {text}', flush=True)
             self._selftest_requested(text)
+        elif kind == 'speaker':
+            # The server's voice check, for tuning the threshold with real voices.
+            status = item.get('status')
+            carried = bool(item.get('carried'))
+            if item.get('known') and isinstance(item.get('name'), str):
+                self.trust.confirm(item['name'])
+            elif carried:
+                self.trust.extend()
+            else:
+                self.trust.clear()
+            event('speaker', known=bool(item.get('known')), score=item.get('score'),
+                  carried=carried, **({'status': status} if isinstance(status, str) else {}))
+            self.turn_guest = not (item.get('known') or carried)
         elif kind == 'enroll':
             # after the server's announcement
             self.enroll_after_speech = 'refine' if item.get('mode') == 'refine' else 'enroll'
@@ -1899,18 +2698,159 @@ class VoiceController:
                 event('memory', op=item.get('op'), learned=bool(item.get('learned')))
         elif kind == 'reply':
             text = str(item.get('text', ''))
-            if self.turn_transcript and not intents.is_stop(self.turn_transcript):
-                self.memory.remember_turn(self.turn_transcript, text,
-                                          mood=self.mood.label(time.time()))
+            if (self.turn_transcript and not intents.is_stop(self.turn_transcript)
+                    and not self.turn_guest):
+                self._remember_turn(self.turn_transcript, text,
+                                          mood=self.mood.label(time.time()),
+                                          persona=self.persona)
             self.turn_llm = llm_kind(item.get('model'))
             event('llm_response', text=text, model=item.get('model'))
             print(f'SERVITOR: {text}', flush=True)
+        elif kind == 'audio' and item.get('path'):
+            self._story_part(item)
+        elif kind == 'story':
+            self._story_state(item.get('state'))
         elif kind == 'audio':
             event('remote_audio', format=item.get('format'),
                   duration_ms=item.get('duration_ms'), bytes=item.get('bytes'))
         elif kind == 'done':
             event('latency', stage='remote', metric='server',
                   timings=item.get('timings') or {})
+
+    # --- long stories (story.py) ---------------------------------------------------
+
+    def _story_state(self, state, remote=True):
+        """A new or updated story state from the server or the local start."""
+        if not isinstance(state, dict):
+            return
+        if self.story is None:
+            self.story = stories.StoryRun(state, remote=remote)
+        else:
+            self.story.state = state
+
+    def _story_part(self, item):
+        """An audio part of a story from the server: queued, played in order."""
+        if self.story is None:
+            self.story = stories.StoryRun(None, remote=True)  # state follows at the end
+        self.story.add(path=item['path'], text=item.get('text'), ms=item.get('duration_ms'))
+        event('story_part', part=item.get('part'), parts=item.get('parts'),
+              duration_ms=item.get('duration_ms'))
+
+    def _drop_story(self, reason):
+        run, self.story = self.story, None
+        if run is not None:
+            run.cancel()
+            event('story_stopped', reason=reason, played_ms=run.played_ms,
+                  parts=run.parts_played)
+
+    def _story_fetch(self, run):
+        """Ask for the next section: the server, or the Pi's own LLM path."""
+        if run.remote:
+            if self.story_uplink_factory is None:
+                run.failed = 'no server for the story'
+                return
+            uplink = self.story_uplink_factory(run.state)
+            run.job = RemoteTurnJob(uplink, self.config.runtime_dir, idle_timeout=story_timeout())
+        else:
+            model = free_model() if self.llm_mode == 'free' else None
+            run.job = TranscriptionJob(functools.partial(
+                generate_reply, lore=run.state['lore'], persona=run.state['persona'],
+                model=model, story=run.state), run.state['topic'])
+        event('story_fetch', section=run.state.get('seg'))
+
+    def _story_job_done(self, run):
+        job, run.job = run.job, None
+        if job.cancelled:
+            return
+        if isinstance(job, RemoteTurnJob):
+            for item in job.drain():
+                self._story_progress(item)
+            if job.error is not None:
+                run.failed = job.error
+                event('story_error', stage=job.error_stage, code=job.error_code)
+            elif isinstance(job.story, dict):
+                run.state = job.story
+            else:
+                run.failed = 'no story state'
+            return
+        if job.error is not None:
+            run.failed = job.error
+            event('story_error', stage='llm', code='llm')
+            return
+        raw, _model = job.result
+        text, note = stories.split_note(split_tag(raw)[0])
+        text = stories.trim_incomplete(memory_core.split_learned(text)[0])
+        if not text:
+            run.failed = 'empty section'
+            return
+        run.state = stories.advance(run.state, text, note)
+        for part in stories.split_parts(text):
+            run.add(text=part)
+
+    def _story_progress(self, item):
+        kind = item.get('event')
+        if kind == 'audio' and item.get('path'):
+            if self.story is not None:
+                self._story_part(item)
+            else:
+                Path(item['path']).unlink(missing_ok=True)
+        elif kind == 'reply':
+            event('story_section', words=len(str(item.get('text', '')).split()),
+                  model=item.get('model'))
+
+    def _story_tick(self):
+        """Play the next part, fetch the next section in time, end cleanly."""
+        run = self.story
+        if run is None or self.recorder.process is not None:
+            return
+        if run.job is not None:
+            if isinstance(run.job, RemoteTurnJob):
+                for item in run.job.drain():
+                    self._story_progress(item)
+            if run.job.done.is_set():
+                self._story_job_done(run)
+        if self.story is not run:
+            return
+        if self.job is None and run.state is not None and run.needs_more():
+            self._story_fetch(run)
+        if self.speech.active or getattr(self.speech, 'synthesizing', False):
+            return
+        if run.playing is not None:
+            if run.current_path:
+                Path(run.current_path).unlink(missing_ok=True)
+            run.part_finished()
+        if self.alarm_queue:
+            return                     # spoken by _speak_alarms on the next tick
+        item = run.next_part()
+        if item is not None:
+            run.current_path = item.get('path')
+            try:
+                self._settle_cue()
+                if item.get('path'):
+                    self.speech.play(item['path'], text=item.get('text'))
+                else:
+                    self.speech.start(item['text'])
+                self.speech_started_at = time.monotonic()
+                self._turn_spoken()
+            except (OSError, RuntimeError, ValueError) as exc:
+                event('speech_error', message=str(exc))
+                run.failed = str(exc)
+            return
+        if self.job is not None or not run.finished:
+            return
+        short = (run.state or {}).get('short')
+        if (run.failed is not None or short) and not run.notice_given:
+            # Say that the story is incomplete instead of ending silently.
+            run.notice_given = True
+            persona = (run.state or {}).get('persona', self.persona)
+            notices = stories.ABORTED if run.failed is not None else stories.SHORTER
+            self._start_speech(notices.get(persona, notices['servitor']), source='story')
+            run.playing = (time.monotonic(), 0)
+            run.current_path = None
+            return
+        self.story = None
+        event('story_finished', played_ms=run.played_ms, parts=run.parts_played,
+              failed=run.failed is not None)
 
     def _finish_remote(self, job):
         capture, self.remote_capture = self.remote_capture, None
@@ -1919,11 +2859,41 @@ class VoiceController:
         if job.cancelled:
             event('transcript_discarded')
             return
+        if job.error is None and (job.result or {}).get('journey') is not None:
+            # Structured hand-over without audio: act only on the completed turn.
+            self.remote_failed = False
+            event('remote_done', host=job.result.get('host'), journey=True)
+            item = job.result['journey']
+            taken, self.turn_trip = self.turn_trip, None
+            request = journey_feed.clean_request(item.get('request'))
+            if request is None or self.journeys is None:
+                event('journey', result='invalid_request')
+                self._journey_say("Fahrtanfrage nicht verstanden.")
+                return
+            proposal = item.get('proposal')
+            self._journey_turn(request, taken,
+                               speaker=item['speaker'] if isinstance(item.get('speaker'), str)
+                               else None,
+                               guest=item.get('guest') is True,
+                               proposal_id=proposal if isinstance(proposal, str) else None)
+            return
         if job.transcript and intents.is_stop(job.transcript):
             # Also with an older server that still sent a spoken reply.
             if job.error is None:
                 self.remote_failed = False
             self.stop_by_voice()
+            return
+        if job.error is None:
+            self.turn_trip = None          # answered by something else: question gone
+        if job.error is None and (job.result or {}).get('story'):
+            self.remote_failed = False
+            event('remote_done', host=job.result.get('host'), story=True)
+            return                     # the parts play from the story queue
+        if job.error is not None and (getattr(job, 'parts', 0) or self.story is not None):
+            # A story that already started is never told again from the start.
+            event('remote_error', stage=job.error_stage, code=job.error_code, message=job.error)
+            if self.story is not None:
+                self.story.failed = job.error
             return
         if job.error is None:
             self.remote_failed = False
@@ -1945,7 +2915,10 @@ class VoiceController:
         if job.error_stage in ('upload', 'stream'):
             self.remote_failed = True
         if not job.fallback_allowed:
-            event('stt_error', message=job.error)
+            if job.error_code == 'too_short':
+                event('capture_discarded', reason='too_short')
+            else:
+                event('stt_error', message=job.error)
             self.turn_released_at = None
             return
         self._set_route('pi')
@@ -1964,20 +2937,39 @@ class VoiceController:
             event('stt_error', message=job.error)
 
     def tick(self, gpio_pressed, shim_pressed, now, pitft_pressed=(False, False)):
+        self._check_hotspot_picker(now)
+        self._take_cpu_mode_result()
         held = gpio_pressed or shim_pressed[0]
         action = self.ptt.update(held, now)
         commands = [name for i, name in enumerate('BCDE', 1)
                     if self.commands[name].update(shim_pressed[i], now) == 'start']
+        if self.manual_standby and not self.probe:
+            # Ignore PTT, SHIM, menu and wakeword while manually asleep.
+            # Hardware low-battery / undervoltage / thermal alarms may wake
+            # Proximus to announce the problem; shutdown_due is checked by
+            # check_alarms regardless of this gate.
+            self.ptt.resync(held, now)
+            if not CRITICAL_ALARMS.intersection(self.alarms.active):
+                return
+            self.pisugar_standby(now, reason='critical_alarm')
         if self.enroll is not None and not self.probe:
             if self.enroll.running:
-                # The session owns microphone and speaker; only B (cancel) counts.
+                # The session owns microphone and speaker; B cancels, E confirms.
                 if 'B' in commands:
                     self.enroll.cancel()
+                elif 'E' in commands and hasattr(self.enroll, 'press'):
+                    self.enroll.press('E')
                 self.last_activity = now
                 return
             finished, self.enroll = self.enroll, None
             result = finished.result or {}
             event('enroll', **{k: v for k, v in result.items() if k != 'details'})
+            if isinstance(finished, people.Flow) and result.get('auth'):
+                self.trust.confirm(finished.name)       # passphrase and voice checked
+            elif result.get('voiceprint'):
+                # just enrolled; the same name the profile was stored under
+                self.trust.confirm(memory_core.clean_text(result.get('name') or '')[:40]
+                                   or 'Bediener')
             if isinstance(finished, people.Flow):
                 self._people_flow_done(finished, result, now)
             self.ptt.resync(held, now)
@@ -1997,6 +2989,24 @@ class VoiceController:
             commands = [name for name in commands if name not in 'BE']
         if self.people.active and not self.menu.open and ('B' in commands or 'E' in commands):
             self._people_buttons('E' in commands, 'B' in commands, now)
+            commands = [name for name in commands if name not in 'BE']
+        if (self.journeys is not None and self.journeys.proposal is not None
+                and 'E' in commands and
+                (self.job is not None or self.speech.active or
+                 self.journeys.proposal.get('expires') is None)):
+            # Until audio playback finished, E is not a confirmation and must
+            # not fall through to the generic status key handler either.
+            event('journey', result='confirmation_not_spoken')
+            commands = [name for name in commands if name != 'E']
+        if (self.journeys is not None and self.journeys.proposal is not None
+                and not self.menu.open
+                and ('B' in commands or ('E' in commands and self.job is None))):
+            taken = self.journeys.take()
+            if taken is not None and 'E' in commands and 'B' not in commands:
+                self._journey_turn(dict(type='answer', answer='confirm'), taken, button=True)
+            elif taken is not None:
+                event('journey', result='cancelled', id=taken['id'], source='button')
+                self._say("Abgebrochen. Nichts eingetragen.")
             commands = [name for name in commands if name not in 'BE']
         if (self.device_pending and not self.menu.open
                 and ('B' in commands or 'E' in commands)):
@@ -2049,9 +3059,14 @@ class VoiceController:
                 self.speech_started_at = None
             event('speech_finished' if code == 0 else 'speech_error', returncode=code)
             self.wake_resume_at = now + WAKE_ECHO_PAUSE  # do not hear our own tail
+            if self.journeys is not None:
+                if code == 0:
+                    self.journeys.spoken()   # 90 s only after successful playback
+                else:
+                    self.journeys.cancel()   # no confirmation for an unheard offer
             if self.enroll_after_speech:
-                mode, self.enroll_after_speech = self.enroll_after_speech, None
-                self._start_enroll(mode)
+                self.enroll_after_speech = None
+                self._offer_enroll()
             if self.weather_shown:
                 self.weather_hide_at = time.monotonic() + WEATHER_HOLD_SECONDS
             if self.device_after_speech:
@@ -2080,6 +3095,17 @@ class VoiceController:
 
             if stage == 'remote':
                 self._finish_remote(job)
+            elif stage == 'journey_tts':
+                self._journey_tts_done(job)
+            elif stage == 'journey':
+                step, self.journey_step = self.journey_step, None
+                # Applied even when B cut it off: a confirmed entry may already exist.
+                text = self.journeys.finish(step, job.result, job.error)
+                if job.cancelled:
+                    self.journeys.cancel()    # never leave an unheard question open
+                    event('journey', result='discarded', step=step.name)
+                elif text:
+                    self._journey_say(text)
             elif job.cancelled:
                 event('transcript_discarded' if stage == 'stt' else 'llm_discarded')
             elif job.error is not None:
@@ -2095,8 +3121,9 @@ class VoiceController:
                 self.mood.react(feeling, time.time())
                 self._publish_mood()
                 reply = self._learn(reply)
-                self.memory.remember_turn(self.turn_transcript or '', reply,
-                                          mood=self.mood.label(time.time()))
+                self._remember_turn(self.turn_transcript or '', reply,
+                                    mood=self.mood.label(time.time()),
+                                    persona=self.persona)
                 self.turn_llm = llm_kind(model)
                 event('llm_response', text=reply, model=model)
                 print(f'SERVITOR: {reply}', flush=True)
@@ -2121,6 +3148,7 @@ class VoiceController:
                     and getattr(self.speech, 'synthesizing', False))):
                 event('busy', reason='processing')
             else:
+                self._drop_story('new_turn')   # PTT stops the story at once
                 self.speech.stop()
                 self.speech_started_at = None
                 self._release_microphone()
@@ -2133,10 +3161,25 @@ class VoiceController:
             self.ptt.resync(held, now)
         if self.wake is not None and not self.probe:
             self._wake_tick(now)
+        if (not self.probe and self.journeys is not None and self.journeys.reminders
+                and self._idle() and not self.menu.open):
+            # Pi reminders, each once, and only when they can be said right now:
+            # a reminder held back past the departure is dropped, never said late.
+            self.alarm_queue.extend(self.journeys.due())
         if not self.probe:
-            self._speak_alarms()
+            self._speak_alarms()       # alarms go first, between two story parts
+            self._story_tick()
             pressed = action is not None or commands or any(pitft_pressed)
             self._update_power(now, pressed)
+            if self.nightwatch is not None:
+                eligible = (not held and not pressed and self._idle() and not self.menu.open
+                            and not self.maint.active and not self.story and not self.alarm_queue
+                            and not self.bt_busy and not self.maint_jobs
+                            and self.server_state() == 'ok'
+                            and bool(self.battery and self.battery.get('plugged')))
+                snapshot = (self.status_snapshot() if eligible
+                            and time.monotonic() - self.nightwatch.last_check >= 30 else {})
+                self.nightwatch.tick(now - self.last_activity, eligible, snapshot)
 
         if not self.probe and self.config.hybrid:
             # The standby Vosk worker (~190 MB of 415) only serves the local
@@ -2153,19 +3196,74 @@ class VoiceController:
         return (self.recorder.process is not None or self.job is not None
                 or self.speech.active or getattr(self.speech, 'synthesizing', False)
                 or self.menu.open or bool(self.alarm_queue) or self.maint.active
-                or self.people.active)
+                or self.people.active or self.story is not None
+                or self.cpu_mode_busy)
+
+    def pisugar_standby(self, now, reason='button'):
+        """Single function-button tap toggles quiet *software* standby.
+
+        SSH, Wi-Fi and Linux stay alive. Only the PiSugar function button
+        wakes an otherwise quiet Proximus; safety-critical alarms override.
+
+        The tap means "quiet now": an ordinary answer, announcement, story,
+        recording or open menu is stopped. Refused only where stopping would
+        lose something important: a critical alarm, a confirmed reboot or
+        shutdown, maintenance or voice enrollment in progress.
+        """
+        if self.manual_standby:
+            self.manual_standby = False
+            self.last_activity = now
+            self._update_power(now, greet=False)
+            self.wake_resume_at = now + WAKE_ECHO_PAUSE
+            event('pisugar_standby', state='awake', reason=reason)
+            return True
+        blocker = self._standby_blocker()
+        if blocker is not None:
+            event('pisugar_standby', state='rejected', reason=blocker)
+            return False
+        interrupted = self._busy()
+        if interrupted:
+            self.cancel(False, now)          # speech, story, recording, server turn
+            self.alarm_queue = []            # only ordinary notices can be queued here
+            self.enroll_after_speech = None
+            if self.people.active:
+                self.people.close()
+                self._publish_people()
+        self.manual_standby = True
+        self._release_microphone()
+        self.menu.close()
+        self._publish_menu()
+        self._update_power(now, greet=False)
+        event('pisugar_standby', state='sleep', reason=reason, interrupted=interrupted)
+        return True
+
+    def _standby_blocker(self):
+        """Why manual standby must wait (a short reason for the journal), or None."""
+        if self.probe:
+            return 'probe'
+        if self.shutting_down or self.device_pending or self.device_after_speech:
+            return 'power_action'
+        if self.alarms_enabled and CRITICAL_ALARMS.intersection(self.alarms.active):
+            return 'critical_alarm'
+        if self.maint.active:
+            return 'maintenance'
+        if self.enroll is not None and getattr(self.enroll, 'running', False):
+            return 'enrollment'
+        if self.cpu_mode_busy:
+            return 'cpu_mode'
+        return None
 
     def _wake_up(self, now):
         self.last_activity = now
         self._update_power(now, False)
 
-    def _update_power(self, now, pressed=False):
+    def _update_power(self, now, pressed=False, greet=True):
         """awake -> rest -> sleep while nothing happens; any activity wakes."""
         quiet = now - self.last_activity
-        if pressed or self._busy():
+        if not self.manual_standby and (pressed or self._busy()):
             self.last_activity = now
         idle = now - self.last_activity
-        power = ('sleep' if idle >= self.sleep_after else
+        power = ('sleep' if self.manual_standby or idle >= self.sleep_after else
                  'rest' if idle >= self.rest_after else 'awake')
         if power == self.power:
             return
@@ -2180,18 +3278,21 @@ class VoiceController:
         elif previous == 'sleep':
             self.board_leds.restore()
             self.mood.woke_up(quiet, time.time())
-        if power == 'sleep' and self.sleep_wlan_off and self.wlan_on:
+        if (power == 'sleep' and not self.manual_standby
+                and self.sleep_wlan_off and self.wlan_on):
             self.wlan_slept = self.set_wlan(False)
         elif previous == 'sleep' and self.wlan_slept:
             self.wlan_slept = False
             self.set_wlan(True)
-        if previous == 'sleep' and self._idle() and not self.alarm_queue:
+        if previous == 'sleep' and greet and self._idle() and not self.alarm_queue:
             # Woken by a display/SHIM button: say so. Talking (PTT), alarms
             # and status replies already speak or listen; the wake word
             # greets on its own before listening.
             self._greet()
 
     def close(self):
+        if self.pisugar_poller is not None:
+            self.pisugar_poller.close()
         if self.wake is not None:
             self.wake.stop()
         stop_prepared_vosk()
@@ -2252,12 +3353,25 @@ def main():
             def uplink_factory():
                 controller = controller_ref[0] if controller_ref else None
                 status = controller.turn_snapshot() if controller else None
-                memory_copy = (memory_core.encode_header(
-                    session.memory_payload(controller.memory.context())) if controller else None)
+                context = controller.memory_context() if controller else None
+                memory_copy = (memory_core.encode_header(session.memory_payload(context))
+                               if controller else None)
+                voice = controller.voice_core() if controller else None
+                # Guest copy for a server that cannot check the v2 voice: marked
+                # as enrolled, so the server stays strict and refuses changes.
+                guest = (memory_core.encode_header(dict(
+                    memory_core.guest_view(context, 'unverified'), enrolled=1))
+                    if voice and context is not None else None)
                 appointments = (agenda_feed.encode_header(controller.agenda.today())
                                 if controller else None)
+                tomorrow = (agenda_feed.encode_header(controller.agenda.tomorrow())
+                            if controller else None)
                 return RemoteTurnUplink(remote_config, status=status, memory=memory_copy,
-                                        agenda=appointments, session=session)
+                                        agenda=appointments, session=session,
+                                        agenda_tomorrow=tomorrow, voice=voice,
+                                        memory_guest=guest,
+                                        nightwatch=nightwatch.encode_view(controller.nightstore.view())
+                                        if controller else None)
             event('remote_ready', hosts=remote_config.hosts, format=remote_config.audio_format)
     recorder = Recorder(
         runtime_dir,
@@ -2351,6 +3465,22 @@ def main():
                                  wake=wake, wake_word=wake_label, cue=acknowledge,
                                  config=config)
     controller_ref.append(controller)
+    if not args.probe and controller.cpu_mode_explicit:
+        # Restore the previously chosen profile after a normal service reboot.
+        controller._set_cpu_mode(controller.cpu_mode, announce=False)
+    if not args.probe:
+        controller.pisugar_poller = pisugar_client.Poller().start()
+    if not args.probe and remote_config is not None and config.nightwatch:
+        controller.nightwatch = nightwatch_client.Client(controller.memory, remote_config,
+            start=config.night_start, end=config.night_end, idle_seconds=config.night_idle, log=event)
+    if uplink_factory is not None:
+        def story_uplink_factory(state):
+            return RemoteStoryUplink(remote_config, state, status=controller.turn_snapshot())
+        controller.story_uplink_factory = story_uplink_factory
+    if not args.probe and remote_config is not None and os.environ.get(
+            'JOURNEY_REMOTE_TTS', 'on').strip().lower() not in ('off', '0', 'false', 'no'):
+        controller.journey_speak_config = remote_config
+        event('journey', result='tts_remote_ready', hosts=remote_config.hosts)
     if not args.probe and controller.weather.start().configured:
         event('weather_ready', days=weather.DAYS)
     if not args.probe and controller.agenda.start().configured:
@@ -2361,15 +3491,23 @@ def main():
             controller.wlan_on = wlan_radio.wlan_blocked() is not True
     elif not args.probe:
         controller.wlan_on = wlan_radio.wlan_blocked() is not True
+    def quiet():
+        """Manual (PiSugar) standby: probes pause so WLAN and CPU can doze."""
+        return controller.manual_standby
+
+    def started(watch):
+        watch.quiet = quiet
+        return watch.start()
+
     if uplink_factory is not None:
         from netprobe import ServerProbe
-        controller.server_probe = ServerProbe(interval=15.0).start()
+        controller.server_probe = started(ServerProbe(interval=15.0))
     if not args.probe:
-        controller.internet_probe = InternetProbe().start()
-        controller.network_watch = sysmon.network_watch().start()
+        controller.internet_probe = started(InternetProbe())
+        controller.network_watch = started(sysmon.network_watch())
         if config.bluetooth:
             controller.start_bluetooth()
-        controller.update_watch = sysmon.update_watch().start()
+        controller.update_watch = started(sysmon.update_watch())
         if config.logwatch:
             def selftest_report(result):
                 event('selftest', findings=result['findings'], repairs=result['repairs'])
@@ -2377,8 +3515,21 @@ def main():
                                                     report=selftest_report).start()
     battery_monitor = Battery()
     next_power = 0.0
+    # Optional, battery-only root helper. systemctl runs off the GPIO loop.
+    # Never turn WLAN off merely because the automatic idle timer expired.
+    power_saver = None
+    if (not args.probe and os.environ.get('PISUGAR_BATTERY_SAVE', 'off')
+            .strip().lower() in ('on', '1', 'true', 'yes')):
+        power_saver = battery_standby.Supervisor(report=event).start()
     shim = None
     led = None
+    # Explicit opt-in: a monitor retries intermittent I2C failures with
+    # bounded backoff. A failed initial read can recover without restarting.
+    # First *successful* read always consumes stale startup taps.
+    tap_monitor = None
+    if (not args.probe and os.environ.get('PISUGAR_STANDBY_BUTTON', 'off')
+            .strip().lower() in ('on', '1', 'true', 'yes')):
+        tap_monitor = pisugar_button.TapMonitor()
     shim_retry_at, shim_backoff = None, SHIM_RETRY_SECONDS
 
     def open_shim(now):
@@ -2441,14 +3592,18 @@ def main():
                     controller.check_alarms(now)
                     next_power = now + 10.0
                 pressed = (False,) * 5
+                # Manual standby ignores the SHIM anyway (only the PiSugar
+                # button wakes): no I2C polling of it, a slow loop below.
+                resting = controller.manual_standby and not args.probe
                 if shim is None and shim_retry_at is not None and now >= shim_retry_at:
                     open_shim(now)
                 if shim is not None:
                     try:
                         if led is not None and led.error is not None:
                             raise led.error
-                        pressed = shim.read()
-                        if led is not None:
+                        if not resting:
+                            pressed = shim.read()
+                        if led is not None:             # writes only on a change
                             led.request(controller.color)
                     except OSError as exc:
                         event('shim_error', message=str(exc), fallback='GPIO17',
@@ -2456,13 +3611,54 @@ def main():
                         stop_shim()
                         controller.cancel(gpio_pressed, now)
                         shim_retry_at = now + SHIM_RETRY_SECONDS
+                if tap_monitor is not None:
+                    result = tap_monitor.poll(now)
+                    if result is not None:
+                        if result['state'] == 'error':
+                            # An unacknowledged tap is never used to toggle
+                            # standby. Retain the reader and retry after a
+                            # bounded delay; one EREMOTEIO is not permanent.
+                            event('pisugar_button_error', message=result['message'],
+                                  failures=result['failures'],
+                                  retry_seconds=result['retry_seconds'],
+                                  disabled=False)
+                            if result['should_wake'] and controller.manual_standby:
+                                # If the PiSugar bus stays down, wake the
+                                # assistant so GPIO17 and the SHIM are usable.
+                                controller.pisugar_standby(now, reason='i2c_unavailable')
+                        elif result['state'] == 'ready':
+                            event('pisugar_button_ready', address='0x57',
+                                  mode='software_standby',
+                                  discarded=result['ignored_startup_gesture'])
+                        else:
+                            if result['recovered_after']:
+                                event('pisugar_button_recovered',
+                                      after_errors=result['recovered_after'])
+                            gesture = result['gesture']
+                            if gesture:
+                                event('pisugar_button', gesture=gesture)
+                                if gesture == pisugar_button.SINGLE:
+                                    controller.pisugar_standby(now)
                 try:
                     controller.tick(gpio_pressed, pressed, now, pitft)
                 except (OSError, RuntimeError, wave.Error, EOFError) as exc:
                     event('error', message=str(exc))
                     controller.cancel(gpio_pressed or pressed[0], now)
-                stop.wait(0.01)
+                if power_saver is not None:
+                    # Losing PiSugar telemetry / returning to mains / alarms /
+                    # waking Proximus must all immediately request restoration.
+                    safe_battery = (controller.battery is not None
+                                    and controller.battery.get('plugged') is False)
+                    critical = bool(CRITICAL_ALARMS.intersection(controller.alarms.active))
+                    power_saver.request(controller.manual_standby and safe_battery
+                                        and not critical and not controller.shutting_down)
+                # 100 Hz while awake (buttons feel instant); 5 Hz in manual
+                # standby: the PiSugar latches its button, alarms run on their
+                # own 10 s timer, and every wake-up costs battery.
+                stop.wait(STANDBY_LOOP_SECONDS if resting else 0.01)
     finally:
+        if power_saver is not None:
+            power_saver.close()
         try:
             controller.close()
         finally:

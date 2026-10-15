@@ -116,11 +116,17 @@ class ControllerTests(unittest.TestCase):
         self.c.tick(False, (False,) * 5, 1.1)
         self.assertIsNone(self.shown())
 
-    def test_briefing_shows_today_and_ptt_hides(self):
-        self.c._start_llm('morgenbericht')
-        self.assertEqual(self.shown(), '0')
-        self.c.cancel(False, 1.0)
-        self.assertIsNone(self.shown())
+    def test_briefing_shows_today_or_tomorrow_by_hour_and_ptt_hides(self):
+        for hour, day in ((7, '0'), (17, '0'), (18, '1'), (21, '1')):
+            moment = datetime.datetime.combine(TODAY, datetime.time(hour))
+            with self.subTest(hour=hour), patch('ptt.datetime.datetime', wraps=datetime.datetime) as clock:
+                clock.now.return_value = moment
+                self.c._start_llm('morgenbericht')
+            self.assertEqual(self.shown(), day)
+            self.assertIn('Morgen: 6 bis 14 Grad' if day == '1' else 'Außentemperatur 7 Grad',
+                          self.spoken[-1])
+            self.c.cancel(False, 1.0)
+            self.assertIsNone(self.shown())
 
     def test_nothing_shown_without_stored_weather(self):
         self.c.weather.today.return_value = None

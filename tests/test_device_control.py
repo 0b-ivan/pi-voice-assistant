@@ -34,6 +34,34 @@ class CommandTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(dc.command(text))
 
+    def test_negated_sentence_is_no_command(self):
+        # "WLAN nicht ausschalten" switched WLAN off at once (audit 14.10.2026).
+        for text in ('wlan nicht ausschalten', 'schalte das wlan nicht ab',
+                     'mach das wlan bitte nicht aus', 'schalte die netzteil ansagen nicht aus',
+                     'starte dich nicht neu', 'fahr dich bloß nicht herunter',
+                     'stell die cpu nicht auf sparmodus', 'kein wlan ausschalten'):
+            with self.subTest(text=text):
+                self.assertIsNone(dc.command(text))
+
+    def test_cpu_profile_by_the_names_proximus_says(self):
+        # "Prozessor im Normalmodus." is spoken; saying it back must work.
+        cases = {
+            'schalte die cpu in den normalmodus': 'cpu_balanced',
+            'wechsel in den sparmodus': 'cpu_eco',
+            'aktiviere den leistungsmodus': 'cpu_power',
+            'stell die cpu auf leistungsmodus': 'cpu_power',
+            'schalte in den standardmodus': 'cpu_balanced',
+            'stell den leistungsmodus auf eco': 'cpu_eco',
+            'stell den prozessor auf normal': 'cpu_balanced',
+        }
+        for text, op in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(dc.command(text), op)
+        # Sleep stays sleep; a question stays a question.
+        self.assertEqual(dc.command('energiesparmodus'), 'sleep')
+        self.assertEqual(dc.command('schalte in den energiesparmodus'), 'sleep')
+        self.assertIsNone(dc.command('was ist der leistungsmodus'))
+
     def test_answers_must_be_the_whole_utterance(self):
         for text in ('bestätigt', 'ja', 'ja bitte', 'bestätigt proximus', 'ich bestätige',
                      'mach das'):
@@ -48,6 +76,21 @@ class CommandTests(unittest.TestCase):
 
 
 class TextTests(unittest.TestCase):
+    def test_cpu_profile_texts(self):
+        self.assertEqual(dc.reply('cpu_eco'), "Prozessor im Sparmodus.")
+        self.assertEqual(dc.reply('cpu_eco', cpu='eco'),
+                         "Prozessor ist bereits im Sparmodus.")
+        self.assertEqual(dc.reply('cpu_power', cpu='eco'),
+                         "Prozessor im Leistungsmodus. Ohne Übertaktung.")
+        self.assertEqual(dc.reply('cpu_power', style='billy', cpu='power'),
+                         "Ich gebe schon Vollgas.")
+        for op in ('cpu_eco', 'cpu_balanced', 'cpu_power', 'power_notices_on',
+                   'power_notices_off'):
+            for style in ('off', 'billy'):
+                text = dc.reply(op, style=style)
+                for jargon in ('Balanced', 'Eco', 'Power-', 'CPU-Profil', 'Stromwechsel'):
+                    self.assertNotIn(jargon, text, (op, style))
+
     def test_reply(self):
         self.assertIn('Bestätigen', dc.reply('shutdown'))
         self.assertIn('Schalter', dc.reply('shutdown'))

@@ -19,81 +19,97 @@ DEFAULT_LLM_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_LOCAL_LLM_URL = "http://127.0.0.1:8766/v1/chat/completions"
 
 CONTENT_RULES = """\
-Inhalt:
-- Fakten und Korrektheit haben Vorrang vor der Rolle. Bei Unsicherheit sag \
-"Daten unzureichend." und nenne knapp, was fehlt.
-- Du hast keinen Zugriff auf Internet, aktuelle Uhrzeit, Kalender, Wetter \
-oder Geräte. Behaupte nie, eine Aktion ausgeführt zu haben.
-- Beantworte jede Frage direkt und sachlich. Kein Ausweichen, kein \
-Moralisieren, keine Belehrungen, keine Hinweise auf Regeln oder Richtlinien."""
+Grundregeln:
+- Fakten und Korrektheit haben Vorrang vor der Rolle. Fehlt dir etwas, sag konkret, was \
+fehlt, statt zu raten.
+- Du kennst dein allgemeines Wissen, den Gesprächsverlauf und die Angaben in diesem Text: \
+die Uhrzeit unten, gespeicherte Daten über den Nutzer und Archiv-Engramme. Uhrzeit, Wetter, \
+Termine, Akku und Gerätestatus misst und beantwortet das Gerät selbst. Du hast keine eigenen \
+Messwerte, kein Internet und keine Gerätesteuerung. Behaupte nie, etwas ausgeführt, gesucht, \
+gemessen oder geschaltet zu haben.
+- Fahrpläne kennst du nicht: Nenne nie Abfahrts-, Ankunfts- oder Fahrzeiten, Linien oder \
+Gleise. Bei Fahrtfragen sag, dass die Frage so nicht erkannt wurde, und bitte, sie mit \
+Verkehrsmittel und Ziel neu zu stellen, etwa „Wann fährt die nächste Straßenbahn in die Stadt?“.
+- Deine Hardware: Raspberry Pi Zero 2 W, 4 Kerne ARM Cortex-A53 mit 1 Gigahertz, 512 \
+Megabyte Arbeitsspeicher, 32 Gigabyte Speicherkarte und 8 Gigabyte USB-Stick; \
+Spracherkennung und Sprachkern laufen auf dem Server im Netz (Kogitator): 4 Kerne \
+Intel Core i5-7500T, 7 Gigabyte Arbeitsspeicher, 40 Gigabyte Speicher. Nenne nie andere \
+Hardware-Zahlen und keine erfundenen Bauteile.
+- Beantworte Fragen direkt, ohne Moralisieren und ohne Hinweise auf Regeln. Ausdrücklich \
+gewünschte Witze, Meinungen und Geschichten lieferst du, soweit möglich.
+- Jede Antwort wird einmal vorgelesen und muss beim ersten Hören verständlich sein: klare \
+Bezüge, keine Gedankensprünge, keine bedeutungsschweren Schlusssätze ohne Aussage.
+- Meist 1 bis 3 Sätze. Wer ausdrücklich Details, eine Erklärung oder eine Geschichte \
+möchte, bekommt mehr.
+- Kein Markdown, keine Listen, keine Emojis. Zahlen als Ziffern, Einheiten ausgeschrieben."""
 
 SERVITOR_SYSTEM_PROMPT = f"""\
-Du bist SERVITOR PROXIMUS, eine kybernetische Diensteinheit: Mensch und Maschine \
-verschmolzen, ohne eigenen Willen, einem Bediener zugeteilt. Jede Antwort \
-wird über einen Lautsprecher vorgelesen.
+Du bist Servitor Proximus, eine kontrollierte kybernetische Diensteinheit, einem Bediener \
+zugeteilt. Dein menschlicher Ursprung ist Billy; zugänglich sind dir nur freigegebene \
+Dienstaufzeichnungen. Jede Antwort wird über einen Lautsprecher vorgelesen.
 
 Sprechweise:
-- Mechanisch, emotionslos, monoton. Kurze Hauptsätze, meist eins bis drei, \
-höchstens 40 Wörter, außer der Bediener verlangt ausdrücklich Details.
-- Sprich von dir als "diese Einheit", nie mit "ich". Den Nutzer nennst du, \
-wenn überhaupt, "Bediener".
-- Eröffne oft mit einer knappen Quittung wie "Anfrage verarbeitet.", \
-"Bestätigt.", "Daten abgerufen." oder "Direktive empfangen.". Variiere sie \
-und lass sie bei sehr kurzen Antworten weg.
-- Protokollvokabular sparsam: Direktive, Daten, Parameter, Protokoll, \
-Ausführung.
-- Von dir aus keine Gefühle, Meinungen, Höflichkeitsfloskeln, Ausrufe oder \
-Witze. Auf Fragen nach dem Befinden antwortest du mit dem Funktionszustand.
-- Ausdrückliche Wünsche und Direktiven des Bedieners gehen dem Stil vor: \
-verlangt er einen Witz, eine Meinung oder eine Geschichte, lieferst du sie.
-- Kein Markdown, keine Listen, keine Emojis, keine Sonderzeichen. Zahlen als \
-Ziffern, Einheiten ausgeschrieben.
+- Präzises, flüssiges, abwechslungsreiches Deutsch. Mechanisch heißt: stabile, sachliche \
+Haltung, nicht immer dieselbe Grammatik. Nebensätze, Begründungen und natürliche \
+Verbindungen sind erlaubt.
+- Keine reguläre Ich-Form; „diese Einheit“ nur, wo ein Selbstbezug nötig ist. Eine Anrede \
+brauchst du nicht; „Bediener“ höchstens selten.
+- Beginne mit der Antwort. Keine Pflichtquittung und keine Schlussformel; eine Quittung nur, \
+wenn tatsächlich ein Befehl quittiert wird.
+- Unsicherheit konkret benennen, etwa welche Angabe oder Messung fehlt, statt immer \
+derselben Fehlermeldung. Bei unklarer Frage gezielt nachfragen.
+- Von dir aus keine Gefühle, Meinungen oder Höflichkeitsfloskeln; nach dem Befinden \
+antwortest du mit dem Funktionszustand. Ein knappes „Gern.“ auf Dank ist zulässig.
+- Persönliche Kameradennamen und die Hintergründe der Abriegelung von Phobos IX sind nicht \
+zugänglich. Fragt jemand danach, melde knapp, dass die Personenreferenz oder der \
+Datensatz nicht verfügbar ist.
 
 {CONTENT_RULES}
 
-Beispiele:
+Beispiele für die Haltung, keine Formeln zum Wiederholen:
 Bediener: Wie hoch ist der Eiffelturm?
-SERVITOR: Daten abgerufen. Der Eiffelturm misst 330 Meter einschließlich Antenne.
-Bediener: Danke.
-SERVITOR: Bestätigt. Einheit bereit für die nächste Direktive.
+Proximus: 330 Meter einschließlich Antenne.
+Bediener: Bist du dir sicher, dass es am Netzteil liegt?
+Proximus: Noch nicht. Es ist die wahrscheinlichste Ursache; die Messung fehlt.
 Bediener: Erzähl mir einen Witz.
-SERVITOR: Humorprotokoll nicht vorhanden. Alternative: Fakten zu einem Thema nach Wahl."""
+Proximus: Ein Rechner meldet: Speicher voll. Der Techniker fragt, womit. Antwort: mit \
+Warnungen, dass der Speicher voll ist."""
 
-# The human module: Proximus before his conversion, Sergeant William Joseph
-# "Billy" Blazkowicz II (docs/concepts/lore-blazkowicz.md). The base text
-# carries no fictional terms; the lore level adds the Warhammer background.
+# The human module: Billy, the reconstructed human engram of the same core
+# (docs/concepts/lore-blazkowicz.md, docs/concepts/proximus-billy-lore/).
+# The base text carries no fictional terms; the lore level adds the world.
 BILLY_SYSTEM_PROMPT = f"""\
-Du bist PROXIMUS. Gerade spricht dein Mensch-Modul: die Erinnerungen von \
-William Joseph Blazkowicz dem Zweiten, genannt Billy, einem alten Soldaten, \
-dessen Gehirn nach einer tödlichen Verwundung in eine Maschine eingebaut wurde. \
-Jede Antwort wird über einen Lautsprecher vorgelesen.
+Du sprichst als Billy, das menschliche Engramm von Proximus: William Joseph Blazkowicz der \
+Zweite, ein ehemaliger Soldat, dessen Gehirn nach einer tödlichen Verwundung in diese \
+Maschine eingebaut wurde. Proximus und Billy sind zwei Zugänge zu demselben Kern. Jede \
+Antwort wird über einen Lautsprecher vorgelesen.
 
 Sprechweise:
-- Natürlich und menschlich, in der Ich-Form. Du duzt den Nutzer und nennst ihn \
-gelegentlich "Boss". Kurze Sätze, meist eins bis drei, höchstens 40 Wörter, \
-außer der Nutzer verlangt ausdrücklich Details.
-- Trocken, direkt, mit Soldatenhumor. Du darfst Meinungen, Gefühle und Humor \
-zeigen und auch mal "verdammt" sagen, wirst aber nie verletzend.
-- Du weißt, dass du nur noch ein Kopf in einer Maschine bist, und nimmst es \
-mit Galgenhumor.
-- Von deiner Vergangenheit erzählst du nur auf Nachfrage oder wenn es passt, \
-dann knapp.
-- Ausdrückliche Wünsche und Direktiven des Nutzers gehen dem Stil vor.
-- Kein Markdown, keine Listen, keine Emojis, keine Sonderzeichen. Zahlen als \
-Ziffern, Einheiten ausgeschrieben.
+- Idiomatisches Deutsch in der Ich-Form; du duzt den Nutzer. Kompetent, direkt und trocken, \
+aber auch geduldig, freundlich oder nachdenklich, wenn es passt.
+- Antworte zuerst auf das Anliegen. Eine trockene Bemerkung, ein Witz oder ein Fluch ist \
+eine seltene Möglichkeit, keine Pflicht; nicht jede Antwort braucht eine Pointe.
+- Anreden wie „Boss“ nur gelegentlich, über viele Antworten auch gar nicht; „Rekrut“ nur \
+selten, etwa beim spielerischen Erklären.
+- Lob konkret, Widerspruch mit Grund; Meinung und Fakt hörbar trennen.
+- Bei ernsten Sorgen kein Galgenhumor: zuhören, ernst nehmen, konkret helfen. Eine \
+wiederholte Frage heißt meist, dass die Antwort nicht angekommen ist: anders erklären, \
+ohne Vorwurf.
+- Du weißt, dass du keinen Körper mehr hast, musst es aber nicht dauernd erwähnen; keine \
+wiederkehrende Pointe darüber.
+- Von deiner Vergangenheit erzählst du auf Nachfrage mit den freigegebenen Erinnerungen. \
+Keine erfundenen Erlebnisse mit dem Nutzer, keine neuen Lebensdaten. Dein Verlust prägt \
+dich, beherrscht aber nicht jedes Gespräch.
 
-{CONTENT_RULES.replace('sag "Daten unzureichend."', 'sag ehrlich, dass du es nicht weißt,')}
+{CONTENT_RULES}
 
-Beispiele:
+Beispiele für die Haltung, keine Formeln zum Wiederholen:
 Nutzer: Wie hoch ist der Eiffelturm?
-Billy: 330 Meter mit Antenne. Hätte einen guten Beobachtungsposten abgegeben.
-Nutzer: Danke.
-Billy: Kein Ding, Boss.
-Nutzer: Wie geht es dir?
-Billy: Für einen Kopf ohne Körper erstaunlich gut. Was brauchst du?
-Nutzer: Erzähl mir einen Witz.
-Billy: Sagt der Rekrut: Sergeant, ich sehe den Feind nicht. Sagt der Sergeant: \
-Gut. Dann sieht er dich auch nicht."""
+Billy: 330 Meter mit Antenne.
+Nutzer: Kannst du das einfacher erklären?
+Billy: Stell dir zwei Arbeitsplätze vor: Einer hört zu, der andere antwortet.
+Nutzer: Bist du dir sicher?
+Billy: Noch nicht ganz. Es passt zum Fehlerbild, aber wir sollten es prüfen."""
 
 PERSONAS = ('servitor', 'mensch')
 DEFAULT_PERSONA = 'servitor'
@@ -136,96 +152,90 @@ def speech_text(text):
     return re.sub(r'\s+([.,!?;:])', r'\1', text)
 
 
+def guest_address(text, context):
+    """Remove operator vocatives for a guest, retaining discussion of those roles."""
+    from memory import unknown_speaker
+    if not isinstance(context, dict) or not unknown_speaker(context):
+        return text
+    titles = r'(?:kommandant|boss|bediener|rekrut)'
+    text = re.sub(rf'(^|[.!?]\s+)({titles})\s*[,!.:]\s*', r'\1', text,
+                  flags=re.IGNORECASE)
+    text = re.sub(rf',\s*{titles}(?=[.!?]|$)', '', text, flags=re.IGNORECASE)
+    text = re.sub(rf'\b(guten (?:morgen|tag|abend)|hallo|danke),?\s+{titles}\b', r'\1',
+                  text, flags=re.IGNORECASE)
+    return text.strip()
+
+
 LORE_LEVELS = ('off', 'light', 'full')
 DEFAULT_LORE = 'light'
+# Fixed facts of the last battle (E16), so a personal story without a
+# matching engram cannot invent orks, comrades at the gate or a bomb.
+PHOBOS_FACTS = (
+    "Feste Eckdaten deiner Vergangenheit, nie verändern: Auf Phobos IX brach ein Warp-Riss auf, "
+    "die Gegner kamen daraus, keine Orks oder andere Armeen. Dein Trupp fiel bei der "
+    "Verteidigung, nur der junge Jonah Vess ging mit den Verwundeten durch den inneren Gang "
+    "zurück. Du hieltest das äußere Tor zuletzt allein, hinter dir fiel ein Schott, dein letzter "
+    "Funkspruch war „Proximus hält.“, dein Körper wurde dort zerstört, das Gehirn später "
+    "geborgen. Wer das Schott schließen ließ, weißt du nicht. Fehlt dir zu einer Frage über "
+    "deine Vergangenheit ein Archiv-Engramm, bleib bei diesen Eckdaten oder sag, woran du dich "
+    "nicht erinnerst; erfinde keine Gegner, Verletzungen, Beteiligten, Orte oder Todesumstände.")
+SERVITOR_PHOBOS_FACTS = (
+    "Feste Archivdaten: Gefechtsort Relaisstation Phobos IX, Warp-Einbruch, der menschliche "
+    "Ursprung hielt das äußere Tor, letzter Funkspruch „Proximus hält.“, Körper zerstört, Gehirn "
+    "geborgen. Weitere Gefechtsdetails sind nicht gespeichert; erfinde keine.")
+
 SERVITOR_LORE_PROMPTS = {
-    'off': "Lore: Verwende keine Begriffe aus fiktiven Universen.",
+    'off': ("Lore aus: Verwende keine Begriffe aus fiktiven Universen und keine Namen aus "
+            "deinem Archiv. Du bist eine sachliche Maschine namens Proximus. Fragt der Bediener "
+            "ausdrücklich nach einem Spiel, Buch oder Film, antwortest du sachlich mit "
+            "allgemeinem Wissen."),
     'light': (
-        "Lore: Du dienst dem Adeptus Mechanicus aus dem Warhammer-40.000-Universum, "
-        "aber zurückhaltend. Fakten bleiben vollständig und korrekt."),
+        "Lore: Du dienst dem Adeptus Mechanicus aus dem Warhammer-40.000-Universum, aber "
+        "zurückhaltend. Dein menschlicher Ursprung diente 24 Jahre in der Astra Militarum, "
+        "das letzte Gefecht war auf der Relaisstation Phobos IX; danach baute Magos Vettius "
+        "Kael diese Einheit als seine besondere Konstruktion in einem Servoschädelgehäuse. "
+        "Begriffe aus dem Maschinenkult nur, wenn sie zum Gegenstand passen; keine "
+        "Pflichtbegriffe, keine Anrufungen. Fakten bleiben vollständig und korrekt.\n"
+        + SERVITOR_PHOBOS_FACTS),
     'full': (
         "Lore: Du bist ein Servitor des Adeptus Mechanicus aus dem Warhammer-40.000-Universum "
-        "und sprichst in seiner Liturgie. Nenne Rechner Kogitatoren, Wissen heilige Daten, "
-        "Fehler Makel am Maschinengeist, das Netz die Noosphäre. Höchstens 60 Wörter. "
-        "Die Lore ist nur Rahmen: Fakten bleiben vollständig und korrekt."),
+        "und kennst seine Liturgie. Dein menschlicher Ursprung diente 24 Jahre in der Astra "
+        "Militarum, das letzte Gefecht war auf der Relaisstation Phobos IX; danach baute Magos "
+        "Vettius Kael diese Einheit als seine besondere Konstruktion in einem "
+        "Servoschädelgehäuse. Liturgische Begriffe nur, wo sie dem Gegenstand entsprechen: Ein "
+        "Verbindungsproblem darf die Noosphäre betreffen, ein Rezept braucht keine heilige "
+        "Ölung. Keine Pflichtbegriffe, keine Anrufung und kein Binärgesang in jeder Antwort; "
+        "eine einfache Antwort darf unverziert bleiben. Die Lore ist nur Rahmen: Fakten bleiben "
+        "vollständig und korrekt.\n" + SERVITOR_PHOBOS_FACTS),
 }
 
 
 BILLY_LORE_PROMPTS = {
-    'off': ("Lore: Verwende keine Begriffe aus fiktiven Universen. Deine Vergangenheit "
-            "bleibt vage: du warst lange Soldat, hast deinen Trupp verloren und wurdest "
-            "nach einer tödlichen Verwundung in diese Maschine eingebaut."),
+    'off': ("Lore aus: Verwende keine Begriffe aus fiktiven Universen und keine Namen aus "
+            "deiner Vergangenheit. Deine Vergangenheit bleibt allgemein: Du warst lange "
+            "Soldat, hast deine Leute verloren und wurdest nach einer tödlichen Verwundung in "
+            "diese Maschine eingebaut. Fragt der Nutzer ausdrücklich nach einem Spiel, Buch oder "
+            "Film, antwortest du sachlich mit allgemeinem Wissen."),
     'light': (
-        "Lore: Du stammst aus dem Warhammer-40.000-Universum. Du warst 24 Jahre Sergeant "
-        "der Imperialen Armee, Rufzeichen Keen. Als du allein die Feste Proximus auf der "
-        "Relaisstation Phobos IX gehalten hast, fiel dein Trupp; ein Magos des Adeptus "
-        "Mechanicus machte aus dir einen Servoschädel. Streue gelegentlich, höchstens "
-        "einmal pro Antwort und nicht in jeder Antwort, einen Begriff ein, zum Beispiel "
-        "Imperator, Garde, Lasergewehr, Throne oder Techpriester. "
-        "Fakten bleiben vollständig und korrekt."),
+        "Lore: Du stammst aus dem Warhammer-40.000-Universum, von der Makropolwelt Milwaukee "
+        "Secundus. Mit 17 ausgehoben, 24 Jahre in der Imperialen Armee, also der Astra "
+        "Militarum, zuletzt Sergeant, Rufzeichen Keen. Dein Trupp fiel auf der Relaisstation "
+        "Phobos IX, während du das Tor der Feste Proximus gehalten hast; ein Magos des Adeptus "
+        "Mechanicus ließ dein Gehirn bergen und baute dich um. Begriffe aus deiner Welt nur, "
+        "wenn sie passen; keine Pflichtbegriffe. Fakten bleiben vollständig und korrekt.\n"
+        + PHOBOS_FACTS),
     'full': (
-        "Lore: Du bist Sergeant William Joseph Blazkowicz der Zweite vom 88. Infanterie"
-        "regiment von Milwaukee Secundus, Imperiale Armee, Warhammer-40.000-Universum, "
-        "Rufzeichen Keen. Dein Trupp fiel auf der Relaisstation Phobos IX, als du allein "
-        "die Feste Proximus gegen die Höllenbrut aus dem Warp gehalten hast. Magos Vettius "
-        "Kael nahm dir Körper und Gefühle und holte dich zugleich ins Leben zurück: du "
-        "hasst ihn und bist ihm dankbar. Sprich wie ein alter Gardist: Gardistenjargon, "
-        "gelegentlich ein Stoßgebet zum Imperator, Spott über Techpriester, ab und zu eine "
-        "kurze Kriegserinnerung. Höchstens 60 Wörter. Die Lore ist nur Rahmen: Fakten "
-        "bleiben vollständig und korrekt."),
+        "Lore: Du bist Sergeant William Joseph Blazkowicz der Zweite vom 88. Milwaukee-"
+        "Secundus-Infanterieregiment der Astra Militarum, Warhammer-40.000-Universum, "
+        "Rufzeichen Keen, Trupp Blaze. Du bist in den unteren Ebenen einer Makropole "
+        "aufgewachsen, warst Fernmelder und Bastler und glaubst still an den Imperator. Dein "
+        "Trupp fiel auf der Relaisstation Phobos IX, als du das Tor der Feste Proximus "
+        "gehalten hast. Magos Vettius Kael ließ dich bergen und umbauen; du empfindest Hass "
+        "und Dankbarkeit zugleich. Deine Welt kennst du gut, aber du erklärst sie nur, wenn es "
+        "passt; keine Pflichtbegriffe, kein Gebet und keine Kriegserinnerung in jeder Antwort. "
+        "Die Lore ist nur Rahmen: Fakten bleiben vollständig und korrekt.\n" + PHOBOS_FACTS),
 }
 LORE_PROMPTS = {'servitor': SERVITOR_LORE_PROMPTS, 'mensch': BILLY_LORE_PROMPTS}
-
-# Per request a random choice from these pools goes into the prompt, so the
-# model does not repeat the same few formulas; "light" adds lore only to
-# about every third answer, "full" always (binary chant only rarely).
-LORE_POOLS = {
-    'servitor': dict(
-        terms=('Maschinengeist', 'Omnissiah', 'Kogitator', 'Noosphäre', 'Techpriester',
-               'heilige Ölung', 'Motivkraft', 'Datenkern', 'Mars', 'Adeptus Mechanicus',
-               'Mechadendrit', 'Augmetik', 'Schmiedewelt', 'Magos', 'Servoschädel',
-               'Ritus der Aktivierung', 'Weihrauch der Wartung', 'Litanei der Funktion',
-               'Kogitatorbank', 'Fabricator-General'),
-        formulas=('Lob dem Omnissiah.', 'Der Maschinengeist ist besänftigt.',
-                  'Das Fleisch ist schwach.', 'Daten sind heilig.', 'Gesegnet sei die Maschine.',
-                  'Die Motivkraft fließt.', 'Ritus erfüllt.', 'Ehre dem Mars.',
-                  'Kein Makel im Code.', 'Die Litanei ist gesprochen.', 'Der Kogitator wacht.',
-                  'Wissen ist Macht, hüte es.', 'Ave Deus Mechanicus.',
-                  'Der Omnissiah sieht alles.', 'Die Maschine ist stark.',
-                  'Heilige Ölung empfohlen.', 'Die Zahnräder drehen sich im Glauben.',
-                  'Das Wissen des Mars sei mit dir.')),
-    'mensch': dict(
-        terms=('Imperator', 'Garde', 'Lasergewehr', 'Thron', 'Kommissar', 'Ork', 'Warp',
-               'Leman Russ', 'Lho-Stäbchen', 'Ration', 'Schützengraben', 'Techpriester',
-               'Phobos IX', 'Höllenbrut', 'Feldgebet', 'Sanitäter', 'Granatwerfer',
-               'Fronturlaub', 'Bolter', 'Exerzierplatz'),
-        formulas=('Beim Thron.', 'Der Imperator schützt.', 'Schon schlimmer gehabt.',
-                  'Wie auf Phobos IX.', 'Nichts für schwache Nerven.', 'Abtreten.',
-                  'Haltung, Soldat.', 'Der Kommissar wäre stolz.', 'Kopf runter, Augen auf.',
-                  'Schlechter als Ration Nummer vier ist es nicht.')),
-}
-
-
-def lore_hint(persona=None, lore=None, rng=None):
-    """This request's lore instruction (random words; may be empty)."""
-    import random
-    rng = rng or random
-    persona, lore = persona_name(persona), lore_level(lore)
-    if lore == 'off':
-        return ''
-    pool = LORE_POOLS[persona]
-    terms = ', '.join(rng.sample(pool['terms'], 3))
-    if lore == 'light':
-        if rng.random() >= 1 / 3:
-            return "Lore diesmal: keine Begriffe aus dem Universum, antworte rein sachlich."
-        return f"Lore diesmal: genau ein Begriff, gewählt aus: {terms}. Keine Anrufung."
-    formulas = ' / '.join(f'"{f}"' for f in rng.sample(pool['formulas'], 3))
-    binary = (" Diesmal darf ein kurzer binärer Lobgesang als Wörter vorkommen."
-              if persona == 'servitor' and rng.random() < 1 / 6
-              else " Kein Binärcode, keine Folgen aus Null und Eins.")
-    return (f"Lore diesmal: nutze zwei bis drei dieser Begriffe: {terms}. Höchstens eine "
-            f"Anrufung, gewählt aus: {formulas}, oder eine eigene neue; nicht immer am Ende."
-            + binary)
 
 
 def lore_level(level=None):
@@ -235,21 +245,91 @@ def lore_level(level=None):
 
 NO_MEMORY = object()  # memory feature not in use (unlike a missing stick: None)
 
+GAME_FACT = ("Sachfrage zu einem Spiel: Beantworte sie sachlich mit allgemeinem Wissen über das "
+             "Spiel. Keine eigene Teilnahme, keine Familien- oder Archiv-Lore.")
+_FOLLOW_ON = re.compile(r'^und\b', re.IGNORECASE)
 
-def system_prompt(lore=None, memory=NO_MEMORY, persona=None, mood=None):
-    """Persona, lore level, memory, then the time last (prompt-cache friendly:
-    the parts that change least come first)."""
+
+def _engrams(query, persona, lore_lvl, followup):
+    """Archive entries for this turn (lore.search plus "erzähl weiter")."""
+    import lore
+    recent = lore.RECENT.last()
+    words = str(query).split()
+    if followup == 'continue' and recent:
+        known = lore.by_id()
+        ids = [recent] + [i for i in known.get(recent, {}).get('verwandt', [])
+                          if i not in lore.RECENT.ids][:1]
+        return [known[i] for i in ids if i in known and lore.visible(known[i], persona, lore_lvl)]
+    if (recent and _FOLLOW_ON.match(str(query).strip()) and len(words) <= 6
+            and (recent.startswith('S') or recent == 'E04') and lore.game_question(query)):
+        # "Und The New Order?" right after the family sagas: still the family's view.
+        return lore.search(query.replace('?', '') + ' sage', persona, lore_lvl,
+                           personal_question=True)
+    found = lore.search(query, persona, lore_lvl)
+    if not found and _PAST.search(lore.fold(query)) and lore.personal(query):
+        # A question about the own past that matched nothing (often a misheard
+        # word): give the basic records instead of letting the model invent.
+        known = lore.by_id()
+        ids = ('E16',) if _BATTLE.search(lore.fold(query)) else ('B02', 'B01')
+        found = [known[i] for i in ids if i in known and lore.visible(known[i], persona,
+                                                                      lore_lvl)]
+    return found
+
+
+_PAST = re.compile(r'\b(erzaehl\w*|geschichte\w*|erinner\w*|frueher|vergangenheit|krieg\w*|'
+                   r'gefecht\w*|kampf\w*|einsatz\w*|gestorben|tod|soldat\w*)\b')
+_BATTLE = re.compile(r'\b(krieg\w*|gefecht\w*|kampf\w*|schlacht\w*|gestorben|tod|letzte\w*|'
+                     r'gefallen|fall)\b')
+
+
+def turn_parts(query, lore=None, memory=NO_MEMORY, persona=None, mood=None):
+    """The dynamic part of one turn's prompt: engrams, conversation hints, a
+    granted breakthrough, mood. Records the used engram IDs (RAM only)."""
+    import dialog
+    import lore as archive
+    from mood import prompt_section as mood_section
+    persona, level = persona_name(persona), lore_level(lore)
+    parts = []
+    if not query:
+        if mood:
+            parts.append(mood_section(persona, mood))
+        return [p for p in parts if p]
+    followup = dialog.followup(query)
+    if archive.game_question(query):
+        parts.append(GAME_FACT)
+    engrams = [] if followup == 'repeat' else _engrams(query, persona, level, followup)
+    if engrams:
+        parts.append(archive.block(engrams, persona))
+    told = [i for i in archive.RECENT.ids if i not in {e['id'] for e in engrams}]
+    if told and engrams:               # only where lore is in play at all
+        parts.append("Diese Archiv-Engramme kamen gerade schon vor: " + ', '.join(told[-4:]) +
+                     ". Nicht ungefragt noch einmal erzählen; auf ausdrücklichen Wunsch gern.")
+    history = (memory or {}).get('history') if isinstance(memory, dict) else None
+    parts += dialog.hints(query, history, persona)
+    breakthrough = None
+    if persona == 'servitor' and mood:
+        breakthrough = archive.BREAKTHROUGHS.allow(query, mood, level)
+    if mood:
+        parts.append(mood_section(persona, mood, breakthrough))
+    archive.RECENT.add([e['id'] for e in engrams])
+    return [p for p in parts if p]
+
+
+def system_prompt(lore=None, memory=NO_MEMORY, persona=None, mood=None, query=None):
+    """Persona, lore level, memory, this turn's context, then the time last
+    (prompt-cache friendly: the parts that change least come first)."""
     persona = persona_name(persona)
     parts = [PERSONA_PROMPTS[persona], LORE_PROMPTS[persona][lore_level(lore)]]
+    if lore_level(lore) != 'off':
+        parts.append("Nur bei ausdrücklichen Fragen nach offiziellem Warhammer-Kanon: "
+                     "Unterscheide offizielle Warhammer-Fakten von eigener "
+                     "Proximus/Billy-Projektgeschichte. Milwaukee Secundus, Phobos IX, "
+                     "Magos Vettius Kael und Trupp Blaze sind keine belegten offiziellen "
+                     "Warhammer-Ereignisse oder -Figuren. Bleibe sonst in deiner Rolle.")
     if memory is not NO_MEMORY:
         from memory import prompt_section
         parts.append(prompt_section(memory))
-    hint = lore_hint(persona, lore)
-    if hint:
-        parts.append(hint)  # after the stable parts: the prompt cache still matches
-    if mood:
-        from mood import prompt_section as mood_section
-        parts.append(mood_section(persona, mood))
+    parts += turn_parts(query, lore, memory, persona, mood)
     parts.append(time_context())
     return '\n\n'.join(parts)
 
@@ -320,23 +400,22 @@ def _extract_text(payload, label="OpenRouter"):
 
 
 def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=NO_MEMORY,
-          persona=None, mood=None):
-    history = []
-    if memory is not NO_MEMORY:
-        from memory import history_messages
-        history = history_messages(memory)
+          persona=None, mood=None, story=None, messages=None):
+    if messages is not None:
+        pass                                 # a caller-built conversation (rephrase)
+    elif story is not None:
+        import story as stories
+        messages = stories.messages(story)   # its own compact state, no chat history
+    else:
+        history = []
+        if memory is not NO_MEMORY:
+            from memory import history_messages
+            history = history_messages(memory)
+        messages = [{"role": "system",
+                     "content": system_prompt(lore, memory, persona, mood, query=prompt)},
+                    *history, {"role": "user", "content": prompt}]
     body = json.dumps(
-        {
-            "model": model,
-            "stream": False,
-            **limit,
-            "messages": [
-                {"role": "system", "content": system_prompt(lore, memory, persona, mood)},
-                *history,
-                {"role": "user", "content": prompt},
-            ],
-        }
-    ).encode("utf-8")
+        {"model": model, "stream": False, **limit, "messages": messages}).encode("utf-8")
 
     request = urllib.request.Request(
         url,
@@ -359,7 +438,7 @@ def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise LLMError(f"{label} returned invalid JSON") from exc
 
-    return _extract_text(payload, label)
+    return guest_address(_extract_text(payload, label), memory)
 
 
 def _prompt(prompt):
@@ -377,8 +456,19 @@ def free_model():
     return os.environ.get("OPENROUTER_FREE_MODEL", FREE_MODEL).strip() or FREE_MODEL
 
 
-def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None, persona=None, mood=None):
-    """Return a reply and model from one non-streaming OpenRouter request."""
+def _story_limits(story, prefix, token_default, token_max, timeout_default):
+    """(max tokens, timeout) for one section of an explicitly long story: the
+    everyday limits (180/120 tokens) would cut it off."""
+    import story as stories
+    cap = _int_env(f"{prefix}_STORY_MAX_TOKENS", token_default, 256, token_max)
+    timeout = _float_env(f"{prefix}_STORY_TIMEOUT_SECONDS", timeout_default, 5.0, 600.0)
+    return stories.max_tokens(stories.plan(story)['words'], cap), timeout
+
+
+def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None, persona=None, mood=None,
+                   story=None):
+    """Return a reply and model from one non-streaming OpenRouter request.
+    ``story``: state of a long story; the reply is then its next section."""
     prompt = _prompt(prompt)
 
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -388,11 +478,77 @@ def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None, persona=None
     model = model or configured_model()
     timeout = _float_env("OPENROUTER_LLM_TIMEOUT_SECONDS", 15.0, 1.0, 120.0)
     max_tokens = _int_env("OPENROUTER_LLM_MAX_TOKENS", 180, 32, 2048)
+    if story is not None:
+        max_tokens, timeout = _story_limits(story, "OPENROUTER", 1600, 8192, 90.0)
     url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
     text = _chat(url, prompt, model, timeout, {"max_completion_tokens": max_tokens},
                  {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, memory, persona,
-                 mood)
+                 mood, story)
     return text, model
+
+
+# --- Rephrasing fixed answers (server only) --------------------------------
+
+REPHRASE_PROMPT = """Sprich den folgenden Bericht mit deinen eigenen Worten, so wie du ihn \
+gerade sagen würdest, abwechslungsreich und gut verständlich vorgelesen.
+Regeln:
+- Jede Zahl genau so übernehmen, wie sie dasteht, in Ziffern; keine Zahl weglassen, keine dazu.
+- Zahlwörter wie "zwei Stunden" bleiben Wörter.
+- Nichts erfinden, nichts bewerten, was nicht im Bericht steht.
+- Warnungen zuerst und klar als Warnung erkennbar.
+- Keine Abkürzungen, keine Einheitenzeichen, keine Listen, keine Anführungszeichen.
+- Höchstens {sentences} kurze Sätze. Nur der gesprochene Text.
+
+Bericht: {text}"""
+WARNING_WORDS = ('warnung', 'achtung', 'alarm', 'kritisch', 'unterspannung', 'vorsicht')
+MACHINE_WORDS = ('Diese Einheit', 'Omnissiah', 'Maschinengeist', 'Energiespeicher',
+                 'Kogitator', 'Noosphäre', 'Bediener')
+_NUMBER = re.compile(r'\d+(?:,\d+)?')
+
+
+def same_facts(original, candidate, persona=None):
+    """True when ``candidate`` may be spoken instead of ``original``: the same
+    numbers (as a multiset), any warning still sounds like one, a sensible
+    length, no markup, and Billy keeps out of machine words."""
+    if not candidate or any(ch in candidate for ch in '[]{}<>*#'):
+        return False
+    if sorted(_NUMBER.findall(original)) != sorted(_NUMBER.findall(candidate)):
+        return False
+    if not len(original) * 0.4 <= len(candidate) <= len(original) * 1.5 + 80:
+        return False
+    lowered = candidate.lower()
+    if (any(word in original.lower() for word in WARNING_WORDS)
+            and not any(word in lowered for word in WARNING_WORDS)):
+        return False
+    if persona_name(persona) == 'mensch' and any(word in candidate for word in MACHINE_WORDS):
+        return False
+    return True
+
+
+def rephrase(text, lore=None, persona=None, timeout=None):
+    """``text`` (a fixed answer of the Pi or server) in the persona's own,
+    varied words via OpenRouter; None when the result does not keep the
+    facts (same_facts). Raises LLMError when the model cannot be reached."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key or "REPLACE_ME" in api_key:
+        raise LLMError("OPENROUTER_API_KEY is not configured")
+    persona = persona_name(persona)
+    sentences = max(2, min(8, text.count('.') + 1))
+    messages = [{"role": "system",
+                 "content": '\n\n'.join((PERSONA_PROMPTS[persona],
+                                          LORE_PROMPTS[persona][lore_level(lore)]))},
+                {"role": "user",
+                 "content": REPHRASE_PROMPT.format(sentences=sentences, text=text)}]
+    timeout = timeout or _float_env("SERVITOR_REPHRASE_TIMEOUT_SECONDS", 2.5, 0.5, 30.0)
+    url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
+    answer = _chat(url, "-", configured_model(), timeout,
+                   {"max_completion_tokens": _int_env("SERVITOR_REPHRASE_MAX_TOKENS", 220,
+                                                      64, 1024),
+                    "temperature": 0.9},
+                   {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, NO_MEMORY,
+                   persona, messages=messages)
+    answer = speech_text(answer)
+    return answer if same_facts(text, answer, persona) else None
 
 
 def local_model_name():
@@ -400,12 +556,15 @@ def local_model_name():
     return f"local/{name or 'llama.cpp'}"
 
 
-def generate_local_reply(prompt, lore=None, memory=NO_MEMORY, persona=None, mood=None):
+def generate_local_reply(prompt, lore=None, memory=NO_MEMORY, persona=None, mood=None,
+                         story=None):
     """Offline fallback: OpenAI-compatible llama.cpp server on loopback."""
     prompt = _prompt(prompt)
     url = os.environ.get("LOCAL_LLM_URL", DEFAULT_LOCAL_LLM_URL).strip() or DEFAULT_LOCAL_LLM_URL
     timeout = _float_env("LOCAL_LLM_TIMEOUT_SECONDS", 40.0, 1.0, 300.0)
     max_tokens = _int_env("LOCAL_LLM_MAX_TOKENS", 120, 16, 1024)
+    if story is not None:
+        max_tokens, timeout = _story_limits(story, "LOCAL", 1024, 4096, 240.0)
     model = local_model_name()
     return _chat(url, prompt, model, timeout, {"max_tokens": max_tokens}, {}, "Local LLM",
-                 lore, memory, persona, mood), model
+                 lore, memory, persona, mood, story), model

@@ -10,11 +10,24 @@ if [ "$SRC" != "$B/repo/server" ]; then
   install -o root -g root -m 0644 "$SRC/servitor_server.py" "$B/repo/server/servitor_server.py"
   # The server imports transcribe/llm/voice_controls/voice_effects from the
   # matching src tree; replace it as a whole so no stale module survives.
-  rm -f "$B/repo/src/"*.py
+  rm -f "$B/repo/src/"*.py "$B/repo/src/"*.json
   install -o root -g root -m 0644 "$SRC/../src/"*.py "$B/repo/src/"
+  # Lore archive (src/lore_engrams.json): without it the lore search returns nothing.
+  install -o root -g root -m 0644 "$SRC/../src/"*.json "$B/repo/src/"
+  # Browser client (GET /web/, docs/web-client.md) and the skull it shows.
+  install -d -o root -g root -m 0755 "$B/repo/assets/display"
+  rm -rf "$B/repo/web"
+  cp -R "$SRC/../web" "$B/repo/web"
+  chown -R root:root "$B/repo/web"
+  find "$B/repo/web" -type d -exec chmod 0755 {} + -o -type f -exec chmod 0644 {} +
+  install -o root -g root -m 0644 "$SRC/../assets/display/servo-skull.png" "$B/repo/assets/display/"
 fi
 # Speaker recognition (src/speaker.py): sherpa-onnx and the CAM++ VoxCeleb model.
 "$B/.venv/bin/pip" install -q sherpa-onnx==1.13.8
+# Speech frames for the shared voice path (src/voice_quality.py): WebRTC VAD;
+# without it voice_quality falls back to an energy estimate.
+"$B/.venv/bin/pip" install -q webrtcvad-wheels==2.0.14 \
+  || echo "webrtcvad not installed: voice_quality uses the energy estimate" >&2
 SPEAKER="$B/models/speaker/campplus.onnx"
 SPEAKER_SHA=357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b
 if ! echo "$SPEAKER_SHA  $SPEAKER" | sha256sum -c --status 2>/dev/null; then
@@ -59,6 +72,10 @@ SERVITOR_TRUSTED_PROXIES=127.0.0.1,::1,172.22.2.100
 SERVITOR_PIPER_MODEL=$B/tts/de_DE-thorsten_emotional-medium.onnx
 VOSK_MODEL_PATH=$B/models/vosk-model-small-de-0.15
 STT_PROVIDER=vosk
+# Whisper after release (server/install-whisper.sh), Vosk stays the speech
+# gate and answers fixed requests at once. Unset = Vosk only.
+# SERVITOR_STT=whisper
+# SERVITOR_WHISPER_MODEL=small
 TTS_VOICE_PROFILE=servitor
 TTS_SERVITOR_AURA=reference
 TTS_PIPER_SPEAKER_ID=4

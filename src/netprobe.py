@@ -1,7 +1,8 @@
-"""Is CT 107 reachable? Polled in a daemon thread by the display and pi-ptt.
+"""Is the Servitor API reachable via any configured endpoint?
 
-GET /health of the first ASSISTANT_BASE_URL needs no token and costs a few
-milliseconds; a slow or dead server never blocks the caller's loop.
+The display and pi-ptt poll in background threads. A failed LAN /health
+must not mark the server down while its Cloudflare HTTPS fallback works.
+The health endpoint requires no token; never send credentials here.
 """
 import json
 import os
@@ -10,6 +11,9 @@ import threading
 import time
 
 ENV_FILE = Path('/etc/pi-voice-assistant.env')
+# Cloudflare blocks Python's default urllib User-Agent (error 1010).
+# Match the normal authenticated audio client in remote_turn.py.
+HEALTH_USER_AGENT = 'pi-voice-assistant/1'
 SERVER_PROBE_INTERVAL_SECONDS = 10.0
 # The Pi's WLAN (power save on) answers a LAN ping in 2 ms, now and then only
 # after 150 ms, and /health in up to 0.85 s: 0.5 s took a slow answer for an
@@ -36,7 +40,7 @@ def load_env(path=ENV_FILE):
 
 
 def server_state(env=None):
-    """'off' without ASSISTANT_BASE_URL, else 'ok'/'down' from GET /health."""
+    """'off' without endpoints, 'ok' if any /health is ready, else 'down'."""
     import urllib.request
     env = (dict(os.environ) if os.environ.get('ASSISTANT_BASE_URL') else load_env()) \
         if env is None else env
@@ -44,23 +48,30 @@ def server_state(env=None):
     urls = [u for u in urls if u]
     if not urls:
         return 'off'
-    try:
-        with urllib.request.urlopen(urls[0] + '/health',
-                                    timeout=SERVER_PROBE_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read(256))
-        return 'ok' if isinstance(payload, dict) and payload.get('ready') is True else 'down'
-    except (OSError, ValueError):
-        return 'down'
+    for url in urls:
+        request = urllib.request.Request(
+            url + '/health', headers={'User-Agent': HEALTH_USER_AGENT})
+        try:
+            with urllib.request.urlopen(request,
+                                        timeout=SERVER_PROBE_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read(256))
+            if isinstance(payload, dict) and payload.get('ready') is True:
+                return 'ok'
+        except (OSError, ValueError):
+            # Try the next endpoint: LAN timeout / malformed JSON / HTTP error
+            # must not raise a false server alarm while Cloudflare is healthy.
+            continue
+    return 'down'
 
 
 class ServerProbe:
     """Polls /health in a daemon thread so a slow server never stalls frames."""
     def __init__(self, interval=SERVER_PROBE_INTERVAL_SECONDS, probe=None):
-        import threading
         self.interval = interval
         self.probe = probe or server_state
         self.state = None
         self.misses = 0         # failed probes in a row while the state is still 'ok'
+        self.quiet = None       # callable: True while the unit sleeps (no probing)
         self._thread = threading.Thread(target=self._run, name='server-probe', daemon=True)
 
     def start(self):
@@ -80,9 +91,17 @@ class ServerProbe:
 
     def _run(self):
         while True:
+            if self.quiet is not None and self.quiet():
+                # Deep standby: no network traffic, so WLAN can doze; back
+                # within QUIET_POLL_SECONDS of waking up.
+                time.sleep(QUIET_POLL_SECONDS)
+                continue
             time.sleep(self.step())
 
 
+
+
+QUIET_POLL_SECONDS = 2.0
 
 
 def network_up():

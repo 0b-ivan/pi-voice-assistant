@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'server'))
 import servitor_server as ss  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from transcribe import NoSpeechError  # noqa: E402
+import memory  # noqa: E402
+import system_status  # noqa: E402
 
 TOKEN = 'x' * 40
 
@@ -79,6 +81,70 @@ class FakePipeline:
 
 
 class ServerTest(unittest.TestCase):
+    def test_local_mode_uses_real_measurements_and_fixed_model_identity(self):
+        cases = ('wie voll ist dein akku',
+                 'kannst du bitte einmal nachsehen wie hoch dein akku gerade wirklich ist und ob du lädst',
+                 'sag mir bitte einmal deine messwerte und deinen aktuellen status ohne etwas zu raten',
+                 'welches sprachmodell bist du')
+        self.pipeline.fail_llm = True  # any model invocation would fail this test
+        for persona in ('servitor', 'mensch'):
+            for question in cases:
+                self.pipeline.transcript = question
+                events = []
+                self.service.run_turn([b'\1' * 16000], events.append, 'wav', device=dict(
+                    llm_mode='local', persona=persona, battery_pct=80, battery_charging=True))
+                reply = next(e for e in events if e['event'] == 'reply')
+                self.assertEqual(reply['model'], 'local/intent')
+                if 'sprachmodell' in question:
+                    self.assertIn('Billy' if persona == 'mensch' else 'Proximus', reply['text'])
+                else:
+                    self.assertIn('80 Prozent', reply['text'])
+                    self.assertNotIn('48 Prozent', reply['text'])
+        self.pipeline.transcript = 'wie voll ist dein akku'
+        events = []
+        self.service.run_turn([b'\1' * 16000], events.append, 'wav', device=dict(llm_mode='local'))
+        self.assertEqual(next(e['text'] for e in events if e['event'] == 'reply'),
+                         'Energiedaten nicht verfügbar.')
+
+    def test_tomorrow_calendar_header_is_used_and_legacy_client_gets_no_guesses(self):
+        import agenda
+        import datetime
+        import zoneinfo
+        now = datetime.datetime(2026, 10, 10, 23, 0, tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        early = dict(summary='Frühtermin', start=(now + datetime.timedelta(days=1)).replace(hour=6),
+                     end=None, all_day=False)
+        today = dict(early, summary='Termin heute', start=now)
+        self.pipeline.transcript = 'was steht morgen an'
+        self.pipeline.fail_llm = True
+
+        def turn(tomorrow=None, guest=False):
+            headers = {'Authorization': f'Bearer {TOKEN}',
+                       'X-Servitor-Agenda': agenda.encode_header([today])}
+            if tomorrow is not None:
+                headers['X-Servitor-Agenda-Tomorrow'] = tomorrow
+            if guest:
+                import speaker
+                copy = dict(facts=[], directives=[], history=[], voiceprints=[dict(
+                    name='Ivan', print=speaker.encode([1.0, 0.0]))])
+                headers['X-Servitor-Status'] = json.dumps(dict(memory='on'))
+                headers['X-Servitor-Memory'] = memory.encode_header(copy)
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+            try:
+                conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+                events = self.events(conn.getresponse().read())
+                return next(e['text'] for e in events if e['event'] == 'reply')
+            finally:
+                conn.close()
+
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=now):
+            self.assertEqual(turn(agenda.encode_header([early])), 'Termine morgen. 6 Uhr: Frühtermin.')
+            self.assertEqual(turn(), 'Kalenderdaten für morgen nicht verfügbar.')
+            self.assertEqual(turn(agenda.encode_header([])), 'Keine weiteren Termine morgen.')
+            self.assertEqual(turn('invalid header'), 'Kalenderdaten für morgen nicht verfügbar.')
+            with unittest.mock.patch.object(ss.Service, '_identify',
+                                             lambda self, audio, copy, emit, voice=None: memory.guest_view(copy)):
+                self.assertIn('nicht als Bediener erkannt', turn(agenda.encode_header([early]), guest=True))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         config = ss.Config({'SERVITOR_API_TOKEN': TOKEN, 'SERVITOR_BIND': '127.0.0.1',
@@ -333,7 +399,7 @@ class ServerTest(unittest.TestCase):
         data = conn.getresponse().read()
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
-        self.assertIn('Omnissiah', reply['text'])
+        self.assertIn('Adeptus Mechanicus', reply['text'])
 
     def test_persona_and_voice_from_device_reach_pipeline(self):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
@@ -453,11 +519,12 @@ class ServerTest(unittest.TestCase):
     def test_billy_words_for_memory_commands_and_intents(self):
         self.pipeline.transcript = 'merk dir dass ich kaffee mag'
         events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
-        self.assertEqual(next(e for e in events if e['event'] == 'reply')['text'], 'Gemerkt.')
+        self.assertIn(next(e for e in events if e['event'] == 'reply')['text'],
+                      memory.BILLY_REPLIES['add_fact'])
         self.pipeline.transcript = 'wie spät ist es'
         events = self.turn_with_memory('on', dict(facts=[], directives=[]), persona='mensch')
-        self.assertTrue(next(e for e in events if e['event'] == 'reply')['text']
-                        .startswith('Es ist '))
+        self.assertRegex(next(e for e in events if e['event'] == 'reply')['text'],
+                         r'^(Es ist |Gerade ist es )?\d+ Uhr')
 
     def test_memory_copy_reaches_llm_and_learned_lines_are_not_spoken(self):
         copy = dict(facts=['Bediener heißt Ivan'], directives=['Städte heißen Makropolen'],
@@ -527,6 +594,234 @@ class ServerTest(unittest.TestCase):
                 last = self.raw_turn(body)[-1]
                 self.assertEqual((last['event'], last['code']), ('error', 'bad_request'))
 
+    def test_ask_takes_the_way_of_a_transcript_without_audio(self):
+        self.pipeline.transcript = None  # any recognition would fail
+        _, data = self.request('/v1/ask', json.dumps({'text': 'Wie hoch ist der Eiffelturm?'}).encode())
+        events = self.events(data)
+        self.assertEqual(self.pipeline.accepted, 0)
+        self.assertEqual(events[0], dict(event='transcript', text='Wie hoch ist der Eiffelturm?'))
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual(reply['text'], 'Antwort auf Wie hoch ist der Eiffelturm?')
+        self.assertEqual([e['event'] for e in events][-2:], ['audio', 'done'])
+
+    def test_journey_without_journey_support_is_answered_without_llm(self):
+        self.pipeline.fail_llm = True
+        _, data = self.request('/v1/ask', json.dumps({'text': 'Wann fährt der nächste Bus zum Bahnhof'}).encode())
+        events = self.events(data)
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual((reply['model'], reply['text']), ('local/journey', ss.JOURNEY_ELSEWHERE['servitor']))
+        self.assertFalse(any(e['event'] == 'journey' for e in events))
+        self.assertEqual([e['event'] for e in events][-2:], ['audio', 'done'])
+
+    def test_ask_answers_fixed_requests_without_llm(self):
+        self.pipeline.fail_llm = True
+        _, data = self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode())
+        reply = next(e for e in self.events(data) if e['event'] == 'reply')
+        self.assertEqual(reply['model'], 'local/intent')
+
+    def test_ask_validates_text_and_token(self):
+        response, _ = self.request('/v1/ask', b'{"text": "x"}', token='y' * 40)
+        self.assertEqual(response.status, 401)
+        for payload, status in (({'text': ''}, 400), ({'text': 3}, 400), ({}, 400),
+                                ({'text': 'x' * (ss.MAX_TYPED_CHARS + 1)}, 413)):
+            with self.subTest(payload=payload):
+                response, _ = self.request('/v1/ask', json.dumps(payload).encode())
+                self.assertEqual(response.status, status)
+
+    def test_password_login_gives_a_web_session_that_opens_turns_but_not_maintenance(self):
+        self.service.config.web_password = ss.hash_password('kogitator-7')
+        port = self.server.server_address[1]
+
+        def call(method, path, body=None, headers=None):
+            conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+            try:
+                conn.request(method, path, body=body, headers=headers or {})
+                response = conn.getresponse()
+                return response, response.read()
+            finally:
+                conn.close()
+
+        response, _ = call('POST', '/v1/login', json.dumps({'password': 'falsch'}))
+        self.assertEqual(response.status, 401)
+        self.assertIsNone(response.getheader('Set-Cookie'))
+        response, _ = call('POST', '/v1/login', json.dumps({'password': 'kogitator-7', 'remember': True}))
+        self.assertEqual(response.status, 200)
+        cookie = response.getheader('Set-Cookie')
+        self.assertIn('HttpOnly', cookie)
+        self.assertIn('SameSite=Strict', cookie)
+        self.assertIn(f'Max-Age={ss.WebSessions.LONG}', cookie)
+        session = cookie.split(';')[0]
+        web = {'Cookie': session, 'X-Servitor-Client': 'web'}
+        _, data = call('GET', '/v1/session', headers=web)
+        self.assertTrue(json.loads(data)['ok'])
+        response, data = call('POST', '/v1/ask', json.dumps({'text': 'wie spät ist es'}), web)
+        self.assertEqual(response.status, 200)
+        self.assertTrue(any(e['event'] == 'reply' for e in self.events(data)))
+        # Without the client header (a foreign page posting a form) the cookie is worthless.
+        response, _ = call('POST', '/v1/ask', json.dumps({'text': 'x'}), {'Cookie': session})
+        self.assertEqual(response.status, 401)
+        for method, path in (('GET', '/v1/status'), ('POST', '/v1/maintenance'), ('GET', '/v1/nightwatch')):
+            with self.subTest(path=path):
+                response, _ = call(method, path, b'{}' if method == 'POST' else None, web)
+                self.assertEqual(response.status, 401)
+        response, _ = call('POST', '/v1/logout', b'', web)
+        self.assertIn('Max-Age=0', response.getheader('Set-Cookie'))
+        _, data = call('GET', '/v1/session', headers=web)
+        self.assertFalse(json.loads(data)['ok'])
+
+    def test_password_login_locks_after_five_failures_and_is_off_without_a_hash(self):
+        response, _ = self.request('/v1/login', json.dumps({'password': 'x'}).encode(), token=None)
+        self.assertEqual(response.status, 503)
+        self.service.config.web_password = ss.hash_password('kogitator-7')
+        for _ in range(ss.WebSessions.TRIES):
+            response, _ = self.request('/v1/login', json.dumps({'password': 'x'}).encode(), token=None)
+            self.assertEqual(response.status, 401)
+        response, _ = self.request('/v1/login', json.dumps({'password': 'kogitator-7'}).encode(), token=None)
+        self.assertEqual(response.status, 429)
+
+    def test_password_hash_round_trip(self):
+        stored = ss.hash_password('Ave Omnissiah')
+        self.assertTrue(stored.startswith('scrypt$'))
+        self.assertTrue(ss.check_password('Ave Omnissiah', stored))
+        self.assertFalse(ss.check_password('ave omnissiah', stored))
+        self.assertFalse(ss.check_password('x', 'kaputt'))
+
+    def test_journal_accepts_only_local_proximus_services(self):
+        journal = self.service.journal
+        for name, unit in (('Fremder Host-Dienst', 'ssh.service'),
+                           ('Fremder Container', 'cron.service'),
+                           ('Alle Kernelmeldungen', 'kernel')):
+            journal.add_journald(json.dumps(dict(MESSAGE=name, PRIORITY='4',
+                                                 _SYSTEMD_UNIT=unit)))
+        journal.add_journald(json.dumps(dict(MESSAGE='Nicht lokaler Proximus',
+                                             PRIORITY='4', _SYSTEMD_UNIT='servitor-voice.service',
+                                             _HOSTNAME='wgz-pve-01')))
+        journal.add_journald(json.dumps(dict(MESSAGE='172.22.9.1 "POST /v1/ask HTTP/1.1" 200 -',
+                                             _SYSTEMD_UNIT='servitor-voice.service')))
+        journal.add_journald(json.dumps(dict(MESSAGE='{"event": "ready", "load_seconds": 3.2}',
+                                             PRIORITY='6', _SYSTEMD_UNIT='servitor-voice.service',
+                                             __REALTIME_TIMESTAMP='1760000000000000')))
+        journal.add_journald(json.dumps(dict(MESSAGE='Sprachkern bereit', PRIORITY='4',
+                                             _SYSTEMD_UNIT='servitor-llm.service')))
+        journal.add_journald('kein json')
+        response, _ = self.request('/v1/journal', method='GET', token=None)
+        self.assertEqual(response.status, 401)
+        response, data = self.request('/v1/journal?after=0', method='GET')
+        lines = json.loads(data)['lines']
+        self.assertEqual([(line['unit'], line['prio']) for line in lines],
+                         [('servitor-voice', 6), ('servitor-llm', 4)])
+        self.assertEqual(lines[0]['ts'], 1760000000.0)
+        self.assertEqual(lines[0]['text'], '{"event": "ready", "load_seconds": 3.2}')
+        last = json.loads(data)['seq']
+        _, data = self.request(f'/v1/journal?after={last}', method='GET')
+        self.assertEqual(json.loads(data)['lines'], [])
+
+    def test_api_requests_are_logged_as_events_with_their_client(self):
+        lines = []
+        with unittest.mock.patch('builtins.print', lambda *a, **k: lines.append(a[0])):
+            self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode())
+            self.request('/health', method='GET', token=None)
+            self.request('/web/app.js', method='GET', token=None)
+        requests = [json.loads(line) for line in lines if '"request"' in line]
+        self.assertEqual(requests, [dict(event='request', client='pi', method='POST',
+                                         path='/v1/ask', status=200)])
+
+    def test_journal_excludes_forwarded_logs_even_with_allowed_unit(self):
+        self.service.journal.add_journald(json.dumps(dict(
+            MESSAGE='Unzulässiger Fremdhost', PRIORITY='6',
+            _SYSTEMD_UNIT='servitor-voice.service', _HOSTNAME='wgz-pve-01')))
+        self.assertEqual(self.service.journal.since(0)['lines'], [])
+
+    def test_journal_reconnects_after_restart_even_if_new_counter_is_higher(self):
+        old = ss.Journal()
+        old.add('alte Sitzung')
+        new = self.service.journal
+        new.add('Proximus verbunden', unit='servitor-voice')
+        new.add('Sprachkern bereit', unit='servitor-llm')
+        _, raw = self.request(f'/v1/journal?after={old.seq}&instance={old.instance}', method='GET')
+        data = json.loads(raw)
+        self.assertEqual([entry['text'] for entry in data['lines']], ['Proximus verbunden', 'Sprachkern bereit'])
+        self.assertEqual(data['instance'], new.instance)
+        _, raw = self.request(f'/v1/journal?after={new.seq}&instance={new.instance}', method='GET')
+        self.assertEqual(json.loads(raw)['lines'], [])
+        # Older browsers without an instance recover from a reset counter too.
+        _, raw = self.request('/v1/journal?after=9999', method='GET')
+        self.assertEqual(len(json.loads(raw)['lines']), 2)
+
+    def test_journal_keeps_times_and_drops_colour_codes(self):
+        journal = self.service.journal
+        journal.add('\x1b[0;93m2026-10-14 19:15:33.070364312 [W:onnxruntime] Failed to persist\x1b[m')
+        journal.add('neighbour fe80::1c2b:3aff:fe11:22 reachable')
+        texts = [l['text'] for l in journal.since(0)['lines']]
+        self.assertEqual(texts, ['2026-10-14 19:15:33.070364312 [W:onnxruntime] Failed to persist',
+                                 'neighbour *:* reachable'])
+
+    def test_journal_follows_journalctl_output(self):
+        script = Path(self.tmp.name) / 'fake-journalctl'
+        script.write_text('#!/bin/sh\necho \'{"MESSAGE": "Proximus bereit", "_SYSTEMD_UNIT": "servitor-voice.service"}\'\n'
+                          'echo "No journal files were found." >&2\nexit 9\n')
+        script.chmod(0o755)
+        stop = threading.Event()
+        thread = ss.follow_system_journal(self.service.journal, [str(script)], stop=stop)
+        try:
+            for _ in range(50):
+                data = self.service.journal.since(0)
+                if 'Status 9' in data['source']['error']:
+                    break
+                time.sleep(0.05)
+            texts = [line['text'] for line in data['lines']]
+            self.assertIn('Proximus bereit', texts)
+            self.assertIn('journalctl: No journal files were found.', texts)
+            self.assertIn('Status 9', data['source']['error'])
+        finally:
+            stop.set()
+            thread.join(1)
+        self.assertFalse(thread.is_alive())
+
+    def test_tee_fallback_without_journalctl(self):
+        tee = ss.Tee(open(os.devnull, 'w'), self.service.journal)
+        tee.write('half')
+        tee.write(' a line\n192.168.1.77 "GET /web/ HTTP/1.1" 200 -\n')
+        self.assertEqual([l['text'] for l in self.service.journal.since(0)['lines']], ['half a line'])
+
+    def test_web_client_is_served_without_token_and_only_its_files(self):
+        response, _ = self.request('/web', method='GET', token=None)
+        self.assertEqual((response.status, response.getheader('Location')), (302, '/web/'))
+        for path, mime in (('/', 'text/html'), ('/web/', 'text/html'), ('/web/app.js', 'text/javascript'),
+                           ('/web/capture-worklet.js', 'text/javascript'),
+                           ('/web/style.css', 'text/css'), ('/web/servo-skull.png', 'image/png'),
+                           ('/web/manifest.webmanifest', 'application/manifest+json')):
+            with self.subTest(path=path):
+                response, data = self.request(path, method='GET', token=None)
+                self.assertEqual(response.status, 200)
+                self.assertTrue(response.getheader('Content-Type').startswith(mime))
+                self.assertIn("default-src 'self'", response.getheader('Content-Security-Policy'))
+                self.assertEqual(response.getheader('X-Content-Type-Options'), 'nosniff')
+                self.assertTrue(data)
+        for path in ('/web/../server/servitor_server.py', '/web/index.html', '/web/%2e%2e/README.md',
+                     '/web/app.js.map'):
+            with self.subTest(path=path):
+                response, _ = self.request(path, method='GET', token=None)
+                self.assertEqual(response.status, 404)
+
+    def test_web_client_references_only_served_files(self):
+        import re
+        html = (ss.WEB / 'index.html').read_text()
+        for name in re.findall(r'(?:src|href)="([^"]+)"', html):
+            if not name.startswith('#'):          # sigils inside the page
+                self.assertIn(name, ss.WEB_FILES)
+        css = (ss.WEB / 'style.css').read_text()
+        for name in re.findall(r'url\("(/[^"]+)"\)', css):
+            self.assertIn(name, ss.WEB_FILES)       # fonts, the skull
+        for name, _ in ss.WEB_FILES.values():
+            self.assertTrue((ss.WEB / name).is_file(), name)
+        script = (ss.WEB / 'app.js').read_text()
+        # Turns plus the read-only token check of the call; never maintenance.
+        for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):
+            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story', '/v1/status', '/v1/journal',
+                                     '/v1/login', '/v1/logout', '/v1/session'))
+        self.assertIn("addModule('/web/capture-worklet.js')", script)
+
     def test_speak_requires_string_text(self):
         for payload in ({'text': None}, {'text': ['a']}, {'text': 5}):
             with self.subTest(payload=payload):
@@ -569,16 +864,22 @@ class IntentServerTest(ServerTest):
             _, data = self.request('/v1/turn', b'\1' * 16000)
         events = self.events(data)
         reply = next(e for e in events if e['event'] == 'reply')
-        self.assertEqual((reply['text'], reply['model']), ('Zeitindex: 4 Uhr 7.', 'local/intent'))
+        self.assertIn(reply['text'], ('Zeitindex: 4 Uhr 7.', 'Es ist 4 Uhr 7.'))
+        self.assertEqual(reply['model'], 'local/intent')
         self.assertNotIn('think', [e.get('stage') for e in events])
         self.assertEqual(events[-1]['event'], 'done')
 
     def test_briefing_fetches_weather_on_the_server(self):
+        import datetime
+        import zoneinfo
         self.pipeline.transcript = 'guten morgen'
         self.pipeline.fail_llm = True
         self.service.weather = unittest.mock.Mock()
         self.service.weather.get.return_value = dict(now=12, code=3, high=14, low=6, rain=10)
-        _, data = self.request('/v1/turn', b'\1' * 16000)
+        fixed = datetime.datetime(2026, 10, 8, 8, 0,
+                                  tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            _, data = self.request('/v1/turn', b'\1' * 16000)
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertEqual(reply['model'], 'local/intent')
         self.assertIn('Außentemperatur 12 Grad, bedeckt.', reply['text'])
@@ -654,13 +955,34 @@ class IntentServerTest(ServerTest):
                              'Termine heute. 9 Uhr 30: Zahnarzt.')
             self.assertEqual(turn(None), 'Kalenderdaten nicht verfügbar.')
             with unittest.mock.patch.object(ss.Service, '_identify',
-                                            lambda self, audio, copy, emit:
+                                            lambda self, audio, copy, emit, voice=None:
                                             dict(copy, speaker='unknown')):
                 text = turn(agenda.encode_header([dentist]),
                             dict(facts=[], directives=[], history=[],
                                  voiceprints=[dict(name='Ivan', print='AAAA')]))
         self.assertIn('nicht als Bediener erkannt', text)
         self.assertNotIn('Zahnarzt', text)
+
+    def test_guest_cannot_start_enrollment(self):
+        # "Lerne meine Stimme" from an unknown voice: a refusal, not the LLM.
+        import memory
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, copy, emit, voice=None:
+                                        dict(copy, speaker='unknown')):
+            text, _ = self.device_turn('lerne meine stimme', {'memory': 'on'}, copy)
+        self.assertEqual(text, memory.GUEST_TEXT)
+
+    def test_enroll_command_without_a_memory_copy_does_not_crash(self):
+        # Status without memory (old Pi, dropped header) or an unknown session
+        # after a server restart: llm.NO_MEMORY reached unknown_speaker() and
+        # the turn failed with AttributeError (audit 14.10.2026).
+        import enroll
+        for transcript in ('stimme kennenlernen', 'lerne meine stimme'):
+            with self.subTest(transcript=transcript):
+                text, _ = self.device_turn(transcript, {'devctl': 'on'})
+                self.assertEqual(text, enroll.MENU_ONLY)
 
     def device_turn(self, transcript, status, memory_copy=None):
         import memory
@@ -702,7 +1024,7 @@ class IntentServerTest(ServerTest):
         guest = dict(facts=[], directives=[], history=[],
                      voiceprints=[dict(name='Ivan', print='AAAA')])
         with unittest.mock.patch.object(ss.Service, '_identify',
-                                        lambda self, audio, copy, emit:
+                                        lambda self, audio, copy, emit, voice=None:
                                         dict(copy, speaker='unknown')):
             text, device = self.device_turn('fahr dich herunter',
                                             {'devctl': 'on', 'memory': 'on'}, guest)
@@ -753,9 +1075,164 @@ class IntentServerTest(ServerTest):
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertIn('Energiespeicher 83 Prozent. Ladung aktiv.', reply['text'])
-        self.assertIn('Verbindung zum Server stabil.', reply['text'])  # server knows it is up
+        self.assertTrue(any(server in reply['text']                   # server knows it is up
+                            for server in system_status.STATUS_FACTS['server']), reply['text'])
         self.assertNotIn('nicht erreichbar', reply['text'])
 
+    def turn_reply(self, transcript, status):
+        self.pipeline.transcript = transcript
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps(status)})
+        data = conn.getresponse().read()
+        conn.close()
+        return next(e for e in self.events(data) if e['event'] == 'reply')
+
+    def test_information_answers_get_fresh_words_from_the_llm(self):
+        calls = []
+
+        def rephrase(text, lore=None, persona=None, mode=None):
+            calls.append((text, persona, mode))
+            return 'Ich habe 83 Prozent im Akku und lade.'
+        self.pipeline.rephrase = rephrase
+        reply = self.turn_reply('wie ist der akkustand', {'battery_pct': 83,
+                                                         'battery_charging': True})
+        self.assertEqual(reply['text'], 'Ich habe 83 Prozent im Akku und lade.')
+        self.assertEqual(reply['model'], 'local/intent+rephrase')
+        self.assertIn('Energiespeicher 83 Prozent', calls[0][0])   # the fixed facts went in
+        # Times are not rephrased, nor the status report: it must be fast.
+        self.turn_reply('wie spät ist es', {})
+        status = self.turn_reply('wie ist dein status', {'battery_pct': 83})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(status['model'], 'local/intent')
+
+    def test_rephrase_failure_keeps_the_fixed_answer(self):
+        for result in (None, RuntimeError('boom')):
+            def rephrase(text, lore=None, persona=None, mode=None, result=result):
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            self.pipeline.rephrase = rephrase
+            reply = self.turn_reply('wie ist der akkustand', {'battery_pct': 83})
+            self.assertIn('Energiespeicher 83 Prozent', reply['text'])
+            self.assertEqual(reply['model'], 'local/intent')
+
+    def turn_events(self, transcript, status):
+        self.pipeline.transcript = transcript
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps(status)})
+        data = conn.getresponse().read()
+        conn.close()
+        return self.events(data)
+
+    def test_long_status_comes_in_parts_for_pis_that_queue_them(self):
+        status = {'battery_pct': 83, 'temp_c': 45, 'uptime_s': 7380, 'wifi_dbm': -60,
+                  'net_ms': 40, 'story': 'on'}
+        events = self.turn_events('wie ist dein status', status)
+        audio = [e for e in events if e['event'] == 'audio']
+        self.assertGreater(len(audio), 1)
+        self.assertEqual([e['part'] for e in audio], list(range(len(audio))))
+        self.assertTrue(all(e['parts'] == len(audio) for e in audio))
+        self.assertLessEqual(len(audio[0]['text']), 80)              # the voice starts early
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual(' '.join(e['text'] for e in audio), reply['text'])
+        self.assertEqual(events[-1]['event'], 'done')
+        self.assertFalse(any(e['event'] == 'story' for e in events))  # no story state
+        # An older Pi (no story support) gets one file as before.
+        audio = [e for e in self.turn_events('wie ist dein status', dict(status, story=None))
+                 if e['event'] == 'audio']
+        self.assertEqual(len(audio), 1)
+        self.assertNotIn('part', audio[0])
+
+    def test_speech_parts(self):
+        self.assertEqual(ss.speech_parts('Kurz. Ende.'), ['Kurz. Ende.'])
+        text = ('Status nominal. Energiespeicher 80 Prozent. Akkubetrieb. Kerntemperatur 48 '
+                'Grad. Verbindung zum Server stabil. Laufzeit zwei Stunden. Befehl erwartet.')
+        parts = ss.speech_parts(text)
+        self.assertEqual(' '.join(parts), text)
+        self.assertGreaterEqual(len(parts[0]), ss.FIRST_PART_CHARS)
+        self.assertTrue(all(p.endswith('.') for p in parts))
+        self.assertTrue(all(len(p) >= ss.FIRST_PART_CHARS for p in parts))
+
+
+class RephraseGuardTests(unittest.TestCase):
+    def setUp(self):
+        import llm
+        self.llm = llm
+
+    def test_same_facts(self):
+        fixed = ("Status eingeschränkt. Warnung: Unterspannung. Energiespeicher 83 Prozent. "
+                 "Zellspannung 4,02 Volt. Laufzeit zwei Stunden.")
+        good = ("Achtung, Unterspannung! Der Speicher hat 83 Prozent, die Zelle 4,02 Volt, "
+                "und ich laufe seit zwei Stunden.")
+        self.assertTrue(self.llm.same_facts(fixed, good))
+        for bad in ("Achtung, Unterspannung! 84 Prozent, 4,02 Volt.",          # changed
+                    "Achtung, Unterspannung! 83 Prozent.",                       # dropped
+                    "Alles gut. 83 Prozent, 4,02 Volt, zwei Stunden.",           # no warning
+                    "Achtung: [stimmung:ruhig] 83 Prozent, 4,02 Volt.",          # markup
+                    "Achtung. 83 Prozent, 4,02 Volt. " + "Blabla. " * 40,         # too long
+                    ""):
+            self.assertFalse(self.llm.same_facts(fixed, bad), bad)
+        self.assertFalse(self.llm.same_facts("Akku bei 80 Prozent.",
+                                             "Energiespeicher bei 80 Prozent.", 'mensch'))
+
+    def test_rephrase_checks_the_answer_and_needs_a_key(self):
+        with unittest.mock.patch.dict(os.environ, {'OPENROUTER_API_KEY': 'k'}):
+            with unittest.mock.patch.object(self.llm, '_chat',
+                                            return_value='Ich habe 80 Prozent im Akku.') as chat:
+                self.assertEqual(self.llm.rephrase('Energiespeicher 80 Prozent.'),
+                                 'Ich habe 80 Prozent im Akku.')
+                messages = chat.call_args.kwargs['messages']
+                self.assertIn('Energiespeicher 80 Prozent.', messages[-1]['content'])
+            with unittest.mock.patch.object(self.llm, '_chat', return_value='Ich habe 90 Prozent.'):
+                self.assertIsNone(self.llm.rephrase('Energiespeicher 80 Prozent.'))
+        with unittest.mock.patch.dict(os.environ, {'OPENROUTER_API_KEY': ''}):
+            with self.assertRaises(self.llm.LLMError):
+                self.llm.rephrase('Energiespeicher 80 Prozent.')
+
+    def test_real_pipeline_respects_switch_and_local_mode(self):
+        pipeline = ss.RealPipeline.__new__(ss.RealPipeline)
+        pipeline.clock, pipeline.openrouter_retry_at = (lambda: 100.0), 0.0
+        with unittest.mock.patch('llm.rephrase', return_value='neu') as rephrase:
+            self.assertEqual(pipeline.rephrase('alt'), 'neu')
+            self.assertIsNone(pipeline.rephrase('alt', mode='local'))
+            with unittest.mock.patch.dict(os.environ, {'SERVITOR_REPHRASE': 'off'}):
+                self.assertIsNone(pipeline.rephrase('alt'))
+            pipeline.openrouter_retry_at = 200.0              # OpenRouter cooling down
+            self.assertIsNone(pipeline.rephrase('alt'))
+            self.assertEqual(rephrase.call_count, 1)
+
+
+class WhisperQuickPathTests(unittest.TestCase):
+    def test_fixed_requests_and_stop_keep_the_vosk_text(self):
+        self.assertTrue(ss.quick_text('wie spät ist es'))
+        self.assertTrue(ss.quick_text('sei still'))
+        self.assertFalse(ss.quick_text('wie hoch ist der eiffelturm'))
+
+    def test_transcribe_mode_keeps_vosk_for_passphrases(self):
+        seen = []
+
+        class Recognizer:
+            whisper = True
+
+            def accept_pcm(self, pcm):
+                pass
+
+            def finish(self):
+                seen.append(self.whisper)
+                return 'omnissiah segne diese maschine'
+
+        class Pipeline:
+            def recognizer(self):
+                return Recognizer()
+
+        config = ss.Config({'SERVITOR_API_TOKEN': 'x' * 40})
+        service = ss.Service(config, Pipeline())
+        events = []
+        service.run_turn([b'\1\0' * 8000], events.append, 'wav', transcribe_only=True)
+        self.assertEqual(seen, [False])
+        self.assertIn(dict(event='transcript', text='omnissiah segne diese maschine'), events)
 
 if __name__ == '__main__':
     unittest.main()

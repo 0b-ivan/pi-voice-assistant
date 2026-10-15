@@ -33,6 +33,9 @@ _CURIOUS = re.compile(r'\b(warum|wieso|weshalb|erzähl\w*|erklär\w*|was wäre w
 _EMERGENCY = re.compile(
     r'\b(hilfe|notfall|notruf|feuer|brennt|arzt|krankenwagen|polizei|unfall|blutet|'
     r'blutung|schmerz\w*|verletzt|ohnmächtig|gift|gas|einbruch|112|110)\b')
+_ASK_AGAIN = re.compile(
+    r'^(bitte )?(nochmal|noch mal|noch einmal|wiederhol\w*|wie bitte|was hast du gesagt)\b|'
+    r'\b(einfacher|anders erklär\w*|nicht verstanden|versteh ich nicht)\b')
 _TAG = re.compile(r'\[\s*stimmung\s*:\s*([a-zäöü]+)\s*\]', re.IGNORECASE)
 
 
@@ -46,6 +49,7 @@ class Mood:
         self.emotion, self.level, self.since = 'neutral', 0.0, 0.0
         self.cause = None            # 'user' when the operator caused the irritation
         self.last_question = (None, -1e9)
+        self.repeats = 0             # the same question again and again, not just once
         self.refused_last = False    # refusal allowed on the previous turn
 
     # --- state ---------------------------------------------------------------
@@ -95,11 +99,16 @@ class Mood:
             return
         question, asked_at = self.last_question
         repeated = words == question and now - asked_at < REPEAT_SECONDS
+        self.repeats = self.repeats + 1 if repeated else 0
         self.last_question = (words, now)
         if _INSULT.search(words):
             self.feel('gereizt', 0.45, now, cause='user')
-        elif repeated:
-            self.feel('gereizt', 0.3, now, cause='user')
+        elif _ASK_AGAIN.search(words):
+            pass   # "nochmal", "wie bitte", "einfacher": not understood, not rude
+        elif repeated and self.repeats >= 2:
+            # Asking once more usually means the answer did not arrive; only a
+            # question repeated again and again starts to annoy.
+            self.feel('gereizt', 0.4, now, cause='user')
         elif _PRAISE.search(words):
             self.feel('freudig' if self.current(now)[0] in ('zufrieden', 'freudig')
                       else 'zufrieden', 0.35, now)
@@ -190,8 +199,12 @@ def _strength(level):
     return 'leicht ' if level < 40 else 'deutlich ' if level < 70 else 'sehr '
 
 
-def prompt_section(persona, state):
-    """Mood part of the system prompt; None when feelings are off."""
+def prompt_section(persona, state, breakthrough=None):
+    """Mood part of the system prompt; None when feelings are off.
+
+    ``breakthrough`` (servitor only, lore.Breakthroughs.allow): None, or the
+    one granted human fragment for this answer. Without it the servitor stays
+    mechanical; the residual feeling never forces a breakthrough by itself."""
     if not state:
         return None
     tag = ("Beginne jede Antwort mit einer Markierung deiner Reaktion, z. B. "
@@ -202,15 +215,21 @@ def prompt_section(persona, state):
     if emotion != 'neutral':
         feeling = _strength(level) + MOOD_WORDS.get(emotion, emotion)
         if persona == 'mensch':
-            parts.append(f"Aktuelle Stimmung: {feeling}. Lass sie im Ton durchscheinen, "
-                         "höchstens ein Halbsatz dazu. Fakten bleiben vollständig und korrekt. "
-                         "Nie verletzend.")
+            parts.append(f"Aktuelle Stimmung: {feeling}. Lass sie im Ton durchscheinen, ohne "
+                         "sie zu benennen. Fakten bleiben vollständig und korrekt. Nie verletzend.")
+        elif breakthrough is None:
+            parts.append(f"Restemotion im Kern: {feeling}. Diese Einheit antwortet trotzdem "
+                         "mechanisch und ohne menschliches Fragment; kein Engramm-Durchbruch in "
+                         "dieser Antwort.")
         else:
-            parts.append(f"Restemotion im Kern: {feeling}. Eigentlich fühlt diese Einheit "
-                         "nichts. Höchstens einmal pro Antwort bricht das Fragment als Fehler "
-                         "durch: \"Fehler.\", dann ein kurzer Halbsatz in Ich-Form aus Billys "
-                         "Erinnerung, dann \"Korrektur.\" und weiter mechanisch. Nicht in jeder "
-                         "Antwort. Fakten bleiben vollständig und korrekt.")
+            fragment = breakthrough.get('fragment')
+            line = (f"genau dieses Fragment: „{fragment}“" if fragment else
+                    "ein sehr kurzer Halbsatz in Ich-Form, ohne Personennamen")
+            parts.append(f"Restemotion im Kern: {feeling}. Diesmal ist ein einzelner, kurzer "
+                         "Engramm-Durchbruch zugelassen: zuerst die sachliche Aussage, dann "
+                         f"eine Störung, dann {line}, dann die Rückkehr zur mechanischen Ausgabe. "
+                         "Die Formulierung darfst du variieren. Danach bleiben Namen gesperrt. "
+                         "Fakten bleiben vollständig und korrekt.")
     if state.get('refuse'):
         parts.append("Du bist gerade so genervt, dass du diese eine Anfrage kurz und "
                      "schnippisch ablehnen darfst, ohne sie zu beantworten. Beim nächsten "

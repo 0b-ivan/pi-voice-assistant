@@ -36,20 +36,26 @@ class BillyWordingTests(unittest.TestCase):
                         server='ok', temp_c=50)
         for intent in ('time', 'date', 'status', 'battery', 'network'):
             self.assertHuman(intents.answer(intent, NOW, snapshot))
-        self.assertEqual(intents.answer('time', NOW, snapshot), 'Es ist 7 Uhr 15.')
-        self.assertEqual(intents.answer('time', NOW, dict(snapshot, persona='servitor')),
-                         'Zeitindex: 7 Uhr 15.')
-        self.assertIn('Wachablösung', intents.answer('time', NOW, dict(snapshot, lore='full')))
+        # Wording varies (variants.py); the time itself never does.
+        for _ in range(6):
+            self.assertIn('7 Uhr 15.', intents.answer('time', NOW, snapshot))
+            self.assertHuman(intents.answer('time', NOW, dict(snapshot, lore='full')))
+        self.assertIn(intents.answer('time', NOW, dict(snapshot, persona='servitor')),
+                      ('Zeitindex: 7 Uhr 15.', 'Es ist 7 Uhr 15.'))
         briefing = intents.answer('briefing', NOW, dict(snapshot, operator='Ivan'))
         self.assertTrue(briefing.startswith('Morgen, Ivan.'))
         self.assertHuman(briefing)
 
     def test_status_keeps_the_facts(self):
         text = status_text(dict(persona='mensch', battery_pct=12, temp_c=80, server='down'))
-        self.assertTrue(text.startswith('Lagebericht. Nicht alles rund.'))
+        import system_status
+        self.assertTrue(any(text.startswith(opening + ' Nicht alles rund.')
+                            for opening in system_status.STATUS_OPEN['billy']), text)
         self.assertIn('12 Prozent', text)
         self.assertIn('80 Grad', text)
-        self.assertIn('Server nicht erreichbar', text)
+        self.assertIn('Der Server antwortet nicht', text)
+        self.assertHuman(text)
+        self.assertNotIn('Kerntemperatur', text)
 
     def test_alarms_in_billys_words(self):
         snapshot = dict(battery_pct=9, temp_c=78, load_pct=95)
@@ -57,7 +63,9 @@ class BillyWordingTests(unittest.TestCase):
             self.assertHuman(alarms._phrase(key, snapshot, 'billy'))
         self.assertIn('78 Grad', alarms._phrase('temperature', snapshot, 'billy'))
         self.assertIn('9 Prozent', alarms._battery_phrase(2, 9, 'billy'))
-        self.assertIn('Boss', alarms.WAKE_PHRASES['billy'])
+        for phrase in alarms.WAKE_PHRASES['billy']:
+            self.assertHuman(phrase)
+        self.assertIn(alarms.wake_phrase('billy'), alarms.WAKE_PHRASES['billy'])
         self.assertEqual(alarms.shutdown_text(alarms.SHUTDOWN_NOW, 'off'), alarms.SHUTDOWN_NOW)
         self.assertNotEqual(alarms.shutdown_text(alarms.SHUTDOWN_NOW, 'billy'),
                             alarms.SHUTDOWN_NOW)
@@ -68,8 +76,10 @@ class BillyWordingTests(unittest.TestCase):
 
     def test_memory_and_maintenance(self):
         context = dict(facts=['Ivan mag Kaffee'], directives=[])
-        self.assertEqual(memory.reply('add_fact', 'x', context, 'billy'), 'Gemerkt.')
-        self.assertEqual(memory.reply('forget', 'kaffee', context, 'billy'), '1 Eintrag vergessen.')
+        self.assertIn(memory.reply('add_fact', 'x', context, 'billy'),
+                      memory.BILLY_REPLIES['add_fact'])
+        for _ in range(4):   # every variant keeps the count
+            self.assertIn('1 Eintrag', memory.reply('forget', 'kaffee', context, 'billy'))
         self.assertIn('Stick', memory.reply('add_fact', 'x', None, 'billy'))
         self.assertEqual(maintenance.result_text('pi', dict(state='done', upgraded=3), 'billy'),
                          'Pi: Update fertig, 3 Pakete.')

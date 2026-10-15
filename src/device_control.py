@@ -18,11 +18,29 @@ Text only (no hardware): ptt.py switches WLAN (rfkill), requests the reboot
 """
 import re
 
-OPS = ('wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown')
+OPS = ('wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown',
+       'power_notices_on', 'power_notices_off',
+       'cpu_eco', 'cpu_balanced', 'cpu_power')
 CONFIRM_OPS = ('reboot', 'shutdown')
 CONFIRM_SECONDS = 20.0   # from the question; the answer's recording starts well before
 
 _WLAN = re.compile(r'\b(wlan|w lan|wifi|wi fi|wireless lan|funkmodul|funk)\b')
+_CPU_MODE = re.compile(r'\b(cpu|prozessor|leistungs ?modus|leistungs ?profil|rechen ?modus)\b')
+_CPU_SET = re.compile(r'\b(stell\w*|schalt\w*|setz\w*|wechsel\w*|aktivier\w*|nutz\w*|wähl\w*)\b')
+# The profile names Proximus says itself ("Prozessor im Normalmodus") also
+# name the profile: "wechsel in den Sparmodus", "aktiviere den Leistungsmodus".
+_CPU_NAMED = re.compile(r'\b(spar ?modus|normal ?modus|standard ?modus|eco ?modus|'
+                        r'leistungs ?modus|power ?modus|performance ?modus)\b')
+_CPU_ECO = re.compile(r'\b(eco|eco ?modus|spar ?modus|spar ?profil|energiespar\w*)\b')
+_CPU_BALANCED = re.compile(r'\b(normal|normal ?modus|balanced|ausgeglichen|standard|standard ?modus)\b')
+_CPU_POWER = re.compile(r'\b(power|power ?modus|performance|performance ?modus|leistung|'
+                        r'hochleistung\w*)\b')
+# "Leistungsmodus" is the power profile, unless it names the setting itself
+# ("stell den Leistungsmodus auf eco").
+_CPU_POWER_NOUN = re.compile(r'\b(leistungs ?modus)\b')
+# "WLAN nicht ausschalten" must never switch it off: a negated sentence is no command.
+_NEGATION = re.compile(r'\b(nicht|nich|kein\w*|nie|niemals)\b')
+_POWER_NOTICES = re.compile(r'\b(energie ?hinweise|energie ?meldungen|stromwechsel ?meldungen|strom ?hinweise|ladehinweise|netzteil ?ansagen|netzteil ?hinweise)\b')
 _OFF = re.compile(r'\b(aus|ab|deaktivier\w*|abschalt\w*|ausschalt\w*|trenn\w*)\b')
 _ON = re.compile(r'\b(an|ein|aktivier\w*|einschalt\w*|anschalt\w*)\b')
 _SHUTDOWN = re.compile(
@@ -48,7 +66,30 @@ def command(text):
     """'wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown' or None. ``text`` is normalized
     (lower case, no punctuation). Reboot of the server is not ours (maintenance)."""
     text = str(text).strip()
-    if not text or len(text.split()) > 8:
+    if not text or len(text.split()) > 8 or _NEGATION.search(text):
+        return None
+    # The spoken command can select only the kernel governor. Never interpret
+    # overclock/voltage terms as authorization to change boot firmware.
+    named = _CPU_NAMED.search(text) and not _SLEEP.search(text)
+    if (_CPU_MODE.search(text) or named) and _CPU_SET.search(text):
+        if re.search(r'\b(overclock\w*|übertakt\w*|spannungs\w*|voltage)\b', text):
+            return None
+        matches = [('cpu_eco', _CPU_ECO.search(text)),
+                   ('cpu_balanced', _CPU_BALANCED.search(text)),
+                   ('cpu_power', _CPU_POWER.search(text))]
+        selected = [name for name, result in matches if result]
+        if not selected and _CPU_POWER_NOUN.search(text):
+            selected = ['cpu_power']
+        return selected[0] if len(selected) == 1 else None
+    # Only an explicit command changes optional announcements. Questions about
+    # configuring them remain questions, not actions.
+    if _POWER_NOTICES.search(text):
+        if text.startswith(('wie ', 'was ', 'warum ', 'wieso ', 'weshalb ')):
+            return None
+        if _OFF.search(text):
+            return 'power_notices_off'
+        if _ON.search(text):
+            return 'power_notices_on'
         return None
     if _WLAN.search(text):
         if _OFF.search(text):
@@ -96,6 +137,11 @@ START = {
     'sleep': "Ruhemodus. Aktivierungswort bleibt aktiv.",
     'reboot': "Neustart eingeleitet.",
     'shutdown': "Einheit fährt herunter.",
+    'power_notices_on': "Netzteil-Ansagen aktiviert. Akkuwarnungen bleiben immer aktiv.",
+    'power_notices_off': "Netzteil-Ansagen deaktiviert. Akkuwarnungen bleiben immer aktiv.",
+    'cpu_eco': "Prozessor im Sparmodus.",
+    'cpu_balanced': "Prozessor im Normalmodus.",
+    'cpu_power': "Prozessor im Leistungsmodus. Ohne Übertaktung.",
 }
 START_FULL = {
     'sleep': "Ruhemodus. Der Maschinengeist schlummert, das Auspex wacht.",
@@ -108,9 +154,21 @@ START_BILLY = {
     'sleep': "Ich hau mich hin. Ruf mich, wenn was ist.",
     'reboot': "Ich starte neu. Bis gleich.",
     'shutdown': "Ich mach dann mal aus.",
+    'power_notices_on': "Ich sag wieder Bescheid, wenn das Netzteil kommt oder geht. "
+                        "Akkuwarnungen kommen sowieso.",
+    'power_notices_off': "Netzteil an und ab sag ich nicht mehr an. Akkuwarnungen kommen sowieso.",
+    'cpu_eco': "Ich schalte einen Gang runter und spare Strom.",
+    'cpu_balanced': "Zurück auf normales Tempo.",
+    'cpu_power': "Volle Leistung. Übertaktet wird aber nicht.",
 }
-ALREADY = {'wlan_off': "WLAN ist bereits deaktiviert.", 'wlan_on': "WLAN ist bereits aktiv."}
-ALREADY_BILLY = {'wlan_off': "WLAN ist schon aus.", 'wlan_on': "WLAN ist schon an."}
+ALREADY = {'wlan_off': "WLAN ist bereits deaktiviert.", 'wlan_on': "WLAN ist bereits aktiv.",
+           'cpu_eco': "Prozessor ist bereits im Sparmodus.",
+           'cpu_balanced': "Prozessor ist bereits im Normalmodus.",
+           'cpu_power': "Prozessor ist bereits im Leistungsmodus."}
+ALREADY_BILLY = {'wlan_off': "WLAN ist schon aus.", 'wlan_on': "WLAN ist schon an.",
+                 'cpu_eco': "Ich spare schon Strom.",
+                 'cpu_balanced': "Ich laufe schon im normalen Tempo.",
+                 'cpu_power': "Ich gebe schon Vollgas."}
 CANCELLED = "Abgebrochen."
 CANCELLED_BILLY = "Okay, lass ich."
 BUTTON_ONLY = "Stimme nicht erkannt. Bestätigen nur mit Taste E."
@@ -161,10 +219,12 @@ def failed_text(style='off'):
     return FAILED_BILLY if _billy(style) else FAILED
 
 
-def reply(op, wlan=None, style='off'):
-    """The sentence for a command turn: question, 'already', or what happens now."""
+def reply(op, wlan=None, style='off', cpu=None):
+    """The sentence for a command turn: question, 'already', or what happens now.
+    ``cpu``: the CPU profile chosen now (eco/balanced/power), if known."""
     if op in CONFIRM_OPS:
         return ask_text(op, style)
-    if (op == 'wlan_off' and wlan == 'off') or (op == 'wlan_on' and wlan == 'on'):
+    if ((op == 'wlan_off' and wlan == 'off') or (op == 'wlan_on' and wlan == 'on')
+            or (cpu is not None and op == f'cpu_{cpu}')):
         return already_text(op, style)
     return start_text(op, style)

@@ -24,6 +24,7 @@ import time
 import uuid
 
 VERSION = 1
+MIN_TURN_SECONDS = 0.2  # shared by the Pi capture and server upload validation
 # Type -> largest body in bytes (compact JSON). Later steps add their types here.
 TYPES = {
     'hello': 2048,
@@ -35,6 +36,40 @@ PRIO_ALARM, PRIO_HIGH, PRIO_NORMAL, PRIO_LOW = 0, 1, 2, 3
 MAX_MESSAGE = 16 * 1024      # whole envelope, any type
 MAX_TTL = 7 * 24 * 3600
 CLOCK_SKEW = 300             # a message from up to 5 min in the future is fine
+
+
+# X-Servitor-Status (the Pi's status snapshot): the server ignores a longer
+# header completely, and with it everything that routes a turn.
+STATUS_HEADER_MAX = 1024
+# Given up first, in this order, when the snapshot does not fit: details for
+# spoken reports. Never what routes a turn (memory, devctl, pending, trip,
+# story, llm_mode, lore, persona, voice, maintenance, mood ...).
+STATUS_EXPENDABLE = (
+    'log_resolved', 'log_last', 'log_repairs',
+    'pisugar_auto_power_on', 'pisugar_watchdog', 'pisugar_charge_protection',
+    'pisugar_rtc_alarm', 'pisugar_soft_poweroff', 'safe_shutdown_delay_s', 'safe_shutdown_pct',
+    'charge_restart_pct', 'charge_limit_pct', 'pisugar_chip_c', 'output_current_ma',
+    'log_findings', 'log_checked_at', 'apt_age_days', 'swap_used_pct', 'uptime_s',
+    'server_updates_security', 'server_updates', 'updates_security', 'updates',
+    'lan_ms', 'net_ms', 'wifi_dbm', 'dns', 'disk_free_pct', 'mem_free_pct', 'load_pct',
+    'throttled', 'temp_c', 'cpu', 'battery_mv',
+)
+
+
+def status_header(snapshot):
+    """The snapshot as X-Servitor-Status, at most STATUS_HEADER_MAX characters:
+    expendable details are dropped until it fits. None when empty or when even
+    the routing fields do not fit."""
+    if not snapshot:
+        return None
+    status = dict(snapshot)
+    for name in (None, *STATUS_EXPENDABLE):
+        if name is not None:
+            status.pop(name, None)
+        raw = json.dumps(status, separators=(',', ':'))
+        if len(raw) <= STATUS_HEADER_MAX:
+            return raw
+    return None
 
 
 class ProtocolError(ValueError):
@@ -136,7 +171,8 @@ class Seen:
 
 def split_memory(context):
     """(stable core, recent history) of a memory context (memory.Memory.context)."""
-    core = {key: value for key, value in context.items() if key != 'history'}
+    # "trusted" (memory.Trust) changes between turns: it travels with the history.
+    core = {key: value for key, value in context.items() if key not in ('history', 'trusted')}
     return core, context.get('history', [])
 
 
@@ -148,14 +184,16 @@ class ClientSession:
         self.id = None
         self.core = None           # digest of the core the server confirmed
         self.supported = True      # False after an old server answered 404
+        self.voice = None          # digest of the v2 voice core the server confirmed
+        self.voice_supported = True  # False after an old server answered 404 to it
 
     def start(self, ident):
         with self.lock:
-            self.id, self.core = ident, None
+            self.id, self.core, self.voice = ident, None, None
 
     def reset(self):
         with self.lock:
-            self.id, self.core = None, None
+            self.id, self.core, self.voice = None, None, None
 
     def confirmed(self, core_digest):
         with self.lock:
@@ -171,7 +209,10 @@ class ClientSession:
         with self.lock:
             known = self.id is not None and self.core == digest(core)
         if known:
-            return dict(core=digest(core), history=history)
+            slim = dict(core=digest(core), history=history)
+            if context.get('trusted'):
+                slim['trusted'] = context['trusted']
+            return slim
         return context
 
 
@@ -217,6 +258,23 @@ class Sessions:
             session['core'], session['digest'] = core, digest(core)
             return session['digest']
 
+    def set_voice(self, ident, core_digest, profiles):
+        """Keep the v2 voice profiles a Pi sent for this session (RAM only)."""
+        with self.lock:
+            session = self.items.get(ident)
+            if session is None:
+                return False
+            session['voice'], session['voice_digest'] = profiles, core_digest
+            return True
+
+    def voice(self, ident, core_digest):
+        """The v2 voice profiles of this session if their digest matches, else None."""
+        with self.lock:
+            session = self.items.get(ident)
+            if session is None or session.get('voice_digest') != core_digest:
+                return None
+            return session.get('voice')
+
     def restore(self, ident, payload):
         """Full context from a slim payload (core digest + history), or None
         when this session does not hold that core (new server, other core)."""
@@ -224,4 +282,7 @@ class Sessions:
             session = self.items.get(ident)
             if session is None or session['digest'] != payload.get('core'):
                 return None
-            return dict(session['core'], history=payload.get('history', []))
+            full = dict(session['core'], history=payload.get('history', []))
+            if payload.get('trusted'):
+                full['trusted'] = payload['trusted']
+            return full

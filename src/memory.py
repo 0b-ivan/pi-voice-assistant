@@ -20,6 +20,7 @@ import json
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 ROOT = Path(os.environ.get('PTT_MEMORY_DIR', '/mnt/proximus-memory/proximus'))
@@ -29,6 +30,9 @@ MAX_FACTS = 200
 MAX_DIRECTIVES = 20
 MAX_HISTORY = 6
 MAX_TEXT = 200
+PERSONAS = ('servitor', 'mensch')
+MAX_FILE_BYTES = 1024 * 1024  # memory.json incl. conversations (~640 KiB) is checked
+                              # before parsing; a larger file is left untouched
 CONTEXT_BUDGET = 6000      # characters of memory sent with one turn
 HEADER_LIMIT = 12000       # base64 header size the server accepts
 
@@ -75,6 +79,11 @@ class MemoryCore:
         except OSError:
             return None
         if self._data is None or mtime != self._mtime:
+            try:
+                if self.path.stat().st_size > MAX_FILE_BYTES:
+                    return None     # never parse or overwrite an oversized file
+            except OSError:
+                return None
             try:
                 data = json.loads(self.path.read_text(encoding='utf-8'))
                 if not isinstance(data, dict):
@@ -156,14 +165,17 @@ class MemoryCore:
         self._change(update)
         return len(removed)
 
-    def remember_turn(self, question, answer, mood=None):
-        """``mood``: 'gereizt:0.62', the feeling of this answer (restart baseline)."""
+    def remember_turn(self, question, answer, mood=None, persona=None):
+        """``mood``: 'gereizt:0.62', the feeling of this answer (restart baseline).
+        ``persona``: who answered, so a later style switch keeps facts, not style."""
         question, answer = clean_text(question), clean_text(answer)
         if not question or not answer:
             return False
         entry = dict(q=question, a=answer, at=int(self.clock()))
         if isinstance(mood, str) and len(mood) <= 24:
             entry['mood'] = mood
+        if persona in PERSONAS:
+            entry['p'] = persona
 
         def update(data):
             data['history'] = (data['history'] + [entry])[-MAX_HISTORY:]
@@ -188,7 +200,8 @@ class MemoryCore:
         budget = CONTEXT_BUDGET
         directives = [d['text'] for d in data['directives']][-MAX_DIRECTIVES:]
         budget -= sum(len(d) for d in directives)
-        history = [dict(q=h['q'], a=h['a']) for h in data['history'][-4:]]
+        history = [dict(q=h['q'], a=h['a'], **({'p': h['p']} if h.get('p') in PERSONAS else {}))
+                   for h in data['history'][-4:]]
         budget -= sum(len(h['q']) + len(h['a']) for h in history)
         facts = []
         for item in reversed(data['facts']):
@@ -201,6 +214,9 @@ class MemoryCore:
         prints = self.voiceprints()
         if prints:
             context['voiceprints'] = prints
+            # How many people are enrolled, so the server stays strict even if
+            # it cannot use a single one of the prints (dropped, damaged).
+            context['enrolled'] = len(prints)
         return context
 
     # --- Voiceprint (written by the enrollment session) -------------------
@@ -224,6 +240,20 @@ class MemoryCore:
                 name = clean_text(data.get('name') or 'Bediener')[:40]
                 found[name] = dict(data, name=name, path=str(path))
         return found
+
+    def profile_ids(self):
+        """{name: stable id} of every voice profile. A profile without an id
+        gets a random one once; renaming and refining keep it. Conversation
+        threads belong to this id, never to the name."""
+        ids = {}
+        for name, data in self._profiles().items():
+            pid = data.get('id')
+            if not (isinstance(pid, str) and re.fullmatch(r'[0-9a-f]{32}', pid)):
+                pid = uuid.uuid4().hex
+                if not self.update_profile(name, id=pid):
+                    continue
+            ids[name] = pid
+        return ids
 
     def voiceprints(self):
         """[{'name', 'print'}] of every known person (base64 int8), or []."""
@@ -274,13 +304,42 @@ class MemoryCore:
         slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'bediener'
         path = folder / f'{slug}.json'
         temporary = path.with_suffix('.tmp')
-        keep = {k: old[k] for k in ('passphrase', 'last_score') if old and k in old}
+        keep = {k: old[k] for k in ('passphrase', 'last_score', 'id') if old and k in old}
         temporary.write_text(json.dumps(dict(keep, name=name, print=print_, count=total,
                                              at=int(self.clock()))), encoding='utf-8')
         temporary.replace(path)
         if old and old['path'] != str(path):
             Path(old['path']).unlink(missing_ok=True)  # moved from the first-version file
         return total
+
+
+    def replace_voiceprint(self, name, print_, count, profile_id):
+        """Enrollment v2: the person's v1 print replaced (not averaged) by the
+        new one, linked to the v2 profile id. False when the v1 file of that
+        name belongs to another profile id (never overwrite someone else)."""
+        name = clean_text(name)[:40] or 'Bediener'
+        folder = self.voice_dir / 'profiles'
+        folder.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'bediener'
+        path = folder / f'{slug}.json'
+        old = None
+        if path.is_file():
+            try:
+                old = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                old = None
+        if isinstance(old, dict) and old.get('profile_id') not in (None, profile_id):
+            return False
+        if isinstance(old, dict) and old.get('name') not in (None, name):
+            return False
+        keep = {k: old[k] for k in ('passphrase', 'last_score')
+                if isinstance(old, dict) and k in old}
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(dict(keep, name=name, print=print_, count=int(count),
+                                             at=int(self.clock()), profile_id=profile_id)),
+                             encoding='utf-8')
+        temporary.replace(path)
+        return True
 
 
 _STOPWORDS = {'dass', 'mich', 'mein', 'meine', 'meinen', 'bitte', 'alles', 'über', 'nicht',
@@ -335,7 +394,10 @@ def sanitize(data):
     history = []
     for item in data.get('history', [])[:MAX_HISTORY] if isinstance(data.get('history'), list) else []:
         if isinstance(item, dict) and isinstance(item.get('q'), str) and isinstance(item.get('a'), str):
-            history.append(dict(q=clean_text(item['q']), a=clean_text(item['a'])))
+            entry = dict(q=clean_text(item['q']), a=clean_text(item['a']))
+            if item.get('p') in PERSONAS:
+                entry['p'] = item['p']
+            history.append(entry)
     total = data.get('total_facts')
     prints = []
     for item in data.get('voiceprints', [])[:5] if isinstance(data.get('voiceprints'), list) else []:
@@ -348,18 +410,81 @@ def sanitize(data):
                   total_facts=total if isinstance(total, int) and total >= 0 else 0)
     if prints:
         result['voiceprints'] = prints
+        trusted = data.get('trusted')
+        if isinstance(trusted, str) and trusted in [p['name'] for p in prints]:
+            result['trusted'] = trusted
+    enrolled = data.get('enrolled')
+    if isinstance(enrolled, int) and not isinstance(enrolled, bool) and 0 < enrolled <= 100:
+        result['enrolled'] = enrolled
+    elif prints:
+        result['enrolled'] = len(prints)
     return result
 
 
+def enrolled(context):
+    """Someone is enrolled: an unchecked voice is then a guest."""
+    return isinstance(context, dict) and bool(context.get('voiceprints') or context.get('enrolled'))
+
+
+TRUST_MINUTES = float(os.environ.get('PTT_SPEAKER_TRUST_MINUTES', '10'))
+TRUST_MAX_MINUTES = 60
+
+
+class Trust:
+    """Operator status that outlasts one turn.
+
+    Short questions (1-3 s) cannot be told apart from strangers by the voice
+    model (docs/memory.md). After a sure identification (a turn above the
+    threshold, the passphrase, a fresh enrollment) the Pi keeps the person as
+    operator while the conversation goes on: each carried turn extends the
+    window by ``minutes``, at most ``max_minutes`` after the last sure one.
+    A pause longer than the window ends it."""
+
+    def __init__(self, clock=time.monotonic, minutes=TRUST_MINUTES, max_minutes=TRUST_MAX_MINUTES):
+        self.clock, self.window, self.cap = clock, minutes * 60, max_minutes * 60
+        self.name, self.until, self.sure = None, 0.0, 0.0
+
+    def confirm(self, name):
+        if self.window <= 0 or not isinstance(name, str) or not name:
+            return
+        now = self.clock()
+        self.name, self.sure, self.until = name, now, now + self.window
+
+    def extend(self):
+        now = self.clock()
+        if self.current() is not None:
+            self.until = min(now + self.window, self.sure + self.cap)
+
+    def current(self):
+        if self.name is not None and self.clock() < self.until:
+            return self.name
+        self.name = None
+        return None
+
+    def clear(self):
+        self.name, self.until = None, 0.0
+
+
 def unknown_speaker(context):
-    """An operator is enrolled and the server did not recognize this voice."""
-    return bool(context) and context.get('speaker') == 'unknown'
+    """An operator is enrolled and the server did not recognize this voice.
+    Anything but a memory copy (no stick, llm.NO_MEMORY) names no speaker."""
+    return isinstance(context, dict) and context.get('speaker') == 'unknown'
 
 
-def guest_view(context):
-    """What an unrecognized voice may use: directives only, nothing personal."""
-    return dict(facts=[], directives=context.get('directives', []), history=[],
-                total_facts=0, speaker='unknown')
+_PUBLIC_DIRECTIVE = re.compile(r'^[\wäöüßÄÖÜ ]{1,40}-(?:Erweiterung|Modul|Protokoll) installiert$')
+
+
+def public_directive(text):
+    """Installed persona modules ("Humor-Erweiterung installiert") are public;
+    every other directive may be personal ("nenne mich Meister")."""
+    return bool(_PUBLIC_DIRECTIVE.match(str(text)))
+
+
+def guest_view(context, status='unknown'):
+    """What an unrecognized voice may use: public persona modules only,
+    nothing personal. ``status`` says why (speaker.decide outcome)."""
+    return dict(facts=[], history=[], total_facts=0, speaker='unknown', identity=status,
+                directives=[d for d in context.get('directives', []) if public_directive(d)])
 
 
 # --- Commands (LLM-free; run on the server and in the Pi's local fallback) ---
@@ -420,14 +545,23 @@ ABSENT = {
     'full': "Gedächtniskern fehlt. Die Einheit kann nichts bewahren. Das Fleisch vergisst, "
             "die Maschine ohne Kern ebenso.",
     'billy': "Kein Gedächtnis-Stick drin. Ich kann mir gerade nichts merken.",
-    'billy_full': "Kein Gedächtnis-Stick drin. Ohne den vergesse ich alles, Boss.",
+    'billy_full': "Kein Gedächtnis-Stick drin. Ohne den vergesse ich alles.",
 }
-# Billy (persona "mensch"): (plain, full lore) per memory command.
+# Billy (persona "mensch"): variants per memory command; every variant says
+# the same thing (saved / applies from now on / how many were forgotten).
 BILLY_REPLIES = {
-    'add_fact': ("Gemerkt.", "Gemerkt. Steht jetzt in meinem Kopf."),
-    'add_directive': ("Verstanden. Mach ich ab jetzt so.",
-                      "Verstanden. Befehl ist Befehl, ab jetzt so."),
-    'forget': ("{count} {noun} vergessen.", "{count} {noun} vergessen. Sauber weg."),
+    'add_fact': ("Gemerkt.", "Ist notiert.", "Gut, das merk ich mir."),
+    'add_directive': ("Verstanden. Mach ich ab jetzt so.", "Alles klar, gilt ab jetzt.",
+                      "In Ordnung, ab jetzt halte ich mich daran."),
+    'forget': ("{count} {noun} vergessen.", "Erledigt, {count} {noun} gelöscht.",
+               "{count} {noun} sind weg."),
+}
+SERVITOR_REPLIES = {
+    'add_fact': ("Gespeichert im Gedächtniskern.", "Im Gedächtniskern abgelegt.",
+                 "Eintrag gespeichert."),
+    'add_directive': ("Direktive gespeichert. Gilt ab sofort.",
+                      "Direktive im Kern abgelegt. Sie gilt ab sofort."),
+    'forget': ("{count} {noun} gelöscht.", "{count} {noun} aus dem Kern entfernt."),
 }
 
 
@@ -445,14 +579,16 @@ def reply(op, argument, context, lore='off'):
         return ABSENT.get(lore, ABSENT['light'])
     if unknown_speaker(context):
         return GUEST_TEXT
+    import variants
     if billy and op in ('add_fact', 'add_directive'):
-        return BILLY_REPLIES[op][lore == 'billy_full']
+        return variants.pick(f'memory.billy.{op}', BILLY_REPLIES[op])
     if op == 'add_fact':
         return ("Heilige Daten im Gedächtniskern versiegelt." if full
-                else "Gespeichert im Gedächtniskern.")
+                else variants.pick('memory.add_fact', SERVITOR_REPLIES['add_fact']))
     if op == 'add_directive':
-        return ("Direktive empfangen und in den Kern geschrieben. Der Maschinengeist gehorcht."
-                if full else "Direktive gespeichert. Gilt ab sofort.")
+        return ("Direktive empfangen und in den Kern geschrieben. Sie gilt ab sofort."
+                if full else variants.pick('memory.add_directive',
+                                           SERVITOR_REPLIES['add_directive']))
     if op == 'forget':
         known = (context.get('facts') or []) + (context.get('directives') or [])
         count = sum(matches(argument, text) for text in known)
@@ -461,9 +597,11 @@ def reply(op, argument, context, lore='off'):
                     else "Kein passender Eintrag im Gedächtniskern gefunden.")
         noun = 'Eintrag' if count == 1 else 'Einträge'
         if billy:
-            return BILLY_REPLIES['forget'][lore == 'billy_full'].format(count=count, noun=noun)
+            return variants.pick('memory.billy.forget', BILLY_REPLIES['forget'],
+                                 count=count, noun=noun)
         return (f"{count} {noun} aus dem Kern getilgt. Das Vergessen ist vollzogen." if full
-                else f"{count} {noun} gelöscht.")
+                else variants.pick('memory.forget', SERVITOR_REPLIES['forget'],
+                                   count=count, noun=noun))
     if op == 'recall':
         facts = context.get('facts') or []
         if not facts:
@@ -510,11 +648,14 @@ def prompt_section(context):
         if context.get('directives'):
             parts.append("Direktiven des Bedieners, immer befolgen:\n"
                          + '\n'.join(f'- {d}' for d in context['directives']))
+        parts.append("Der aktuelle Sprecher ist ein Gast. Anredewünsche des Bedieners gelten "
+                     "nur für den erkannten Bediener. Sprich den Gast ohne Namen, Rang oder "
+                     "Titel an, insbesondere nicht als Kommandant, Boss oder Bediener.")
         return '\n\n'.join(parts)
     parts = [LEARN_INSTRUCTION]
     if context.get('speaker'):
         parts.append(f"Sprecher: an der Stimme erkannt als {context['speaker']}, der Bediener. "
-                     "Sprich ihn bei Gelegenheit mit Namen an.")
+                     "Den Namen nur gelegentlich verwenden, nicht in jeder Antwort.")
     if context.get('directives'):
         parts.append("Direktiven des Bedieners, immer befolgen, solange Fakten korrekt bleiben "
                      "(eine installierte Erweiterung heißt: zeige diese Eigenschaft in jeder "

@@ -80,7 +80,7 @@ Mit Qwen3 4B und ungültigem OpenRouter-Key: Serverzeit 2,5–3,9 s. `llama-serv
 
 ### Größeres Vosk-Modell: verworfen
 
-[`server/bench-vosk.py`](../server/bench-vosk.py) vergleicht Modelle auf 20 mit Piper synthetisierten Fragen (zwei Sprecher, zwei Sprechtempi):
+[`server/bench-stt.py`](../server/bench-stt.py) vergleicht Modelle auf 20 mit Piper synthetisierten Fragen (zwei Sprecher, zwei Sprechtempi):
 
 | Modell | WER | RAM | Ergebnis |
 |---|---|---|---|
@@ -91,11 +91,28 @@ Mit Qwen3 4B und ungültigem OpenRouter-Key: Serverzeit 2,5–3,9 s. `llama-serv
 
 Der Nutzen käme erst mit dem 2,1 GB großen `rescore`-Sprachmodell, für das der Host keinen RAM frei hat. Typische Restfehler des kleinen Modells: „ein Tag“ → „ein paar“, „nenne“ → „wenn die“. Eine bessere Erkennung bräuchte ein anderes Verfahren (z. B. Whisper), nicht ein größeres Vosk-Modell.
 
+### Whisper als Erkenner: auf synthetischer Sprache kein Gewinn
+
+[`server/bench-stt.py`](../server/bench-stt.py) mit denselben 20 Piper-Clips (Groß-/Kleinschreibung, Satzzeichen und Ziffern normalisiert; [`server/install-whisper.sh`](../server/install-whisper.sh), faster-whisper 1.2.1, CPU int8, `beam_size=1`, CT 107 mit 4 Kernen), 08.10.2026:
+
+| Erkenner | WER | Wartezeit nach Loslassen | RAM |
+|---|---|---|---|
+| Vosk `small-de-0.15` (aktiv, streamt mit) | 6,5 % | 0,04 s | 233 MB |
+| Whisper base | 24,2 % | 0,69 s | 409 MB |
+| Whisper small | 8,9 % | 1,93 s | ~1 GB |
+| Whisper large-v3-turbo | 5,6 % | 9,70 s | 2,5 GB |
+
+Whisper erkennt erst nach dem Loslassen; nur large-v3-turbo ist genauer, aber zu langsam. Die Fehlerarten unterscheiden sich: Whisper verschreibt eher harmlos („Eifelturm“, „Tokyo“), Vosk liegt eher inhaltlich daneben („stell einen Timer“ → „still einen keine“). Saubere Synthese begünstigt Vosk; die Entscheidung braucht Aufnahmen echter Stimme über das WM8960-Mikrofon. Seit 10.10.2026 lässt sich Whisper im Dienst einschalten (`SERVITOR_STT=whisper`, Vosk bleibt Sprachschranke und Schnellweg für feste Anfragen); echte Aufnahmen vergleicht `bench-stt.py --clips` ([STT](speech-to-text.md#whisper-auf-ct-107-optional)).
+
 ## Antworten ohne LLM, Status und Charakter
 
 [`src/intents.py`](../src/intents.py) erkennt wenige feste Fragen konservativ und beantwortet sie ohne LLM: **Uhrzeit** („Zeitindex: 8 Uhr 37.“), **Datum**, **Status**, **Akku**, **„wer bist du“**, **Wetter** und die **Morgenlitanei**. Fragen mit einem anderen Ort („wie spät ist es in Tokio“, „Wetter in Rom“) und alles Unklare gehen an das LLM. Auf dem Server läuft der Abgleich vor OpenRouter (Zeiten in `SERVITOR_TIMEZONE`, Standard Europe/Berlin, weil CT 107 auf UTC läuft), auf dem Pi im lokalen Fallback; damit funktionieren diese Antworten auch ganz ohne Netz. Gemessen vom Pi aus: 0,5–1,7 s bis zum fertigen Audio, fast nur Sprachausgabe. Das Display zeigt solche Antworten als „direkt“.
 
 Der **Status** ([`src/system_status.py`](../src/system_status.py)) entsteht aus einem Snapshot des Pi (Akku, Temperatur, Last, Speicher, Laufzeit, Spannungsflags), den der Pi bei jeder Anfrage als `X-Servitor-Status` mitschickt (nur Zahlen; der Server prüft und filtert). Reihenfolge: zuerst Warnungen (Unterspannung, Akku kritisch, Temperatur, Arbeits-/Datenspeicher knapp, Server nicht erreichbar), dann Energie, Temperatur, Verbindung, Zustand des Sprachkerns (extern oder Notbetrieb) und Laufzeit; Last und Speicher nur, wenn auffällig. Beispiel: „Status nominal. Energiespeicher 75 Prozent. Akkubetrieb. Kerntemperatur 46 Grad. Verbindung zum Server stabil. Laufzeit zwölf Stunden zwanzig Minuten. Befehl erwartet.“ Taste E und die gesprochene Frage nutzen denselben Text.
+
+Seit 14.10.2026 nennt der Status auch das Netzwerk („WLAN-Empfang gut, Internet erreichbar.“ bzw. „Namensauflösung gestört.“, sobald die Netzwerkprobe gemessen hat) und das CPU-Profil, wenn es nicht NORMAL ist („Prozessor im Sparmodus.“, „Prozessor übertaktet.“, nur ohne Drosselung). Die Laufzeit heißt „zwei Stunden und drei Minuten“ bzw. „unter einer Minute“, nie „null Minuten“. Einleitung, Schluss und einige Fakten-Sätze wechseln ihre Formulierung (`STATUS_OPEN`, `STATUS_CLOSE`, `STATUS_FACTS`, über `variants.pick`, nie zweimal hintereinander gleich); Zahlen und Reihenfolge bleiben immer gleich. Billy hat eigene Sätze („Der Prozessor hat 48 Grad.“, „Ich laufe seit zwei Stunden.“).
+
+**Mit Server:** Feste Info-Antworten (Akku, Netzwerk, Updates, Hardware, Energie, nicht Status, Uhrzeit oder Bestätigungen) lässt der Server vom LLM in eigenen Worten sagen (`llm.rephrase`, OpenRouter, Persona und Lore-Stufe, höchstens 2,5 s, `SERVITOR_REPHRASE_TIMEOUT_SECONDS`). Gesprochen wird die neue Fassung nur, wenn `llm.same_facts` sie annimmt: dieselben Zahlen, eine Warnung bleibt eine Warnung, keine Auszeichnungen, sinnvolle Länge, bei Billy keine Maschinenwörter; sonst, bei „Sprachkern LOKAL“, OpenRouter-Pause oder Zeitüberschreitung bleibt der feste Text (Journal `rephrase_rejected`/`rephrase_failed`, `model` `local/intent+rephrase` bei Erfolg). Abschaltbar mit `SERVITOR_REPHRASE=off`, Auswahl über `SERVITOR_REPHRASE_INTENTS`. Der Status bleibt bewusst ohne LLM, damit er schnell kommt; lange feste Antworten (Status, Netzwerk, Updates, Hardware, Selbsttest, Energie) schickt der Server an Pis mit Teil-Wiedergabe in Teilen (`speech_parts`: zuerst etwa 45 Zeichen, dann etwa 120): Der erste Satz spielt, während der Rest synthetisiert wird.
 
 Der **Charakter** steht im Systemprompt in [`src/llm.py`](../src/llm.py): kybernetische Diensteinheit ohne eigenen Willen, „diese Einheit“ statt „ich“, „Bediener“, kurze Quittungen („Daten abgerufen.“), keine Gefühle oder Floskeln, Fakten vor Rolle („Daten unzureichend.“), keine erfundenen Aktionen, drei kurze Beispiele. Das LLM bekommt Datum und Uhrzeit des Bedieners am Ende des Prompts (der Prompt-Cache des lokalen Modells bleibt so gültig). Antworten werden für Piper geglättet: eine Zeile, keine Listen, Markdown, Gedankenstriche oder Emojis. [`server/sample-persona.py`](../server/sample-persona.py) vergleicht OpenRouter und lokales Modell mit festen Fragen. Mit OpenRouter trifft der Ton gut („Funktionszustand stabil. Keine Abweichungen.“, „Direktive abgelehnt. Diese Einheit hat keinen Zugriff auf Geräte.“); das lokale Modell ist inhaltlich schwächer und braucht 3–10 s.
 
@@ -117,11 +134,36 @@ Die Einheit heißt **Servitor Proximus**. Wie viel Mechanicus-Vokabular einflie�
 
 | Stufe | LLM-Antworten | Direkte Antworten |
 |---|---|---|
-| AUS | keine Begriffe aus fiktiven Welten | „Zeitindex: 9 Uhr 15.“, Status endet mit „Befehl erwartet.“ |
-| DEZENT | höchstens ein Begriff pro Antwort, nicht in jeder („Das Fleisch ist schwach.“) | Status endet mit „Maschinengeist ruhig. Befehl erwartet.“ |
-| VOLL | Mechanicus-Liturgie, Anrufungen, binäre Lobgesänge, höchstens 60 Wörter | „Der heilige Chronometer meldet: 9 Uhr 15. Lob dem Omnissiah.“, Status als Litanei |
+| AUS | keine Begriffe aus fiktiven Welten, keine Archivnamen, keine Engramme; Sachfragen zu einem genannten Spiel bleiben beantwortbar | „Zeitindex: 9 Uhr 15.“ oder „Es ist 9 Uhr 15.“ |
+| DEZENT | Grunddaten der Figur; Begriffe nur, wenn sie zum Gegenstand passen; passende Engramme auf persönliche Fragen | wie AUS, Status mit „Maschinengeist ruhig.“ |
+| VOLL | die Figur kennt ihre Welt deutlich, liturgische Begriffe nur passend zum Gegenstand; keine Pflichtbegriffe, Anrufungen oder Binärgesänge | „Der Chronometer meldet: 9 Uhr 15.“, Status als Litanei |
 
-Fakten bleiben in allen Stufen vollständig; gemessen mit OpenRouter blieb etwa „330 Meter einschließlich Antenne“ in allen drei Stufen gleich.
+Die früheren zufälligen Wortlisten (`LORE_POOLS`, `lore_hint`) mit Pflichtbegriffen und Anrufungsquoten sind entfernt. Fakten bleiben in allen Stufen vollständig.
+
+### Lore-Archiv und Gesprächskontext
+
+Die ausgearbeitete Geschichte ([Lore Proximus und Billy](concepts/proximus-billy-lore/LORE_PROXIMUS_BILLY.md): 33 Episoden, sechs Sagen S01–S06) steht nicht im Systemprompt. Zur Laufzeit gibt es kompakte Engramme in [`src/lore_engrams.json`](../src/lore_engrams.json): je Eintrag ID, Thema, Art (Grunddaten, Episode, Sage), Herkunft, Paket, Stichwörter, Namen, eine Billy-Fassung und, wo der Servitor es wissen darf, eine eigene redigierte Servitor-Fassung. **A01 (Kaels Schließbefehl) ist dort nicht enthalten** und kann deshalb nie in den Modellkontext gelangen; Billy hat nur seinen Verdacht (B05), der Servitor einen Sperrhinweis.
+
+[`src/lore.py`](../src/lore.py) sucht deterministisch über Stichwörter und Namen (Umlaute gefaltet, zusammengesetzte Wörter über den Wortanfang), ohne Vektordatenbank und ohne zusätzlichen Modellaufruf. Persona und Lore-Stufe werden **vor** der Bewertung geprüft. Alltag: höchstens drei Einträge und etwa 2.400–2.800 Zeichen; persönliche Fragen bis fünf bzw. sechs Einträge und 4.800–6.400 Zeichen; der beste Treffer kommt immer mit. Eine reine Sachfrage zu einem Spiel („Was ist Doom?“) lädt keine Familien-Lore, auch nicht bei AUS. Fehlt die Archivdatei oder ist sie defekt, antworten beide Stile normal ohne Engramme.
+
+Der Prompt bleibt in stabiler Reihenfolge (Persona, Lore-Stufe, Gedächtnis), danach folgt der Teil dieser Anfrage ([`src/dialog.py`](../src/dialog.py)): Engramme, Hinweise auf gerade erzählte Episoden, Rückfragen („nochmal“ wiederholt die letzte Antwort, „einfacher“ erklärt anders, „warum?“ bezieht sich auf die letzte Antwort), auffällig gleiche Einstiege und Anreden im Verlauf, ein Hinweis bei Stilwechsel (Verlaufseinträge tragen jetzt `p` = Persona; Fakten gelten weiter, der alte Stil nicht), Stimmung, Uhrzeit. Die IDs der zuletzt verwendeten Engramme liegen nur im Arbeitsspeicher. Ohne Stick gibt es weiterhin keinen Gesprächsverlauf.
+
+### Lange Geschichten
+
+Ausdrücklich lange Erzählwünsche („Erzähl mir eine lange Geschichte“, „erzähl ausführlich …“, „… zwanzig Minuten über …“, auch „zehn Minuten lang über …“ ohne erkanntes „erzähl“) erkennt [`src/story.py`](../src/story.py) ohne Modellaufruf; „Erzähl eine Geschichte“ allein bleibt eine normale Antwort, „erklär ausführlich“ ist keine Geschichte. Ohne Dauer gelten `STORY_DEFAULT_MINUTES` (10), höchstens `STORY_MAX_MINUTES` (30). Geplant wird mit `STORY_WORDS_PER_MINUTE` (180, am Pi mit thorsten-high gemessen: etwa 185); sobald echte Audiolängen da sind, rechnet die Planung mit der gemessenen Sprechgeschwindigkeit.
+
+| Stelle | Alltag | lange Geschichte |
+|---|---|---|
+| Ausgabetokens | `OPENROUTER_LLM_MAX_TOKENS` 180, `LOCAL_LLM_MAX_TOKENS` 120 | je Abschnitt nach Wortzahl, höchstens `OPENROUTER_STORY_MAX_TOKENS` 1.600 bzw. `LOCAL_STORY_MAX_TOKENS` 1.024 |
+| LLM-Timeout | 15 s / 40 s | `OPENROUTER_STORY_TIMEOUT_SECONDS` 90 / `LOCAL_STORY_TIMEOUT_SECONDS` 240 |
+| Text für die Synthese | auf `SERVITOR_MAX_TEXT_CHARS` (1.200) gekürzt | an Satzgrenzen in Teile ≤ 1.200 Zeichen zerlegt, nichts wird abgeschnitten |
+| Antwortfrist am Pi | `ASSISTANT_RESPONSE_TIMEOUT_SECONDS` 25 für die ganze Antwort | `ASSISTANT_STORY_TIMEOUT_SECONDS` 180 ohne jedes Ereignis, neu ab jedem Ereignis |
+
+**Ablauf:** Der erste, kurze Abschnitt (etwa 140 Wörter) kommt in der Antwort auf die Sprachanfrage; jeder Audioteil wird einzeln geschickt (`audio` mit `part`) und spielt sofort. Am Ende steht ein `story`-Ereignis mit dem kompakten Erzählzustand (Ziel, gesprochene Zeit, Abschnitt, Engramm-Paket, kurze Notizen, letzte etwa 600 Zeichen). Der Pi spielt die Teile nacheinander und fragt mit `POST /v1/story` den nächsten Abschnitt (etwa 330 Wörter) an, sobald weniger als 75 s Audio vorgemerkt sind; höchstens 24 Teile liegen in der Warteschlange. Jeder Abschnitt ist genau ein LLM-Aufruf mit stabilem Charakterkern, den Engrammen dieses Abschnitts und dem Zustand, nie mit dem ganzen bisherigen Monolog. Das Modell schreibt am Ende eine `NOTIZ:`-Zeile als Fortschrittsprotokoll; sie wird nie gesprochen. Der letzte Abschnitt führt zu einem Schluss, die Zahl der Abschnitte ist begrenzt.
+
+**Abbruch:** Taste B, die Sprechtaste oder das Aktivierungswort in einer Lücke zwischen zwei Teilen beenden die Geschichte sofort: laufende Anfrage abgebrochen, vorgemerkte Teile gelöscht, Wiedergabe gestoppt. Ein „Stopp“ über die Sprechtaste beendet ohne neue Antwort. Während ein Teil spielt, ist das Mikrofon wie immer aus; reine Sprachunterbrechung ohne Taste gibt es weiterhin nicht. Alarme werden an der nächsten Teilgrenze vor dem nächsten Teil gesprochen. Bricht ein Abschnitt ab (Netz, Server, Modell), sagt Proximus einmal, dass die Erzählung hier endet; sie beginnt nie von vorn und wird nach einem Neustart nicht fortgesetzt. Der Zustand liegt nur im Arbeitsspeicher; gespeichert wird höchstens der Anfang des ersten Abschnitts als normaler Verlaufseintrag (gekürzt wie jede Antwort). Ein älterer Pi ohne `story`-Kennung bekommt einen ehrlichen Hinweis statt einer heimlich gekürzten Geschichte. Ohne Server erzählt der Pi über OpenRouter abschnittsweise mit lokaler Sprachausgabe.
+
+Offline geprüft (simulierte Audiolängen für 10, 15 und 20 Minuten, Abbruch, Fehler, Warteschlange). **Am Gerät (10.10.2026):** zehn Minuten angefordert, erster Abschnitt nach etwa 21 s Serverzeit fertig (LLM 3,6 s), drei Folgeabschnitte automatisch nachgeladen (264–299 Wörter, je etwa 90–95 s Audio), Taste B stoppte nach 3 Minuten. Eine vollständige 10- bis 20-Minuten-Geschichte und die Lücken zwischen Abschnitten sind noch nicht ganz durchgehört.
 
 ### Sprechstil und Stimmeffekt
 
@@ -134,7 +176,9 @@ Neben dem Servitor gibt es das **Mensch-Modul**: Proximus vor seinem Umbau, Serg
 
 Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt danach Prompt und Effekt. Ältere Pis ohne die Felder bekommen den Servitor. Lokal auf dem Pi wirkt der Stimmeffekt nur mit `TTS_VOICE_PROFILE=servitor` (dort ist das `thorsten_emotional`-Modell geladen); vorgefertigte Ansagen (Alarme, Aufwachen) klingen vorerst weiter nach Servitor.
 
-**Feste Sätze** (Uhrzeit, Datum, Akku, Status, Netz, Updates, Morgenbericht, Alarme, Aufwachen, Herunterfahren, Gedächtnisbefehle, Wartungsergebnisse) gibt es in fünf Stilen (`system_status.phrase_style`): `off`, `light`, `full` für den Servitor sowie `billy` und `billy_full` für Billy, also ohne bzw. mit voller Lore. Billy sagt dann z. B. „Es ist 7 Uhr 15.“ statt „Zeitindex: 7 Uhr 15.“, „Achtung. Akku bei 9 Prozent. Ich brauch Strom, Boss.“ oder „Gemerkt.“. Die Fakten bleiben gleich. Den Stil leiten Pi und Server aus `lore` und `persona` im Status-Snapshot ab.
+**Feste Sätze** (Uhrzeit, Datum, Akku, Status, Netz, Updates, Morgenbericht, Alarme, Aufwachen, Herunterfahren, Gedächtnisbefehle, Wartungsergebnisse) gibt es in fünf Stilen (`system_status.phrase_style`): `off`, `light`, `full` für den Servitor sowie `billy` und `billy_full` für Billy, also ohne bzw. mit voller Lore. Billy sagt dann z. B. „Es ist 7 Uhr 15.“ statt „Zeitindex: 7 Uhr 15.“ oder „Gemerkt.“. Die Fakten bleiben gleich. Den Stil leiten Pi und Server aus `lore` und `persona` im Status-Snapshot ab.
+
+Häufige unkritische Sätze (Uhrzeit, Datum, „Wer bist du?“, Gedächtnisbefehle, Morgenbericht-Anfang, Aufwachen, „ohne Server“) haben kleine Variantenpools ([`src/variants.py`](../src/variants.py)); dieselbe Variante kommt nicht zweimal hintereinander. Gemerkt werden nur Varianten-IDs im Arbeitsspeicher. Zahlen, Status und Bestätigungen sind in allen Varianten gleich. Alarme, Herunterfahren, Rückfragen zu Neustart und Wartung bleiben fest. Jede Aufwach-Variante steht in `alarm_audio.known_pieces` und bekommt eigene Clips; fehlen sie noch, wird genau der gewählte Text live synthetisiert, Text und Audio passen also immer zusammen.
 
 „Wer bist du?“ und „Wie geht es dir?“ beantwortet der Servitor mit festen Sätzen ([`src/intents.py`](../src/intents.py)); im Sprechstil Billy gehen beide Fragen an das Sprachmodell, damit er selbst antwortet. „Systemstatus“, Uhrzeit, Akku usw. bleiben in beiden Stilen feste Antworten.
 
@@ -145,7 +189,7 @@ Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt 
 | Auslöser | Gefühl |
 |---|---|
 | Lob, Dank | zufrieden, bei wiederholtem Lob freudig |
-| Beleidigung („Blechbüchse“, „Halt die Klappe“), dieselbe Frage zweimal binnen 2 min | gereizt (vom Bediener verursacht) |
+| Beleidigung („Blechbüchse“, „Halt die Klappe“), dieselbe Frage dreimal binnen 2 min | gereizt (vom Bediener verursacht); einmal nachfragen, „nochmal“, „wie bitte“ oder „einfacher“ ärgert nie |
 | „Warum …“, „Erzähl …“ | neugierig |
 | Akku unter 20 % ohne Netzteil | müde |
 | CPU-Temperatur ab 70 °C oder Last ab 90 % | gereizt (vom System verursacht) |
@@ -153,7 +197,7 @@ Der Pi schickt `persona` und `voice` mit dem Status-Snapshot; der Server wählt 
 | Aufwachen nach über 1 Stunde Ruhe | gelangweilt |
 | Reaktion des Modells: `[stimmung:…]` am Anfang der Antwort | schiebt die Stimmung ein Stück in diese Richtung |
 
-Die Markierung `[stimmung:…]` wird auf dem Server und auf dem Pi entfernt und nie gesprochen. **Billy** zeigt die Stimmung offen im Ton. Beim **Servitor** bricht sie höchstens einmal pro Antwort als Fehler durch („Fehler. … Korrektur.“). **Verweigern** darf er nur, wenn er vom Bediener stark gereizt ist (ab 0,7), höchstens jede zweite Anfrage und nie bei Hilferufen („Hilfe“, „Notfall“, „brennt“, „Arzt“ …). Uhrzeit, Alarme, Gedächtnis- und Menübefehle laufen ohnehin nicht über das Sprachmodell.
+Die Markierung `[stimmung:…]` wird auf dem Server und auf dem Pi entfernt und nie gesprochen. **Billy** zeigt die Stimmung im Ton, ohne sie zu benennen. Beim **Servitor** gibt es einen Engramm-Durchbruch nur, wenn `lore.Breakthroughs` ihn für genau diese Antwort freigibt: Gefühle an, Stimmung nicht neutral, ein passender Anlass (Kameradenname, Kael, Vergangenheit oder eine Restemotion ab 0,7) und mindestens drei Antworten Abstand. Freigegeben wird nur ein kurzes Fragment aus dem Archiv (z. B. „Dace hätte darüber gelacht.“), danach bleiben die Namen gesperrt. **Verweigern** darf er nur, wenn er vom Bediener stark gereizt ist (ab 0,7), höchstens jede zweite Anfrage und nie bei Hilferufen („Hilfe“, „Notfall“, „brennt“, „Arzt“ …). Uhrzeit, Alarme, Gedächtnis- und Menübefehle laufen ohnehin nicht über das Sprachmodell.
 
 **Nach einem Neustart** ist er neutral. Jeder Verlaufseintrag auf dem Gedächtnis-Stick speichert die Stimmung seiner Antwort (`mood: "gereizt:0.62"`). Aus den neuesten drei, die jünger als 12 Stunden sind, entsteht eine schwache Grundstimmung (höchstens 0,3).
 
@@ -221,7 +265,7 @@ Es gibt zwei Clip-Sätze: die Servitor-Sätze in der Maschinenstimme (Dateinamen
 
 ## Display: Servo-Skull
 
-Im Ruhezustand und beim Sprechen zeigt das PiTFT einen Servo-Skull ([`src/skull.py`](../src/skull.py)) mit rot pulsierendem Auge: ruhig atmend im Leerlauf (4 Bilder/s), beim Sprechen im Takt der Lautstärke der Antwort (Hüllkurve der WAV, 50-ms-Schritte, `/run/pi-ptt/speech-envelope.json`). Das Auge wird automatisch gefunden und in 12 Stufen vorberechnet. Das verwendete Pixel-Art-Bild (r/PixelArt, „16-color Warhammer servo skull wallpaper“) liegt **nur auf dem Pi** (`PI_DISPLAY_SKULL`, Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`), nicht in diesem öffentlichen Repository; ohne Datei zeichnet der Code einen eigenen schlichten Schädel. Display-CPU im Leerlauf ~10 % eines Kerns.
+Im Ruhezustand und beim Sprechen zeigt das PiTFT einen Servo-Skull ([`src/skull.py`](../src/skull.py)) mit rot pulsierendem Auge: ruhig atmend im Leerlauf (4 Bilder/s), beim Sprechen im Takt der Lautstärke der Antwort (Hüllkurve der WAV, 50-ms-Schritte, `/run/pi-ptt/speech-envelope.json`). Das Auge wird automatisch gefunden und in 12 Stufen vorberechnet. Das verwendete Pixel-Art-Bild (r/PixelArt, „16-color Warhammer servo skull wallpaper“) liegt in [`assets/display/servo-skull.png`](../assets/display/servo-skull.png); `install-voice-service.sh` installiert sie nach `PI_DISPLAY_SKULL` (Standard `/opt/pi-voice-assistant/models/display/servo-skull.png`), ersatzweise liest `skull.py` sie direkt aus dem Repository. Ohne Datei zeichnet der Code einen eigenen schlichten Schädel. Das tatsächlich laufende CPU-Profil verändert Schädel und Billy ([Display](display.md#cpu-profil-auf-dem-display)). Display-CPU im Leerlauf ~10 % eines Kerns.
 
 **Billy (Sprechstil `mensch`)** zeigt statt des Schädels das Gesicht aus der Doom-Statusleiste ([`src/face.py`](../src/face.py)) in einem grauen, abgeschrägten Rahmen. Die Zeile richtet sich nach dem **Akku** wie die Gesundheit im Spiel (100–80 % sauber … unter 20 % blutig, ab 3 % ohne Netzteil tot), die Spalte nach dem, was er tut:
 

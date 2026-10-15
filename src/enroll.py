@@ -1,20 +1,23 @@
-"""Getting to know the operator: wake-word samples, questions, voiceprint.
+"""Getting to know the operator: menu items, commands, wake-word takes.
 
-One session (menu "Kennenlernen" or "Lerne mich kennen"):
+The voice part, the facts and the confirmation live in voice_enroll
+(enrollment v2, concept stimm-einlernen). This module keeps what is shared:
 
-1. After a beep the operator says "Proximus" WAKE_COUNT times (2 s each,
-   with hints: quieter, from further away ...). The clips go to the memory
-   stick (proximus/voice/wake/) for retraining the wake word.
-2. Proximus asks QUESTIONS; each answer (6 s after a beep) is transcribed by
-   the server (POST /v1/turn?mode=transcribe) and stored as a fact or, for
-   the speaking style, as a directive. Clips: proximus/voice/answers/.
-3. The server turns the answer clips into voice embeddings
-   (POST /v1/voiceprint); their mean becomes the operator's voiceprint on
-   the stick, used to recognize the operator in later turns.
+- command(): "Lerne mich kennen" / "Stimme nachtrainieren". A voice command
+  only opens the menu at "Stimme kennenlernen"; button E starts, so no spoken
+  sentence can overwrite an identity.
+- QUESTIONS and name_from() for the optional facts module.
+- Session: menu "Wakeword aufnehmen", WAKE_COUNT takes of "Proximus" (2 s,
+  with hints) for the wake-word training in proximus/voice/wake/. They never
+  enter a voice profile. Every take goes through voice_quality: bad formats
+  and takes without speech are deleted, the numbers are logged as
+  'enroll_clip' events (no content).
+- Server calls of the Pi's io: transcribe(), voiceprint() (v1, people
+  authentication) and clip() (POST /v2/enroll/clip).
 
-Everything stays on the stick; button B cancels at any time. The session
-runs in its own thread and talks to the hardware through small callables,
-so it can be tested without a microphone.
+Everything stays on the stick; button B cancels at any time. Sessions run in
+their own thread and talk to the hardware through small callables, so they
+can be tested without a microphone.
 """
 import json
 import re
@@ -22,6 +25,8 @@ import threading
 import time
 import wave
 from pathlib import Path
+
+import voice_quality
 
 WAKE_COUNT = 20
 WAKE_SECONDS = 2
@@ -46,21 +51,24 @@ QUESTIONS = (
      "Über den Bediener: {}"),
 )
 ANNOUNCE = "Kennenlern-Sitzung startet."
-INTRO = "Kennenlern-Sitzung beginnt. Abbrechen jederzeit mit Taste B."
-QUESTIONS_INTRO = "Stimmproben erfasst. Nun einige Fragen. Antworte nach dem Signalton."
 CANCELLED = "Kennenlern-Sitzung abgebrochen."
 NEED_STICK = "Kennenlernen braucht den Gedächtniskern. Bitte Stick anschließen."
 NEED_SERVER = "Kennenlernen braucht den Server. Verbindung prüfen."
-NO_VOICEPRINT = "Stimmprofil konnte nicht erstellt werden."
 FAILED = "Kennenlern-Sitzung abgebrochen. Mikrofon nicht verfügbar."
-REFINE_INTRO = "Stimmprofil nachtrainieren. Sage nach jedem Signalton Proximus. Abbrechen mit Taste B."
-NO_PROFILE = "Noch kein Stimmprofil vorhanden. Erst Kennenlernen starten."
-NO_MATCH = "Stimme keinem bekannten Profil zuzuordnen. Für eine neue Person Kennenlernen starten."
-REFINE_MATCH = 0.4      # lower than for recognition: we already expect a known voice
+WAKE_INTRO = "Aktivierungswort aufnehmen. Sage nach jedem Signalton Proximus. Abbrechen mit Taste B."
+MENU_HINT = "Kennenlernen bereit. Taste E startet, Taste B bricht ab."
+MENU_ONLY = "Kennenlernen bitte im Menü Personen starten."
+CHOOSE_PERSON = "Mehrere Personen bekannt. Bitte im Menü Personen auswählen."
+NO_PROFILE = "Noch kein Stimmprofil vorhanden. Erst Stimme kennenlernen."
+# Problems that keep a clip out of a voiceprint or the wake-word samples.
+VOICE_PROBLEMS = {'too_short', 'clipping', 'too_quiet', 'noisy', 'pauses'}
+WAKE_PROBLEMS = {'too_short', 'clipping', 'too_quiet', 'noisy'}
+WAKE_SPEECH_MIN = 0.3   # one "Proximus"
 _REFINE = re.compile(r'\b(stimm(e|profil) (nachtrainieren|nach trainieren|verbessern|verfeinern|'
                      r'trainieren)|nachtrainieren|stimmtraining)\b')
 _COMMAND = re.compile(r'\b(lerne? mich kennen|kennenlernen|kennen lernen|trainingsmodus|'
-                      r'stimmprofil (anlegen|erstellen))\b')
+                      r'stimmprofil (anlegen|erstellen)|lerne? meine stimme|'
+                      r'meine stimme (lernen|anlernen|einlernen|kennenlernen))\b')
 _NAME_PREFIX = re.compile(r'^(?:du kannst mich |nenn(?:e)? mich |ich heiße |mein name ist |'
                           r'ich bin |sag |einfach )+')
 
@@ -73,23 +81,17 @@ def command(text):
     return 'enroll' if _COMMAND.search(text) else None
 
 
-def refined_text(name, total):
-    return f"Stimmprofil {name} verfeinert. {total} Aufnahmen."
+def wake_done_text(count):
+    return f"Aktivierungswort aufgenommen. {count} Proben gespeichert."
 
-
-
-def done_text(facts, voiceprint):
-    voice = " Stimmprofil gespeichert." if voiceprint else ""
-    return f"Kennenlernen abgeschlossen. {facts} Erinnerungen angelegt.{voice}"
 
 
 def phrases():
     """Fixed sentences, for prerecorded clips."""
-    texts = [ANNOUNCE, INTRO, QUESTIONS_INTRO, CANCELLED, FAILED, REFINE_INTRO, NO_PROFILE,
-             NO_MATCH, refined_text('Ivan', 2), NEED_STICK, NEED_SERVER, NO_VOICEPRINT,
-             *WAKE_HINTS.values(), *(q for _, q, _, _ in QUESTIONS)]
-    texts += [done_text(n, v) for n in (2,) for v in (True, False)]
-    return texts
+    import voice_enroll
+    return [ANNOUNCE, CANCELLED, FAILED, WAKE_INTRO, MENU_HINT, MENU_ONLY, CHOOSE_PERSON,
+            NO_PROFILE, NEED_STICK, NEED_SERVER, wake_done_text(WAKE_COUNT), *WAKE_HINTS.values(),
+            *(q for _, q, _, _ in QUESTIONS), *voice_enroll.phrases()]
 
 
 def name_from(answer):
@@ -112,8 +114,31 @@ def beep_wav(path, freq=880.0, seconds=0.15, rate=16000):
 
 
 def pcm_of(path):
-    with wave.open(str(path), 'rb') as clip:
-        return clip.readframes(clip.getnframes())
+    """Mono 16 kHz int16 PCM of a WAV clip (voice_quality.read_wav: format
+    checked, stereo mixed, other rates resampled); AudioFormatError if not."""
+    return voice_quality.read_wav(path)
+
+
+def clip_check(pcm, kind, index, allowed=VOICE_PROBLEMS,
+               speech_min=voice_quality.SPEECH_MIN, speech_max=voice_quality.SPEECH_MAX):
+    """(quality numbers, problems that keep the clip out of the voiceprint).
+    Logged as numbers and codes only."""
+    quality = voice_quality.analyze(pcm)
+    codes = voice_quality.problems(quality, speech_min, speech_max)
+    print(json.dumps(dict(version=1, event='enroll_clip', kind=kind, index=index,
+                          problems=codes, **quality)), flush=True)
+    return quality, [code for code in codes if code in allowed]
+
+
+def _read(path, kind, index):
+    """PCM of a recorded clip, or None (bad format: logged, clip deleted)."""
+    try:
+        return pcm_of(path)
+    except (voice_quality.AudioFormatError, OSError) as exc:
+        print(json.dumps(dict(version=1, event='enroll_clip', kind=kind, index=index,
+                              problems=['format'], error=type(exc).__name__)), flush=True)
+        Path(path).unlink(missing_ok=True)
+        return None
 
 
 class Session:
@@ -158,14 +183,14 @@ class Session:
             self.result = dict(error=str(exc))
 
     def run(self):
+        """Menu "Wakeword aufnehmen": WAKE_COUNT takes of "Proximus" for the
+        wake-word training; they never enter a voice profile."""
         stamp = time.strftime('%Y%m%d-%H%M%S', time.localtime(self.clock()))
         wake_dir = self.core.voice_dir / 'wake'
-        answer_dir = self.core.voice_dir / 'answers'
         wake_dir.mkdir(parents=True, exist_ok=True)
-        answer_dir.mkdir(parents=True, exist_ok=True)
         self.io.publish(stage='intro')
-        self.io.say(REFINE_INTRO if self.mode == 'refine' else INTRO)
-        takes = []
+        self.io.say(WAKE_INTRO)
+        kept = 0
         for index in range(WAKE_COUNT):
             self._check()
             if index in WAKE_HINTS:
@@ -177,79 +202,21 @@ class Session:
             if self.io.record(take, WAKE_SECONDS) is False:
                 self._check()
                 raise RuntimeError('microphone unavailable')
-            takes.append(take)
             self.io.publish(stage='wake', step=index + 1, total=WAKE_COUNT, rec=False)
+            pcm = _read(take, 'wake', index)
+            if pcm is None:
+                continue
+            _, rejected = clip_check(pcm, 'wake', index, WAKE_PROBLEMS, WAKE_SPEECH_MIN,
+                                     voice_quality.SPEECH_MAX)
+            if rejected and 'too_short' in rejected:
+                take.unlink(missing_ok=True)        # nothing said: no training sample
+                continue
+            kept += 1
         self._check()
-        if self.mode == 'refine':
-            return self._refine(takes)
-        self.io.say(QUESTIONS_INTRO)
-        stored, prints, name = 0, [], None
-        for number, (key, question, kind, template) in enumerate(QUESTIONS):
-            self._check()
-            self.io.publish(stage='ask', step=number, total=len(QUESTIONS), rec=False)
-            self.io.say(question)
-            self.io.beep()
-            path = answer_dir / f'{stamp}-{key}.wav'
-            self.io.publish(stage='ask', step=number, total=len(QUESTIONS), rec=True)
-            if self.io.record(path, ANSWER_SECONDS) is False:
-                self._check()
-                raise RuntimeError('microphone unavailable')
-            self.io.publish(stage='ask', step=number, total=len(QUESTIONS), rec=False)
-            self._check()
-            pcm = pcm_of(path)
-            answer = self.io.transcribe(pcm)
-            if answer:
-                if key == 'name':
-                    name = name_from(answer)
-                    answer = name
-                if self.core.add(kind, template.format(answer)):
-                    stored += 1
-            print_ = self.io.voiceprint(pcm)
-            if print_:
-                prints.append(print_)
-        self.io.publish(stage='process')
-        voiceprint = False
-        if prints:
-            from speaker import average, decode, encode
-            vector = average([decode(p) for p in prints])
-            if vector:
-                self.core.save_voiceprint(name or 'Bediener', encode(vector), len(prints))
-                voiceprint = True
         self.io.publish(stage='done')
-        self.io.say(done_text(stored, voiceprint) if prints else
-                    done_text(stored, False) + " " + NO_VOICEPRINT)
+        self.io.say(wake_done_text(kept))
         self.io.publish(stage=None)
-        return dict(facts=stored, voiceprint=voiceprint, name=name)
-
-
-    def _refine(self, takes):
-        """Five takes at a time (~10 s) give one embedding; their mean is merged
-        into the profile it matches best."""
-        from speaker import average, decode, encode, identify
-        self.io.publish(stage='process')
-        prints = []
-        for start in range(0, len(takes), 5):
-            pcm = b''.join(pcm_of(path) for path in takes[start:start + 5] if path.is_file())
-            print_ = self.io.voiceprint(pcm) if pcm else None
-            if print_:
-                prints.append(print_)
-        known = [dict(name=p['name'], vector=decode(p['print'])) for p in self.core.voiceprints()]
-        vector = average([decode(p) for p in prints])
-        if self.target and vector and any(p['name'] == self.target for p in known):
-            name, score = self.target, None
-        else:
-            name, score = identify(vector, known, REFINE_MATCH) if vector else (None, None)
-        self.io.publish(stage='done')
-        if not known:
-            text, total = NO_PROFILE, None
-        elif name is None:
-            text, total = NO_MATCH, None
-        else:
-            total = self.core.save_voiceprint(name, encode(vector), len(prints))
-            text = refined_text(name, total)
-        self.io.say(text)
-        self.io.publish(stage=None)
-        return dict(refined=name, score=None if score is None else round(score, 3), count=total)
+        return dict(wake=kept)
 
 
 class _Cancelled(Exception):
@@ -289,6 +256,16 @@ def transcribe(pcm, env=None):
         if item.get('event') == 'transcript':
             return str(item.get('text', '')).strip() or None
     return None
+
+
+def clip(pcm, env=None):
+    """POST /v2/enroll/clip: {quality, transcript, vector, model, ...} or None."""
+    raw = _post('/v2/enroll/clip', pcm, env)
+    try:
+        reply = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    return reply if isinstance(reply, dict) else None
 
 
 def voiceprint(pcm, env=None):

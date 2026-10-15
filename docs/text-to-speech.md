@@ -43,7 +43,13 @@ Die Wörter werden mit `length_scale=1.02` bewusst kurz und hart gehalten. Niedr
 
 ## Aussprache
 
-Der deutsche espeak-Phonemizer hinter Piper betont manche Lore-Wörter falsch. [`src/pronounce.py`](../src/pronounce.py) schreibt sie direkt vor Piper um (Server, Pi, Streaming und `speak.py`); Display, Journal und Gedächtnis behalten die echte Schreibweise. Bisher: **Omnissiah → „Omnissi-ah“**. espeak machte daraus `ˈɔmnɪsˌiːɑː` (Betonung auf „OM“), jetzt `ɔmnˈɪsiːˈɑː` (Betonung auf „NIS“, wie in der Lore). Neue Regeln vorher mit dem Phonemizer aus Pipers venv prüfen (Befehl im Modulkopf). Die Alarm-Clips sind nach der gesprochenen Form benannt: nach einer neuen Regel `alarm_audio.py build --prune` laufen lassen, dann werden die betroffenen Clips neu gerendert.
+Der deutsche espeak-Phonemizer hinter Piper liest manches falsch. [`src/pronounce.py`](../src/pronounce.py) bereitet den Text direkt vor Piper auf (Server, Pi, Streaming und `speak.py`); Display, Journal und Gedächtnis behalten die echte Schreibweise. Drei Schritte:
+
+1. **Abkürzungen, Einheiten, Datum, Dezimalzahlen.** espeak buchstabierte „z. B.“ („zet. be.“) und machte aus jedem Punkt eine Satzpause, las „10. Oktober“ als „zehn. Oktober“, „3.5“ als „drei Punkt fünf“, „°C“ als „Grad C“, „km/h“ als „ka em ha“ und „Phobos IX“ als „Phobos römisch neun“. Jetzt: „zum Beispiel“, „der zehnte Oktober“ / „am zehnten Oktober“, „3,5“, „Grad“, „Kilometer pro Stunde“, „Phobos Neun“; dazu usw., bzw., d. h., ca., ggf., evtl., Nr., Mio., Mrd., `8.30 Uhr` → „8 Uhr 30“. Ein Datum ohne Jahr („3.5.“) wird nur nach am/vom/der/Wochentag … umgewandelt, sonst könnte es eine Dezimalzahl am Satzende sein.
+2. **Umschreibung:** Omnissiah → „Omnissi-ah“ (Betonung auf „NIS“ statt „OM“).
+3. **Lautschrift für falsch betonte Namen:** Piper 1.8 nimmt `[[ … ]]` als rohe Phoneme. So gehen Proximus (`prˈɔksimʊs` statt pro-XI-mus), Adeptus Mechanicus (`adˈɛptʊs meçˈaːnikʊs` statt A-deptus ME-chanicus), Noosphäre, Astartes, Lho-Stäbchen, Leman, Blazkowicz, Milwaukee und Secundus an Piper. Ohne diese Piper-Funktion bleibt das Wort unverändert.
+
+Neue Regeln vorher mit dem Phonemizer aus Pipers venv prüfen (Befehl im Modulkopf). Die Alarm-Clips sind nach der gesprochenen Form benannt: nach einer neuen Regel `alarm_audio.py build --prune` laufen lassen, dann werden die betroffenen Clips neu gerendert.
 
 ## Servitor-DSP
 

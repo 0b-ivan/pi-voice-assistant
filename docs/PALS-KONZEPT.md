@@ -6,7 +6,7 @@
 |---|---|
 | Projekt | [0b-ivan/pi-voice-assistant](https://github.com/0b-ivan/pi-voice-assistant) |
 | Dokument | `docs/PALS-KONZEPT.md` |
-| Version | **1.1, Architekturreview vom 11.10.2026** |
+| Version | **1.2, Repository-Abgleich vom 15.10.2026** |
 | Implementierungsstand | **Nicht implementiert**; dieses Dokument beschreibt Zielarchitektur und Abnahmekriterien |
 | Zielgruppe | Projektentwickler, Claude Code, Reviewer und Betreiber |
 | Charakter | Proximus / Servitor bzw. Billy |
@@ -14,14 +14,15 @@
 
 > **Definition:** „Agonie“, „Bestrafung“ und „Schmerz“ sind in PALS **fiktive, simulierte Zustände** eines Sprachassistenten. Ein LLM leidet dadurch nicht. Eine negative Rückmeldung kann die künftigen Antworten durch Gedächtnisregeln beeinflussen oder später als Trainingsbeispiel dienen. **Ein Tastendruck ist kein Fine-Tuning und verändert keine Modellgewichte.**
 
-## Architekturreview vom 11.10.2026: Was ist die beste Lösung?
+## Architekturreview und Repository-Abgleich vom 15.10.2026
 
-**Status:** Recherche und Repository-Review, **keine** Implementierung. Dieses Review hat Vorrang bei Widersprüchen zu älteren Beispielen.
+**Status:** Konzept mit Repository-Abgleich gegen `main` (`f3a09be`, 15.10.2026), **keine** PALS-Implementierung. Das Methodenreview stammt vom 11.10.2026; externe Framework-/Hardware-Aussagen wurden am 15.10. nicht erneut recherchiert. Dieser Abgleich hat Vorrang bei Widersprüchen zu älteren Beispielen.
 
-**Neue Repo-Lage:**
+**Verifizierter Repository-Stand:**
 - [PR #92](https://github.com/0b-ivan/pi-voice-assistant/pull/92) **gemergt**: Gesprächs-/Gedächtniskonzept mit stabiler Besitzertrennung und Quellbelegen.
-- [PR #97](https://github.com/0b-ivan/pi-voice-assistant/pull/97) **offen**: `src/conversation.py` implementiert einen noch **nicht eingebundenen** Personen-/Threadspeicher im bestehenden `memory.json`. Enthalten sind `turn_id`, Snapshot-/Stick-Generation, `delivery`-Status (`pending/played/interrupted/failed`), Quoten und Löschen. **Diese Basis erst integrieren/abnehmen und danach PALS darauf aufbauen**, keine parallelen inkompatiblen Turn-IDs oder Ablagestrukturen.
-- [PR #98](https://github.com/0b-ivan/pi-voice-assistant/pull/98) **offen**: Nightwatch für Software-/Sicherheitsprüfungen. Dessen Befunde sind **keine Nutzerpräferenzen**, und sein Modellpfad muss vom Feedback-/Training-Pfad getrennt bleiben.
+- [PR #97](https://github.com/0b-ivan/pi-voice-assistant/pull/97) **gemergt**: `src/conversation.py` implementiert einen noch **nicht eingebundenen** Personen-/Threadspeicher im bestehenden `memory.json`. Enthalten sind `turn_id`, Snapshot-/Stick-Generation, `delivery`-Status (`pending/played/interrupted/failed`), Quoten und Löschen. **Diese Basis ist im Repository, aber noch nicht im Sprachpfad aktiv. Erst Identität vor Kontextauswahl und Laufzeitintegration abnehmen, danach PALS darauf aufbauen**, keine parallelen inkompatiblen Turn-IDs oder Ablagestrukturen.
+- [PR #98](https://github.com/0b-ivan/pi-voice-assistant/pull/98) **gemergt**: Nightwatch für Software-/Sicherheitsprüfungen. Dessen Befunde sind **keine Nutzerpräferenzen**, und sein Modellpfad muss vom Feedback-/Training-Pfad getrennt bleiben.
+- Gemergte Status-/Geräte-/Fahrtenkorrekturen (#107, #116, #119) und konsolidierter Webclient (#120) verwenden weiterhin die gemeinsame Sprachpipeline. Einige Antwortwege sind deterministisch.
 - Neue gemergte Intents und Fahrtenfehlerkorrekturen (u. a. #90, #94, #96): Einige schädliche Antworten stammen aus dem **Intent-/Daten-/STT-Routing**, nicht aus schlechter Modellpersonalisierung. Das PALS-Signal muss darum die Antwortquelle enthalten.
 
 **Fundamentale Korrektur am ursprünglichen Konzept:** `„Wie spät ist es?“` kann bereits **deterministisch** beantwortet werden. Eine reine LLM-Bewertung würde gerade solche Antworten nicht erfassen. Feedback erfassen wir daher für **eindeutig identifizierte, nichtkritische Antworten aller Quellen**, leiten die **Abhilfe aber getrennt** weiter:
@@ -53,7 +54,7 @@ Vor Fine-Tuning **drei Baselines** auf demselben Holdout vergleichen: (A) bisher
 
 **Hardware-Fazit:** i5 Gen7 + 32 GB ist als Datenaufbereitungs-/Evaluationsnode gut. Die aktuelle bitsandbytes-CPU-Unterstützung erfordert auf Linux/x86-64 mindestens AVX2, was erst am realen Host zu bestätigen ist. Unterstützung bedeutet **nicht** akzeptable 4B-Trainingzeiten. Erst kleinen LoRA-SFT-Lauf mit 20 Schritten messen. Apple-Silicon-Mac mit MLX ist optional eine bessere Trainingsmaschine, wenn verfügbar. Kein neues Framework wie LangGraph/Mem0 als Laufzeitpflicht: deren **Speichermuster** (Personen-Scopes, getrennte episodische/prozedurale Fakten, gezielte CRUD) in vorhandene Architektur übernehmen.
 
-**Verifikation:** Kein PALS-Code im aktuellen `main` bestätigt; keine echten Pi-/i5-Benchmarks ausgeführt. Die PR-Zustände gelten für die Prüfung vom 11.10.2026 und sind vor Claude-Implementierung erneut abzufragen.
+**Verifikation:** #97, #98, #107 und #120 sind gemergt. `src/conversation.py` ist vorhanden; der produktive Sprachpfad importiert diesen Gesprächsspeicher weiterhin nicht. Kein PALS-Feedback-Capture oder Trainingspfad im geprüften Sprachweg; keine echten Pi-/i5-Benchmarks ausgeführt. Ein Merge ist kein Deployment-Nachweis. PR-/Runtime-Zustände vor jeder Implementierung erneut prüfen.
 
 ---
 
@@ -93,7 +94,7 @@ Proximus soll seine Rolle und seine Fähigkeiten behalten, sich aber nach und na
 
 **Nicht-Ziele für MVP:** Vollständiges RLHF/Online-RL, dauerhaft laufende Trainingsprozesse auf dem Pi, direkter Gewichtsupdate nach einem Knopfdruck, Cloud-Zwang, neue Datenbank auf dem Pi, autonomes Überschreiben produktiver Modelle, starke biometrische Sicherheit allein durch kurze Stimmaufnahmen.
 
-## 2. Verifizierter Ausgangspunkt (Repo-Stand 10.10.2026)
+## 2. Ausgangspunkt (ursprünglicher Stand 10.10., Abgleich 15.10.2026)
 
 Vor Implementierung aktuelle Branches/Dateien erneut lesen.
 
@@ -108,7 +109,7 @@ Vor Implementierung aktuelle Branches/Dateien erneut lesen.
 | CT 107 | `server/servitor_server.py`: Vosk, Piper, `src/llm.py`; HTTP `/v1/turn`, `/v1/hello`, `/v1/message` |
 | Lokales LLM | Qwen3-4B-Instruct-2507, quantisiertes GGUF Q4_K_M über `llama.cpp`, ca. 5 GB RAM/4 CPU-Kerne für CT 107 |
 | Externes LLM | OpenRouter; Modellgewichte fremd, daher kein direktes Fine-Tuning durch uns |
-| Dokumentationsstatus | [PR #81](https://github.com/0b-ivan/pi-voice-assistant/pull/81) konsolidiert bestehende Doku; [PR #82](https://github.com/0b-ivan/pi-voice-assistant/pull/82) wurde geschlossen, seine Idee in #81 aufgenommen |
+| Dokumentationsstatus | #81 und #82 sind geschlossen, beide ohne Merge. Aktuelle README, `docs/` und tatsächlichen Code verwenden; historische PR-Pläne nicht als implementierten Zustand behandeln |
 
 **Wichtige technische Lücke:** Ein eigener `turn_id`-/Antwortkandidat-Lebenszyklus ist für PALS zu ergänzen. Aus dem existierenden `cancel()` darf kein Rückschluss auf eine bewertete Antwort gezogen werden. Ebenso dürfen in `src/protocol.py` nicht existierende Outbox-Features nicht als verfügbar angenommen werden.
 
@@ -247,7 +248,7 @@ Kein neues umfangreiches Untermenü im MVP zwingend, sofern Sprachbefehle und ei
 
 ## 6. Datenmodell und Persistenz
 
-**Source of Truth:** USB-Stick mit Label `PROXIMUS`, Pfad unter `/mnt/proximus-memory/proximus/` (wie bestehendes `memory.json`). **Nach PR #97 bevorzugt ein `feedback`-Unterbereich im selben `memory.json` mit stabiler Owner-/Thread-/Turn-ID**, solange Größe und Pi-Schreiblast dies zulassen. Dadurch sind Turn, Bewertung, Löschung und Source-Referenzen in einer atomaren `MemoryCore`-Transaktion möglich. Eine separate `feedback.json` ist **nur eine Alternative nach Kapazitäts-/Performance-Messung** und benötigt dann konsistente Cross-File-Lösch-/Recovery-Regeln. Kein zweiter Writer und keine zweite Kopie kompletter Gesprächsverläufe. Versionierte Schemas, beschränkte Größen, atomare Aktualisierung (temp-Datei + `fsync` + Rename + `fsync` des Ordners) analog `src/memory.py`.
+**Source of Truth:** USB-Stick mit Label `PROXIMUS`, Pfad unter `/mnt/proximus-memory/proximus/` (wie bestehendes `memory.json`). **Auf Basis des gemergten, noch nicht im Sprachpfad aktiven Speichers aus PR #97 bevorzugt ein `feedback`-Unterbereich im selben `memory.json` mit stabiler Owner-/Thread-/Turn-ID**, solange Größe und Pi-Schreiblast dies zulassen. Dadurch sind Turn, Bewertung, Löschung und Source-Referenzen in einer atomaren `MemoryCore`-Transaktion möglich. Eine separate `feedback.json` ist **nur eine Alternative nach Kapazitäts-/Performance-Messung** und benötigt dann konsistente Cross-File-Lösch-/Recovery-Regeln. Kein zweiter Writer und keine zweite Kopie kompletter Gesprächsverläufe. Versionierte Schemas, beschränkte Größen, atomare Aktualisierung (temp-Datei + `fsync` + Rename + `fsync` des Ordners) analog `src/memory.py`.
 
 ### 6.1 Feedback-Record – Beispiel
 
@@ -555,7 +556,7 @@ Geplante Diagnosefragen: „Wie viele Korrekturen hast du gelernt?“, „Welche
 
 ### 16.1 Vorschlag für neue/angepasste Dateien
 
-**Bestehende Dateien gezielt ändern:** `src/ptt.py`, `src/memory.py`, nach Integration von PR #97 ggf. `src/conversation.py`, `src/mood.py`, `src/llm.py` sowie passende vorhandene Tests. Die genaue Einbindung von Statusdisplay/LED anhand aktueller Implementierung überprüfen.
+**Bestehende Dateien gezielt ändern:** `src/ptt.py`, `src/memory.py`, das vorhandene, noch nicht im Sprachpfad aktive `src/conversation.py`, `src/mood.py`, `src/llm.py` sowie passende vorhandene Tests. Die genaue Einbindung von Statusdisplay/LED anhand aktueller Implementierung überprüfen.
 
 **Neu, nur wenn sinnvoll:**
 - `src/feedback.py`: schlanke testbare Kernlogik für Kandidat, Langdruck, Feedback-Record, Regeln.
@@ -579,7 +580,7 @@ Diese Startwerte sind **Vorschläge**, keine vorausgesetzten Nutzerentscheidunge
 
 ## 18. Claude-Startauftrag (kopierfertig)
 
-> Du arbeitest am Repository `0b-ivan/pi-voice-assistant`. Lies zuerst die aktuelle README, die tatsächlichen Python-Dateien, Tests und dieses Konzept `docs/PALS-KONZEPT.md`. Beachte, dass PR #81 die Dokumentation konsolidiert; ändere niemals blind veraltete Pfade oder die produktive Installation. Implementiere **ausschließlich P0 und einen kleinen P1-Entwurf** aus Abschnitt 16: prüfe zuerst den Merge-/Runtime-Status von PR #97 (Conversation-IDs und Delivery-Status), PR #98 (Nightwatch) und die neuen Intent-/Fahrtenrouten. Sichere die bisherige B-Abbruch- und Menüfunktion durch Tests ab und ergänze konfigurierbaren B-Langdruck ab 800 ms, der nach sofortigem Cancel den **tatsächlich gespielten** Turn per stabiler ID höchstens einmal negativ bewertet. Erhalte den Quelltyp: LLM-Feedback als Präferenzfall, nichtkritisches Intent-/Fahrtenfeedback zunächst als Diagnosedatensatz; Alarme sind ausgenommen. Nutze vorhandene Turn-IDs soweit verfügbar, **nicht** `last_answer()` zur Zuordnung unterbrochener Antworten. Ergänze Fake-Clock-Tests, aber **noch keine Trainingspipeline, keine neuen Netzwerkendpunkte, keine automatische Lernregel, keine Persona-Animation**. Sei bei Menü, Wartung, Enrollment, Sicherheitsbestätigung, STT ohne Ergebnis und Status/Alarm strikt rückwärtskompatibel. Erstelle einen kleinen Pull Request mit Testnachweisen, überprüften Dateiänderungen, dokumentierten Risiken und Hardware-Abnahmeplan. Kein automatischer Merge/Deploy.
+> Du arbeitest am Repository `0b-ivan/pi-voice-assistant`. Lies zuerst die aktuelle README, die tatsächlichen Python-Dateien, Tests und dieses Konzept `docs/PALS-KONZEPT.md`. Beachte, dass #81 und #82 ohne Merge geschlossen sind und der Gesprächsspeicher aus #97 trotz Merge noch nicht im Sprachpfad aktiv ist; ändere niemals blind veraltete Pfade oder die produktive Installation. Implementiere **ausschließlich P0 und einen kleinen P1-Entwurf** aus Abschnitt 16: prüfe zuerst den Merge-/Runtime-Status von PR #97 (Conversation-IDs und Delivery-Status), PR #98 (Nightwatch) und die neuen Intent-/Fahrtenrouten. Sichere die bisherige B-Abbruch- und Menüfunktion durch Tests ab und ergänze konfigurierbaren B-Langdruck ab 800 ms, der nach sofortigem Cancel den **tatsächlich gespielten** Turn per stabiler ID höchstens einmal negativ bewertet. Erhalte den Quelltyp: LLM-Feedback als Präferenzfall, nichtkritisches Intent-/Fahrtenfeedback zunächst als Diagnosedatensatz; Alarme sind ausgenommen. Nutze vorhandene Turn-IDs soweit verfügbar, **nicht** `last_answer()` zur Zuordnung unterbrochener Antworten. Ergänze Fake-Clock-Tests, aber **noch keine Trainingspipeline, keine neuen Netzwerkendpunkte, keine automatische Lernregel, keine Persona-Animation**. Sei bei Menü, Wartung, Enrollment, Sicherheitsbestätigung, STT ohne Ergebnis und Status/Alarm strikt rückwärtskompatibel. Erstelle einen kleinen Pull Request mit Testnachweisen, überprüften Dateiänderungen, dokumentierten Risiken und Hardware-Abnahmeplan. Kein automatischer Merge/Deploy.
 
 ## 19. Technische Referenzen
 

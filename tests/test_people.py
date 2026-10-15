@@ -21,8 +21,9 @@ CLOSE = speaker.normalize([1.0, 0.5, 0.0, 0.2] * 64 + [-0.3, 0.9, 0.4, -0.6] * 6
 
 
 class IO:
-    def __init__(self, voice, words):
+    def __init__(self, voice, words, take=None):
         self.voice, self.words, self.said = voice, list(words), []
+        self.take = take        # PCM of every recording; default: 2 s of speech
 
     def say(self, text):
         self.said.append(text)
@@ -35,7 +36,8 @@ class IO:
             out.setnchannels(1)
             out.setsampwidth(2)
             out.setframerate(16000)
-            out.writeframes(bytes(16000 * 2))
+            out.writeframes(self.take if self.take is not None
+                            else pcm((0.5, 0), (2.0, 8000), (0.5, 0)))
 
     def transcribe(self, pcm):
         return self.words.pop(0) if self.words else None
@@ -71,13 +73,20 @@ class MatchingTests(unittest.TestCase):
     def test_trim_silence_keeps_speech_only(self):
         take = pcm((2.0, 0), (1.5, 8000), (2.5, 30))
         trimmed = speaker.trim_silence(take)
-        self.assertAlmostEqual(len(trimmed) / 32000, 1.5 + 2 * 0.2, delta=0.1)
+        self.assertAlmostEqual(len(trimmed) / 32000, 1.5 + 2 * 0.15, delta=0.05)
 
-    def test_trim_silence_never_goes_below_a_second(self):
+    def test_trim_silence_without_speech_is_empty(self):
+        # A short take is cut to its speech (the caller decides whether that
+        # is enough); a silent one gives nothing instead of the silence.
         take = pcm((2.0, 0), (0.3, 8000), (2.0, 0))
-        self.assertEqual(speaker.trim_silence(take), take)
-        silent = pcm((4.0, 0))
-        self.assertEqual(speaker.trim_silence(silent), silent)
+        self.assertAlmostEqual(len(speaker.trim_silence(take)) / 32000, 0.3 + 2 * 0.15,
+                               delta=0.05)
+        self.assertEqual(speaker.trim_silence(pcm((4.0, 0))), b"")
+
+    def test_trim_silence_short_takes(self):
+        take = pcm((0.6, 0), (0.7, 8000), (0.7, 0))      # one 2 s "Proximus" take
+        trimmed = speaker.trim_silence(take)
+        self.assertAlmostEqual(len(trimmed) / 32000, 0.7 + 2 * 0.15, delta=0.05)
 
 
 class FlowTests(unittest.TestCase):
@@ -136,13 +145,35 @@ class FlowTests(unittest.TestCase):
         result, io = self.flow(OTHER, ["omnissiah segne diese maschine"], "details")
         self.assertFalse(result["auth"])
 
-    def test_weak_voice_with_right_phrase_suggests_retraining(self):
+    def test_weak_voice_with_right_phrase_is_refused(self):
+        # A spoken passphrase is heard by anyone nearby: with a voice between
+        # WEAK_VOICE and the threshold it only earns the hint to retrain.
         self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
         score = speaker.cosine(CLOSE, IVAN)
         self.assertTrue(people.WEAK_VOICE <= score < speaker.THRESHOLD, score)
-        result, io = self.flow(CLOSE, ["omnissiah segne diese maschine"], "refine")
-        self.assertEqual((result["auth"], result["weak"], result.get("refine")), (True, True, True))
-        self.assertIn(people.AUTH_WEAK, io.said)
+        result, io = self.flow(CLOSE, ["omnissiah segne diese maschine"] * people.ATTEMPTS,
+                               "refine")
+        self.assertEqual((result["auth"], result["weak"], result.get("refine")),
+                         (False, True, None))
+        self.assertEqual(io.said[-1], people.AUTH_WEAK)
+        self.assertEqual([e["result"] for e in self.events()], ["weak"] * people.ATTEMPTS)
+
+    def test_too_little_speech_is_a_failed_attempt_not_a_server_error(self):
+        self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
+        io = IO(IVAN, ["omnissiah segne diese maschine"] * 2,
+                take=pcm((1.0, 0), (0.5, 8000), (1.0, 0)))
+        result, io = self.flow(None, None, "details", io)
+        self.assertFalse(result["auth"])
+        self.assertNotIn(people.NO_SERVER, io.said)
+        self.assertEqual(io.said[-1], people.AUTH_FAILED)
+        self.assertEqual([e["result"] for e in self.events()], ["too_short"] * people.ATTEMPTS)
+
+    def test_auth_log_and_details_carry_no_name_and_no_percent(self):
+        self.core.update_profile("Ivan", passphrase="omnissiah segne diese maschine")
+        result, io = self.flow(IVAN, ["omnissiah segne diese maschine"], "details")
+        self.assertTrue(result["auth"])
+        self.assertNotIn("Ivan", self.log.getvalue())
+        self.assertNotIn("Prozent", io.said[-1])
 
     def test_browser_navigation(self):
         browser = people.Browser()
@@ -221,6 +252,77 @@ class ControllerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnrollControllerTests(ControllerTests):
+    def start(self, mode, target=None):
+        import voice_enroll
+        import enroll
+        self.c.remote = True
+        self.c.server_state = lambda: "ok"
+        with patch.object(voice_enroll.VoiceSession, "start"), \
+                patch.object(enroll.Session, "start"), \
+                patch.object(self.ptt, "EnrollIO", Mock()):
+            self.c._start_enroll(mode, target=target)
+        session, self.c.enroll = self.c.enroll, None
+        return session
+
+    def test_menu_items_start_the_right_module(self):
+        import voice_enroll
+        import enroll
+        new = self.start("enroll")
+        self.assertIsInstance(new, voice_enroll.VoiceSession)
+        self.assertEqual((new.mode, new.voice, new.facts, new.baseline), ("new", True, True, False))
+        add = self.start("refine")                      # only Ivan known: him
+        self.assertEqual((add.mode, add.target["name"], add.facts), ("add", "Ivan", False))
+        self.assertEqual(self.start("facts").mode, "facts")
+        self.assertIsInstance(self.start("wake_rec"), enroll.Session)
+        self.c.memory.save_voiceprint("Anna", speaker.encode(OTHER), 7)
+        self.assertIsNone(self.start("refine"))         # two people: choose in "Personen"
+        self.assertIn(enroll.CHOOSE_PERSON, self.said)
+        self.assertEqual(self.start("refine", target="Anna").target["name"], "Anna")
+
+    def test_a_spoken_command_only_opens_the_menu(self):
+        import menu
+        self.c._offer_enroll()
+        self.assertTrue(self.c.menu.open)
+        self.assertEqual(self.c.menu.items[self.c.menu.index], "enroll")
+        self.assertIsNone(self.c.enroll)
+        self.assertIn("facts", menu.GROUPS["people"])
+        self.assertEqual(menu.LABELS["enroll"], "Stimme kennenlernen")
+
+    def test_e_reaches_a_running_session_and_b_cancels(self):
+        session = Mock(running=True)
+        self.c.enroll = session
+        pressed_e, pressed_b = (False, False, False, False, True), (False, True, False, False, False)
+        for now in (0.0, 0.1):                          # released first: buttons arm
+            self.c.tick(False, (False,) * 5, now)
+        for now in (1.0, 1.1):                          # held past the debounce time
+            self.c.tick(False, pressed_e, now)
+        session.press.assert_called_once_with("E")
+        self.c.tick(False, (False,) * 5, 1.2)
+        for now in (1.3, 1.4):
+            self.c.tick(False, pressed_b, now)
+        session.cancel.assert_called_once_with()
+
+    def test_display_gets_the_sentence_and_the_condition(self):
+        io_ = self.ptt.EnrollIO(runtime=self.tmp.name, config=Mock(runtime_dir=self.tmp.name,
+                                                                  output_device="x",
+                                                                  capture_device="y"))
+        io_.publish(stage="voice", step=12, total=24, condition="far", text="Der Satz.")
+        status = json.loads((Path(self.tmp.name) / "status.json").read_text())
+        self.assertEqual((status["enroll"], status["enroll_step"], status["enroll_cond"]),
+                         ("voice", 12, "far"))
+        sentence = json.loads((Path(self.tmp.name) / "display-enroll.json").read_text())
+        self.assertEqual(sentence["text"], "Der Satz.")
+        io_.publish(rec=True)
+        status = json.loads((Path(self.tmp.name) / "status.json").read_text())
+        self.assertEqual((status["enroll_rec"], status["enroll_step"]), ("on", 12))
+        io_.publish(stage=None)
+        status = json.loads((Path(self.tmp.name) / "status.json").read_text())
+        self.assertNotIn("enroll", status)
+        self.assertEqual(json.loads((Path(self.tmp.name) / "display-enroll.json")
+                                    .read_text())["text"], "")
 
 
 class MicrophoneTests(ControllerTests):

@@ -396,6 +396,14 @@ def derive(sprites, scale):
         for name, image in made.items():
             out[(row, name)] = image.resize((image.width * scale, image.height * scale),
                                             Image.NEAREST)
+    # The god face talks too (overclock keeps it on): its own lip line, the
+    # same mouths. In Doom the god face is the same at every health.
+    if lips and 'god' in sprites:
+        god = _shrink(sprites['god'], scale)
+        if god.size == clean.size:
+            for name, image in _mouths(god, _seam(god, lips)).items():
+                out[('god', name)] = image.resize((image.width * scale, image.height * scale),
+                                                  Image.NEAREST)
     return out
 
 
@@ -433,9 +441,73 @@ class Face:
                                   self.size[1] - sprite.height - extra(key) * up // down),
                          sprite)
             self.frames[key] = canvas
+        self._eyes = None
+        self._golden = {}
 
     def frame(self, key):
-        return self.frames.get(key) or self.frames[(key[0], 'look')]
+        if key in self.frames:
+            return self.frames[key]
+        if isinstance(key, tuple) and key[0] == 'god':
+            return self.frames['god']
+        return self.frames[(key[0], 'look')]
+
+    def _god_eyes(self):
+        """Pixels of the god face's golden eyes (where it differs from the
+        calm face and is gold), shared by the talking god frames."""
+        if self._eyes is None:
+            from PIL import ImageChops
+            self._eyes = frozenset()
+            god, look = self.frames.get('god'), self.frames.get((0, 'look'))
+            if god is not None and look is not None:
+                diff = ImageChops.difference(god, look).convert('L')
+                top = self.size[1] // 3            # eyes sit in the upper half,
+                bottom = self.size[1] * 2 // 3     # the orange lips stay out
+                data, pixels = diff.load(), god.load()
+                self._eyes = frozenset(
+                    (x, y) for y in range(top, bottom) for x in range(self.size[0])
+                    if data[x, y] and _golden(pixels[x, y]))
+        return self._eyes
+
+    def godlike(self, key, step=0):
+        """Overclock: Billy in god mode. Calm and glancing faces become the
+        god face, talking ones the god face with that mouth; pain, grin,
+        anger and the turned head keep their own face (mimic stays), dead
+        stays dead. ``step`` (0 .. GOLD_STEPS-1) lets the gold eyes swell a
+        little; 0 is the sprite as id drew it. Pulsed frames are kept."""
+        key = god_key(key)
+        image = self.frame(key)
+        if key != 'god' and not (isinstance(key, tuple) and key[0] == 'god'):
+            return image
+        step = max(0, min(GOLD_STEPS - 1, step))
+        if step == 0:
+            return image
+        cached = self._golden.get((key, step))
+        if cached is None:
+            cached = image.copy()
+            pixels = cached.load()
+            k = 0.3 * step / max(1, GOLD_STEPS - 1)
+            for x, y in self._god_eyes():
+                if y < cached.height:
+                    pixels[x, y] = tuple(int(c + (t - c) * k)
+                                         for c, t in zip(pixels[x, y], GOD_GLINT))
+            self._golden[(key, step)] = cached
+        return cached
+
+
+def _golden(pixel):
+    r, g, b = pixel[:3]
+    return r > 140 and g > 80 and b < 0.45 * g          # the god eyes, not skin
+
+
+def god_key(key):
+    """The god mode version of a face key (see Face.godlike)."""
+    if not isinstance(key, tuple) or key[0] == 'god':
+        return key
+    if key[1] in TALK:
+        return ('god', key[1])
+    if key[1] in ('look', 'look_a', 'look_b', 'blink', 'squint', 'wide'):
+        return 'god'
+    return key
 
 
 def health_row(battery_percent):
@@ -459,6 +531,15 @@ def _glance(now):
 
 
 GOD_SECONDS = 2.0
+GOD_GLINT = (255, 236, 140)    # the god eyes swell toward this while pulsing
+GOLD_STEPS = 3         # overclock eyes: pulse levels (0 = the original sprite)
+GOLD_PERIOD = 2.4      # seconds per pulse
+
+
+def gold_step(now):
+    """Overclock eye pulse step for time ``now``."""
+    import math
+    return round((0.5 + 0.5 * math.sin(2 * math.pi * now / GOLD_PERIOD)) * (GOLD_STEPS - 1))
 
 
 MOOD_FROM = 0.3       # weaker feelings leave the face alone
@@ -498,15 +579,33 @@ VISEMES = {'.': 'look', 'a': 'talk_half', 'A': 'talk_open', 'e': 'talk_e',
            'E': 'talk_e', 'o': 'talk_round', 'O': 'talk_round'}
 
 
+def _cpu_idle(cpu, now):
+    """Idle face for the CPU profile in effect, or None for the usual one.
+    ECO: calm, straight ahead, slow blinks. POWER/overclock: alert, the
+    eyes wide now and then and quicker glances."""
+    if cpu == 'eco':
+        return 'blink' if blinking(now, every=6.0, length=0.25) else 'look'
+    if cpu == 'overclock':
+        return 'look'           # becomes the god face's steady golden stare
+    if cpu == 'power':
+        if blinking(now, every=5.0):
+            return 'blink'
+        slot = int(now / 0.5)
+        roll = (slot * 2654435761) % 97
+        return 'wide' if roll < 14 else 'look_a' if roll < 26 else 'look_b' if roll < 38 else 'look'
+    return None
+
+
 def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plugged_at=None,
-           mood=None, viseme=None):
+           mood=None, viseme=None, cpu=None):
     """The face to show: (row, column) or 'god'/'dead'.
 
     state: the display state (BEREIT, ZUHÖREN, DENKEN, SPRECHEN ...);
     level: speech loudness 0..1 while speaking; battery: power.Battery
     reading; alarm: a critical alarm is active; hushed_at: time.time() of
     the last cancel ("Stop", "Klappe halten", B); mood: (emotion, 0..1);
-    viseme: the mouth code of this moment of the reply, when known.
+    viseme: the mouth code of this moment of the reply, when known;
+    cpu: the CPU profile in effect (cpu_state.classify), for the idle face.
     """
     percent = (battery or {}).get('percent')
     if percent is not None and percent <= 3 and not (battery or {}).get('plugged'):
@@ -538,6 +637,9 @@ def choose(state, now, level=0.0, battery=None, alarm=False, hushed_at=None, plu
         face = _mood_face(mood[0], mood[1], now)
         if face:
             return (row, face)
+    face = _cpu_idle(cpu, now)
+    if face:
+        return (row, face)
     if blinking(now):
         return (row, 'blink')
     return (row, _glance(now))

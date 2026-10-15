@@ -52,6 +52,13 @@ if [ "$("$L/bin/llama-server" --version 2>&1 | grep -c "$(echo $LLAMA_COMMIT | c
   rm -rf "$L/src"
 fi
 
+# Record deployed binary provenance for the read-only night security audit.
+# The source checkout is removed above; a short --version SHA alone is not
+# enough for an exact OSV git-commit query.
+LLAMA_BINARY_SHA=$(sha256sum "$L/bin/llama-server" | cut -d ' ' -f 1)
+printf '{"commit":"%s","binary_sha256":"%s"}\n' "$LLAMA_COMMIT" "$LLAMA_BINARY_SHA" > "$L/provenance.json"
+chmod 0644 "$L/provenance.json"
+
 if ! echo "$SHA  $L/models/$MODEL" | sha256sum -c --status 2>/dev/null; then
   curl -fsSL --retry 3 -o "$L/models/$MODEL.part" "$URL"
   echo "$SHA  $L/models/$MODEL.part" | sha256sum -c --status || { echo "model hash mismatch" >&2; exit 1; }

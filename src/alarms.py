@@ -77,14 +77,27 @@ def memory_phrase(present, facts, lore):
             else "Gedächtniskern verbunden." + count)
 
 
-# Spoken when the unit wakes from sleep, per lore level.
+# Spoken when the unit wakes from sleep, per lore level. Each variant has its
+# own prerecorded clips (alarm_audio.known_pieces lists all of them), so the
+# chosen text and the played audio always match; a variant without clips is
+# synthesized live with exactly that text.
 WAKE_PHRASES = {
-    'off': "Aktiviert. Systeme werden vorbereitet.",
-    'light': "Proximus erwacht. Systeme werden vorgewärmt.",
-    'full': "Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.",
-    'billy': "Bin wach, Boss. Moment, ich sortier mich.",
-    'billy_full': "Aufstehen, Gardist. Systeme laufen warm.",
+    'off': ("Aktiviert. Systeme werden vorbereitet.", "Aktiviert. Bereit in wenigen Sekunden."),
+    'light': ("Proximus erwacht. Systeme werden vorgewärmt.",
+              "Proximus aktiv. Systeme werden vorbereitet."),
+    'full': ("Der Maschinengeist erwacht. Kogitatoren werden vorgewärmt.",
+             "Proximus erwacht. Die Kogitatoren laufen an."),
+    'billy': ("Bin wach. Moment, ich sortier mich.", "Bin da. Gib mir einen Moment.",
+              "Wach. Ich komme gleich in Gang."),
+    'billy_full': ("Bin wach. Systeme laufen warm.", "Bin da. Gib mir einen Moment.",
+                   "Wach. Ich komme gleich in Gang."),
 }
+
+
+def wake_phrase(style):
+    """One wake-up line for ``style``, not the same as last time."""
+    import variants
+    return variants.pick(f'wake.{style}', WAKE_PHRASES.get(style, WAKE_PHRASES['light']))
 
 
 @dataclass
@@ -228,12 +241,12 @@ class AlarmMonitor:
     def shutdown_due(self, now):
         return self.shutdown_at is not None and now >= self.shutdown_at
 
-    def _battery(self, snapshot, now, out, lore):
+    def _battery(self, snapshot, now, out, lore, announce_source=True):
         percent = snapshot.get('battery_pct')
         if percent is None:
             return
         plugged = bool(snapshot.get('battery_plugged', False))
-        if self.plugged is not None and plugged != self.plugged:
+        if announce_source and self.plugged is not None and plugged != self.plugged:
             out.append(power_source_phrase(plugged, percent, lore))
         self.plugged = plugged
         state = self.states['battery']
@@ -310,14 +323,16 @@ class AlarmMonitor:
             return sentence + " Soll sich ein Techpriester drum kümmern."
         return sentence
 
-    def update(self, snapshot, now, network=None, server=None, lore='off', internet=None):
+    def update(self, snapshot, now, network=None, server=None, lore='off', internet=None,
+               power_source_announcements=True):
         """network/internet: True/False/None (unknown or WLAN switched off on
         purpose); server: 'ok'/'down'/'off'. Returns sentences to speak."""
         out = []
         s = self.states
         throttled = snapshot.get('throttled', 0) or 0
         self._set('undervoltage', bool(throttled & 0x1), now, out, snapshot, lore)
-        self._battery(snapshot, now, out, lore)
+        self._battery(snapshot, now, out, lore,
+                      announce_source=power_source_announcements)
 
         free = snapshot.get('mem_free_pct')
         swap = snapshot.get('swap_used_pct', 0) or 0

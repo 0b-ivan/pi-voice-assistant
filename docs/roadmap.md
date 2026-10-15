@@ -1,15 +1,17 @@
 # Nächste Aufgaben
 
-Stand 09.10.2026. Der Funktionsstand steht in der [README](../README.md); hier steht nur verbleibende Arbeit.
+Stand 10.10.2026. Der Funktionsstand steht in der [README](../README.md); hier steht nur verbleibende Arbeit.
 
 ## Als Nächstes
 
 - **Abnahme der Neuerungen vom 09.10.2026 am Gerät** ([Protokoll](history/session-2026-10-09.md)):
-  - Gerätesteuerung: erkennt Vosk „WLAN aus/an“, „Geh schlafen“, „Starte dich neu“, „Fahr dich herunter“ und „Bestätigt“ mit echter Stimme? Greifen `rfkill`, Neustart über den Wartungsdienst und Herunterfahren (polkit)? Herunterfahren zuletzt testen.
+  - Gerätesteuerung: erkennt Vosk „WLAN aus/an“, „Geh schlafen“, „Starte dich neu“ und „Bestätigt“ mit echter Stimme? Greifen `rfkill` und Neustart über den Wartungsdienst? Herunterfahren per Sprache funktioniert (10.10.2026, [Protokoll](history/session-2026-10-10.md)).
   - Stimmerkennung bei kurzen Befehlen: `speaker`-Werte im Journal von CT 107 prüfen; liegen sie beim Bediener meist unter 0,5, Stimme nachtrainieren oder `SERVITOR_SPEAKER_THRESHOLD` senken.
   - Quittungston und die Aussprache „Omnissiah“ anhören; Morgenbericht mit Wetter und Terminen aus der echten Nextcloud.
-  - Wetteransicht auf dem PiTFT (Bildrate, Lesbarkeit), `weather.json` auf dem Stick nach einem Abruf, Wetterfrage ohne Netz.
-- **Selbsttest und Logs auf dem Stick am Gerät abnehmen** ([Logs und Selbsttest](logs.md)): `deploy/logsync/install.sh` und den Wartungs-Worker neu einspielen, `logsync.json` und `/mnt/proximus-memory/logs` prüfen, Stick ab- und anstecken, nach einem Tag das `selftest`-Event lesen. Erscheinen harmlose Zeilen als Befund, Muster in `IGNORE` (src/logwatch.py) oder `LOGWATCH_IGNORE` ergänzen.
+  - Wetteransicht auf dem PiTFT (Bildrate, Lesbarkeit), Wetterfrage ohne Netz. `weather.json` auf dem Stick: geprüft 10.10.2026.
+- **Selbsttest am Gerät abnehmen** ([Logs und Selbsttest](logs.md)): Log-Kopie auf den Stick läuft (10.10.2026). Offen: die neue Antwort auf „Selbsttest“ / „Was ist mit dir los?“ anhören (auch mit Lore VOLL und Billy), Stick ab- und anstecken und danach `logsync.json` prüfen, nach einem Tag das `selftest`-Event lesen. Harmlose Zeilen als Befund: Muster in `IGNORE` (src/logwatch.py) oder `LOGWATCH_IGNORE` ergänzen.
+- **Neue Stimmen am Gerät abnehmen** ([TTS](text-to-speech.md#stimmen-auf-ct-107-thorsten-high)): Alarm-Clips nach dem Neubau anhören; stört die längere Synthese (thorsten-high ~5× langsamer), Proximus auf thorsten_emotional mit der neuen Grundkette zurücknehmen oder Antworten satzweise streamen.
+- **„Server antwortet nicht“ beobachten:** seit #79 (2 s Timeout, zwei Fehlversuche) sollten Fehlalarme verschwinden. Kommen sie trotzdem, WLAN-Energiesparen auf dem Pi abschalten (Verbindung `netplan-wlan0-wgz-IoT`).
 - **Spracherkennung mit echter Stimme bewerten:** etwa 10 Sätze über das WM8960-Mikrofon aufnehmen, Vosk small gegen Whisper small auf CT 107 vergleichen (Branch `feat/servitor-whisper-stt`; mit synthetischer Sprache war Vosk small genauso gut und 50-mal schneller nach dem Loslassen). Aufnahmen danach löschen.
 - **Aktivierungswort mit echter Stimme abnehmen** (Trefferquote, Fehlauslösungen über einen Tag, Pausenerkennung), danach eigenes „Hey Servitor“ trainieren (openWakeWord-Trainingspipeline mit Piper-Stimmen, auf CT 107).
 - **Hardware-Abnahme der Bedienung:** PiTFT-Menü, „Display aus“, Status-LED-Farben, C/D mit Wiederholung, E im und außerhalb des Menüs.

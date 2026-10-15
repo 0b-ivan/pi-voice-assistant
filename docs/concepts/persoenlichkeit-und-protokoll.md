@@ -58,7 +58,7 @@ Feste Sätze kommen in eine Tabelle `PHRASES[persona][lore]`. Die vorab erzeugte
     - Temperatur oder CPU hoch → gereizt
     - Server oder Internet weg → besorgt
     - Lob → zufrieden oder freudig
-    - Beleidigung oder ständige Wiederholung → gereizt
+    - Beleidigung oder ständige Wiederholung (dieselbe Frage dreimal) → gereizt; einmal nachfragen oder „nochmal“ ärgert nicht
     - lange Ruhe → gelangweilt
     - bekannte Person → freudig
   - Optional ein Kürzel vom LLM am Antwortanfang (`[stimmung:…]`). Es wird vor der Sprachausgabe entfernt und verschiebt die Stimmung nur ein Stück.
@@ -215,7 +215,7 @@ Für beide Seiten gilt:
 |---|---|---|---|
 | 1 | Einstellungen speichern, Prompt nach Sprechstil × Lore aufteilen, Stimmeffekt im Menü, Kurzwahl | – | ✅ #54, #58 |
 | 2 | Feste Sätze `PHRASES[persona][lore]`, Alarmsätze neu vorab erzeugen | 1 | ✅ #63 |
-| 2b | Lore-Archiv (Kern-Engramme Billy) mit einfacher Stichwortsuche auf dem Server, Billy-Stimme | 1 | teilweise: Billy-Stimme ✅, Lore-Archiv offen |
+| 2b | Lore-Archiv (Kern-Engramme Billy) mit einfacher Stichwortsuche auf dem Server, Billy-Stimme | 1 | ✅ Billy-Stimme; Lore-Archiv 10.10.2026 (`src/lore.py`, `src/lore_engrams.json`, auf Server und Pi), lange Geschichten (`src/story.py`) |
 | 3 | `protocol.py` und HTTP-Sitzung | – | ✅ Hülle, `/v1/hello`, `/v1/message` (ping), Gedächtniskern pro Sitzung |
 | 4 | Timer lokal, Erinnerungen auf dem Stick, Prioritäten der Ansagen | – | offen |
 | 5 | Logbuch und „Was habe ich verpasst?“ | 3 | offen |
