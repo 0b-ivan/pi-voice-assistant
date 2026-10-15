@@ -21,6 +21,23 @@ MAX_JOBS = 8
 MAX_EVENTS = 100
 FINAL = frozenset({'abgeschlossen', 'fehlgeschlagen', 'abgebrochen'})
 
+# Ein Modell hat keinen Zugriff auf Aufträge. Nennt seine Antwort trotzdem eine
+# Auftragskennung oder eine Aktion an einem Auftrag, ist sie erfunden.
+JOB_ID = re.compile(r'\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,24}\b', re.IGNORECASE)
+JOB_ACTION = re.compile(
+    r'\b(?:prüf)?(?:auftrag|aufträge|auftrags\w*|diagnose\w*|job|jobs|prüfung)\b'
+    r'[^.!?\n]{0,80}\b(?:markiert|erledigt|abgebrochen|storniert|gelöscht|entfernt|'
+    r'beendet|geschlossen|archiviert|zurückgesetzt|neu gestartet|abgeschlossen)\b',
+    re.IGNORECASE)
+JOB_ACTION_TEXT = ('Diagnoseaufträge kann ich nur starten und lesen, nicht markieren, '
+                   'abbrechen oder löschen. Den belegten Stand nennt „Prüfe Auftrag: '
+                   '<Kennung>“; „Neues Gespräch“ beendet noch laufende Prüfungen.')
+
+
+def claims_job_action(text):
+    """True, wenn eine Modellantwort einen Auftrag oder dessen Zustand behauptet."""
+    return bool(JOB_ID.search(text or '') or JOB_ACTION.search(text or ''))
+
 
 class MissingChat(ValueError):
     pass
@@ -54,7 +71,7 @@ class WebConversations:
             self.chats[chat_id] = dict(
                 principal=principal, created=self.clock(),
                 thread=conversation.fresh('web-guest', int(self.clock())),
-                jobs=[], events=[], seq=0)
+                jobs=[], events=[], seq=0, focus=None)
             return chat_id
 
     def exists(self, chat_id, principal):
@@ -115,6 +132,7 @@ class WebConversations:
             chat['jobs'] = chat['jobs'][-MAX_JOBS:]
             self._event(chat, job, 'diagnose_start', period=period)
             self._keep(job)
+            chat['focus'] = job['id']
             return dict(job), True
 
     def job_update(self, chat_id, principal, job_id, status, stage, **fields):
@@ -147,6 +165,15 @@ class WebConversations:
         with self.lock:
             jobs = self._get(chat_id, principal)['jobs']
             return dict(jobs[-1]) if jobs else None
+
+    def set_focus(self, chat_id, principal, job_id):
+        """Der zuletzt gestartete oder abgefragte Auftrag gilt für Rückfragen."""
+        with self.lock:
+            self._get(chat_id, principal)['focus'] = job_id
+
+    def focus(self, chat_id, principal):
+        with self.lock:
+            return self._get(chat_id, principal).get('focus')
 
     def job(self, chat_id, principal, job_id):
         """Read-only lookup by full ID or unique prefix, never across browsers."""

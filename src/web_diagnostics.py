@@ -19,8 +19,12 @@ SYSTEM_SOURCE = 'ct107_system'
 SYSTEM_LABEL = 'CT 107 (Systemjournal)'
 WINDOW = 7200          # Standard; SERVITOR_DIAGNOSE_HOURS oder die Frage ändern ihn
 MAX_WINDOW = 25 * 3600  # ein Kalendertag kann wegen der Zeitumstellung 25 Stunden haben
-MAX_LINES = 120
-MAX_BYTES = 65536
+# Zeilenbudget je Quelle wächst mit dem Zeitraum: CT 107 schreibt im Normalbetrieb
+# etwa 40 eigene Zeilen pro Stunde, 100 lassen Spielraum für Fehlerhäufungen.
+MIN_LINES = 120
+LINES_PER_HOUR = 100
+MAX_LINES = 2500
+BYTES_PER_LINE = 640   # eine JSON-Zeile mit den festen Feldern, großzügig
 TIMEOUT = 8
 
 # LogWatch-Regeln für Kernel-/Systemfehler auf CT 107. Andere Dienste
@@ -32,7 +36,12 @@ SYSTEM_RULES = tuple(
 )
 
 
-def _capture(command):
+def budget(seconds):
+    """Zeilen je Quelle für einen Zeitraum; Bytes ergeben sich daraus."""
+    return max(MIN_LINES, min(MAX_LINES, -(-int(seconds) * LINES_PER_HOUR // 3600)))
+
+
+def _capture(command, max_bytes=MIN_LINES * BYTES_PER_LINE):
     proc = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     output = bytearray()
@@ -54,7 +63,7 @@ def _capture(command):
                     selector.unregister(key.fileobj)
                     continue
                 buffer = key.data
-                cap = MAX_BYTES if buffer is output else 2048
+                cap = max_bytes if buffer is output else 2048
                 if len(buffer) + len(chunk) > cap:
                     limited = True
                     buffer.extend(chunk[:max(0, cap - len(buffer))])
@@ -74,7 +83,7 @@ def _capture(command):
     return bytes(output), proc.returncode, limited, bool(error)
 
 
-def _scope(command, source, since, now, capture, hostname):
+def _scope(command, source, since, now, capture, hostname, max_lines=MIN_LINES):
     """Eine begrenzte Journalabfrage. Fremder Freitext verlässt diese Ebene nicht."""
     try:
         raw, status, limited, warning = capture(command)
@@ -83,10 +92,10 @@ def _scope(command, source, since, now, capture, hostname):
                         error='Journal nicht erreichbar')
     entries, discarded = [], 0
     lines = raw.decode('utf-8', 'replace').splitlines()
-    if len(lines) > MAX_LINES:
+    if len(lines) > max_lines:
         limited = True
-        discarded += len(lines) - MAX_LINES
-        lines = lines[-MAX_LINES:]
+        discarded += len(lines) - max_lines
+        lines = lines[-max_lines:]
     for line in lines:
         try:
             fields = json.loads(line)
@@ -133,19 +142,23 @@ def read(now=None, capture=_capture, since=None, until=None, window=None):
     since = int(end - (window or WINDOW) if since is None else since)
     if not 0 < end - since <= MAX_WINDOW or end > now + 60:
         raise ValueError('Diagnosezeitraum außerhalb des erlaubten Bereichs')
+    lines = budget(end - since)
+    if capture is _capture:
+        def capture(command, _run=_capture):
+            return _run(command, lines * BYTES_PER_LINE)
     args = ['--no-pager', '-q', '-o', 'json',
             '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
             '__REALTIME_TIMESTAMP,_HOSTNAME',
-            '-n', str(MAX_LINES + 1),
+            '-n', str(lines + 1),
             '--since=@' + str(since), '--until=@' + str(end)]
     own_command = ['journalctl', *args, '-u', UNITS[0], '-u', UNITS[1]]
     # Nur CT 107, nur Priority 0..4. Kein Journal anderer Proxmox-Knoten,
     # kein journalctl --machine/--directory, keine fremde Logausgabe.
     system_command = ['journalctl', '--system', *args, '-p', '0..4']
     own, own_coverage = _scope(own_command, 'own', since, end, capture,
-                               socket.gethostname())
+                               socket.gethostname(), lines)
     system, system_coverage = _scope(system_command, SYSTEM_SOURCE, since, end,
-                                     capture, socket.gethostname())
+                                     capture, socket.gethostname(), lines)
     coverage = dict(
         read=own_coverage['read'] + system_coverage['read'],
         discarded=own_coverage['discarded'] + system_coverage['discarded'],

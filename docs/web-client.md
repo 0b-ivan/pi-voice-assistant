@@ -341,8 +341,8 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   `src/web_diagnostics.py` fragt in zwei festen, begrenzten
   `journalctl`-Abfragen die Proximus-Units `servitor-voice.service` und
   `servitor-llm.service` sowie Warnungen der Prioritäten 0–4 **aus dem
-  lokalen CT-107-Systemjournal** der letzten zwei Stunden ab (je 120
-  Einträge, 64 KiB, acht Sekunden). Das zweite Journal wird nur nach
+  lokalen CT-107-Systemjournal** der letzten zwei Stunden ab (acht Sekunden;
+  Zeilenbudget je Quelle siehe unten). Das zweite Journal wird nur nach
   lokaler Hostkennung ausgewertet: Proxmox-Host-/Remote-Journale werden
   verworfen. Kernelmeldungen werden per bestehenden LogWatch-Regeln auf
   OOM, Datenträgerfehler, Unterspannung und USB-Störungen klassifiziert;
@@ -354,8 +354,12 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   `SERVITOR_DIAGNOSE_HOURS` (1–24) in `/etc/servitor-voice.env` ändern. Eine
   Frage wie „Logs der letzten 6 Stunden“ oder „Selbsttest der letzten zwölf
   Stunden“ gilt nur für diesen Auftrag; mehr als 24 Stunden lehnt Proximus ab
-  und verweist auf „Logs von gestern“. Die Grenze von 120 Zeilen je Quelle
-  bleibt; ein längerer Zeitraum wird dadurch eher als unvollständig ausgewiesen.
+  und verweist auf „Logs von gestern“.
+- Das Zeilenbudget je Quelle wächst mit dem Zeitraum: 100 Zeilen pro Stunde,
+  mindestens 120, höchstens 2500 (ein ganzer Tag), je Zeile 640 Byte.
+  Gemessen am 15.10.2026 schrieb CT 107 rund 40 eigene Zeilen pro Stunde.
+  Wird das Budget dennoch überschritten, weist der Bericht die Abdeckung
+  ausdrücklich als unvollständig aus.
 - Klassifikation und Wiederherstellungsbelege kommen deterministisch von
   `src/logwatch.py`. Erst danach darf eine Modellinterpretation erfolgen;
   sie ist als Hypothese markiert. Rohtranskripte, Logfreitext und Secrets
@@ -373,10 +377,17 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   Sie ist eine 96-Bit-Zufallszahl, die nur dem auslösenden Browser angezeigt
   wurde, und gilt deshalb nach Neustart und neuer Anmeldung als Berechtigung
   für Status und Zusammenfassung, nicht für Ereignisse oder Empfangsbestätigung.
+- Rückfragen ohne Kennung („Fehler behoben?“, „Ist es fertig?“) beziehen sich
+  auf den zuletzt **gestarteten oder abgefragten** Auftrag dieses Gesprächs,
+  auch wenn er aus dem Archiv stammt.
+- Das Modell kennt keine Aufträge. Nennt eine Modellantwort im Webgespräch
+  trotzdem eine Auftragskennung oder eine Aktion an einem Auftrag („als
+  erledigt markiert“, „abgebrochen“), sendet der Server stattdessen einen
+  festen Hinweis: Aufträge lassen sich nur starten und lesen.
 - Fragen nach den **Logs von gestern** lösen einen gesonderten, lesenden
   Diagnoseauftrag für den gestrigen Kalendertag in der konfigurierten Zeitzone
-  aus. Beide Journalabfragen bleiben hart begrenzt; bei mehr als 120 Zeilen
-  pro Quelle wird die unvollständige Abdeckung ausgewiesen. Ältere Journale
+  aus. Beide Journalabfragen bleiben hart begrenzt (Budget wie oben); darüber
+  wird die unvollständige Abdeckung ausgewiesen. Ältere Journale
   sind nur verfügbar, sofern CT 107 sie noch vorhält.
 - Das CT-107-Systemjournal ist **kein Gesprächsarchiv**. Der Web-Chat besitzt
   ausschließlich den laufenden, flüchtigen Browserdialog und kann Aussagen
