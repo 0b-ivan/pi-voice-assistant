@@ -56,6 +56,31 @@ class ArchiveTests(unittest.TestCase):
         for name in COMRADES + ('Phobos', 'Kael', 'Milwaukee'):
             self.assertNotIn(name, off.split('Grundregeln')[1])
 
+    def test_official_canon_is_separate_from_project_fiction(self):
+        for persona in ('servitor', 'mensch'):
+            for level in ('light', 'full'):
+                prompt = llm.system_prompt(level, persona=persona,
+                                           query='Ist Phobos IX offizieller Warhammer-Kanon?')
+                self.assertIn('keine belegten offiziellen', prompt)
+                for name in ('Milwaukee Secundus', 'Phobos IX', 'Vettius Kael'):
+                    self.assertIn(name, prompt)
+            self.assertNotIn('eigener Proximus/Billy-Projektgeschichte',
+                llm.system_prompt('off', persona=persona, query='Wer bist du?'))
+
+    def test_40k_background_answers_have_relevant_archive_context(self):
+        for question, expected in (
+            ('Ist jeder Servoschädel wie du?', 'B04'),
+            ('Funktioniert ein Lasergewehr mit Patronen?', 'E25'),
+            ('Kann dein Vox einen Astropathen ersetzen?', 'E29'),
+            ('War Phobos IX die UAC-Basis?', 'S05'),
+        ):
+            with self.subTest(question=question):
+                self.assertIn(expected, ids(lore.search(question, 'mensch', 'full')))
+        for question in ('Wie hoch ist der Eiffelturm?', 'Wie lange kocht ein Ei?',
+                         'Was ist ein Raspberry Pi?'):
+            for persona in ('servitor', 'mensch'):
+                self.assertEqual(lore.search(question, persona, 'full'), [])
+
     def test_everyday_questions_load_no_lore(self):
         for question in ('Wie hoch ist der Eiffelturm?', 'Wie lange kocht ein Ei?',
                          'Rechne 17 mal 23'):

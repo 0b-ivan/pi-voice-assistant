@@ -594,6 +594,234 @@ class ServerTest(unittest.TestCase):
                 last = self.raw_turn(body)[-1]
                 self.assertEqual((last['event'], last['code']), ('error', 'bad_request'))
 
+    def test_ask_takes_the_way_of_a_transcript_without_audio(self):
+        self.pipeline.transcript = None  # any recognition would fail
+        _, data = self.request('/v1/ask', json.dumps({'text': 'Wie hoch ist der Eiffelturm?'}).encode())
+        events = self.events(data)
+        self.assertEqual(self.pipeline.accepted, 0)
+        self.assertEqual(events[0], dict(event='transcript', text='Wie hoch ist der Eiffelturm?'))
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual(reply['text'], 'Antwort auf Wie hoch ist der Eiffelturm?')
+        self.assertEqual([e['event'] for e in events][-2:], ['audio', 'done'])
+
+    def test_journey_without_journey_support_is_answered_without_llm(self):
+        self.pipeline.fail_llm = True
+        _, data = self.request('/v1/ask', json.dumps({'text': 'Wann fährt der nächste Bus zum Bahnhof'}).encode())
+        events = self.events(data)
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual((reply['model'], reply['text']), ('local/journey', ss.JOURNEY_ELSEWHERE['servitor']))
+        self.assertFalse(any(e['event'] == 'journey' for e in events))
+        self.assertEqual([e['event'] for e in events][-2:], ['audio', 'done'])
+
+    def test_ask_answers_fixed_requests_without_llm(self):
+        self.pipeline.fail_llm = True
+        _, data = self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode())
+        reply = next(e for e in self.events(data) if e['event'] == 'reply')
+        self.assertEqual(reply['model'], 'local/intent')
+
+    def test_ask_validates_text_and_token(self):
+        response, _ = self.request('/v1/ask', b'{"text": "x"}', token='y' * 40)
+        self.assertEqual(response.status, 401)
+        for payload, status in (({'text': ''}, 400), ({'text': 3}, 400), ({}, 400),
+                                ({'text': 'x' * (ss.MAX_TYPED_CHARS + 1)}, 413)):
+            with self.subTest(payload=payload):
+                response, _ = self.request('/v1/ask', json.dumps(payload).encode())
+                self.assertEqual(response.status, status)
+
+    def test_password_login_gives_a_web_session_that_opens_turns_but_not_maintenance(self):
+        self.service.config.web_password = ss.hash_password('kogitator-7')
+        port = self.server.server_address[1]
+
+        def call(method, path, body=None, headers=None):
+            conn = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+            try:
+                conn.request(method, path, body=body, headers=headers or {})
+                response = conn.getresponse()
+                return response, response.read()
+            finally:
+                conn.close()
+
+        response, _ = call('POST', '/v1/login', json.dumps({'password': 'falsch'}))
+        self.assertEqual(response.status, 401)
+        self.assertIsNone(response.getheader('Set-Cookie'))
+        response, _ = call('POST', '/v1/login', json.dumps({'password': 'kogitator-7', 'remember': True}))
+        self.assertEqual(response.status, 200)
+        cookie = response.getheader('Set-Cookie')
+        self.assertIn('HttpOnly', cookie)
+        self.assertIn('SameSite=Strict', cookie)
+        self.assertIn(f'Max-Age={ss.WebSessions.LONG}', cookie)
+        session = cookie.split(';')[0]
+        web = {'Cookie': session, 'X-Servitor-Client': 'web'}
+        _, data = call('GET', '/v1/session', headers=web)
+        self.assertTrue(json.loads(data)['ok'])
+        response, data = call('POST', '/v1/ask', json.dumps({'text': 'wie spät ist es'}), web)
+        self.assertEqual(response.status, 200)
+        self.assertTrue(any(e['event'] == 'reply' for e in self.events(data)))
+        # Without the client header (a foreign page posting a form) the cookie is worthless.
+        response, _ = call('POST', '/v1/ask', json.dumps({'text': 'x'}), {'Cookie': session})
+        self.assertEqual(response.status, 401)
+        for method, path in (('GET', '/v1/status'), ('POST', '/v1/maintenance'), ('GET', '/v1/nightwatch')):
+            with self.subTest(path=path):
+                response, _ = call(method, path, b'{}' if method == 'POST' else None, web)
+                self.assertEqual(response.status, 401)
+        response, _ = call('POST', '/v1/logout', b'', web)
+        self.assertIn('Max-Age=0', response.getheader('Set-Cookie'))
+        _, data = call('GET', '/v1/session', headers=web)
+        self.assertFalse(json.loads(data)['ok'])
+
+    def test_password_login_locks_after_five_failures_and_is_off_without_a_hash(self):
+        response, _ = self.request('/v1/login', json.dumps({'password': 'x'}).encode(), token=None)
+        self.assertEqual(response.status, 503)
+        self.service.config.web_password = ss.hash_password('kogitator-7')
+        for _ in range(ss.WebSessions.TRIES):
+            response, _ = self.request('/v1/login', json.dumps({'password': 'x'}).encode(), token=None)
+            self.assertEqual(response.status, 401)
+        response, _ = self.request('/v1/login', json.dumps({'password': 'kogitator-7'}).encode(), token=None)
+        self.assertEqual(response.status, 429)
+
+    def test_password_hash_round_trip(self):
+        stored = ss.hash_password('Ave Omnissiah')
+        self.assertTrue(stored.startswith('scrypt$'))
+        self.assertTrue(ss.check_password('Ave Omnissiah', stored))
+        self.assertFalse(ss.check_password('ave omnissiah', stored))
+        self.assertFalse(ss.check_password('x', 'kaputt'))
+
+    def test_journal_accepts_only_local_proximus_services(self):
+        journal = self.service.journal
+        for name, unit in (('Fremder Host-Dienst', 'ssh.service'),
+                           ('Fremder Container', 'cron.service'),
+                           ('Alle Kernelmeldungen', 'kernel')):
+            journal.add_journald(json.dumps(dict(MESSAGE=name, PRIORITY='4',
+                                                 _SYSTEMD_UNIT=unit)))
+        journal.add_journald(json.dumps(dict(MESSAGE='Nicht lokaler Proximus',
+                                             PRIORITY='4', _SYSTEMD_UNIT='servitor-voice.service',
+                                             _HOSTNAME='wgz-pve-01')))
+        journal.add_journald(json.dumps(dict(MESSAGE='172.22.9.1 "POST /v1/ask HTTP/1.1" 200 -',
+                                             _SYSTEMD_UNIT='servitor-voice.service')))
+        journal.add_journald(json.dumps(dict(MESSAGE='{"event": "ready", "load_seconds": 3.2}',
+                                             PRIORITY='6', _SYSTEMD_UNIT='servitor-voice.service',
+                                             __REALTIME_TIMESTAMP='1760000000000000')))
+        journal.add_journald(json.dumps(dict(MESSAGE='Sprachkern bereit', PRIORITY='4',
+                                             _SYSTEMD_UNIT='servitor-llm.service')))
+        journal.add_journald('kein json')
+        response, _ = self.request('/v1/journal', method='GET', token=None)
+        self.assertEqual(response.status, 401)
+        response, data = self.request('/v1/journal?after=0', method='GET')
+        lines = json.loads(data)['lines']
+        self.assertEqual([(line['unit'], line['prio']) for line in lines],
+                         [('servitor-voice', 6), ('servitor-llm', 4)])
+        self.assertEqual(lines[0]['ts'], 1760000000.0)
+        self.assertEqual(lines[0]['text'], '{"event": "ready", "load_seconds": 3.2}')
+        last = json.loads(data)['seq']
+        _, data = self.request(f'/v1/journal?after={last}', method='GET')
+        self.assertEqual(json.loads(data)['lines'], [])
+
+    def test_api_requests_are_logged_as_events_with_their_client(self):
+        lines = []
+        with unittest.mock.patch('builtins.print', lambda *a, **k: lines.append(a[0])):
+            self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode())
+            self.request('/health', method='GET', token=None)
+            self.request('/web/app.js', method='GET', token=None)
+        requests = [json.loads(line) for line in lines if '"request"' in line]
+        self.assertEqual(requests, [dict(event='request', client='pi', method='POST',
+                                         path='/v1/ask', status=200)])
+
+    def test_journal_excludes_forwarded_logs_even_with_allowed_unit(self):
+        self.service.journal.add_journald(json.dumps(dict(
+            MESSAGE='Unzulässiger Fremdhost', PRIORITY='6',
+            _SYSTEMD_UNIT='servitor-voice.service', _HOSTNAME='wgz-pve-01')))
+        self.assertEqual(self.service.journal.since(0)['lines'], [])
+
+    def test_journal_reconnects_after_restart_even_if_new_counter_is_higher(self):
+        old = ss.Journal()
+        old.add('alte Sitzung')
+        new = self.service.journal
+        new.add('Proximus verbunden', unit='servitor-voice')
+        new.add('Sprachkern bereit', unit='servitor-llm')
+        _, raw = self.request(f'/v1/journal?after={old.seq}&instance={old.instance}', method='GET')
+        data = json.loads(raw)
+        self.assertEqual([entry['text'] for entry in data['lines']], ['Proximus verbunden', 'Sprachkern bereit'])
+        self.assertEqual(data['instance'], new.instance)
+        _, raw = self.request(f'/v1/journal?after={new.seq}&instance={new.instance}', method='GET')
+        self.assertEqual(json.loads(raw)['lines'], [])
+        # Older browsers without an instance recover from a reset counter too.
+        _, raw = self.request('/v1/journal?after=9999', method='GET')
+        self.assertEqual(len(json.loads(raw)['lines']), 2)
+
+    def test_journal_keeps_times_and_drops_colour_codes(self):
+        journal = self.service.journal
+        journal.add('\x1b[0;93m2026-10-14 19:15:33.070364312 [W:onnxruntime] Failed to persist\x1b[m')
+        journal.add('neighbour fe80::1c2b:3aff:fe11:22 reachable')
+        texts = [l['text'] for l in journal.since(0)['lines']]
+        self.assertEqual(texts, ['2026-10-14 19:15:33.070364312 [W:onnxruntime] Failed to persist',
+                                 'neighbour *:* reachable'])
+
+    def test_journal_follows_journalctl_output(self):
+        script = Path(self.tmp.name) / 'fake-journalctl'
+        script.write_text('#!/bin/sh\necho \'{"MESSAGE": "Proximus bereit", "_SYSTEMD_UNIT": "servitor-voice.service"}\'\n'
+                          'echo "No journal files were found." >&2\nexit 9\n')
+        script.chmod(0o755)
+        stop = threading.Event()
+        thread = ss.follow_system_journal(self.service.journal, [str(script)], stop=stop)
+        try:
+            for _ in range(50):
+                data = self.service.journal.since(0)
+                if 'Status 9' in data['source']['error']:
+                    break
+                time.sleep(0.05)
+            texts = [line['text'] for line in data['lines']]
+            self.assertIn('Proximus bereit', texts)
+            self.assertIn('journalctl: No journal files were found.', texts)
+            self.assertIn('Status 9', data['source']['error'])
+        finally:
+            stop.set()
+            thread.join(1)
+        self.assertFalse(thread.is_alive())
+
+    def test_tee_fallback_without_journalctl(self):
+        tee = ss.Tee(open(os.devnull, 'w'), self.service.journal)
+        tee.write('half')
+        tee.write(' a line\n192.168.1.77 "GET /web/ HTTP/1.1" 200 -\n')
+        self.assertEqual([l['text'] for l in self.service.journal.since(0)['lines']], ['half a line'])
+
+    def test_web_client_is_served_without_token_and_only_its_files(self):
+        response, _ = self.request('/web', method='GET', token=None)
+        self.assertEqual((response.status, response.getheader('Location')), (302, '/web/'))
+        for path, mime in (('/', 'text/html'), ('/web/', 'text/html'), ('/web/app.js', 'text/javascript'),
+                           ('/web/capture-worklet.js', 'text/javascript'),
+                           ('/web/style.css', 'text/css'), ('/web/servo-skull.png', 'image/png'),
+                           ('/web/manifest.webmanifest', 'application/manifest+json')):
+            with self.subTest(path=path):
+                response, data = self.request(path, method='GET', token=None)
+                self.assertEqual(response.status, 200)
+                self.assertTrue(response.getheader('Content-Type').startswith(mime))
+                self.assertIn("default-src 'self'", response.getheader('Content-Security-Policy'))
+                self.assertEqual(response.getheader('X-Content-Type-Options'), 'nosniff')
+                self.assertTrue(data)
+        for path in ('/web/../server/servitor_server.py', '/web/index.html', '/web/%2e%2e/README.md',
+                     '/web/app.js.map'):
+            with self.subTest(path=path):
+                response, _ = self.request(path, method='GET', token=None)
+                self.assertEqual(response.status, 404)
+
+    def test_web_client_references_only_served_files(self):
+        import re
+        html = (ss.WEB / 'index.html').read_text()
+        for name in re.findall(r'(?:src|href)="([^"]+)"', html):
+            if not name.startswith('#'):          # sigils inside the page
+                self.assertIn(name, ss.WEB_FILES)
+        css = (ss.WEB / 'style.css').read_text()
+        for name in re.findall(r'url\("(/[^"]+)"\)', css):
+            self.assertIn(name, ss.WEB_FILES)       # fonts, the skull
+        for name, _ in ss.WEB_FILES.values():
+            self.assertTrue((ss.WEB / name).is_file(), name)
+        script = (ss.WEB / 'app.js').read_text()
+        # Turns plus the read-only token check of the call; never maintenance.
+        for endpoint in re.findall(r"'(/v1/[a-z]+)'", script):
+            self.assertIn(endpoint, ('/v1/turn', '/v1/ask', '/v1/story', '/v1/status', '/v1/journal',
+                                     '/v1/login', '/v1/logout', '/v1/session'))
+        self.assertIn("addModule('/web/capture-worklet.js')", script)
+
     def test_speak_requires_string_text(self):
         for payload in ({'text': None}, {'text': ['a']}, {'text': 5}):
             with self.subTest(payload=payload):

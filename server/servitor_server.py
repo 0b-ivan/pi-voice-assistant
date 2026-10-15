@@ -11,6 +11,9 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
 * ``POST /v1/turn?format=wav|opus`` with raw 16 kHz mono s16le PCM as body
   (Content-Length or chunked; chunks are recognized while they arrive).
 * ``POST /v1/speak?format=wav|opus`` with JSON ``{"text": "..."}``.
+* ``POST /v1/ask?format=wav|opus`` with JSON ``{"text": "..."}``: a typed
+  question that takes the way of a transcript (intents, LLM, voice); the
+  browser client's text field.
 * ``POST /v1/story?format=wav|opus`` with JSON ``{"story": state}``: the next
   section of an explicitly long story (src/story.py). Like a turn that asks
   for a long story, it answers with ``reply``, several ``audio`` events with
@@ -22,6 +25,18 @@ Protocol (HTTP/1.1, bearer token on every /v1 request):
   session already holds.
 * ``POST /v1/message`` with one SPX/1 envelope, answered with ``ack``.
 * ``GET /health`` without token: ``{"ok": true, "ready": bool}`` only.
+* ``GET /v1/journal?after=N``: recent lines of this host's system journal
+  after sequence number N (unit, priority, text; HTTP access lines left out),
+  shown behind the browser client's chat.
+* ``POST /v1/login`` with JSON ``{"password": "...", "remember": bool}``: the
+  browser client's password (SERVITOR_WEB_PASSWORD_HASH) for a session cookie;
+  ``GET /v1/session`` tells whether it is still valid, ``POST /v1/logout``
+  ends it. The cookie opens turns, typed questions, stories and the journal,
+  only together with the header ``X-Servitor-Client: web``; maintenance,
+  status, nightwatch and voice data stay token-only.
+* ``GET /`` (also ``/web/``) without token: the browser client (``web/``,
+  docs/web-client.md); https://proximus.obivan.org/ lands on it.
+  Only its fixed files are served; every request it makes needs the token.
 
 Responses of /v1 are NDJSON events: ``stage`` (recognize, think, synthesize,
 render), ``transcript``, ``reply``, ``audio`` (base64), ``done`` (timings) or
@@ -34,11 +49,14 @@ timetable and speaks the answer itself.
 import base64
 import collections
 import datetime
+import hashlib
 import hmac
 import http.server
 import json
 import os
 import re
+import secrets
+import socket
 from pathlib import Path
 import socketserver
 import subprocess
@@ -80,6 +98,31 @@ CLIP_MAX_SECONDS = 12
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 # TurnError codes caused by the input, not by the server (logwatch ignores them).
 OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
+# Journeys are answered by the Pi (MoBY, home address); other clients get this.
+JOURNEY_ELSEWHERE = {
+    'servitor': 'Fahrtauskunft nur über die Einheit am Gerät verfügbar. Dieser Kanal führt keine Fahrplandaten.',
+    'mensch': 'Fahrpläne frage ich nur am Gerät selbst ab, hier im Browser leider nicht.',
+}
+MAX_TYPED_CHARS = 500     # /v1/ask: about what a 30 s spoken question holds
+# The browser client: published path -> (file in WEB, MIME type). Nothing else is served.
+WEB = Path(__file__).resolve().parent.parent / 'web'
+WEB_FILES = {
+    '/': ('index.html', 'text/html; charset=utf-8'),
+    '/web/': ('index.html', 'text/html; charset=utf-8'),
+    '/web/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+    '/web/vox.js': ('vox.js', 'text/javascript; charset=utf-8'),
+    '/web/capture-worklet.js': ('capture-worklet.js', 'text/javascript; charset=utf-8'),
+    '/web/style.css': ('style.css', 'text/css; charset=utf-8'),
+    '/web/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json'),
+    '/web/servo-skull.png': ('../assets/display/servo-skull.png', 'image/png'),
+    '/web/mechanicus.svg': ('mechanicus.svg', 'image/svg+xml'),
+    '/web/fonts/schola-regular.woff2': ('fonts/schola-regular.woff2', 'font/woff2'),
+    '/web/fonts/schola-bold.woff2': ('fonts/schola-bold.woff2', 'font/woff2'),
+    '/web/fonts/share-tech-mono.woff2': ('fonts/share-tech-mono.woff2', 'font/woff2'),
+}
+WEB_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+           "media-src 'self' blob: data:; connect-src 'self'; worker-src 'self'; "
+           "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
 
 # Fixed information answers the server may let the LLM say in fresh words
@@ -166,6 +209,8 @@ class Config:
         self.busy_wait = float(env.get('SERVITOR_BUSY_WAIT_SECONDS', '8'))
         self.loading_wait = float(env.get('SERVITOR_LOADING_WAIT_SECONDS', '15'))
         # CF-Connecting-IP is only believed from these peers (local cloudflared).
+        # Browser login (docs/web-client.md): scrypt hash from --hash-password.
+        self.web_password = env.get('SERVITOR_WEB_PASSWORD_HASH', '').strip()
         self.trusted_proxies = {
             value.strip() for value in
             env.get('SERVITOR_TRUSTED_PROXIES', '127.0.0.1,::1').split(',') if value.strip()}
@@ -348,6 +393,220 @@ def wav_duration_ms(path):
         return round(audio.getnframes() * 1000 / audio.getframerate())
 
 
+def hash_password(password, salt=None, n=2 ** 14, r=8, p=1):
+    """scrypt$n$r$p$salt$hash (hex) of a password, for SERVITOR_WEB_PASSWORD_HASH."""
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode('utf-8'), salt=salt, n=n, r=r, p=p, dklen=32)
+    return f'scrypt${n}${r}${p}${salt.hex()}${digest.hex()}'
+
+
+def check_password(password, stored):
+    try:
+        kind, n, r, p, salt, digest = stored.split('$')
+        if kind != 'scrypt':
+            return False
+        mine = hash_password(password, bytes.fromhex(salt), int(n), int(r), int(p))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(mine.encode(), stored.encode())
+
+
+class WebSessions:
+    """Browser sessions after a password login, in RAM only (a restart logs
+    out). Five wrong passwords from one address lock it for 15 minutes."""
+
+    SHORT, LONG = 12 * 3600, 30 * 24 * 3600
+    TRIES, LOCK = 5, 15 * 60
+
+    def __init__(self, clock=time.time):
+        self.clock = clock
+        self.items = {}
+        self.failures = collections.defaultdict(list)
+        self.lock = threading.Lock()
+
+    def locked(self, client):
+        with self.lock:
+            now = self.clock()
+            recent = [t for t in self.failures[client] if now - t < self.LOCK]
+            self.failures[client] = recent
+            return len(recent) >= self.TRIES
+
+    def failed(self, client):
+        with self.lock:
+            self.failures[client].append(self.clock())
+
+    def open(self, client, remember):
+        ident = secrets.token_urlsafe(32)
+        lifetime = self.LONG if remember else self.SHORT
+        with self.lock:
+            self.failures.pop(client, None)
+            now = self.clock()
+            for key in [k for k, until in self.items.items() if until < now]:
+                del self.items[key]
+            self.items[ident] = now + lifetime
+        return ident, lifetime
+
+    def valid(self, ident):
+        if not ident:
+            return False
+        with self.lock:
+            until = self.items.get(ident)
+            if until is None or until < self.clock():
+                self.items.pop(ident, None)
+                return False
+            return True
+
+    def close(self, ident):
+        with self.lock:
+            self.items.pop(ident, None)
+
+
+class Journal:
+    """Nur lokale Proximus-Dienste gelangen in das Browser-Journal.
+
+    Die serverseitige Whitelist gilt auch bei späteren Änderungen am
+    journalctl-Aufruf. Journal-Puffer werden nur im RAM gehalten.
+    """
+
+    OWN_UNITS = frozenset({'servitor-voice.service', 'servitor-llm.service'})
+
+    # Web server access lines ('1.2.3.4 "POST /v1/ask HTTP/1.1" 200 -') are not
+    # server logs; neither is the service's own HTTP noise.
+    ACCESS = re.compile(r'"(?:GET|POST|PUT|HEAD|DELETE|OPTIONS) /\S* HTTP/[\d.]+"'
+                        r'|request timed out|turn aborted', re.IGNORECASE)
+    IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}(\d{1,3})\b')
+    # At least three colons: '19:15:33' (a time) is no address, 'fe80::1:2' is.
+    IPV6 = re.compile(r'(?<![\w:])(?:[0-9a-f]{0,4}:){3,7}[0-9a-f]{0,4}(?![\w:])', re.IGNORECASE)
+    ANSI = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')   # colour codes (onnxruntime, llama.cpp)
+
+    def __init__(self, size=300, clock=time.time):
+        self.items = collections.deque(maxlen=size)
+        self.seq = 0
+        self.instance = secrets.token_hex(8)
+        self.source = dict(mode='own', error='')
+        self.clock = clock
+        self.lock = threading.Lock()
+
+    def add(self, line, unit='', priority=6, at=None, host=''):
+        line = self.ANSI.sub('', line).strip()
+        if not line or self.ACCESS.search(line):
+            return
+        line = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', line)
+        line = self.IPV6.sub('*:*', line)[:300]
+        unit = re.sub(r'\.service$', '', unit or '')[:40]
+        with self.lock:
+            self.seq += 1
+            self.items.append(dict(seq=self.seq, ts=round(at or self.clock(), 1), text=line,
+                                   unit=unit, prio=int(priority), host=host[:32]))
+
+    def add_journald(self, raw):
+        """Nur Einträge lokaler Proximus-Units übernehmen."""
+        entry = logwatch.parse_entry(raw)
+        if entry is None or entry['unit'] not in self.OWN_UNITS:
+            return
+        try:
+            host = json.loads(raw).get('_HOSTNAME', '')
+        except (ValueError, AttributeError):
+            return
+        # Auch gefälschte Unit-Namen in weitergeleiteten Journalen abweisen.
+        if not isinstance(host, str) or (host and host != socket.gethostname()):
+            return
+        self.add(entry['text'], entry['unit'], entry['priority'], entry['at'] or None, host)
+
+    def set_source(self, mode, error=''):
+        error = self.ANSI.sub('', error).strip()
+        error = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', error)
+        error = self.IPV6.sub('*:*', error)
+        with self.lock:
+            self.source = dict(mode=mode, error=error[:300])
+
+    def since(self, after, limit=100, instance=None):
+        with self.lock:
+            # A reconnect must also work when the new process's counter has
+            # already overtaken the old one. The instance identifies this RAM log.
+            if after > self.seq or (instance and instance != self.instance):
+                after = 0
+            lines = [item for item in self.items if item['seq'] > after][-limit:]
+            return dict(seq=self.seq, instance=self.instance, source=dict(self.source), lines=lines)
+
+
+def follow_system_journal(journal, command=None, stop=None):
+    """Nur lokale Proximus-Dienste verfolgen, nicht das gesamte Systemjournal.
+
+    -u filtert vor dem Stream; Journal.add_journald prüft zusätzlich Units
+    und Rechnernamen, auch wenn der Aufruf künftig erweitert wird.
+    """
+    command = command or ['journalctl', '-f', '-n', '80',
+                          '-u', 'servitor-voice.service',
+                          '-u', 'servitor-llm.service',
+                          '-o', 'json', '-q', '--no-pager',
+                          '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
+                          '_HOSTNAME,__REALTIME_TIMESTAMP']
+    stop = stop or threading.Event()   # stop between launches, e.g. after a finite journal export
+
+    journal.set_source('system')
+
+    def complain(stream, problem):
+        # journalctl's own complaints ("No journal files were found", missing
+        # permissions) belong in the log too, not into nothing.
+        for line in stream:
+            problem.set()
+            message = f'journalctl: {line.strip()}'
+            journal.set_source('system', message)
+            journal.add(message, 'servitor-voice', 4)
+
+    def run():
+        while not stop.is_set():
+            try:
+                problem = threading.Event()
+                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      text=True, errors='replace',
+                                      env=dict(os.environ, LC_ALL='C')) as proc:
+                    reader = threading.Thread(target=complain, args=(proc.stderr, problem), daemon=True)
+                    reader.start()
+                    for raw in proc.stdout:
+                        journal.add_journald(raw)
+                        if not problem.is_set():
+                            journal.set_source('system')
+                    code = proc.wait()
+                    reader.join()
+                message = f'journalctl beendet (Status {code}); neuer Versuch in 5 s.'
+                journal.set_source('system', message)
+                journal.add(message, 'servitor-voice', 4)
+            except OSError as exc:
+                message = f'journalctl nicht verfügbar: {exc}'
+                journal.set_source('system', message)
+                journal.add(message, 'servitor-voice', 4)
+            stop.wait(5)
+
+    thread = threading.Thread(target=run, name='system-journal', daemon=True)
+    thread.start()
+    return thread
+
+
+class Tee:
+    """A text stream that also hands every complete line to a Journal."""
+
+    def __init__(self, stream, journal):
+        self.stream, self.journal = stream, journal
+        self.pending = ''
+        self.lock = threading.Lock()
+
+    def write(self, text):
+        self.stream.write(text)
+        with self.lock:
+            *lines, self.pending = (self.pending + text).split('\n')
+        for line in lines:
+            self.journal.add(line)
+        return len(text)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
 class RateLimiter:
     def __init__(self, per_minute, clock=time.monotonic):
         self.per_minute, self.clock = per_minute, clock
@@ -379,6 +638,8 @@ class Service:
         self.logwatch = None  # logwatch.server_watch(), started by main()
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
+        self.journal = Journal()
+        self.web_sessions = WebSessions()
         self.ready = False
         import nightwatch_server
         self.nightwatch = nightwatch_server.Manager(self)
@@ -642,8 +903,10 @@ class Service:
 
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None, appointments_tomorrow=None,
-                 voice=None, nightwatch_copy=None):
-        """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` is None.
+                 voice=None, nightwatch_copy=None, typed=None):
+        """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` and
+        ``typed`` are None. ``typed``: a typed question (web client, /v1/ask)
+        that takes the whole way of a transcript; ``text`` is spoken as it is.
 
         ``device`` is the Pi's sanitized status snapshot; questions such as
         time, date or status are answered from it without the LLM.
@@ -663,49 +926,58 @@ class Service:
 
         try:
             if text is None:
-                try:
-                    recognizer = self.pipeline.recognizer()
-                except Exception as exc:
-                    raise TurnError('recognize', 'stt', str(exc)) from exc
-                if transcribe_only and hasattr(recognizer, 'whisper'):
-                    recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
-                pending = b''
-                received = 0
-                # Keep the audio only when a voice must be recognized.
-                keep = memory.enrolled(memory_copy) or voice is not None
-                audio = bytearray()
-                for chunk in pcm_chunks:
-                    received += len(chunk)
-                    if received > self.config.max_bytes:
-                        raise TurnError('upload', 'too_large', 'audio exceeds limit')
-                    if keep:
-                        audio += chunk
-                    pending += chunk
-                    usable = len(pending) - len(pending) % 2
-                    if usable:
-                        try:
-                            recognizer.accept_pcm(pending[:usable])
-                        except Exception as exc:
-                            raise TurnError('recognize', 'stt', str(exc)) from exc
-                        pending = pending[usable:]
-                upload_end = time.monotonic()
-                if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
-                    raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
-                emit(dict(event='stage', stage='recognize'))
-                try:
-                    text = timed('stt_finalize', recognizer.finish)
-                except Exception as exc:
-                    # Only an empty transcript is final for the Pi; a broken
-                    # finalization must still let it retry with local Vosk.
-                    from transcribe import NoSpeechError
-                    code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
-                    raise TurnError('recognize', code, str(exc)) from exc
+                keep, audio = False, b''
+                if typed is not None:
+                    # The web client typed its question: no audio, no voice check.
+                    upload_end = time.monotonic()
+                    text = typed
+                else:
+                    try:
+                        recognizer = self.pipeline.recognizer()
+                    except Exception as exc:
+                        raise TurnError('recognize', 'stt', str(exc)) from exc
+                    if transcribe_only and hasattr(recognizer, 'whisper'):
+                        recognizer.whisper = False  # passphrases were enrolled in Vosk spelling
+                    pending = b''
+                    received = 0
+                    # Keep the audio only when a voice must be recognized.
+                    keep = memory.enrolled(memory_copy) or voice is not None
+                    audio = bytearray()
+                    for chunk in pcm_chunks:
+                        received += len(chunk)
+                        if received > self.config.max_bytes:
+                            raise TurnError('upload', 'too_large', 'audio exceeds limit')
+                        if keep:
+                            audio += chunk
+                        pending += chunk
+                        usable = len(pending) - len(pending) % 2
+                        if usable:
+                            try:
+                                recognizer.accept_pcm(pending[:usable])
+                            except Exception as exc:
+                                raise TurnError('recognize', 'stt', str(exc)) from exc
+                            pending = pending[usable:]
+                    upload_end = time.monotonic()
+                    if received < int(PCM_RATE * 2 * protocol.MIN_TURN_SECONDS):
+                        raise TurnError('upload', 'too_short', 'audio shorter than 0.2 s')
+                    emit(dict(event='stage', stage='recognize'))
+                    try:
+                        text = timed('stt_finalize', recognizer.finish)
+                    except Exception as exc:
+                        # Only an empty transcript is final for the Pi; a broken
+                        # finalization must still let it retry with local Vosk.
+                        from transcribe import NoSpeechError
+                        code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
+                        raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
                 if transcribe_only:  # enrollment answers: the Pi stores them itself
                     emit(dict(event='done', timings=timings))
                     return
                 trip_state = (device or {}).get('trip')
                 trip = journeys.parse(text, trip_state) if trip_state else None
+                # A client without journeys (the browser) asking for one: the
+                # timetable is queried on the Pi. Say so instead of letting the LLM guess.
+                elsewhere = trip_state is None and journeys.parse(text, 'on') is not None
                 if trip is not None:
                     # Trams/trains, reminder, calendar: the Pi queries and acts itself
                     # (home and calendar stay there). Structured, no LLM, no audio.
@@ -733,7 +1005,10 @@ class Service:
                 service_op = maintenance.command(intents.normalize(text))
                 device_reply = self._device_reply(intents.normalize(text), device or {},
                                                   memory_copy, emit)
-                if device_reply is not None:
+                if elsewhere:
+                    persona = 'mensch' if (device or {}).get('persona') == 'mensch' else 'servitor'
+                    answer, model = JOURNEY_ELSEWHERE[persona], 'local/journey'
+                elif device_reply is not None:
                     answer, model = device_reply, 'local/device'
                 elif (enroll.command(intents.normalize(text)) and memory_copy is not NO_MEMORY
                         and not memory.unknown_speaker(memory_copy)):
@@ -937,6 +1212,82 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write('%s %s\n' % (self.address_string(), fmt % args))
 
+    # Static files, health checks and the browser's own polling are not worth a line.
+    QUIET = ('/', '/web', '/health', '/v1/journal', '/v1/session')
+
+    def log_request(self, code='-', size='-'):
+        """One JSON line per API request: who talked (the Pi, the browser) and how
+        it went. The browser's background log shows these as the Pi's traffic."""
+        headers = getattr(self, 'headers', None) or {}   # absent for a broken request line
+        path = urllib.parse.urlsplit(getattr(self, 'path', '') or '').path
+        if path in self.QUIET or path.startswith('/web/'):
+            return
+        client = ('web' if headers.get('X-Servitor-Client') == 'web'
+                  else 'pi' if headers.get('Authorization') else 'anon')
+        try:
+            status = int(code)
+        except (TypeError, ValueError):
+            status = 0
+        print(json.dumps(dict(event='request', client=client, method=self.command,
+                              path=path, status=status)), flush=True)
+
+    COOKIE = 'servitor_session'
+
+    def _cookie(self):
+        for part in self.headers.get('Cookie', '').split(';'):
+            name, _, value = part.strip().partition('=')
+            if name == self.COOKIE:
+                return value[:64]
+        return ''
+
+    def _web_authorized(self):
+        """Token, or a browser session. The session counts only with the
+        X-Servitor-Client header, which no foreign page can add (no CORS)."""
+        if self.service.authorized(self.headers.get('Authorization')):
+            return True
+        return (self.headers.get('X-Servitor-Client') == 'web'
+                and self.service.web_sessions.valid(self._cookie()))
+
+    def _secure(self):
+        # Behind cloudflared the browser speaks HTTPS; on the LAN it is HTTP.
+        return (self.client_address[0] in self.service.config.trusted_proxies
+                or self.headers.get('X-Forwarded-Proto') == 'https')
+
+    def _set_cookie(self, value, lifetime):
+        cookie = f'{self.COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={lifetime}'
+        return cookie + ('; Secure' if self._secure() else '')
+
+    def _login(self):
+        self.close_connection = True
+        sessions = self.service.web_sessions
+        client = self._client()
+        if not self.service.config.web_password:
+            return self._json(503, dict(error='password login not configured'))
+        if sessions.locked(client):
+            return self._json(429, dict(error='locked'), {'Retry-After': str(sessions.LOCK)})
+        try:
+            length = int(self.headers.get('Content-Length', ''))
+            if not 0 < length <= 1024:
+                raise ValueError('length')
+            data = json.loads(self.rfile.read(length))
+            password = data['password']
+            if not isinstance(password, str):
+                raise ValueError('password')
+        except (ValueError, KeyError, TypeError):
+            return self._json(400, dict(error='expected JSON {"password": "..."}'))
+        if not check_password(password, self.service.config.web_password):
+            sessions.failed(client)
+            print(json.dumps(dict(event='web_login_failed')), flush=True)
+            return self._json(401, dict(error='wrong password'))
+        ident, lifetime = sessions.open(client, bool(data.get('remember')))
+        print(json.dumps(dict(event='web_login', remember=bool(data.get('remember')))), flush=True)
+        return self._json(200, dict(ok=True), {'Set-Cookie': self._set_cookie(ident, lifetime)})
+
+    def _logout(self):
+        self.close_connection = True
+        self.service.web_sessions.close(self._cookie())
+        return self._json(200, dict(ok=True), {'Set-Cookie': self._set_cookie('', 0)})
+
     def _client(self):
         # Behind a trusted local cloudflared the header names the real client;
         # any other peer could forge it, so LAN requests use the socket peer.
@@ -960,8 +1311,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         if path == '/v1/nightwatch':
             return self._nightwatch()
+        if path == '/web':
+            self.send_response(302)
+            self.send_header('Location', '/web/')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if path in WEB_FILES:
+            return self._web(path)
         if path == '/health':
             self._json(200, dict(ok=True, ready=self.service.ready))
+        elif path == '/v1/session':
+            self._json(200, dict(ok=self._web_authorized(),
+                                 password=bool(self.service.config.web_password)),
+                       {'Cache-Control': 'no-store'})
+        elif path == '/v1/journal':
+            if not self._web_authorized():
+                return self._json(401, dict(error='unauthorized'))
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                after = max(0, int(query.get('after', ['0'])[0]))
+            except ValueError:
+                after = 0
+            data = self.service.journal.since(after, instance=query.get('instance', [None])[0])
+            data['host'] = socket.gethostname()   # lines from here carry no host label
+            self._json(200, data, {'Cache-Control': 'no-store'})
         elif path == '/v1/status':
             # Maintenance data only with the token (the URL is public).
             if not self.service.authorized(self.headers.get('Authorization')):
@@ -972,6 +1346,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                  maintenance=maintenance.status(self.service.maintenance_dir)))
         else:
             self._json(404, dict(error='not found'))
+
+    def _web(self, path):
+        """One fixed file of the browser client; no token (it asks for it)."""
+        name, mime = WEB_FILES[path]
+        try:
+            body = (WEB / name).read_bytes()
+        except OSError:
+            return self._json(404, dict(error='not found'))
+        self.send_response(200)
+        self.send_header('Content-Type', mime)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Content-Security-Policy', WEB_CSP)
+        self.send_header('Permissions-Policy', 'microphone=(self)')
+        self.end_headers()
+        self.wfile.write(body)
 
     def _nightwatch(self):
         """Authenticated LAN-only job control; no arbitrary commands or paths."""
@@ -1208,6 +1600,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == '/v1/login':
+            return self._login()
+        if url.path == '/v1/logout':
+            return self._logout()
         if url.path == '/v1/hello':
             return self._hello()
         if url.path == '/v1/message':
@@ -1220,12 +1616,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._enroll_clip()
         if url.path == '/v1/nightwatch':
             return self._nightwatch()
-        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story'):
+        if url.path not in ('/v1/turn', '/v1/speak', '/v1/story', '/v1/ask'):
             self.close_connection = True
             return self._json(404, dict(error='not found'))
         self.close_connection = True  # never reuse a connection with an unread body
         self.connection.settimeout(self.service.config.idle_timeout)
-        if not self.service.authorized(self.headers.get('Authorization')):
+        if not self._web_authorized():
             return self._json(401, dict(error='unauthorized'))
         self.service.nightwatch.foreground()
         if not self.service.limiter.allow(self._client()):
@@ -1251,9 +1647,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 <= length <= (limit if url.path == '/v1/turn' else 65536):
                 return self._json(413, dict(error='body too large'))
 
-        text = None
+        text = typed = None
         story_state = None
-        if url.path in ('/v1/speak', '/v1/story'):
+        if url.path in ('/v1/speak', '/v1/story', '/v1/ask'):
             if chunked:
                 return self._json(411, dict(error='length required'))
             try:
@@ -1279,6 +1675,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 text = text.strip()
                 if not text:
                     return self._json(400, dict(error='text must not be empty'))
+                if url.path == '/v1/ask':
+                    if len(text) > MAX_TYPED_CHARS:
+                        return self._json(413, dict(error='question too long'))
+                    text, typed = None, text
             body = iter(())
         else:
             body = read_chunked(self.rfile, limit) if chunked else read_length(self.rfile, length)
@@ -1333,7 +1733,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           transcribe_only=transcribe_only,
                                           appointments=appointments,
                                           appointments_tomorrow=appointments_tomorrow,
-                                          voice=voice, nightwatch_copy=nightwatch_copy)
+                                          voice=voice, nightwatch_copy=nightwatch_copy,
+                                          typed=typed)
             except TurnError as exc:
                 # Stage and code only in the journal (the message may quote the operator).
                 # Silence or a too short press is no fault: the self-test skips those.
@@ -1360,6 +1761,13 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def main():
+    if sys.argv[1:] == ['--hash-password']:
+        import getpass
+        password = getpass.getpass('Passwort für den Web-Client: ')
+        if len(password) < 8 or password != getpass.getpass('Wiederholen: '):
+            sys.exit('Passwörter stimmen nicht überein oder sind kürzer als 8 Zeichen.')
+        print(f'SERVITOR_WEB_PASSWORD_HASH={hash_password(password)}')
+        return
     config = Config()
     os.environ.setdefault('TTS_SERVITOR_AURA', 'reference')
     os.environ.setdefault('TTS_VOICE_PROFILE', 'servitor')
@@ -1367,6 +1775,14 @@ def main():
     service = Service(config, pipeline)
     server = Server((config.bind, config.port), Handler)
     server.service = service
+    # Browser-Journal nur von lokalen Proximus-Diensten; ohne journalctl
+    # wird ausschließlich die Ausgabe dieses Dienstes erfasst.
+    import shutil
+    if shutil.which('journalctl') and os.environ.get('SERVITOR_JOURNAL_SOURCE') != 'own':
+        follow_system_journal(service.journal)
+    else:
+        sys.stdout = Tee(sys.stdout, service.journal)
+        sys.stderr = Tee(sys.stderr, service.journal)
 
     def load():
         started = time.monotonic()

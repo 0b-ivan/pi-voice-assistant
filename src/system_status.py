@@ -426,6 +426,17 @@ def status_text(snapshot, processing=False, lore=None, rng=None):
     snapshot = sanitize_snapshot(snapshot)
     lore = _style(snapshot, lore)
     billy = is_billy(lore)
+    # Ein erreichbarer Webserver ist keine vollständige Pi-Zustandsprüfung.
+    measured = ('battery_pct', 'temp_c', 'load_pct', 'mem_free_pct',
+                'disk_free_pct', 'uptime_s', 'wlan', 'wifi_dbm', 'net_ms',
+                'throttled', 'cpu', 'updates', 'server_updates')
+    if not processing and not any(key in snapshot for key in measured):
+        if snapshot.get('server') == 'ok':
+            return ('Der Sprachserver antwortet. Aktuelle Pi-Messwerte liegen nicht vor.'
+                    if billy else
+                    'Sprachserver erreichbar. Aktuelle Pi-Messwerte nicht verfügbar.')
+        return ('Aktuelle Statusdaten fehlen.' if billy
+                else 'Statusdaten nicht verfügbar.')
     warnings, trouble = [], False
 
     def warn(servitor, human, serious=True):
@@ -543,6 +554,11 @@ def network_text(snapshot, lore=None):
     if snapshot.get('wlan') == 'off':
         return ("WLAN ist aus, ich bin offline." if is_billy(lore)
                 else "WLAN deaktiviert. Keine Netzwerkverbindung.")
+    if not any(key in snapshot for key in ('wlan', 'wifi_dbm', 'net_ms', 'lan_ms', 'dns')):
+        return ('Netzwerkdaten des Pi fehlen. Der Sprachserver antwortet.'
+                if is_billy(lore) and snapshot.get('server') == 'ok'
+                else 'Pi-Netzwerkdaten nicht verfügbar.' if snapshot.get('server') == 'ok'
+                else 'Netzwerkdaten nicht verfügbar.')
     parts = ["Funkcheck." if is_billy(lore) else
              "Netzwerkbericht." if lore != 'full' else "Abtastung der Noosphäre."]
     dbm = snapshot.get('wifi_dbm')
@@ -557,7 +573,7 @@ def network_text(snapshot, lore=None):
         parts.append("Server nicht erreichbar.")
     net = snapshot.get('net_ms')
     if net is None:
-        parts.append("Internet nicht erreichbar.")
+        parts.append("Internetstatus nicht ermittelt.")
     else:
         slow = " Verbindung langsam." if net >= SLOW_MS else ""
         parts.append(f"Internet erreichbar, Latenz {net} Millisekunden.{slow}")
@@ -565,8 +581,8 @@ def network_text(snapshot, lore=None):
         parts.append("Namensauflösung gestört.")
     elif snapshot.get('dns') == 'ok':
         parts.append("Namensauflösung in Ordnung.")
-    if lore == 'full':
-        parts.append("Die Noosphäre ist vermessen.")
+    if lore == 'full' and net is not None:
+        parts.append("Noosphärenabtastung abgeschlossen.")
     return " ".join(parts)
 
 

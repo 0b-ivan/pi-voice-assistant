@@ -320,6 +320,12 @@ def system_prompt(lore=None, memory=NO_MEMORY, persona=None, mood=None, query=No
     (prompt-cache friendly: the parts that change least come first)."""
     persona = persona_name(persona)
     parts = [PERSONA_PROMPTS[persona], LORE_PROMPTS[persona][lore_level(lore)]]
+    if lore_level(lore) != 'off':
+        parts.append("Nur bei ausdrücklichen Fragen nach offiziellem Warhammer-Kanon: "
+                     "Unterscheide offizielle Warhammer-Fakten von eigener "
+                     "Proximus/Billy-Projektgeschichte. Milwaukee Secundus, Phobos IX, "
+                     "Magos Vettius Kael und Trupp Blaze sind keine belegten offiziellen "
+                     "Warhammer-Ereignisse oder -Figuren. Bleibe sonst in deiner Rolle.")
     if memory is not NO_MEMORY:
         from memory import prompt_section
         parts.append(prompt_section(memory))

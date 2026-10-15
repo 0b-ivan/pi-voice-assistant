@@ -1,0 +1,596 @@
+/* Vox terminal: an iron vox-caster with a phosphor tube. The chat is the tube,
+   header and controls are the casing. Mobile first; desktop from 900px.
+   data-state on #chat: idle, listen, work, speak. body[data-effects="off"]
+   drops grain, flicker and glitches; prefers-reduced-motion drops motion.
+   Lettering: Century Schoolbook like the Mechanicus transfers (TeX Gyre Schola,
+   GUST Font License, web/fonts/); the teleprinter text stays monospace. */
+@font-face {
+  font-family: "Schola"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/web/fonts/schola-regular.woff2") format("woff2");
+}
+@font-face {   /* teleprinter: Share Tech Mono, SIL Open Font License */
+  font-family: "Share Tech Mono"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/web/fonts/share-tech-mono.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Schola"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("/web/fonts/schola-bold.woff2") format("woff2");
+}
+:root {
+  --serif: "Schola", "Century Schoolbook", "TeX Gyre Schola", Georgia, serif;
+  --bg: #0d0f0c;
+  /* Casing in field-radio olive (RAL 6014 Gelboliv), stencils in white,
+     label strips in signal yellow. */
+  --iron-hi: #5b5a3e;
+  --iron: #46452f;
+  --iron-lo: #2f2e1f;
+  --edge: #6f6d4c;
+  --stencil: #e9e6d6;
+  --signal: #e2c046;
+  --bakelite: #1c1a14;
+  --brass: #a8894a;
+  --text: #cfe8c4;
+  --muted: #84a07a;
+  --phosphor: #8dff6a;
+  --phosphor-dim: #4f9a3c;
+  --amber: #ffb347;
+  --red: #ff3b2f;
+  --radius: 10px;
+  --gutter: 12px;
+  --scope: 56px;
+  --grain: none;   /* set by vox.js: a small noise tile */
+  --mono: "Share Tech Mono", ui-monospace, "DejaVu Sans Mono", Menlo, monospace;
+  font-family: var(--mono);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sigil-numbers { font-family: var(--serif); font-weight: 700; fill: currentColor; }
+/* Mechanicus lettering for everything engraved on the casing. */
+.bar h1, .stage, .readout, .dial-head, .talk-main, .ask button, .dial-connect, .cancel,
+.log li::before, .log li.system, dialog h2, dialog label, .dial-token, .litany,
+.gauge-label {
+  font-family: var(--serif); font-variant-numeric: lining-nums;
+}
+:focus-visible { outline: 2px solid var(--phosphor); outline-offset: 2px; }
+
+/* --- casing -------------------------------------------------------------------- */
+.plate {
+  position: relative; z-index: 2;
+  background:
+    radial-gradient(circle at 10px 50%, var(--edge) 0 2px, #0006 2.5px, transparent 3.5px),
+    radial-gradient(circle at calc(100% - 10px) 50%, var(--edge) 0 2px, #0006 2.5px, transparent 3.5px),
+    linear-gradient(180deg, var(--iron-hi), var(--iron) 40%, var(--iron-lo));
+  box-shadow: inset 0 1px 0 #ffffff14, inset 0 -1px 0 #0008;
+}
+.lamp {
+  flex: none; width: 12px; height: 12px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #555 0 20%, #222 70%);
+  box-shadow: inset 0 0 2px #000, 0 0 0 2px #0008;
+}
+.lamp.green[data-on="yes"] { background: radial-gradient(circle at 35% 35%, #e9ffd9 0 15%, var(--phosphor) 45%, #1d4a10); box-shadow: 0 0 10px var(--phosphor), 0 0 0 2px #0008; }
+.lamp.red[data-on="yes"] { background: radial-gradient(circle at 35% 35%, #ffe0dc 0 15%, var(--red) 45%, #5a0d08); box-shadow: 0 0 14px var(--red), 0 0 0 2px #0008; }
+.lamp.red[data-on="blink"] { animation: blink .9s steps(2, jump-none) infinite; }
+@keyframes blink { 0% { background: radial-gradient(circle at 35% 35%, #ffe0dc 0 15%, var(--amber) 45%, #5a3008); box-shadow: 0 0 12px var(--amber), 0 0 0 2px #0008; } }
+
+.bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px calc(var(--gutter) + 12px); padding-top: max(8px, env(safe-area-inset-top));
+}
+.sigil {
+  flex: none; width: 26px; height: 26px; color: var(--brass);
+  filter: drop-shadow(0 1px 0 #ffffff22) drop-shadow(0 -1px 0 #000c);
+}
+.cogitator { display: none; flex: none; width: 22px; height: 22px; color: var(--amber); opacity: .25; }
+body[data-state="work"] .cogitator { opacity: 1; animation: spin 2.4s linear infinite; filter: drop-shadow(0 0 4px #ffb34788); }
+@keyframes spin { to { transform: rotate(1turn); } }
+.bar h1 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: .22em; color: var(--phosphor); text-shadow: 0 0 8px #8dff6a66; white-space: nowrap; }
+.bar h1 small { display: none; font-size: .65rem; letter-spacing: .2em; color: var(--muted); text-shadow: none; }
+.stage {
+  display: none; flex: 1; min-width: 0; margin: 0; text-align: center; font-size: .72rem; letter-spacing: .18em;
+  color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stage[data-state="listen"], .readout[data-state="listen"] { color: var(--red); }
+.stage[data-state="work"], .readout[data-state="work"] { color: var(--amber); }
+.stage[data-state="speak"], .readout[data-state="speak"] { color: var(--phosphor); }
+.bar .spacer { flex: 1; }
+/* Phones: the step reads inside the tube, under the scope. */
+.readout {
+  position: absolute; z-index: 1; left: 0; right: 0; top: calc(var(--scope) + 6px); margin: 0;
+  text-align: center; font-size: .68rem; letter-spacing: .22em; color: var(--muted);
+  text-shadow: 0 0 6px currentColor;
+}
+.gauge {
+  flex: none; width: 52px; height: 33px;
+  background: radial-gradient(ellipse at 50% 100%, #e9e2c6, #b9b195 70%);
+  border-radius: 6px 6px 3px 3px; box-shadow: inset 0 0 4px #0009, 0 0 0 2px #0007;
+}
+.gauge-arc, .gauge-red { fill: none; stroke-width: 2.5; }
+.gauge-arc { stroke: #3d3a2e; }
+.gauge-red { stroke: var(--red); stroke-width: 4; }
+.gauge-ticks { fill: none; stroke: #3d3a2e; stroke-width: 1.2; }
+.gauge-scale { font-family: var(--serif); font-weight: 700; font-size: 6.5px; text-anchor: middle; fill: #3d3a2e; }
+/* S-meter: red = weak signal on the left, the needle swings right with strength. */
+.gauge-needle { stroke: #b3261e; stroke-width: 1.6; stroke-linecap: round; transform-origin: 50px 54px; transform: rotate(-85deg); }
+.gauge-hub { fill: #1a1a1a; stroke: var(--brass); stroke-width: 1.5; }
+.gauge-label { font-size: 6px; font-weight: 700; text-anchor: middle; fill: #3d3a2e; letter-spacing: 1.5px; }
+.gauge-bar .gauge-scale, .gauge-bar .gauge-label { display: none; }
+.pill { display: none; font-size: .7rem; padding: 3px 8px; border: 1px solid var(--edge); border-radius: 99px; color: var(--muted); white-space: nowrap; }
+.pill[data-state="ok"] { color: var(--phosphor); border-color: var(--phosphor-dim); }
+.pill[data-state="loading"] { color: var(--amber); border-color: var(--amber); }
+.pill[data-state="down"] { color: var(--red); border-color: var(--red); }
+.icon { flex: none; background: none; border: 0; font-size: 1.25rem; cursor: pointer; padding: 2px 4px; color: var(--muted); }
+.icon:hover { color: var(--phosphor); }
+
+/* --- the tube ------------------------------------------------------------------- */
+.crt {
+  position: relative; overflow: hidden; isolation: isolate;
+  border-radius: 18px / 22px;
+  background: radial-gradient(ellipse at center, #0e1a0c 0%, #070b06 70%, #030503 100%);
+  box-shadow:
+    inset 0 0 70px #000e, inset 0 0 12px #8dff6a22,
+    0 0 0 6px #0b0c0a, 0 0 0 9px var(--iron-hi), 0 0 0 10px #000, 0 8px 24px #000c;
+}
+.chat { flex: 1; min-height: 0; margin: 14px calc(var(--gutter) + 9px); }
+.scanlines {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: inherit;
+  background: repeating-linear-gradient(180deg, #0005 0 1px, transparent 1px 3px);
+  animation: flicker 4s infinite;
+}
+.scanlines::before {   /* grain */
+  content: ""; position: absolute; inset: 0; background: var(--grain); opacity: .07;
+  mix-blend-mode: screen; animation: grain .5s steps(4) infinite;
+}
+.scanlines::after {    /* glass: highlight and vignette */
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: radial-gradient(ellipse at 30% 0%, #ffffff12, transparent 45%),
+              radial-gradient(ellipse at center, transparent 55%, #000a 100%);
+}
+@keyframes flicker { 0%, 100% { opacity: 1; } 47% { opacity: .92; } 48% { opacity: 1; } 73% { opacity: .96; } }
+@keyframes grain { 0% { background-position: 0 0; } 25% { background-position: -31px 17px; } 50% { background-position: 23px -41px; } 75% { background-position: -13px 29px; } }
+body[data-effects="off"] .scanlines { animation: none; }
+body[data-effects="off"] .scanlines::before { display: none; }
+
+.backdrop {   /* the skull, a green ghost on the tube; edges fade (mask) */
+  position: absolute; z-index: -1; left: 50%; top: 46%; transform: translate(-50%, -50%);
+  width: 190%; aspect-ratio: 16 / 9;   /* portrait: the face fills the width */
+  background: url("/web/servo-skull.png") center / cover no-repeat;
+  image-rendering: pixelated;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent),
+                      linear-gradient(to right, transparent, #000 22%, #000 78%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent),
+              linear-gradient(to right, transparent, #000 22%, #000 78%, transparent);
+  mask-composite: intersect;
+  opacity: .18; filter: grayscale(1) sepia(1) hue-rotate(50deg) saturate(2.2) brightness(.85);
+  transition: opacity .3s;
+}
+.chat[data-state="listen"] .backdrop { opacity: .26; }
+.chat[data-state="work"] .backdrop { opacity: .24; animation: breathe 1.6s ease-in-out infinite; }
+.chat[data-state="speak"] .backdrop { opacity: .24; }
+@keyframes breathe { 50% { opacity: .12; } }
+.chat::after {   /* state glow inside the glass */
+  content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
+  transition: box-shadow .3s;
+}
+.chat[data-state="listen"]::after { box-shadow: inset 0 0 80px #ff3b2f55; }
+.chat[data-state="work"]::after { box-shadow: inset 0 0 70px #ffb34733; }
+.chat[data-state="speak"]::after { box-shadow: inset 0 0 80px #8dff6a33; }
+
+/* Interference: the picture tears for a moment (vox.js adds .glitch). */
+.crt.glitch .log, .crt.glitch .scope { animation: tear .25s steps(3) 1; }
+.crt.glitch .scanlines { background:
+    linear-gradient(180deg, transparent 0 38%, #8dff6a22 38% 41%, transparent 41% 66%, #ffffff18 66% 67%, transparent 67%),
+    repeating-linear-gradient(180deg, #0007 0 1px, transparent 1px 2px); }
+@keyframes tear {
+  0% { transform: translateX(-6px) skewX(3deg); filter: brightness(1.6); }
+  50% { transform: translateX(5px); filter: brightness(.6) blur(.6px); }
+  100% { transform: none; filter: none; }
+}
+
+.scope {
+  position: absolute; z-index: 1; left: 12px; top: 8px; height: var(--scope);
+  width: calc(100% - 24px); color: var(--phosphor);
+  filter: drop-shadow(0 0 3px #8dff6aaa);
+}
+
+.log {
+  position: absolute; inset: calc(var(--scope) + 28px) 0 0; margin: 0; list-style: none;
+  padding: 6px 14px 14px;
+  overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 8px;
+  color: var(--phosphor); text-shadow: 0 0 6px #8dff6a77;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px);
+  mask-image: linear-gradient(to bottom, transparent, #000 18px);
+}
+.log { z-index: 1; }
+.log::before { content: ""; margin-top: auto; }
+/* The live journal: dim, small, behind the transcript, fading out at the top. */
+.journal {
+  position: absolute; z-index: 0; inset: calc(var(--scope) + 28px) 0 0; margin: 0; padding: 6px 14px 14px;
+  list-style: none; overflow: hidden; pointer-events: none;
+  /* Newest line on top: the chat grows from the bottom, the journal from the
+     top, so new log lines never hide behind the newest messages. */
+  display: flex; flex-direction: column; justify-content: flex-start; gap: 3px;
+  font-size: .74rem; line-height: 1.4; color: #a9d99a; opacity: .5; text-shadow: none;
+  white-space: nowrap; text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+.journal li:first-child { color: #d9ffc9; }
+/* flex: none - lines must never shrink as the journal fills (they used to
+   squash into each other the longer it ran). */
+.journal li { flex: none; overflow: hidden; text-overflow: ellipsis; }
+.journal li[data-kind="status"] { order: -1; }
+.journal li.warn { color: var(--amber); }
+.journal li.error { color: #ff7a6e; }
+.journal li.traffic { color: #e6ffd9; }
+.journal li.crosstalk { color: #c9b98a; letter-spacing: .08em; }
+.journal li.litany { font-family: var(--serif); font-style: italic; font-size: .8rem; color: #d9ffc9; letter-spacing: .04em; }
+.journal li.noise { color: #b9c9a6; letter-spacing: .12em; }
+body[data-effects="on"] .crt.glitch .journal { animation: tear .25s steps(3) 1; }   /* few lines: they sit at the bottom */
+.log li {
+  max-width: 100%; padding: 5px 10px; border-left: 2px solid var(--phosphor-dim);
+  background: linear-gradient(90deg, #040704f2, #040704dd 75%, #040704aa);
+  box-shadow: 0 0 0 1px #8dff6a14, 0 4px 14px #000c;
+  backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px);
+  overflow-wrap: anywhere; line-height: 1.5; font-size: 1.04rem; letter-spacing: .02em;
+}
+.log li::before { display: block; font-size: .66rem; letter-spacing: .2em; opacity: .7; }
+.log li.you { color: #b9c9a6; border-left-color: var(--amber); text-shadow: none; }
+.log li.you::before { content: "BEDIENER »"; color: var(--amber); }
+.log li.servitor::before { content: "PROXIMUS »"; }
+.log li.system { align-self: center; color: var(--muted); border: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; text-align: center; font-size: .72rem; letter-spacing: .12em; text-shadow: none; }
+.log li.error { color: var(--red); border-left-color: var(--red); text-shadow: 0 0 6px #ff3b2f77; }
+.log li.error::before { content: "+++ SIGNAL GESTÖRT +++"; }
+.log li small { display: block; margin-top: 3px; color: var(--muted); font-size: .66rem; text-shadow: none; }
+.cursor { display: inline-block; width: .55em; height: 1em; vertical-align: -2px; margin-left: 2px; background: var(--phosphor); animation: cursor .8s steps(2, jump-none) infinite; }
+@keyframes cursor { 50% { opacity: 0; } }
+.hint {
+  display: none; position: absolute; left: 0; right: 0; bottom: 24px; margin: 0;
+  padding: 0 14px; text-align: center; color: var(--phosphor-dim); font-size: .82rem; line-height: 1.6;
+}
+.hint p { margin: 0; }
+.hint-sigil { width: 64px; height: 64px; color: var(--phosphor-dim); opacity: .55; margin-bottom: 8px; }
+.litany { font-style: italic; font-size: .95rem; color: var(--phosphor); opacity: .75; margin-top: 4px; }
+.log:empty + .hint { display: block; }
+
+/* Power-on after the call connects. */
+body[data-connected="yes"] .chat { animation: power .7s ease-out 1; }
+@keyframes power {
+  0% { transform: scaleY(.008) scaleX(.6); filter: brightness(4); }
+  45% { transform: scaleY(.02) scaleX(1); filter: brightness(3); }
+  100% { transform: none; filter: none; }
+}
+
+/* --- controls ------------------------------------------------------------------- */
+.controls {
+  display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "ask" "talk" "cancel";
+  padding: 12px calc(var(--gutter) + 12px); padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+.talk {
+  grid-area: talk; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  padding: 20px 12px 16px; border-radius: var(--radius); cursor: pointer;
+  background: linear-gradient(180deg, #4a4f42, #2b2f26 55%, #1d2019);
+  border: 1px solid #000; color: #e9e2c6;
+  box-shadow: inset 0 1px 0 #ffffff26, inset 0 -3px 0 #0008, 0 3px 0 #000, 0 0 0 3px #3a3f35, 0 0 0 4px #000;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  transition: transform .05s, box-shadow .05s;
+}
+.talk::before {   /* red transmit strip */
+  content: ""; position: absolute; top: 7px; left: 50%; width: 36px; height: 4px; margin-left: -18px;
+  border-radius: 2px; background: #5a0d08; box-shadow: inset 0 0 2px #000;
+}
+.talk:disabled { opacity: .55; cursor: progress; }
+.talk.active {
+  transform: translateY(2px); color: #fff;
+  background: linear-gradient(180deg, #5a1a14, #3a100c);
+  box-shadow: inset 0 2px 6px #000c, 0 1px 0 #000, 0 0 0 3px #3a3f35, 0 0 0 4px #000, 0 0 24px #ff3b2f66;
+}
+.talk.active::before { background: var(--red); box-shadow: 0 0 10px var(--red); }
+.talk-main { font-size: .95rem; letter-spacing: .18em; }
+.talk-hint { font-size: .68rem; opacity: .65; }
+@media (pointer: coarse) { .talk-hint { display: none; } }
+.ask { grid-area: ask; display: flex; gap: 10px; min-width: 0; }
+.ask textarea {
+  flex: 1; min-width: 0; width: 0; padding: 10px 12px; border-radius: 8px;
+  background: #070b06; border: 1px solid #000; color: var(--phosphor);
+  box-shadow: inset 0 0 10px #000, 0 0 0 2px #3a3f35;
+  font-size: max(16px, 1rem);   /* iOS zooms into smaller inputs */
+  text-shadow: 0 0 5px #8dff6a66;
+  min-height: 62px; max-height: 112px; line-height: 1.35; resize: none; font-family: inherit;
+}
+.ask textarea::placeholder { color: var(--phosphor-dim); text-shadow: none; }
+.ask button, dialog button, .dial-connect {
+  padding: 10px 14px; border-radius: 8px; cursor: pointer; letter-spacing: .1em;
+  border: 1px solid #000; color: #0b0c0a;
+  background: linear-gradient(180deg, #d6bd7e, var(--brass) 55%, #6e5a2c);
+  box-shadow: inset 0 1px 0 #fff6, 0 2px 0 #000;
+}
+.ask button:active, .dial-connect:active { transform: translateY(1px); box-shadow: inset 0 1px 3px #0008; }
+.cancel {
+  grid-area: cancel; padding: 10px; border-radius: 8px; cursor: pointer; letter-spacing: .1em;
+  border: 1px solid var(--red); background: #1a0806; color: var(--red);
+}
+
+@media (max-width: 899px) {
+  .bar { gap: 6px; padding-left: var(--gutter); padding-right: var(--gutter); }
+  .bar h1 { font-size: .9rem; letter-spacing: .14em; }
+  .bar .sigil { width: 22px; height: 22px; }
+  .bar .gauge { width: 44px; height: 28px; }
+  .bar .lamp { width: 9px; height: 9px; }
+  /* The text gets the full width; all actions share one compact row. */
+  .controls {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "entry entry entry" "talk submit cancel";
+    gap: 8px; padding: 10px var(--gutter) max(10px, env(safe-area-inset-bottom));
+  }
+  .ask { display: contents; }
+  .ask textarea { grid-area: entry; width: 100%; padding: 8px 10px; }
+  .ask button { grid-area: submit; padding: 8px 12px; min-height: 44px; font-size: .8rem; }
+  .talk { min-height: 44px; padding: 9px 10px 7px; gap: 0; }
+  .talk-main { font-size: .78rem; letter-spacing: .08em; }
+  .talk-hint { display: none; }
+  .talk::before { top: 4px; height: 3px; }
+  .cancel { min-height: 44px; padding: 8px; font-size: .76rem; letter-spacing: .04em; }
+  .controls > [hidden] { display: none; }
+}
+.cancel[hidden] { display: none; }
+
+/* --- the call (entry screen) ---------------------------------------------------------- */
+.dial {
+  position: fixed; inset: 0; z-index: 20; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  /* margin: auto on the unit centres it but, unlike align-items: center,
+     never pushes its top out of reach when the screen is too short. */
+  display: flex;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background: radial-gradient(ellipse at 50% 30%, #1d2119, #070806 75%);
+  transition: opacity .5s, visibility .5s;
+}
+body[data-connected="yes"] .dial { opacity: 0; visibility: hidden; pointer-events: none; }
+.dial-unit {
+  position: relative; width: min(100%, 560px); min-width: 0; padding: 22px 18px 18px; border-radius: 16px;
+  margin: auto;
+  display: flex; flex-direction: column; gap: 14px;
+  background:
+    radial-gradient(circle at 14px 14px, var(--edge) 0 2.5px, #0008 3px, transparent 4px),
+    radial-gradient(circle at calc(100% - 14px) 14px, var(--edge) 0 2.5px, #0008 3px, transparent 4px),
+    radial-gradient(circle at 14px calc(100% - 14px), var(--edge) 0 2.5px, #0008 3px, transparent 4px),
+    radial-gradient(circle at calc(100% - 14px) calc(100% - 14px), var(--edge) 0 2.5px, #0008 3px, transparent 4px),
+    linear-gradient(180deg, var(--iron-hi), var(--iron) 35%, var(--iron-lo));
+  box-shadow: inset 0 1px 0 #ffffff1c, 0 0 0 1px #000, 0 30px 60px #000c;
+}
+.dial-sigil {
+  position: absolute; top: -34px; left: 50%; width: 68px; height: 68px; margin-left: -34px;
+  color: var(--brass); border-radius: 50%;
+  background: radial-gradient(circle, var(--iron-hi), var(--iron-lo) 70%);
+  box-shadow: 0 0 0 3px #000, 0 6px 16px #000a;
+  filter: drop-shadow(0 1px 0 #ffffff22);
+}
+.dial-unit { margin-top: 34px; padding-top: 44px; }
+.dial-watermark {
+  position: absolute; z-index: 0; left: 50%; top: 58%; width: 46%; aspect-ratio: 1; height: auto;
+  transform: translate(-50%, -50%); color: var(--phosphor); opacity: .06;
+}
+.grille {   /* speaker grille */
+  height: 26px; margin: 0 28px; border-radius: 13px;
+  background: radial-gradient(circle, #050605 0 2px, transparent 2.5px) 0 0 / 8px 8px, #1b1e18;
+  box-shadow: inset 0 2px 4px #000, 0 1px 0 #ffffff14;
+}
+.dial-screen { height: clamp(150px, 30dvh, 320px); margin: 0 6px; }
+/* Phones: everything up to the connect button fits on one screen. */
+@media (max-width: 899px) {
+  .dial { padding-top: max(10px, env(safe-area-inset-top)); }
+  .dial-unit { margin-top: 30px; padding: 38px 14px 14px; gap: 10px; }
+  .dial-unit .grille { display: none; }
+  .dial-sigil { width: 56px; height: 56px; margin-left: -28px; top: -28px; }
+  .dial-body, .dial-left, .dial-side, .dial-form { gap: 10px; }
+  .dial-side .nameplate { display: none; }
+  .dial-screen .scope { height: 54px; }
+  .dial-log { inset: 88px 0 0; font-size: .74rem; }
+  .dial-connect { padding: 14px 10px; }
+}
+.dial-head { position: absolute; z-index: 1; top: 10px; left: 0; right: 0; margin: 0; text-align: center; font-size: .74rem; font-weight: 700; letter-spacing: .1em; white-space: nowrap; color: var(--phosphor); text-shadow: 0 0 6px #8dff6a99; }
+.dial-screen .scope { top: 30px; height: 84px; }
+.dial-log {
+  position: absolute; inset: 120px 0 0; margin: 0; padding: 0 16px 14px; list-style: none;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 3px; overflow: hidden;
+  font-size: .8rem; line-height: 1.45; color: var(--phosphor); text-shadow: 0 0 6px #8dff6a77;
+}
+.dial-log li::before { content: "› "; opacity: .6; }
+.dial-log li.bad { color: var(--red); text-shadow: 0 0 6px #ff3b2f88; }
+.dial-log li.good { color: #d9ffc9; }
+.dial-form { display: flex; flex-direction: column; gap: 10px; }
+.dial-token { display: flex; flex-direction: column; gap: 4px; font-size: .78rem; letter-spacing: .12em; color: var(--muted); }
+.dial-token input {
+  padding: 10px 12px; border-radius: 8px; background: #070b06; border: 1px solid #000; color: var(--phosphor);
+  box-shadow: inset 0 0 10px #000, 0 0 0 2px #3a3f35; font-size: max(16px, 1rem);
+}
+.dial-form .check { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--muted); }
+.dial-form[data-known="yes"] .dial-token, .dial-form[data-known="yes"] .check { display: none; }
+.dial-connect {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 16px 10px; font-size: .92rem; letter-spacing: .1em;
+}
+.dial-connect .lamp { width: 14px; height: 14px; background: radial-gradient(circle at 35% 35%, #ffe0dc 0 15%, var(--red) 45%, #5a0d08); box-shadow: 0 0 10px var(--red), 0 0 0 2px #0008; animation: blink 1.2s steps(2, jump-none) infinite; }
+.dial-connect:disabled { opacity: .7; cursor: progress; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* --- wider screens -------------------------------------------------------------- */
+@media (min-width: 600px) {
+  .pill { display: inline-block; }
+  .bar h1 small { display: inline; }
+  .stage { display: block; }
+  .cogitator { display: block; }
+  .bar .spacer, .readout { display: none; }
+  .log, .journal { inset: calc(var(--scope) + 14px) 0 0; }
+}
+@media (min-width: 900px) {
+  :root { --gutter: clamp(20px, 3vw, 48px); --scope: 84px; }
+  .bar { padding-top: 10px; padding-bottom: 10px; gap: 14px; }
+  .bar h1 { font-size: 1.1rem; }
+  .stage { font-size: .85rem; }
+  .gauge { width: 84px; height: 54px; }
+  .chat { margin-top: 20px; margin-bottom: 20px; }
+  /* The whole skull, large and centered; the transcript runs over it. */
+  .backdrop { width: auto; height: 108%; top: 50%; }
+  .log { padding: 10px clamp(20px, 4vw, 64px) 20px; gap: 10px; }
+  /* Desktop: the journal gets its own column on the right of the tube, the
+     transcript keeps the left; both stay on the same screen. */
+  .journal {
+    left: auto; right: 0; width: 34%; padding: 10px 26px 20px 12px;
+    white-space: normal; overflow-wrap: anywhere; font-size: .76rem; opacity: .62;
+    border-left: 1px dashed #8dff6a22;
+  }
+  .journal li { text-overflow: clip; }
+  .log { padding-right: calc(34% + 20px); }
+  .log li { max-width: min(86%, 1000px); font-size: 1.12rem; }
+  .log li.you { align-self: flex-end; border-left: 0; border-right: 2px solid var(--amber); text-align: right;
+                background: linear-gradient(270deg, #040704f2, #040704dd 75%, #040704aa); }
+  .controls {
+    grid-template-columns: minmax(260px, 340px) 1fr auto;
+    grid-template-areas: "talk ask cancel";
+    align-items: stretch; padding-top: 14px; padding-bottom: 16px;
+  }
+  .talk { padding: 18px 16px 14px; }
+  .ask textarea { padding: 12px 16px; }
+  .ask button { padding: 0 22px; }
+  .cancel { padding: 0 18px; }
+  .dial-unit { padding: 46px 26px 22px; }
+  .dial-head { font-size: .85rem; letter-spacing: .2em; }
+}
+
+/* --- settings dialog -------------------------------------------------------------- */
+dialog {
+  width: min(100% - 32px, 440px); max-height: calc(100dvh - 32px);
+  background: linear-gradient(180deg, var(--iron-hi), var(--iron) 30%, var(--iron-lo)); color: var(--text);
+  border: 1px solid #000; border-radius: 12px; padding: 16px;
+  box-shadow: inset 0 1px 0 #ffffff1c, 0 20px 50px #000c;
+}
+dialog::backdrop { background: rgb(0 0 0 / .75); }
+dialog h2 { margin: 0 0 12px; font-size: 1rem; letter-spacing: .2em; color: var(--phosphor); }
+dialog form { display: flex; flex-direction: column; gap: 10px; }
+dialog label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; }
+dialog label.check { flex-direction: row; align-items: center; gap: 8px; }
+dialog input[type="password"], dialog select {
+  padding: 8px 10px; background: #070b06; border: 1px solid #000; border-radius: 6px; color: var(--phosphor);
+  font-size: max(16px, 1rem);
+}
+.note { margin: 0; font-size: .75rem; color: var(--muted); }
+.row { display: flex; gap: 8px; justify-content: flex-end; }
+button.secondary { background: none; color: var(--text); border-color: var(--edge); box-shadow: none; }
+
+/* --- field-radio hardware ------------------------------------------------------- */
+.deck { flex: 1; min-height: 0; display: flex; }
+.deck .chat { flex: 1; min-width: 0; }
+.panel { display: none; }
+.nameplate {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  background: var(--iron-lo); box-shadow: inset 0 1px 3px #000a, 0 1px 0 #ffffff14;
+}
+.plate-num {
+  font-family: var(--serif); font-weight: 700; font-size: 1.15rem; line-height: 1;
+  padding: 4px 7px; border-radius: 4px; background: #111; color: var(--stencil);
+  box-shadow: inset 0 0 0 1px #ffffff22;
+}
+.plate-text { flex: 1; font-family: var(--serif); font-weight: 700; letter-spacing: .2em; font-size: .78rem; color: var(--stencil); }
+.hw-label {
+  display: block; margin-top: 4px; text-align: center; font-family: var(--serif); font-weight: 700;
+  font-size: .64rem; letter-spacing: .16em; color: var(--stencil); text-shadow: 0 1px 0 #000a;
+}
+.hw-row { display: flex; gap: 14px; justify-content: space-around; }
+.hw-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+
+/* Selector switch: yellow label strip above, bakelite knob with a white pointer. */
+.hw-rotary { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.hw-strip {
+  display: flex; width: 100%; border-radius: 99px; overflow: hidden;
+  background: var(--signal); box-shadow: inset 0 -1px 0 #0004, 0 1px 2px #000a;
+}
+.hw-position {
+  flex: 1; padding: 4px 2px; border: 0; background: none; cursor: pointer; color: #1a1708;
+  font-family: var(--serif); font-weight: 700; font-size: .66rem; letter-spacing: .06em;
+}
+.hw-position + .hw-position { border-left: 1.5px solid #1a1708; }
+.hw-position[aria-pressed="true"] { background: #1a1708; color: var(--signal); }
+.hw-knob {
+  position: relative; width: 58px; height: 58px; border-radius: 50%; border: 0; cursor: pointer; padding: 0;
+  background: radial-gradient(circle at 40% 35%, #4a463a, var(--bakelite) 62%);
+  box-shadow: 0 4px 0 #000, 0 6px 10px #000c, inset 0 1px 1px #ffffff2a, 0 0 0 4px #2a281c, 0 0 0 5px #000;
+}
+.hw-knob-cap { position: absolute; inset: 0; transition: transform .18s cubic-bezier(.3, 1.6, .5, 1); }
+.hw-knob-cap::before {   /* the white pointer bar */
+  content: ""; position: absolute; left: 50%; top: 5px; width: 7px; height: 30px; margin-left: -3.5px;
+  border-radius: 3px; background: linear-gradient(90deg, #d8d2c0, #fff, #cfc8b5); box-shadow: 0 0 0 1px #000a;
+}
+.hw-knob-cap::after {    /* the slotted screw */
+  content: ""; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px;
+  border-radius: 50%; background: radial-gradient(circle at 40% 35%, #555, #222);
+  box-shadow: inset 0 0 0 1px #000;
+}
+
+/* Toggle switch: a metal bat between EIN and AUS. */
+.hw-toggle { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.hw-mark { font-family: var(--serif); font-weight: 700; font-size: .6rem; letter-spacing: .12em; color: var(--stencil); opacity: .85; }
+.hw-switch {
+  position: relative; width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer; padding: 0;
+  background: radial-gradient(circle, #9a9a8c 0 30%, #4c4b40 32% 62%, #222 64%);
+  box-shadow: 0 0 0 3px #1d1c14, 0 2px 4px #000c;
+}
+.hw-lever {
+  position: absolute; left: 50%; width: 9px; height: 26px; margin-left: -4.5px; border-radius: 5px;
+  background: linear-gradient(90deg, #8d8d80, #f3f3ea 45%, #7a7a6c); box-shadow: 0 2px 3px #000c;
+  bottom: 50%; transform-origin: 50% 100%; transition: transform .12s;
+}
+.hw-switch[aria-checked="false"] .hw-lever { transform: rotate(180deg); }
+
+/* Volume: two arrow keys and a row of lamps. */
+.hw-volume { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.hw-volume .hw-label { grid-column: 1 / -1; }
+.hw-arrow {
+  width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-size: .8rem; color: var(--stencil);
+  border: 1px solid #000; background: linear-gradient(180deg, #4d4b38, #2c2b1e);
+  box-shadow: inset 0 1px 0 #ffffff22, 0 2px 0 #000;
+}
+.hw-arrow:active { transform: translateY(1px); box-shadow: inset 0 1px 3px #000a; }
+.hw-bar { display: flex; gap: 3px; justify-content: center; padding: 5px; border-radius: 4px; background: #0d0c08; box-shadow: inset 0 1px 3px #000; }
+.hw-bar i { width: 7px; height: 14px; border-radius: 1px; background: #2c2a1a; }
+.hw-bar i[data-on="true"] { background: var(--phosphor); box-shadow: 0 0 6px #8dff6a99; }
+.hw-bar i[data-on="true"]:nth-child(n+9) { background: var(--amber); box-shadow: 0 0 6px #ffb34799; }
+
+/* Dial unit: on phones the hardware row sits above the form. */
+.dial-body, .dial-left { display: flex; flex-direction: column; gap: 14px; }
+.dial-side { display: flex; flex-direction: column; gap: 12px; }
+.dial-side .hw-row { align-items: flex-end; }
+.dial-side .hw-volume { flex: 1; }
+
+@media (min-width: 900px) {
+  .bar .gauge-bar { display: none; }
+  .deck { gap: 0; }
+  .panel {
+    display: flex; flex-direction: column; gap: 18px; width: clamp(250px, 21vw, 300px);
+    margin: 14px calc(var(--gutter) + 9px) 20px 0; padding: 16px 16px 18px; border-radius: 12px;
+    overflow-y: auto; box-shadow: inset 0 1px 0 #ffffff1c, 0 0 0 1px #000, 0 8px 24px #000c;
+  }
+  .gauge-panel { width: 100%; height: auto; aspect-ratio: 100 / 64; flex: none; }
+  .panel .hw-knob { width: 50px; height: 50px; }
+  .panel .hw-knob-cap::before { height: 24px; top: 4px; }
+  .panel .hw-position { font-size: .58rem; letter-spacing: .02em; padding: 4px 1px; }
+  .deck .chat { margin-right: 18px; }
+  :root { --scope: 110px; }
+  /* The call: a wide set with the screen left and the controls right. */
+  .dial-unit { width: min(100%, 980px); }
+  .dial-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; align-items: stretch; }
+  .dial-left { display: flex; flex-direction: column; gap: 14px; }
+  .dial-screen { height: clamp(320px, 52dvh, 460px); }
+  .dial-side { padding: 14px; border-radius: 10px; background: #0003; box-shadow: inset 0 1px 3px #000a; justify-content: space-between; }
+  .dial-side .hw-row { flex-direction: column; align-items: center; gap: 16px; }
+  .dial-side .hw-volume { width: 100%; max-width: none; }
+}

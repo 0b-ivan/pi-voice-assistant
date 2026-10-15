@@ -47,6 +47,8 @@ class MatchTests(unittest.TestCase):
             "wie ist dein status": "status",
             "statusbericht": "status",
             "status": "status",
+            "system status?": "status",
+            "wie ist der system status": "status",
             "wie geht es dir": "status",
             "wie voll ist dein akku": "battery",
             "wie ist der ladestand": "battery",
@@ -162,6 +164,17 @@ class AnswerTests(unittest.TestCase):
                          "Energiespeicher 83 Prozent. Ladung aktiv.")
         self.assertEqual(intents.answer("battery", self.NOW, {}), "Energiedaten nicht verfügbar.")
         self.assertIn("Servitor Proximus", intents.answer("identity", self.NOW))
+
+    def test_status_without_pi_telemetry_cannot_claim_nominal_operation(self):
+        for persona, level in (('servitor', 'light'), ('servitor', 'full'),
+                               ('mensch', 'light'), ('mensch', 'full')):
+            with self.subTest(persona=persona, lore=level):
+                answer = intents.answer('status', self.NOW,
+                                        {'server': 'ok', 'persona': persona, 'lore': level})
+                self.assertIn('Pi-Messwerte', answer)
+                self.assertNotIn('nominal', answer.lower())
+                self.assertNotIn('Alle Riten', answer)
+        self.assertIn('Statusdaten', intents.answer('status', self.NOW, {}))
 
     def test_stop_phrases_only_as_whole_utterance(self):
         for text in ('Stop', 'stopp', 'Abbruch!', 'abbrechen', 'Sei still', 'sei ruhig',

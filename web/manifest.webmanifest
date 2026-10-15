@@ -1,0 +1,10 @@
+{
+  "name": "Servitor Proximus",
+  "short_name": "Proximus",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0f0a",
+  "theme_color": "#0b0f0a",
+  "icons": [{"src": "/web/servo-skull.png", "sizes": "any", "type": "image/png"}]
+}
