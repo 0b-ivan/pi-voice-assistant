@@ -1,6 +1,6 @@
 # Proximus: Systemwache – dynamische Überwachung fremder Hosts und Uptime Kuma
 
-Stand: 15.10.2026, Fassung 2. Konzept zur Abstimmung, noch nicht umgesetzt. Anlass: [Vorfall 15.10.2026](VORFALL_2026-10-15.md). Ersetzt die erste Fassung (fest verdrahteter Sammler auf dem Hetzner-Server); deren Bericht-Modus bleibt als sicherste Zugriffsstufe erhalten (Abschnitt 4).
+Stand: 15.10.2026, Fassung 2. Konzept zur Abstimmung. **Umgesetzt:** Uptime Kuma über die Statusseiten (Abschnitt 3.2 Punkt 2) mit Zustandsvergleich, Ereignisjournal, Morgenbericht und Nachfrage, siehe „Umsetzungsstand“ am Ende. Alles andere ist noch nicht umgesetzt. Anlass: [Vorfall 15.10.2026](VORFALL_2026-10-15.md). Ersetzt die erste Fassung (fest verdrahteter Sammler auf dem Hetzner-Server); deren Bericht-Modus bleibt als sicherste Zugriffsstufe erhalten (Abschnitt 4).
 
 ## 1. Ziel
 
@@ -170,3 +170,24 @@ Nichts davon liegt auf dem Pi oder dem Gedächtnis-Stick; der Pi bekommt nur Cod
 6. **Weitere Wachziele:** Proxmox-Host und andere CTs gleich mitdenken (Roadmap-Idee 3), oder zuerst nur Hetzner und Uptime Kuma?
 
 Nach diesen Entscheidungen wird der [Umsetzungsauftrag](CLAUDE_AUFTRAG.md) neu gefasst.
+
+## Umsetzungsstand
+
+**15.10.2026: Uptime Kuma über die Statusseiten** ([`src/systemwache.py`](../../../src/systemwache.py), Tests in `tests/test_systemwache.py` mit den am 15.10. aufgezeichneten Seiten `cloud` und `vault`).
+
+- **Einschalten** auf CT 107 in `/etc/servitor-voice.env`, danach `systemctl restart servitor-voice`:
+  ```sh
+  SERVITOR_KUMA_URL=https://uptime.obivan.org
+  SERVITOR_KUMA_PAGES=cloud,vault
+  ```
+  Ohne diese Zeilen ist die Wache aus. Ein Wachziel im Web-Client (Abschnitt 3) gibt es noch nicht.
+- **Ablauf:** Ein Thread in `servitor-voice` liest jede Minute beide Seiten. Ein Wechsel zählt erst nach zwei Abrufen in Folge. PENDING ist kein Wechsel. Mehr als drei Wechsel pro Stunde werden zu einem Ereignis „instabil“. Erkannt werden außerdem neue und verschwundene Monitore, ein Zertifikat mit weniger als 14 Tagen Restlaufzeit und eine Statusseite, die nicht abrufbar ist.
+- **Ablage:** `/var/lib/servitor-voice/watch/state/kuma.json` (bestätigter Zustand, übersteht Neustarts) und `events.jsonl` (90 Tage, höchstens 20 MB).
+- **Ausgabe:**
+  - Im Morgenbericht nennt die Wache laufende Ausfälle und höchstens zwei Ereignisse der letzten 12 Stunden. Ist alles ruhig, schweigt sie.
+  - Nachfrage mit dem neuen Intent `watch`, zum Beispiel „Was ist bei Uptime Kuma los?“, „Systemwache“, „Wie geht es Nextcloud?“, „Was hat sich verändert?“, „Sind alle Dienste erreichbar?“.
+  - Unbekannte Stimmen bekommen keine Infrastrukturdaten.
+  - Die Antworten werden nicht umformuliert, gehen also nicht zu OpenRouter.
+  - `GET /v1/status` (nur mit Token) enthält zusätzlich `watch` samt der letzten Fehlermeldungen.
+- **Fremddaten:** Monitornamen werden auf einen einfachen Zeichensatz gekürzt. Fehlermeldungen aus Uptime Kuma stehen nur im Journal und in `/v1/status`, nie in einer Ansage oder einem Prompt.
+- **Noch offen:** `/metrics` mit API-Schlüssel (Entscheidung 2), Webhook, Wachziele im Web-Client, Hosts per SSH, Korrelation mit Host-Ereignissen.

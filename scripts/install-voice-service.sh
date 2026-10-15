@@ -124,6 +124,7 @@ install -m 0644 "${repo_root}/src/lore.py" /opt/pi-voice-assistant/src/lore.py
 install -m 0644 "${repo_root}/src/lore_engrams.json" /opt/pi-voice-assistant/src/lore_engrams.json
 install -m 0644 "${repo_root}/src/dialog.py" /opt/pi-voice-assistant/src/dialog.py
 install -m 0644 "${repo_root}/src/story.py" /opt/pi-voice-assistant/src/story.py
+install -m 0644 "${repo_root}/src/systemwache.py" /opt/pi-voice-assistant/src/systemwache.py
 install -m 0644 "${repo_root}/src/variants.py" /opt/pi-voice-assistant/src/variants.py
 # Trams/trains, reminders and calendar entries (TRANSIT_*, CALDAV_*).
 install -m 0644 "${repo_root}/src/journeys.py" /opt/pi-voice-assistant/src/journeys.py

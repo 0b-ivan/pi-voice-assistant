@@ -1,5 +1,5 @@
 """Questions answered without the LLM: time, date, status, battery, identity,
-weather, today's appointments, the self-test and the morning litany (a short
+weather, today's appointments, the self-test, the Systemwache and the morning litany (a short
 briefing).
 
 Runs on the server (normal path, before OpenRouter) and on the Pi (local
@@ -15,6 +15,7 @@ import agenda
 import energy
 import logwatch
 import nightwatch
+import systemwache
 import variants
 import weather
 
@@ -85,6 +86,14 @@ _PATTERNS = (
     # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
     ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
                            r'ladestand|ladezustand|energiereserve\w*)\b|\bwie (?:viel|viele) prozent hast du (?:noch|übrig)\b')),
+    # Systemwache (src/systemwache.py), before "status": its "uptime" means the
+    # own running time, "Uptime Kuma" the monitoring. Vosk small: "up time kuma",
+    # "uptime kumar".
+    ('watch', re.compile(r'\b(up ?time ?kum\w*|systemwache|überwachung|'
+                         r'(was|wie) (ist|steht) (es )?(mit|um|bei) (den |die |meinen |meine |unseren |unsere )?dienste\w*|'
+                         r'(sind|laufen) (alle |meine )?dienste( \w+)?|'
+                         r'wie geht es (der |dem )?(nextcloud|vaultwarden|vault|cloud)|'
+                         r'was hat sich (\w+ ){0,3}verändert)\b')),
     ('status', re.compile(r'\b(dein(en)? status|system ?status|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht|'
                           r'(?:deine? |system ?)(?:temperatur|auslastung|betriebszeit|messwerte)|'
@@ -390,6 +399,9 @@ def briefing_text(now, snapshot, lore='off'):
     logs = logwatch.briefing_sentence(snapshot, lore, now)  # None when nothing is notable
     if logs:
         parts.append(logs)
+    watch = systemwache.briefing_sentence(snapshot, lore, now)  # None when quiet
+    if watch:
+        parts.append(watch)
     night = nightwatch.answer('night_report', snapshot.get('nightwatch'), brief=True)
     if night:
         parts.append(night)
@@ -434,6 +446,8 @@ def answer(intent, now, snapshot=None, lore=None):
         return calendar_text(snapshot, lore)
     if intent == 'selftest':
         return logwatch.selftest_text(snapshot, lore, now)
+    if intent == 'watch':
+        return systemwache.answer_text(snapshot, lore, now, snapshot.get('watch_question'))
     if intent == 'hardware':
         return hardware_text(snapshot, lore)
     if intent == 'model':

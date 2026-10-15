@@ -100,6 +100,9 @@ LOCAL_LLM_MAX_TOKENS=120
 # WEATHER_LAT=52.52
 # WEATHER_LON=13.41
 # Appointments: configured on the Pi (CALDAV_*), sent along with each turn.
+# Systemwache (src/systemwache.py): Uptime Kuma status pages, no key. Unset = off.
+# SERVITOR_KUMA_URL=https://uptime.obivan.org
+# SERVITOR_KUMA_PAGES=cloud,vault
 ENV
   chown root:servitor /etc/servitor-voice.env
   chmod 0640 /etc/servitor-voice.env
