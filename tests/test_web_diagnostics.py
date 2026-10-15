@@ -406,6 +406,15 @@ class WebHTTPTests(unittest.TestCase):
         status, _ = self.ask(chat, 'prüfe auftrag:' + job['id'], browser='b' * 32)
         self.assertEqual(status, 409)
 
+    def test_web_speicherkern_does_not_claim_private_archives(self):
+        chat = self.new()
+        status, events = self.ask(chat, 'Was steht in deinem Speicherkern?')
+        self.assertEqual(status, 200)
+        reply = next(e['text'] for e in events if e['event'] == 'reply')
+        self.assertIn('keinen Zugriff', reply)
+        self.assertIn('flüchtigen Webgesprächs', reply)
+        self.assertNotIn('Archiv-Engramme', reply)
+
     def test_yesterday_logs_and_conversation_are_separated(self):
         chat = self.new()
         local = datetime.datetime(2026, 10, 15, 19, 4,
