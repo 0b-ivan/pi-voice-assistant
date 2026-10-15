@@ -40,7 +40,11 @@ Sprache taugt nicht für Schlüssel. Wachziele werden im **Web-Client** angelegt
 ### 3.2 Uptime Kuma
 
 1. Bediener gibt die URL ein (`https://uptime.obivan.org`) und einen **API-Schlüssel** (Uptime Kuma: Einstellungen → API-Schlüssel). Damit liest Proximus den Prometheus-Endpunkt `/metrics` mit Basic-Auth (leerer Nutzer, Schlüssel als Passwort). Das ist offiziell, nur lesend und liefert je Monitor Status, Antwortzeit, Typ, Ziel und Restlaufzeit des Zertifikats.
-2. Optional eine öffentliche **Statusseite** (`/api/status-page/<slug>` und `/api/status-page/heartbeat/<slug>`), ganz ohne Schlüssel, aber nur mit den Monitoren dieser Seite.
+2. Öffentliche **Statusseiten**, ganz ohne Schlüssel, aber nur mit den Monitoren der jeweiligen Seite. Vorhanden sind `https://uptime.obivan.org/status/cloud` und `https://uptime.obivan.org/status/vault`. Proximus liest je Seite:
+   - `/api/status-page/<slug>`: Titel, Gruppen, Monitore mit ID, Name, Typ, bei aktivierter Anzeige auch die URL, außerdem Vorfälle und Wartungen.
+   - `/api/status-page/heartbeat/<slug>`: je Monitor die letzten Herzschläge (Status 0 = DOWN, 1 = UP, 2 = PENDING, 3 = WARTUNG, Zeit, Antwortzeit, Meldung) und die Verfügbarkeit über 24 Stunden und 30 Tage.
+
+   Damit funktioniert Stufe 1 für Uptime Kuma sofort und ohne Geheimnis. Weil die Seiten öffentlich sind, darf Proximus sie auch über das Internet abrufen. Monitore, die auf keiner Statusseite stehen, sieht er erst mit dem API-Schlüssel.
 3. Optional ein **Webhook** aus Uptime Kuma (Benachrichtigung „Webhook“) an CT 107, damit Ausfälle sofort ankommen statt beim nächsten Abruf. Das ist zugleich der Rückkanal aus Roadmap-Idee 4 (`POST /v1/announce`), abgesichert mit eigenem Token.
 4. Proximus ordnet Monitore beim Erkunden Hosts und Containern zu (gleicher Hostname, Port, Containername). Die Zuordnung ist ein Vorschlag, den der Bediener bestätigt oder korrigiert.
 
@@ -159,7 +163,7 @@ Nichts davon liegt auf dem Pi oder dem Gedächtnis-Stick; der Pi bekommt nur Cod
 ## 12. Entscheidungen des Bedieners
 
 1. **Zugriffsstufe auf dem Hetzner-Server:** B (Wrapper, empfohlen), C (Socket-Proxy) oder D (Gruppe `docker`, einfach, aber Root-gleich)?
-2. **Uptime Kuma:** API-Schlüssel für `/metrics` anlegen? Gibt es eine öffentliche Statusseite, die zusätzlich genutzt werden soll?
+2. **Uptime Kuma:** Die Statusseiten `cloud` und `vault` sind gesetzt (15.10.2026). Zusätzlich einen API-Schlüssel für `/metrics` anlegen, damit Proximus auch die Monitore außerhalb dieser Seiten sieht?
 3. **Sprachmodell für Infrastrukturdaten:** nur lokal (Vorschlag) oder OpenRouter erlaubt?
 4. **Schriftliche Meldungen:** zusätzlich Matrix-Raum oder ntfy, oder nur Sprache und Web-Client?
 5. **Schreibzugriff:** Sollen spätere Stufen Monitore anlegen oder Container neu starten dürfen, oder bleibt Proximus dauerhaft nur lesend?
