@@ -38,6 +38,40 @@ MAX_TTL = 7 * 24 * 3600
 CLOCK_SKEW = 300             # a message from up to 5 min in the future is fine
 
 
+# X-Servitor-Status (the Pi's status snapshot): the server ignores a longer
+# header completely, and with it everything that routes a turn.
+STATUS_HEADER_MAX = 1024
+# Given up first, in this order, when the snapshot does not fit: details for
+# spoken reports. Never what routes a turn (memory, devctl, pending, trip,
+# story, llm_mode, lore, persona, voice, maintenance, mood ...).
+STATUS_EXPENDABLE = (
+    'log_resolved', 'log_last', 'log_repairs',
+    'pisugar_auto_power_on', 'pisugar_watchdog', 'pisugar_charge_protection',
+    'pisugar_rtc_alarm', 'pisugar_soft_poweroff', 'safe_shutdown_delay_s', 'safe_shutdown_pct',
+    'charge_restart_pct', 'charge_limit_pct', 'pisugar_chip_c', 'output_current_ma',
+    'log_findings', 'log_checked_at', 'apt_age_days', 'swap_used_pct', 'uptime_s',
+    'server_updates_security', 'server_updates', 'updates_security', 'updates',
+    'lan_ms', 'net_ms', 'wifi_dbm', 'dns', 'disk_free_pct', 'mem_free_pct', 'load_pct',
+    'throttled', 'temp_c', 'cpu', 'battery_mv',
+)
+
+
+def status_header(snapshot):
+    """The snapshot as X-Servitor-Status, at most STATUS_HEADER_MAX characters:
+    expendable details are dropped until it fits. None when empty or when even
+    the routing fields do not fit."""
+    if not snapshot:
+        return None
+    status = dict(snapshot)
+    for name in (None, *STATUS_EXPENDABLE):
+        if name is not None:
+            status.pop(name, None)
+        raw = json.dumps(status, separators=(',', ':'))
+        if len(raw) <= STATUS_HEADER_MAX:
+            return raw
+    return None
+
+
 class ProtocolError(ValueError):
     def __init__(self, code, message):
         super().__init__(message)

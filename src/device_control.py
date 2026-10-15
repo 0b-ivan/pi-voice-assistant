@@ -27,9 +27,19 @@ CONFIRM_SECONDS = 20.0   # from the question; the answer's recording starts well
 _WLAN = re.compile(r'\b(wlan|w lan|wifi|wi fi|wireless lan|funkmodul|funk)\b')
 _CPU_MODE = re.compile(r'\b(cpu|prozessor|leistungs ?modus|leistungs ?profil|rechen ?modus)\b')
 _CPU_SET = re.compile(r'\b(stell\w*|schalt\w*|setz\w*|wechsel\w*|aktivier\w*|nutz\w*|wähl\w*)\b')
-_CPU_ECO = re.compile(r'\b(eco|spar ?modus|spar ?profil|energiespar\w*)\b')
-_CPU_BALANCED = re.compile(r'\b(normal|balanced|ausgeglichen|standard)\b')
-_CPU_POWER = re.compile(r'\b(power|performance|leistung|hochleistung)\b')
+# The profile names Proximus says itself ("Prozessor im Normalmodus") also
+# name the profile: "wechsel in den Sparmodus", "aktiviere den Leistungsmodus".
+_CPU_NAMED = re.compile(r'\b(spar ?modus|normal ?modus|standard ?modus|eco ?modus|'
+                        r'leistungs ?modus|power ?modus|performance ?modus)\b')
+_CPU_ECO = re.compile(r'\b(eco|eco ?modus|spar ?modus|spar ?profil|energiespar\w*)\b')
+_CPU_BALANCED = re.compile(r'\b(normal|normal ?modus|balanced|ausgeglichen|standard|standard ?modus)\b')
+_CPU_POWER = re.compile(r'\b(power|power ?modus|performance|performance ?modus|leistung|'
+                        r'hochleistung\w*)\b')
+# "Leistungsmodus" is the power profile, unless it names the setting itself
+# ("stell den Leistungsmodus auf eco").
+_CPU_POWER_NOUN = re.compile(r'\b(leistungs ?modus)\b')
+# "WLAN nicht ausschalten" must never switch it off: a negated sentence is no command.
+_NEGATION = re.compile(r'\b(nicht|nich|kein\w*|nie|niemals)\b')
 _POWER_NOTICES = re.compile(r'\b(energie ?hinweise|energie ?meldungen|stromwechsel ?meldungen|strom ?hinweise|ladehinweise|netzteil ?ansagen|netzteil ?hinweise)\b')
 _OFF = re.compile(r'\b(aus|ab|deaktivier\w*|abschalt\w*|ausschalt\w*|trenn\w*)\b')
 _ON = re.compile(r'\b(an|ein|aktivier\w*|einschalt\w*|anschalt\w*)\b')
@@ -56,17 +66,20 @@ def command(text):
     """'wlan_off', 'wlan_on', 'sleep', 'reboot', 'shutdown' or None. ``text`` is normalized
     (lower case, no punctuation). Reboot of the server is not ours (maintenance)."""
     text = str(text).strip()
-    if not text or len(text.split()) > 8:
+    if not text or len(text.split()) > 8 or _NEGATION.search(text):
         return None
     # The spoken command can select only the kernel governor. Never interpret
     # overclock/voltage terms as authorization to change boot firmware.
-    if _CPU_MODE.search(text) and _CPU_SET.search(text):
+    named = _CPU_NAMED.search(text) and not _SLEEP.search(text)
+    if (_CPU_MODE.search(text) or named) and _CPU_SET.search(text):
         if re.search(r'\b(overclock\w*|übertakt\w*|spannungs\w*|voltage)\b', text):
             return None
         matches = [('cpu_eco', _CPU_ECO.search(text)),
                    ('cpu_balanced', _CPU_BALANCED.search(text)),
                    ('cpu_power', _CPU_POWER.search(text))]
         selected = [name for name, result in matches if result]
+        if not selected and _CPU_POWER_NOUN.search(text):
+            selected = ['cpu_power']
         return selected[0] if len(selected) == 1 else None
     # Only an explicit command changes optional announcements. Questions about
     # configuring them remain questions, not actions.

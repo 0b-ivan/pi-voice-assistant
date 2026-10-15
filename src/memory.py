@@ -444,8 +444,9 @@ class Trust:
 
 
 def unknown_speaker(context):
-    """An operator is enrolled and the server did not recognize this voice."""
-    return bool(context) and context.get('speaker') == 'unknown'
+    """An operator is enrolled and the server did not recognize this voice.
+    Anything but a memory copy (no stick, llm.NO_MEMORY) names no speaker."""
+    return isinstance(context, dict) and context.get('speaker') == 'unknown'
 
 
 _PUBLIC_DIRECTIVE = re.compile(r'^[\wäöüßÄÖÜ ]{1,40}-(?:Erweiterung|Modul|Protokoll) installiert$')
