@@ -95,6 +95,8 @@ class WebConversations:
         with self.lock:
             chat = self._get(chat_id, principal)
             for job in reversed(chat['jobs']):
+                if job['period'] != period:
+                    break  # ein gestriger Auftrag ist kein aktueller Selbsttest
                 if job['status'] not in FINAL:
                     return dict(job), False   # singleflight: double click / retries
                 if self.clock() - (job['finished'] or self.clock()) < 10:
