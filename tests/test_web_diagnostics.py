@@ -421,8 +421,8 @@ class WebHTTPTests(unittest.TestCase):
             self.assertEqual(kwargs, dict(since=int(start.timestamp()),
                                           until=int(stop.timestamp())))
             return [], coverage
-        with mock.patch.object(self.service, 'now', return_value=local), \\
-             mock.patch.object(web_diagnostics, 'read', side_effect=reader) as read:
+        with (mock.patch.object(self.service, 'now', return_value=local),
+              mock.patch.object(web_diagnostics, 'read', side_effect=reader) as read):
             status, events = self.ask(
                 chat, 'was steht in denn Logs von gestern ? und worüber haben wir gesprochen ?')
             self.assertEqual(status, 200)
