@@ -151,5 +151,147 @@ class WebDiagnosticTests(unittest.TestCase):
             web_diagnostics.analyse(rows, meta)))
 
 
+# HTTP integration: real threaded handler and NDJSON, fake model/journal, no CT 107.
+import http.client
+import tempfile
+import time
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'server'))
+import servitor_server as ss
+from test_servitor_server import FakePipeline, TOKEN
+
+
+class WebHTTPTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        config = ss.Config({'SERVITOR_API_TOKEN': TOKEN, 'SERVITOR_BIND': '127.0.0.1',
+                            'SERVITOR_PORT': '0', 'SERVITOR_RATE_LIMIT_PER_MINUTE': '99',
+                            'SERVITOR_WORKDIR': self.tmp.name})
+        self.pipe = FakePipeline(self.tmp.name)
+        self.service = ss.Service(config, self.pipe)
+        self.service.ready = True
+        self.server = ss.Server(('127.0.0.1', 0), ss.Handler)
+        self.server.service = self.service
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.browser = 'a' * 32
+
+    def request(self, path, obj=None, method='POST', browser=None, chat=None):
+        headers = {'Authorization': 'Bearer ' + TOKEN, 'X-Servitor-Client': 'web',
+                   'X-Servitor-Browser': browser or self.browser}
+        if chat:
+            headers['X-Servitor-Conversation'] = chat
+        body = b'' if obj is None else json.dumps(obj).encode()
+        if obj is not None:
+            headers['Content-Type'] = 'application/json'
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=5)
+        conn.request(method, path, body=body, headers=headers)
+        response = conn.getresponse()
+        status, content = response.status, response.read()
+        conn.close()
+        return status, content
+
+    def new(self, browser=None):
+        status, body = self.request('/v1/web/conversation', browser=browser)
+        self.assertEqual(status, 201)
+        return json.loads(body)['id']
+
+    def ask(self, chat, text, browser=None):
+        status, body = self.request('/v1/ask?format=wav', dict(text=text),
+                                    browser=browser, chat=chat)
+        if status != 200:
+            return status, json.loads(body)
+        return status, [json.loads(line) for line in body.splitlines() if line]
+
+    def await_job(self, chat, timeout=3):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            job = self.service.web_chats.latest(chat, 'token:' + self.browser)
+            if job and job['status'] in web_context.FINAL:
+                return job
+            time.sleep(0.01)
+        self.fail('Job did not finish')
+
+    def test_web_history_is_in_model_but_never_pi_memory(self):
+        chat = self.new()
+        self.assertEqual(self.ask(chat, 'Wie heißt mein Protokoll?')[0], 200)
+        status, events = self.ask(chat, 'Was habe ich gefragt?')
+        self.assertEqual(status, 200)
+        self.assertIn('history', self.pipe.memory)
+        self.assertEqual(self.pipe.memory['speaker'], 'unknown')
+        self.assertEqual(self.pipe.memory['history'][-1]['q'], 'Wie heißt mein Protokoll?')
+        self.assertNotIn('facts', self.pipe.memory)
+
+    def test_full_dialog_start_status_six_errors_and_one_delivery(self):
+        chat = self.new()
+        items = [entry(11900 + i, 'servitor-voice.service',
+                       json.dumps({'event': 'turn_error', 'code': 'llm'}))
+                 for i in range(6)]
+        coverage = dict(read=6, discarded=0, since=4800, until=12000,
+                        limited=False, error=None)
+        with mock.patch.object(web_diagnostics, 'read', return_value=(items, coverage)):
+            status, first = self.ask(chat, 'Selbsttest')
+            self.assertEqual(status, 200)
+            self.assertIn('Auftragskennung', next(e['text'] for e in first
+                                                   if e['event'] == 'reply'))
+            result = self.await_job(chat)
+            self.assertEqual(result['status'], 'abgeschlossen')
+            self.assertIn('6 Ereignisse', result['report']['summary'])
+            status, followup = self.ask(chat, 'Wo ist das Protokoll?')
+            self.assertEqual(status, 200)
+            self.assertIn('6 Ereignisse', followup[1]['text'])
+            status, followup = self.ask(chat, 'Was bedeuten die sechs Fehler?')
+            self.assertEqual(status, 200)
+            self.assertIn('nicht bewiesen', followup[1]['text'].lower())
+            status, followup = self.ask(chat, 'Ist es inzwischen fertig?')
+            self.assertEqual(status, 200)
+            self.assertIn('Lesende Diagnose', followup[1]['text'])
+            status, data = self.request('/v1/web/jobs?conversation=' + chat + '&after=0',
+                                        method='GET')
+            self.assertEqual(status, 200)
+            events = json.loads(data)['events']
+            self.assertEqual(sum(e['stage'] == 'diagnose_done' for e in events), 1)
+            last = json.loads(data)['seq']
+            status, data = self.request('/v1/web/jobs?conversation=' + chat
+                                        + '&after=' + str(last), method='GET')
+            self.assertEqual(json.loads(data)['events'], [])
+
+    def test_double_selftest_and_other_browser_cannot_read(self):
+        chat = self.new()
+        gate = threading.Event()
+        coverage = dict(read=0, discarded=0, since=4800, until=12000,
+                        limited=False, error=None)
+        def slow():
+            gate.wait(2)
+            return [], coverage
+        with mock.patch.object(web_diagnostics, 'read', side_effect=slow) as reader:
+            self.ask(chat, 'Selbsttest')
+            original = self.service.web_chats.latest(chat, 'token:' + self.browser)
+            self.ask(chat, 'Selbsttest')
+            repeated = self.service.web_chats.latest(chat, 'token:' + self.browser)
+            self.assertEqual(original['id'], repeated['id'])
+            self.assertEqual(reader.call_count, 1)
+            status, _ = self.request('/v1/web/jobs?conversation=' + chat,
+                                      method='GET', browser='b' * 32)
+            self.assertEqual(status, 404)
+            status, _ = self.ask(chat, 'Ist es fertig?', browser='b' * 32)
+            self.assertEqual(status, 409)
+            gate.set()
+            self.await_job(chat)
+
+    def test_logout_cancels_and_forgets_web_conversation(self):
+        chat = self.new()
+        status, _ = self.request('/v1/logout')
+        self.assertEqual(status, 200)
+        status, _ = self.request('/v1/web/jobs?conversation=' + chat, method='GET')
+        self.assertEqual(status, 404)
+        another = self.new(browser='b' * 32)
+        self.assertNotEqual(chat, another)
+
+
 if __name__ == '__main__':
     unittest.main()
