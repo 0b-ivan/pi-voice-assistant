@@ -711,7 +711,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual([(line['unit'], line['prio']) for line in lines],
                          [('servitor-voice', 6), ('servitor-llm', 4)])
         self.assertEqual(lines[0]['ts'], 1760000000.0)
-        self.assertEqual(lines[0]['text'], '{"event": "ready", "load_seconds": 3.2}')
+        self.assertEqual(lines[0]['text'], '{"event": "ready"}')  # Private/diagnostic payload omitted
         last = json.loads(data)['seq']
         _, data = self.request(f'/v1/journal?after={last}', method='GET')
         self.assertEqual(json.loads(data)['lines'], [])
