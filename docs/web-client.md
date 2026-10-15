@@ -367,6 +367,10 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
 - `GET /v1/web/jobs?conversation=...&after=N` gibt begrenzte,
   durchnummerierte Diagnoseereignisse zurück. Das Vox-Terminal prüft sie
   regelmäßig und fügt abgeschlossene Ergebnisse ohne weitere Frage hinzu.
+  Diese Ergebnisse und getippte Diagnoseantworten (`local/diagnose`, ohne
+  eigenen Ton) liest das Terminal über `POST /v1/speak` mit der gewählten
+  Stimme vor; Auftragskennungen bleiben dabei nur auf dem Bildschirm. Läuft
+  gerade eine Frage oder Aufnahme, erscheint ein Ergebnis nur als Text.
   Nach der Anzeige bestätigt es den Empfang über `POST /v1/web/ack`;
   der Server protokolliert diese Bestätigung genau einmal. Eine Unterbrechung
   lässt sich über den Ereigniszähler wieder aufnehmen.
