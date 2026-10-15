@@ -98,9 +98,9 @@ def evidence(item):
                 if isinstance(data.get(key), str)
                 and re.fullmatch(r'[a-zA-Z0-9_.-]{1,40}', data[key]))
     message = item['text']
-    if re.match(r'^(?:[\\w@.\\-]+: )?(?:Main process exited|Failed with result|'
+    if re.match(r'^(?:[\w@.\-]+: )?(?:Main process exited|Failed with result|'
                 r'Failed to start|Start request repeated)', message, re.I):
-        return re.sub(r'(?i)\\b(?:Bearer|token|password|secret)\\b\\s*[:=]\\s*\\S+',
+        return re.sub(r'(?i)\b(?:Bearer|token|password|secret)\b\s*[:=]\s*\S+',
                       '[entfernt]', message[:140])
     return 'Freitext nicht freigegeben'
 
