@@ -129,7 +129,8 @@ def read(now=None, capture=_capture, since=None, until=None):
     now = time.time() if now is None else now
     end = int(now if until is None else until)
     since = int(end - WINDOW if since is None else since)
-    if not 0 < end - since <= 24 * 3600 or end > now + 60:
+    # Ein Kalendertag kann wegen der Zeitumstellung 25 Stunden haben.
+    if not 0 < end - since <= 25 * 3600 or end > now + 60:
         raise ValueError('Diagnosezeitraum außerhalb des erlaubten Bereichs')
     args = ['--no-pager', '-q', '-o', 'json',
             '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
