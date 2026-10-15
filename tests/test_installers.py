@@ -81,8 +81,11 @@ class InstallerTests(unittest.TestCase):
         script_path = ROOT / 'deploy' / 'pi-voice-install'
         subprocess.run(['/bin/sh', '-n', str(script_path)], check=True)
         src = script_path.read_text()
-        self.assertIn('cat-file -e "$commit^{commit}"', src)
+        self.assertIn('transfer.fsckObjects=true', src)
+        self.assertIn('"file://$checkout" "$commit"', src)
         self.assertIn('archive --format=tar --output="$work/repo.tar" "$commit"', src)
+        # Never archive straight out of obivan's writable object store.
+        self.assertNotIn('-C "$checkout" \\\n    archive', src)
         self.assertIn('/home/obivan/pi-voice-assistant', src)
         self.assertIn('git fetch origin main', src)
         self.assertIn('curl -fsSL --retry 2', src)
@@ -119,6 +122,58 @@ class InstallerTests(unittest.TestCase):
                 content = tar.extractfile('scripts/install-voice-service.sh').read()
                 self.assertEqual(content, b'echo committed\n')
 
+
+    def _run_installer_copy(self, root, checkout, commit):
+        """Run deploy/pi-voice-install against a temporary checkout."""
+        src = (ROOT / 'deploy' / 'pi-voice-install').read_text()
+        src = src.replace('checkout="/home/obivan/pi-voice-assistant"',
+                          f'checkout="{checkout}"')
+        src = src.replace('https://codeload.github.com/', 'file:///nonexistent/')
+        src = src.replace('/opt/pi-voice-assistant/src/DEPLOYED', str(root / 'DEPLOYED'))
+        script = root / 'pi-voice-install'
+        script.write_text(src)
+        return subprocess.run(['/bin/sh', str(script), commit], capture_output=True,
+                              text=True, env={'PATH': '/usr/bin:/bin',
+                                              'MARKER': str(root / 'ran')})
+
+    def _pinned_checkout(self, root):
+        checkout = root / 'checkout'
+        (checkout / 'scripts').mkdir(parents=True)
+        git = ['git', '-C', str(checkout)]
+        subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+        subprocess.run(git + ['config', 'user.email', 'ci@example.invalid'], check=True)
+        subprocess.run(git + ['config', 'user.name', 'CI'], check=True)
+        (checkout / 'scripts' / 'install-voice-service.sh').write_text(
+            'echo committed > "$MARKER"\n')
+        subprocess.run(git + ['add', '.'], check=True)
+        subprocess.run(git + ['commit', '-qm', 'pinned'], check=True)
+        commit = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
+        blob = subprocess.check_output(
+            git + ['rev-parse', 'HEAD:scripts/install-voice-service.sh'], text=True).strip()
+        return checkout, commit, checkout / '.git' / 'objects' / blob[:2] / blob[2:]
+
+    def test_installer_runs_the_pinned_commit_from_the_local_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout, commit, _blob = self._pinned_checkout(root)
+            result = self._run_installer_copy(root, checkout, commit)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / 'ran').read_text(), 'committed\n')
+            self.assertEqual((root / 'DEPLOYED').read_text(), commit[:7] + '\n')
+
+    def test_installer_rejects_tampered_objects_in_the_writable_checkout(self):
+        """obivan can rewrite .git/objects; root must not run that as the commit."""
+        import zlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout, commit, blob = self._pinned_checkout(root)
+            payload = b'echo tampered > "$MARKER"\n'
+            blob.chmod(0o644)
+            blob.write_bytes(zlib.compress(b'blob %d\0' % len(payload) + payload))
+            result = self._run_installer_copy(root, checkout, commit)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((root / 'ran').exists())
+            self.assertFalse((root / 'DEPLOYED').exists())
 
 
 if __name__ == '__main__':

@@ -15,6 +15,7 @@ from button_shim import LedWriter  # noqa: E402
 from menu import ITEMS, Menu  # noqa: E402
 from ptt import VoiceController  # noqa: E402
 import ptt  # noqa: E402
+import network_control  # noqa: E402
 
 
 class MenuTests(unittest.TestCase):
@@ -195,6 +196,34 @@ class ControllerMenuTests(unittest.TestCase):
                 self.press(down='E')
                 connect.assert_not_called()
                 self.assertIn('Hotspot', self.c.wifi_notes[-1])
+
+    def _wait_wifi(self):
+        import time
+        deadline = time.monotonic() + 2
+        while self.c.wifi_busy and time.monotonic() < deadline:
+            time.sleep(.01)
+
+    def test_wifi_scan_and_connect_wait_for_running_setup_hotspot(self):
+        saved = [dict(uuid='11111111-2222-3333-4444-555555555555', ssid='Home', name='Home')]
+        with patch.object(self.c.wifi, 'available', return_value=True), \
+             patch.object(self.c.wifi, 'saved', return_value=saved), \
+             patch.object(self.c.wifi, 'scan') as scan, \
+             patch.object(self.c.wifi, 'connect') as connect, \
+             patch('ptt.hotspot_control.is_active', return_value=True):
+            self.c.menu.select('wifi_scan')
+            self.press(down='E')
+            self._wait_wifi()
+            scan.assert_not_called()
+            self.assertIsNone(self.c.picker)
+            self.assertEqual(self.c.wifi_notes[-1], network_control.AP_ACTIVE)
+            # A picker opened before the AP started must not switch away either.
+            picker = dict(title='WLAN GESPEICHERT', action='wifi_pick', index=0,
+                          items=[(saved[0]['uuid'], 'Home ✓')],
+                          profiles={saved[0]['uuid']: saved[0]['uuid']})
+            self.c._wifi_pick(picker, True)
+            self._wait_wifi()
+            connect.assert_not_called()
+            self.assertEqual(self.c.wifi_notes[-1], network_control.AP_ACTIVE)
 
     def test_hotspot_menu_starts_worker_without_root_in_voice_loop(self):
         self.c.menu.select('wifi_hotspot_start')

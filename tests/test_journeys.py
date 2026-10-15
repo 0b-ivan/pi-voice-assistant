@@ -47,6 +47,16 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(journeys.parse('nur bus', 'offers'),
                          dict(type='filter', mode='bus'))
 
+    def test_words_starting_with_bus_are_not_bus_requests(self):
+        for utterance in ('wann geht mein business meeting los', 'wann ist die bussi party'):
+            with self.subTest(utterance=utterance):
+                self.assertIsNone(journeys.parse(utterance, 'on'))
+        for utterance in ('welche busse fahren zum hauptbahnhof', 'wann fährt die buslinie 14'):
+            with self.subTest(utterance=utterance):
+                self.assertEqual(journeys.parse(utterance, 'on')['mode'], 'bus')
+        self.assertEqual(journeys.parse('nur noch busse', 'offers'),
+                         dict(type='filter', mode='bus'))
+
     def test_examples_from_the_assignment(self):
         cases = [
             ('Wann fährt die nächste Straßenbahn in die Stadt?', 'on',

@@ -106,7 +106,7 @@ git cat-file -t <vollständiger-40-stelliger-commit-sha>  # erwartet: commit
 sudo /usr/local/sbin/pi-voice-install <vollständiger-40-stelliger-commit-sha>
 ```
 
-Der Installer benötigt selbst **keinen GitHub-Token** und liest aus dem Checkout nur das Git-Objekt mit exakt dem angegebenen SHA. Ist der Commit noch nicht lokal vorhanden, versucht der Wrapper für öffentliche Repositories den anonymen Download; bei einem privaten Repository gibt er eine klare Anweisung zum vorherigen `git fetch` aus. Die sudo-Regel erlaubt `obivan` nur den Wrapper, keine unkontrollierte privilegierte Shell.
+Der Installer benötigt selbst **keinen GitHub-Token**. Er holt den angegebenen SHA per `git fetch file://…` mit `transfer.fsckObjects` in ein eigenes, root-eigenes Repository; dabei wird jedes Objekt neu gehasht. Manipulierte Dateien unter `.git/objects` im (für `obivan` beschreibbaren) Checkout werden so abgelehnt statt als root ausgeführt. Ist der Commit noch nicht lokal vorhanden, versucht der Wrapper für öffentliche Repositories den anonymen Download; bei einem privaten Repository gibt er eine klare Anweisung zum vorherigen `git fetch` aus. Die sudo-Regel erlaubt `obivan` nur den Wrapper, keine unkontrollierte privilegierte Shell.
 
 **Einmaliges Upgrade von einem alten Wrapper mit `curl`-404:** Nach einem erfolgreichen `git fetch origin main` den geprüften neuen Wrapper aus dem festen Commit installieren und anschließend erneut ausführen (die Datei wird root-eigen/0755):
 

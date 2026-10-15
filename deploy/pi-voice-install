@@ -2,8 +2,10 @@
 # Install an immutable pinned GitHub commit as root (sudo rule for obivan).
 # Private repositories cannot be downloaded from codeload anonymously.
 # A previously authenticated, UNPRIVILEGED git fetch populates the local
-# checkout; only the exact content-addressed Git commit is archived, NEVER
-# files from obivan's writable working tree.
+# checkout. Root never reads objects from it directly: obivan can write any
+# file in .git/objects, and git does not re-hash objects on read. Instead,
+# root fetches the commit into its own repository over file://; index-pack
+# recomputes every object id there, so tampered objects are rejected.
 set -eu
 commit="${1:-}"
 case "$commit" in
@@ -17,15 +19,21 @@ work="$(mktemp -d /var/tmp/pi-voice-install.XXXXXX)"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
 # Root does not need a GitHub token or SSH key. The normal (obivan) user
-# authenticates git fetch on the Pi; root reads its verified SHA object only.
+# authenticates git fetch on the Pi; root re-verifies every fetched object.
 checkout="/home/obivan/pi-voice-assistant"
+verified="$work/.verified.git"
 if [ -e "$checkout/.git" ] &&
-   /usr/bin/git -c "safe.directory=$checkout" -C "$checkout" \
-     cat-file -e "$commit^{commit}" 2>/dev/null; then
-  /usr/bin/git -c "safe.directory=$checkout" -C "$checkout" \
-    archive --format=tar --output="$work/repo.tar" "$commit"
+   /usr/bin/git init -q --bare "$verified" &&
+   /usr/bin/git -C "$verified" -c protocol.file.allow=always \
+     -c transfer.fsckObjects=true fetch -q --no-tags \
+     --upload-pack="/usr/bin/git -c safe.directory=$checkout/.git upload-pack" \
+     "file://$checkout" "$commit" 2>/dev/null &&
+   /usr/bin/git -C "$verified" cat-file -e "$commit^{commit}"; then
+  /usr/bin/git -C "$verified" archive --format=tar --output="$work/repo.tar" "$commit"
+  rm -rf "$verified"
   /usr/bin/tar -xf "$work/repo.tar" -C "$work"
 else
+  rm -rf "$verified"
   # Public repository compatibility only. For private repos GitHub returns
   # 404 without credentials, so show the local git fetch instructions.
   if ! curl -fsSL --retry 2 \

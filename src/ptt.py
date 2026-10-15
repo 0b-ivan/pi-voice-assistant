@@ -1840,6 +1840,15 @@ class VoiceController:
         self._publish_picker()
 
         def work():
+            # wlan0 is in AP mode while the setup hotspot runs: a station scan
+            # fails there, and activating a profile would silently kill the AP
+            # while its QR code is still shown.
+            if hotspot_control.is_active():
+                if self.picker is picker:
+                    self.picker = None
+                    self._publish_picker()
+                self.wifi_notes.append(network_control.AP_ACTIVE)
+                return
             profiles = self.wifi.saved()
             if item == 'wifi_scan':
                 aps = self.wifi.scan()
@@ -1882,6 +1891,10 @@ class VoiceController:
         self.link_grace_until = time.monotonic() + WLAN_GRACE_SECONDS
 
         def work():
+            if hotspot_control.is_active():
+                self.wifi_notes.append(network_control.AP_ACTIVE)
+                event('wifi', result='setup_active')
+                return
             connected = self.wifi.connect(uuid)
             event('wifi', result='connected' if connected else 'already_connected')
             self.wifi_notes.append(network_control.CONNECTED if connected
