@@ -9,7 +9,7 @@ Code: [`src/transit.py`](../src/transit.py) (MoBY/EFA-Adapter), [`src/journeys.p
 | Sagen | Ergebnis |
 |---|---|
 | „Wann fährt die nächste Straßenbahn in die Stadt?“ | ohne genannten Start: für den erkannten Bediener ab zu Hause (unterwegs „ab …“ sagen); Gäste werden gefragt („Von zu Hause oder ab welcher Haltestelle?“) |
-| „Wie komme ich von zu Hause nach Nürnberg?“ | bis zu drei erreichbare Verbindungen |
+| „Wie komme ich von zu Hause nach Nürnberg?“ | zunächst die nächste Verbindung; zwei weitere bleiben auswählbar |
 | „Wann fährt der nächste Zug ab Würzburg Hbf?“ | nächste Abfahrten an diesem Bahnhof |
 | „Nur Regionalzüge“ | dieselbe Anfrage ohne ICE/IC |
 | „Die zweite“ | wählt eine Verbindung |
@@ -17,7 +17,7 @@ Code: [`src/transit.py`](../src/transit.py) (MoBY/EFA-Adapter), [`src/journeys.p
 | „Ja“ oder Taste **E** | führt genau diesen Vorschlag aus |
 | „Nein“, „Abbrechen“, Taste **B**, „Stop“ | nichts wird ausgeführt |
 
-Jede Verbindung nennt Linie bzw. Zugnummer, Richtung, Abfahrt, Ankunft, Gehzeit und Losgehzeit, Bahnreisen zusätzlich Umstiege und Gleise. Ohne Echtzeitdaten sagt Proximus „Laut Fahrplan“, bei Verspätung „… Minuten später als geplant“. Keine Ticketpreise, keine Buchung, keine Überwachung gespeicherter Fahrten.
+Zunächst wird nur die früheste erreichbare Verbindung gesprochen; weitere gefundene Optionen bleiben mit „die zweite“ / „die dritte“ auswählbar. Die Einzelauswahl nennt Linie oder Zugnummer, Richtung, Abfahrt, Ankunft, Gehzeit und Losgehzeit, Bahnreisen zusätzlich Umstiege und Gleise. Ohne Echtzeitdaten sagt Proximus „Laut Fahrplan“, bei Verspätung „… Minuten später als geplant“. Keine Ticketpreise, keine Buchung, keine Überwachung gespeicherter Fahrten.
 
 „Von zu Hause“ nutzt `TRANSIT_HOME`. „Hier“ bedeutet nie automatisch zu Hause: der Pi hat keine Ortung und fragt nach. „In die Stadt“ braucht `TRANSIT_CITY_STOP`; ohne diesen Wert fragt Proximus nach einer Haltestelle. Andere Namen sucht der Stop-Finder, die gewählte Haltestelle wird in der Antwort genannt.
 
@@ -25,7 +25,7 @@ Jede Verbindung nennt Linie bzw. Zugnummer, Richtung, Abfahrt, Ankunft, Gehzeit 
 
 Auskunft → Auswahl → Vorschlag → Zustimmung → Ausführung → Ergebnis.
 
-- Der Server (CT 107) erkennt nur, dass eine Fahrtfrage gestellt wurde, und prüft wie gewohnt die Stimme. Er schickt ein `journey`-Ereignis mit der strukturierten Anfrage, dem erkannten Sprecher und der Vorschlags-ID, dann `done`, **ohne Audio und ohne LLM**. Der Pi fragt den Fahrplan selbst ab und spricht die Antwort. Startadresse und Kalenderzugang verlassen den Pi nicht. Ohne Server läuft derselbe Controller über den lokalen Weg.
+- Der Server (CT 107) erkennt nur, dass eine Fahrtfrage gestellt wurde, und prüft wie gewohnt die Stimme. Er schickt ein `journey`-Ereignis mit der strukturierten Anfrage, dem erkannten Sprecher und der Vorschlags-ID, dann `done`, **ohne Audio und ohne LLM**. Der Pi fragt den Fahrplan selbst ab und übergibt ausschließlich den fertigen Antworttext zur Synthese über das bereits vorhandene, authentifizierte /v1/speak an CT 107. Die fertige WAV spielt er über die lokale Soundkarte ab. Wohnkoordinaten, Kalendereinträge und Zugangsdaten verlassen den Pi nicht. Ohne Server läuft derselbe Controller über den lokalen Weg.
 - Der Pi handelt nur nach einem vollständigen Turn (`done` empfangen). Bricht der Strom ab, beantwortet er den Turn lokal; die einmalige Ausführung je Vorschlags-ID verhindert doppelte Aktionen.
 - Es gibt höchstens eine offene Bestätigungsfrage. Sie gehört zu einer Vorschlags-ID und wird vom nächsten Turn (oder von B/E) verbraucht. Jede andere Antwort verwirft sie.
 - Die Frage gilt 90 Sekunden nach vollständiger Ansage (höchstens 5 Minuten ab Vorschlag).
@@ -56,7 +56,7 @@ TRANSIT_HOME=<Breitengrad>,<Längengrad>   # privat, nur hier
 TRANSIT_CITY_STOP=<Stop-ID>               # vom Bediener festgelegt
 ```
 
-Dann `sudo systemctl restart pi-ptt.service`. Der Kalender nutzt die vorhandenen `CALDAV_*`-Werte; das App-Passwort braucht Schreibrecht auf den gewählten Kalender. Der Server braucht keine neue Einstellung, nur den aktuellen Stand (`server/install-ct.sh`). Ohne ihn beantwortet das LLM Fahrtfragen wie bisher.
+Dann `sudo systemctl restart pi-ptt.service`. Der Kalender nutzt die vorhandenen `CALDAV_*`-Werte; das App-Passwort braucht Schreibrecht auf den gewählten Kalender. Der Server verwendet ohne zusätzliche Einstellung den vorhandenen Endpunkt /v1/speak. JOURNEY_REMOTE_TTS=off schaltet die Auslagerung ab. Ist CT 107 nicht erreichbar, wird nur ein kurzer Text lokal gesprochen, solange mindestens 140 MiB MemAvailable gemeldet werden; darunter verzichtet Proximus zum Schutz vor OOM auf lokale Synthese und verwirft offene Bestätigungen.
 
 Stop-IDs finden (öffentliche Abfrage, ohne Startadresse):
 
@@ -75,5 +75,5 @@ Journal: `journey`-Events (`options`, `proposed`, `confirmed`, `done`, `changed`
 - **`TRANSIT_HOME`** auf dem Pi eintragen. Der geocodierte Hauspunkt ist kein vor Ort geprüfter Eingang; die erste Gehzeit kann um eine Minute abweichen.
 - **Live-Abnahme auf dem Pi:** Die Tests laufen gegen nachgebaute rapidJSON-Antworten in der Form der Live-Antworten vom 10.10.2026. Aus der Entwicklungsumgebung war MoBY nicht erreichbar. Eine echte Fahrt (Straßenbahn und ICE), ein bewusst bestätigter Testeintrag in einem Testkalender und eine Erinnerung sind auf dem Gerät noch zu prüfen.
 - **CalDAV-Schreibrecht** des App-Passworts und ein Testkalender: es wurden keine echten Einträge angelegt.
-- **Sprachausgabe:** Fahrtantworten synthetisiert der Pi selbst (Piper lokal), auch auf dem Serverweg. Lange Antworten mit drei Verbindungen brauchen dadurch spürbar länger als Serverantworten.
+- **Sprachausgabe:** Online synthetisiert CT 107 den fertigen Antworttext; offline bleibt nur die kurze lokale, RAM-begrenzte Ansage. Die Abnahme am echten Pi, inklusive Netzverlust und OOM-Schutz, steht noch aus.
 - **Vosk-Erkennung** von Haltestellennamen und Ordinalzahlen mit echter Stimme ist ungeprüft; unbekannte Namen landen beim Stop-Finder, der die gewählte Haltestelle nennt.

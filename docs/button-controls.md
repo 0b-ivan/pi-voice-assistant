@@ -10,7 +10,7 @@ Tasten/RGB sind auf `main` implementiert. Einzeltest A–E zweimal bestanden, He
 | GPIO17 / WM8960 BUTTON | Gleiche PTT-Funktion, parallel zu A |
 | B | Eigene Dienstansage stoppen, Aufnahme/STT-Ergebnis verwerfen; bei offenem Menü: eine Ebene zurück, oben schließen (erst danach bricht B ab); bei offener Rückfrage zu Neustart/Herunterfahren: abbrechen |
 | C / D | Digitalen `Playback`-Pegel um 2 dB senken/erhöhen, gehalten wiederholt |
-| E | Ohne Menü: Status ansagen (Warnungen zuerst, dann Akku, Temperatur, Serververbindung, Sprachkern, Laufzeit; siehe [Architektur](architecture.md#antworten-ohne-llm-status-und-charakter)). Bei offenem Menü: **Bestätigen**; bei offener Rückfrage zu Neustart/Herunterfahren (per Sprache angefordert, 20 s): **ausführen** ([Gerätesteuerung](architecture.md#gerätesteuerung-per-sprache)) |
+| E | Ohne Menü: Status ansagen (Warnungen zuerst, dann Akku, Temperatur, WLAN-Empfang und Internet, Serververbindung, Sprachkern, CPU-Profil wenn nicht NORMAL, Laufzeit; Einleitung und Formulierungen wechseln, die Zahlen nie; siehe [Architektur](architecture.md#antworten-ohne-llm-status-und-charakter)). Bei offenem Menü: **Bestätigen**; bei offener Rückfrage zu Neustart/Herunterfahren (per Sprache angefordert, 20 s): **ausführen** ([Gerätesteuerung](architecture.md#gerätesteuerung-per-sprache)) |
 | PiTFT-Taste oben (GPIO23) / unten (GPIO24) | Menü öffnen, Auswahl hoch/runter; bei ausgeschaltetem Display nur aufwecken |
 
 A und GPIO17 bilden gemeinsam einen Aufnahmetaster: Aufnahme endet erst, wenn beide losgelassen sind. Alle Tasten beim Start loslassen; B–E lösen einmal pro Druck aus. B hat bei gleichzeitigen Aktionen Vorrang.
@@ -21,37 +21,53 @@ C/D ändern nur den digitalen `Playback`-Regler (0,5-dB-Raster, 255 = 0 dB), nic
 
 ## Menü auf dem PiTFT
 
-Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B schließt**, nach 15 s ohne Taste schließt es selbst, PTT schließt es sofort. `pi-ptt` liest beide Tasten (Pull-up, aktiv Low, `PTT_PITFT_BUTTONS=23,24`, leer = aus) und besitzt den Menüzustand; das Display zeigt ihn nur an (feste Werte in `display-status.json`).
+Die beiden PiTFT-Tasten öffnen ein kleines Menü; **E bestätigt**, **B geht zurück**, nach 15 s ohne Taste schließt es selbst, PTT schließt es sofort. `pi-ptt` liest beide Tasten (Pull-up, aktiv Low, `PTT_PITFT_BUTTONS=23,24`, leer = aus) und besitzt den Menüzustand; das Display zeigt ihn nur an (feste Werte in `display-status.json`).
 
 Bluetooth-Lautsprecher ([`src/bluetooth.py`](../src/bluetooth.py)) brauchen einmal [`deploy/install-bluetooth.sh`](../deploy/install-bluetooth.sh) (bluez-alsa, Gruppe bluetooth). Ein gekoppelter Lautsprecher wird alle 30 s geprüft und neu verbunden; Proximus sagt Verbinden und Trennen an. Die Lautstärke regelt der Lautsprecher selbst (C/D wirken nur auf den eingebauten). Auf dem Pi Zero 2 W teilen sich WLAN und Bluetooth einen Funkchip.
 
 Das Menü hat Gruppen; E öffnet eine Gruppe, jede endet mit „Zurück“, B geht eine Ebene zurück und schließt oben. Die Einträge der Gruppe „Persönlichkeit“ bleiben über einen Neustart erhalten (`/var/lib/pi-ptt/settings.json`, systemd `StateDirectory`); die übrigen Schalter starten mit den Werten aus der env-Datei.
 
+Darstellung: Auf der obersten Ebene hat jede Gruppe ein Symbol und rechts ihren wichtigsten Zustand (Sprechstil, CPU-Leistung, WLAN AUS). In einer Gruppe steht oben „MENÜ › GRUPPE“, Werte stehen rechts und überdecken die Bezeichnung nie; ist eine Liste länger als acht Zeilen, zeigt ein Balken am rechten Rand die Position. Die Fußzeile sagt in einem Satz, was der markierte Eintrag tut; „Ausschalten“ ist rot. Die frühere Gruppe „Gerät“ (Alarme, Status-LED, Display) gehört jetzt zu „System“, „Audio“ heißt „Bluetooth“.
+
 | Gruppe | Eintrag | Wirkung |
 |---|---|---|
-| Sprache | Aktivierungswort AN/AUS | Mithören für „Proximus“/„Hey Jarvis“ ein/aus (nicht über Neustart gespeichert) |
-| | Sprachkern AUTO/FREI/LOKAL | AUTO: OpenRouter (Mistral Medium 3.5), bei Ausfall lokal; FREI: wenig eingeschränktes Modell; LOKAL: nur das lokale Modell auf CT 107 |
-| | Server nutzen AN/AUS | Zwischen CT 107 und rein lokalem Betrieb umschalten |
-| | Quittungston AN/AUS | Kurzer Servo-/Binärton beim Loslassen, wenn die Anfrage angenommen ist (Grundeinstellung `PTT_CUE`, [Architektur](architecture.md#sprachausgabe)) |
 | Persönlichkeit | Menschlich AN/AUS | Kurzwahl: Sprechstil BILLY und Stimmeffekt NATÜRLICH zusammen, AUS schaltet beides auf Servitor zurück; die Lore-Stufe bleibt |
-| | Sprechstil SERVITOR/BILLY | Die Maschine oder das Mensch-Modul: Sergeant Billy Blazkowicz vor dem Umbau ([Lore](concepts/lore-blazkowicz.md)); Grundeinstellung `PTT_PERSONA` |
-| | Stimmeffekt MASCHINE/NATÜRLICH | Servitor-Klangeffekt oder Billys Stimme (gleicher Sprecher, etwas tiefer, ohne Maschinenschichten); Grundeinstellung `PTT_VOICE_EFFECT` |
-| | Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status, für beide Sprechstile (Grundeinstellung `PTT_LORE_LEVEL`) |
+|  | Sprechstil SERVITOR/BILLY | Die Maschine oder das Mensch-Modul: Sergeant Billy Blazkowicz vor dem Umbau ([Lore](concepts/lore-blazkowicz.md)); Grundeinstellung `PTT_PERSONA` |
+|  | Stimmeffekt MASCHINE/NATÜRLICH | Servitor-Klangeffekt oder Billys Stimme (gleicher Sprecher, etwas tiefer, ohne Maschinenschichten); Grundeinstellung `PTT_VOICE_EFFECT` |
+|  | Lore-Stufe AUS/DEZENT/VOLL | Warhammer-40k-Vokabular in Antworten und Status, für beide Sprechstile (Grundeinstellung `PTT_LORE_LEVEL`) |
+| Sprache | Aktivierungswort AN/AUS | Mithören für „Proximus“/„Hey Jarvis“ ein/aus (nicht über Neustart gespeichert) |
+|  | Sprachkern AUTO/FREI/LOKAL | AUTO: OpenRouter (Mistral Medium 3.5), bei Ausfall lokal; FREI: wenig eingeschränktes Modell; LOKAL: nur das lokale Modell auf CT 107 |
+|  | Server nutzen AN/AUS | Zwischen CT 107 und rein lokalem Betrieb umschalten |
+|  | Quittungston AN/AUS | Kurzer Servo-/Binärton beim Loslassen, wenn die Anfrage angenommen ist (Grundeinstellung `PTT_CUE`, [Architektur](architecture.md#sprachausgabe)) |
+| Netzwerk | Netzwerkinfos | Übersicht von LAN, WLAN, lokalen IPv4-Adressen, Gateway, DNS, Signal, Access-Point-Status und Clientzahl; ▲/▼ scrollen, E aktualisieren, B schließen – **nur lesend** |
+|  | WLAN suchen | Liste der erreichbaren SSIDs; gespeicherte WLANs sind markiert; unbekannte WLANs werden in der nächsten Ausbaustufe über einen Setup-Hotspot eingerichtet |
+|  | Gespeicherte WLANs | Bekannte Profile auswählen und verbinden; der Netzwerkwechsel kann die SSH-Verbindung unterbrechen |
+|  | Access Point → AP starten | Startet `Proximus-Setup` (ohne LAN/Internet) und zeigt den **WLAN-QR-Code** |
+|  | Access Point → Passwort anzeigen | Zeigt QR-Code für das **aktive** Setup-WLAN; E schaltet auf Passwort im Klartext um |
+|  | Access Point → Verbundene Geräte | Zeigt live assoziierte WLAN-Geräte mit MAC und Signalstärke; PiTFT ▲/▼ blättert, B schließt. Neue Verbindungen erscheinen als lokale Bildschirmmeldung `AP + NEU`. |
+|  | Access Point → Passwort erneuern | Generiert per AP-Neustart ein neues 16-stelliges Zufallspasswort; vorhandene Clients verlieren ihre Verbindung |
+|  | Access Point → AP beenden | Stoppt den Setup-AP, entfernt dessen temporäre Konfiguration |
+|  | Access Point → Zurück | Zurück zum Netzwerkmenü, ohne den AP zu stoppen ([Anleitung](network-setup.md)) |
+|  | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
+| Bluetooth | BT-Lautsprecher AN/AUS | Gekoppelten Bluetooth-Lautsprecher verbinden/trennen; verbunden geht jede Sprachausgabe dorthin, sonst über den eingebauten Lautsprecher |
+|  | Lautsprecher verbinden | Liste der gekoppelten Lautsprecher, E verbindet den gewählten |
+|  | Lautsprecher suchen | Liste erscheint sofort und wächst während der 12 s Suche (nur Audiogeräte, gekoppelte mit ✓); E auf einen Eintrag koppelt (falls nötig) und verbindet |
+|  | Lautsprecher entfernen | Gekoppelten Lautsprecher vergessen |
+| Energie | Akku & Strom | Seite mit Akku (Prozent, Spannung), Versorgung, Verbrauch, Akkumodul-Temperatur, CPU-Profil mit Takt, CPU-Temperatur und Drosselung; jede Taste führt zurück |
+|  | CPU-Leistung ECO/NORMAL/POWER | Schaltet den Governor reihum (`powersave`/`ondemand`/`performance`), gespeichert; übertaktet nie ([Betrieb](operation.md#cpu-profil-selbst-wählen-und-optional-übertakten-pi-zero-2-w)) |
+|  | Netzteil-Ansagen AN/AUS | Ansage beim Anstecken/Abziehen des Netzteils; Akkuwarnungen bleiben immer an |
+|  | Akku-Einstellungen | Sagt Ladebereich, Abschaltschwelle und Schalter des Akkumoduls an (nur lesend) |
+|  | Ausschalten | Fragt nach, E bestätigt (wie „Fahr dich herunter“); rot markiert |
 | Personen | Bekannte Personen | Liste der Stimmprofile, je Person Nachtrainieren/Details/Passphrase/Löschen mit Stimm- und Passphrase-Anmeldung ([Gedächtnis](memory.md#kennenlernen-und-stimmerkennung)) |
-| | Kennenlernen | Neue Person: Stimmproben, Fragen, Stimmprofil |
-| | Stimme nachtrainieren | 20 Stimmproben, dem passenden Profil zugerechnet |
-| Audio | BT-Lautsprecher AN/AUS | Gekoppelten Bluetooth-Lautsprecher verbinden/trennen; verbunden geht jede Sprachausgabe dorthin, sonst über den eingebauten Lautsprecher |
-| | Lautsprecher verbinden | Liste der gekoppelten Lautsprecher, E verbindet den gewählten |
-| | Lautsprecher suchen | Liste erscheint sofort und wächst während der 12 s Suche (nur Audiogeräte, gekoppelte mit ✓); E auf einen Eintrag koppelt (falls nötig) und verbindet |
-| | Lautsprecher entfernen | Gekoppelten Lautsprecher vergessen |
-| Gerät | WLAN AN/AUS | Funk über rfkill; ohne LAN-Kabel ist der Pi danach offline |
-| | Alarme AN/AUS | Ansagen stumm; Herunterfahren bei leerem Akku bleibt aktiv |
-| | Status-LED AN/AUS | SHIM-LED aus; Aufnahme und Fehler zeigt sie trotzdem |
-| | Display aus | Hintergrundbeleuchtung aus; die nächste PiTFT-Taste weckt nur |
+|  | Kennenlernen | Neue Person: Stimmproben, Fragen, Stimmprofil |
+|  | Stimme nachtrainieren | 20 Stimmproben, dem passenden Profil zugerechnet |
 | System | Systeminfo | IP, Laufzeit, RAM, Server, Gedächtnis, Version, Akku |
-| | Status ansagen | Wie E ohne Menü |
-| | Wartung | [Wartungsmodus](maintenance.md) |
-| | Schließen (oberste Ebene) | Menü zu |
+|  | Status ansagen | Wie E ohne Menü |
+|  | Display aus | Hintergrundbeleuchtung aus; die nächste PiTFT-Taste weckt nur |
+|  | Status-LED AN/AUS | SHIM-LED aus; Aufnahme und Fehler zeigt sie trotzdem |
+|  | Alarme AN/AUS | Ansagen stumm; Herunterfahren bei leerem Akku bleibt aktiv |
+|  | Wartung | [Wartungsmodus](maintenance.md) |
+| Schließen | (oberste Ebene) | Menü zu |
 
 ## Status-LED
 

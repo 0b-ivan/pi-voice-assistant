@@ -46,9 +46,11 @@ STATES = ('on', 'offers', 'ask', 'origin', 'destination', 'calendar', 'choice')
 MODES = ('tram', 'bus', 'train', 'regional', 'long')
 ACTIONS = ('remind', 'calendar')
 
+# "bus", "busse", "buslinie 14", "busverbindung" … but not "business"/"bussi".
+_BUS = r'bus(?:se|sen|linie\w*|verbindung\w*|haltestelle\w*|bahnhof\w*|abfahrt\w*)?'
 _VEHICLE = (r'(straßenbahn\w*|strassenbahn\w*|tram|trams|zug|züge|zuge|bahn|bahnen|s bahn|'
             r'regionalzug\w*|regionalbahn\w*|regionalexpress|regio|ice|intercity|fernzug\w*|'
-            r'verbindung(?:en)?|abfahrt(?:en)?|bus\w*)')
+            r'verbindung(?:en)?|abfahrt(?:en)?|' + _BUS + ')')
 _ASKS = re.compile(r'\b(wann|nächste[nrs]?|wie komme ich|fahrplan|'
                    r'fährt|fahren|geht|gehen|welche[rn]?)\b')
 _HOW = re.compile(r'\bwie (komme|kommen) (ich|wir)\b.*\b(nach|zum|zur|in die (innen)?stadt)\b')
@@ -71,7 +73,7 @@ _BARE_NUMBER = {'eins': 0, 'zwei': 1, 'drei': 2, '1': 0, '2': 1, '3': 2}
 _ORDINALS = {'erste': 0, 'zweite': 1, 'dritte': 2, 'letzte': -1}
 _FILTER = re.compile(r'\b(nur|bloß|lieber) (noch )?(?:mit )?(?:dem |der |den )?'
                      r'(regional\w*|regio|straßenbahn\w*|strassenbahn\w*|tram|ice|fernzüge|'
-                     r'fernverkehr|züge|zug|bahn|bus\w*)\b|\bohne (ice|fernverkehr|fernzüge)\b')
+                     r'fernverkehr|züge|zug|bahn|' + _BUS + r')\b|\bohne (ice|fernverkehr|fernzüge)\b')
 _REMIND = re.compile(r'\b(erinner\w* (mich|uns)|weck\w* mich|sag mir bescheid|sag bescheid)\b')
 _CALENDAR = re.compile(r'\b(kalender\w*|eintragen|trag\w* (\w+ ){0,5}ein)\b')
 _BOTH = re.compile(r'\b(beides|beide|alles beides)\b')
@@ -88,7 +90,7 @@ def _mode(text):
         return 'long'
     if re.search(r'\b(straßenbahn\w*|strassenbahn\w*|trams?)\b', text):
         return 'tram'
-    if re.search(r'\bbus\w*\b', text):
+    if re.search(rf'\b{_BUS}\b', text):
         return 'bus'
     if re.search(r'\b(zug|züge|zuge|s bahn|s-bahn)\b', text):
         return 'train'
@@ -386,18 +388,19 @@ def offers_text(options, query, now):
     else:
         head = (f"{len(options)} Verbindungen nach {target}." if len(options) > 1
                 else f"Eine Verbindung nach {target}.")
-    lines = [head]
-    if len(options) == 1 or query['kind'] == 'departures':
-        lines += [option_text(number if len(options) > 1 else None, option, now)
-                  for number, option in enumerate(options, 1)]
-    else:
-        # Several trips: one short sentence each; the details follow the choice.
-        lines += [short_text(number, option, now) for number, option in enumerate(options, 1)]
-        if not all(option['realtime'] for option in options):
-            lines.append('Zeiten teils laut Fahrplan.')
+    # A "next departure" request should not synthesize three complete trips
+    # on the 512 MB Pi. Retain every option for "die zweite"/"die dritte",
+    # but speak only the nearest connection initially.
+    first = options[0]
+    line = (option_text(None, first, now) if query['kind'] == 'departures'
+            else short_text(1, first, now))
+    lines = [head, line]
+    if not first['realtime'] and query['kind'] != 'departures':
+        lines.append('Laut Fahrplan.')
     if len(options) > 1:
-        lines.append('Welche? Die erste' + (', zweite oder dritte?' if len(options) == 3
-                                            else ' oder zweite?'))
+        lines.append('Weitere Verbindung verfügbar.' if len(options) == 2 else
+                     'Zwei weitere Verbindungen verfügbar.')
+        lines.append('Sag die zweite' + (' oder dritte.' if len(options) == 3 else '.'))
     return ' '.join(lines)
 
 
@@ -915,6 +918,44 @@ def proposal_text(proposal, now):
         question += (" Die Erinnerung am Gerät liegt nur im Arbeitsspeicher: das Gerät muss "
                      "laufen, ein Neustart löscht sie.")
     return question + " Ja oder Taste E."
+
+
+def brief_proposal_text(proposal, now, max_chars=170):
+    """Short but complete consent question for offline/low-memory TTS.
+
+    An abbreviated message is permitted only when the departure, action,
+    chosen calendar and volatile reminder warning still fit. Otherwise
+    return None: the caller must revoke the unheard proposal.
+    """
+    try:
+        option = proposal['option']
+        first = option['vehicles'][0]
+        label = first['label']
+        depart = clock(option['dep'], now)
+        arrive = f", an {clock(option['arr'], now)}" if option['arr'] else ''
+        day = day_word(option['dep'], now)
+        intro = f"Fahrt {label}, {day} ab {depart}{arrive}. "
+        actions = set(proposal['actions'])
+        extras = []
+        if 'calendar' in actions:
+            extras.append(f"die Fahrt in Kalender {proposal['calendar'][1]} eintragen")
+        if 'remind' in actions:
+            alarm = proposal['alarm']
+            if alarm is None:
+                extras.append('dich hier am Gerät vor Abfahrt erinnern')
+            else:
+                extras.append(f"dich um {clock(alarm, now)} hier am Gerät erinnern")
+        if not extras:
+            return None
+        message = intro + 'Soll ich ' + ' und '.join(extras) + '? '
+        if 'remind' in actions:
+            message += 'Neustart löscht die Erinnerung. '
+        message += 'Ja oder Taste E.'
+        if len(message) > max_chars and arrive:
+            message = message.replace(intro, f"Fahrt {label}, {day} ab {depart}. ", 1)
+        return message if len(message) <= max_chars else None
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
 
 
 def reminder_text(option):

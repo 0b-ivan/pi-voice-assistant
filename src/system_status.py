@@ -8,6 +8,7 @@ import shutil
 
 import logwatch
 from mood import EMOTIONS
+import variants
 
 
 THERMAL_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
@@ -151,6 +152,13 @@ SNAPSHOT_FIELDS = {
     'disk_free_pct': (int, 0, 100),
     'uptime_s': (int, 0, 10 ** 9),
     'battery_pct': (int, 0, 100),
+    'battery_mv': (int, 2500, 4500),
+    'output_current_ma': (int, 0, 5000),
+    'pisugar_chip_c': (int, -40, 85),
+    'charge_restart_pct': (int, 0, 100),
+    'charge_limit_pct': (int, 1, 100),
+    'safe_shutdown_pct': (int, 0, 100),
+    'safe_shutdown_delay_s': (int, 0, 3600),
     'swap_used_pct': (int, 0, 100),
     'throttled': (int, 0, 0xFFFFFFFF),
     'wifi_dbm': (int, -120, 0),
@@ -174,6 +182,16 @@ SNAPSHOT_STATES = {'server': ('ok', 'down', 'off'), 'llm': ('openrouter', 'offli
                    # device_control: the Pi knows spoken device commands, and the
                    # reboot/shutdown question it is waiting to have confirmed.
                    'devctl': ('on',), 'pending': ('reboot', 'shutdown'),
+                   'power_notices': ('on', 'off'),
+                   # CPU profile chosen in the menu, and the one really in effect
+                   # (cpu_state.classify).
+                   'cpu_mode': ('eco', 'balanced', 'power'),
+                   'cpu': ('eco', 'balanced', 'power', 'overclock', 'unknown'),
+                   'pisugar_soft_poweroff': ('on', 'off'),
+                   'pisugar_rtc_alarm': ('on', 'off'),
+                   'pisugar_watchdog': ('on', 'off'),
+                   'pisugar_charge_protection': ('on', 'off'),
+                   'pisugar_auto_power_on': ('on', 'off'),
                    # The Pi plays multi-part long stories (story.py, /v1/story).
                    'story': ('on',),
                    # journeys.py: the Pi knows journeys, and what it is waiting for.
@@ -259,21 +277,44 @@ def collect_snapshot(battery=None, throttled=None, server=None, lore=None, wlan=
     if battery:
         raw.update(battery_pct=battery.get('percent'),
                    battery_charging=bool(battery.get('charging')),
-                   battery_plugged=bool(battery.get('plugged')))
+                   battery_plugged=bool(battery.get('plugged')),
+                   battery_mv=battery.get('mv'),
+                   output_current_ma=battery.get('output_current_ma'),
+                   pisugar_chip_c=battery.get('board_c'))
+        for battery_key, status_key in (
+            ('soft_poweroff', 'pisugar_soft_poweroff'),
+            ('watchdog', 'pisugar_watchdog'),
+            ('charge_protection', 'pisugar_charge_protection'),
+            ('auto_power_on', 'pisugar_auto_power_on'),
+        ):
+            flag = battery.get(battery_key)
+            if isinstance(flag, bool):
+                raw[status_key] = 'on' if flag else 'off'
     return sanitize_snapshot({k: v for k, v in raw.items() if v is not None})
 
 
-def _uptime_from_seconds(seconds):
+def _uptime_from_seconds(seconds, dative=False):
+    """"zwei Stunden und drei Minuten", "ein Tag", never "null Minuten";
+    ``dative`` for "seit einem Tag", "seit drei Tagen"."""
     minutes = max(0, seconds // 60)
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     if days:
-        return (f"{_duration_words(days, 'Tag', 'Tage')} "
-                f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)}")
-    if hours:
-        return (f"{_duration_words(hours, 'Stunde', 'Stunden', feminine=True)} "
-                f"{_duration_words(minutes, 'Minute', 'Minuten', feminine=True)}")
-    return _duration_words(minutes, 'Minute', 'Minuten', feminine=True)
+        units = ((days, 'Tag', 'Tagen' if dative else 'Tage', False),
+                 (hours, 'Stunde', 'Stunden', True))
+    elif hours:
+        units = ((hours, 'Stunde', 'Stunden', True), (minutes, 'Minute', 'Minuten', True))
+    else:
+        units = ((minutes, 'Minute', 'Minuten', True),)
+
+    def words(value, one, many, female):
+        if value == 1 and dative:
+            return f"{'einer' if female else 'einem'} {one}"
+        return _duration_words(value, one, many, feminine=female)
+    parts = [words(*unit) for unit in units if unit[0]]
+    if not parts:                       # not "null Minuten"
+        return 'weniger als einer Minute' if dative else 'unter einer Minute'
+    return ' und '.join(parts)
 
 
 # Wording of the fixed sentences: the Servitor's lore level, or Billy (the
@@ -314,88 +355,175 @@ def battery_sentence(snapshot, style='off'):
     return f"Energiespeicher {percent} Prozent. Akkubetrieb."
 
 
-def status_text(snapshot, processing=False, lore=None):
+# Opening and closing words of the status report. Only these vary
+# (variants.py); every fact sentence stays word for word.
+STATUS_OPEN = {
+    'servitor': ("Status nominal.", "Alle Systeme nominal.", "Systeme stabil."),
+    'servitor_trouble': ("Status eingeschränkt.", "Status eingeschränkt, Abweichungen erkannt."),
+    'full': ("Status-Litanei beginnt.", "Die Litanei des Zustands beginnt."),
+    'billy': ("Lagebericht.", "Kurzer Überblick.", "Also, mir geht's so:"),
+}
+STATUS_CLOSE = {
+    'off': ("Befehl erwartet.", "Bereit für Befehle.", "Erwarte Anweisungen."),
+    'light': ("Maschinengeist ruhig. Befehl erwartet.", "Der Maschinengeist ist ruhig. Bereit."),
+    'full': ("Der Maschinengeist ist besänftigt. Lob dem Omnissiah.",
+             "Alle Riten erfüllt. Lob dem Omnissiah."),
+    'billy': ("Sonst alles ruhig, Boss.", "Sonst läuft alles.", "Alles im grünen Bereich."),
+    'billy_trouble': ("Was brauchst du?", "Sag, wenn ich was tun soll."),
+    'billy_full': ("Für den Imperator. Was brauchst du?",),
+}
+# Fact sentences in equivalent wordings (same numbers, same meaning).
+STATUS_FACTS = {
+    'temperature': ("Kerntemperatur {t} Grad.", "Kern bei {t} Grad.", "Kerntemperatur: {t} Grad."),
+    'temperature.billy': ("Prozessor bei {t} Grad.", "Der Prozessor hat {t} Grad.",
+                          "{t} Grad im Prozessor."),
+    'server': ("Verbindung zum Server stabil.", "Serververbindung stabil.",
+               "Server erreichbar, Verbindung stabil."),
+    'server.billy': ("Der Server ist da.", "Mit dem Server bin ich verbunden.",
+                     "Der Server antwortet."),
+    'uptime': ("Laufzeit {u}.", "Betriebszeit {u}."),
+    'uptime.billy': ("Ich laufe seit {ud}.", "Ich bin seit {ud} wach."),
+}
+# Effective CPU profile worth a word (BALANCED is the usual case).
+CPU_SENTENCE = {
+    'eco': ("Prozessor im Sparmodus.", "Ich spare gerade Strom."),
+    'power': ("Prozessor im Leistungsmodus.", "Ich laufe auf voller Leistung."),
+    'overclock': ("Prozessor übertaktet.", "Ich bin übertaktet."),
+}
+
+
+def network_sentence(snapshot, billy=False):
+    """WLAN reception and internet in one short sentence, or None while the
+    network watch has not measured yet (or WLAN is off: that is a warning)."""
+    if snapshot.get('wlan') == 'off':
+        return None
+    dbm, net, dns = snapshot.get('wifi_dbm'), snapshot.get('net_ms'), snapshot.get('dns')
+    if dbm is None and net is None and dns is None:
+        return None
+    parts = []
+    if dbm is not None:
+        quality = _wifi_quality(dbm)
+        parts.append(f"WLAN {quality}" if billy else f"WLAN-Empfang {quality}")
+    if net is not None:
+        slow = net >= SLOW_MS
+        parts.append(("Internet geht, aber langsam" if slow else "Internet geht") if billy
+                     else ("Internet langsam" if slow else "Internet erreichbar"))
+    elif dns == 'fail':
+        parts.append("Namensauflösung kaputt" if billy else "Namensauflösung gestört")
+    else:
+        parts.append("kein Internet" if billy else "kein Internet")
+    sentence = ', '.join(parts) + '.'
+    return sentence[0].upper() + sentence[1:]
+
+
+def status_text(snapshot, processing=False, lore=None, rng=None):
     """Servitor status for button E and the spoken "status" question.
 
     Warnings first, then what matters day to day: energy, temperature,
-    connection and language core. Load and storage only when unusual.
+    network, connection and language core. Load and storage only when
+    unusual. Opening and closing words vary (``rng`` for tests).
     """
     snapshot = sanitize_snapshot(snapshot)
-    warnings = []
+    lore = _style(snapshot, lore)
+    billy = is_billy(lore)
+    warnings, trouble = [], False
+
+    def warn(servitor, human, serious=True):
+        nonlocal trouble
+        warnings.append(human if billy else servitor)
+        trouble = trouble or serious
+
     throttled = snapshot.get('throttled', 0)
     if throttled & 0x1:
-        warnings.append("Warnung: Unterspannung.")
+        warn("Warnung: Unterspannung.", "Achtung, Unterspannung. Das Netzteil schwächelt.")
     elif throttled & 0x6:
-        warnings.append("Warnung: Rechenleistung gedrosselt.")
+        warn("Warnung: Rechenleistung gedrosselt.", "Achtung, ich bin gedrosselt.")
     battery = snapshot.get('battery_pct')
     low_battery = (battery is not None and battery <= 15
                    and not snapshot.get('battery_plugged'))
     if low_battery:
-        warnings.append(f"Warnung: Energiespeicher kritisch, {battery} Prozent.")
+        warn(f"Warnung: Energiespeicher kritisch, {battery} Prozent.",
+             f"Achtung, Akku nur noch {battery} Prozent.")
     temperature = snapshot.get('temp_c')
     hot = temperature is not None and temperature >= 75
     if hot:
-        warnings.append(f"Warnung: Kerntemperatur {temperature} Grad.")
+        warn(f"Warnung: Kerntemperatur {temperature} Grad.",
+             f"Achtung, mir ist heiß: {temperature} Grad.")
     if snapshot.get('mem_free_pct', 100) <= 10:
-        warnings.append("Warnung: Arbeitsspeicher knapp.")
+        warn("Warnung: Arbeitsspeicher knapp.", "Achtung, Arbeitsspeicher knapp.")
     if snapshot.get('disk_free_pct', 100) <= 10:
-        warnings.append("Warnung: Datenspeicher knapp.")
+        warn("Warnung: Datenspeicher knapp.", "Achtung, Speicherplatz knapp.")
     if snapshot.get('wlan') == 'off':
-        warnings.append("WLAN deaktiviert. Nur lokaler Betrieb.")
+        warn("WLAN deaktiviert. Nur lokaler Betrieb.", "WLAN ist aus, ich arbeite lokal.",
+             serious=False)
     elif snapshot.get('server') == 'down':
-        warnings.append("Server nicht erreichbar. Lokaler Betrieb.")
+        warn("Server nicht erreichbar. Lokaler Betrieb.",
+             "Der Server antwortet nicht, ich mach lokal weiter.", serious=False)
 
-    lore = _style(snapshot, lore)
-    billy = is_billy(lore)
-    trouble = any(w.startswith("Warnung") for w in warnings)
+    def pick(key, table, name):
+        return variants.pick(f'status.{key}', table[name], rng=rng)
+
     if processing:
         parts = ["Bin noch dran." if billy else "Direktive in Bearbeitung."]
     elif billy:
-        parts = ["Lagebericht." + (" Nicht alles rund." if trouble else "")]
+        parts = [pick('open.billy', STATUS_OPEN, 'billy')
+                 + (" Nicht alles rund." if trouble else "")]
     elif lore == 'full':
-        parts = ["Status-Litanei beginnt."]
-        if any(w.startswith("Warnung") for w in warnings):
+        parts = [pick('open.full', STATUS_OPEN, 'full')]
+        if trouble:
             parts.append("Makel am Maschinengeist erkannt.")
-    elif any(w.startswith("Warnung") for w in warnings):
-        parts = ["Status eingeschränkt."]
+    elif trouble:
+        parts = [pick('open.trouble', STATUS_OPEN, 'servitor_trouble')]
     else:
-        parts = ["Status nominal."]
+        parts = [pick('open', STATUS_OPEN, 'servitor')]
     parts += warnings
     if not low_battery:
         sentence = battery_sentence(snapshot, lore)
         if sentence:
             parts.append(sentence)
+    def fact(name, **values):
+        key = f'{name}.billy' if billy else name
+        return variants.pick(f'status.fact.{key}', STATUS_FACTS[key], rng=rng, **values)
+
     if temperature is not None and not hot:
-        parts.append(f"Kerntemperatur {temperature} Grad.")
+        parts.append(fact('temperature', t=temperature))
     if snapshot.get('load_pct', 0) >= 80:
-        parts.append(f"Systemlast {snapshot['load_pct']} Prozent.")
+        parts.append(f"Ich bin zu {snapshot['load_pct']} Prozent ausgelastet." if billy
+                     else f"Systemlast {snapshot['load_pct']} Prozent.")
+    network = network_sentence(snapshot, billy)
+    if network:
+        parts.append(network)
     server = snapshot.get('server')
     if server == 'ok':
-        parts.append("Verbindung zum Server stabil.")
+        parts.append(fact('server'))
         if snapshot.get('llm_mode') == 'local':
-            parts.append("Sprachkern lokal.")
+            parts.append("Ich denke gerade nur lokal." if billy else "Sprachkern lokal.")
         elif snapshot.get('llm') == 'offline':
-            parts.append("Sprachkern im Notbetrieb.")
+            parts.append("Das Sprachmodell läuft im Notbetrieb." if billy
+                         else "Sprachkern im Notbetrieb.")
     elif server == 'off' and snapshot.get('wlan') != 'off':
-        parts.append("Nur lokaler Betrieb.")
+        parts.append("Ich arbeite nur lokal." if billy else "Nur lokaler Betrieb.")
+    cpu = CPU_SENTENCE.get(snapshot.get('cpu'))
+    if cpu and not (throttled & 0x7):
+        parts.append(cpu[1 if billy else 0])
     if snapshot.get('memory') == 'off':
-        parts.append("Gedächtniskern fehlt.")
+        parts.append("Mein Gedächtnis-Stick fehlt." if billy else "Gedächtniskern fehlt.")
     maintenance = updates_sentence(snapshot, short=True)
     if maintenance:
         parts.append(maintenance)
     uptime = snapshot.get('uptime_s')
     if uptime is not None:
-        parts.append(f"Laufzeit {_uptime_from_seconds(uptime)}.")
+        parts.append(fact('uptime', u=_uptime_from_seconds(uptime),
+                          ud=_uptime_from_seconds(uptime, dative=True)))
     if not processing:
         if billy:
-            parts.append("Für den Imperator. Was brauchst du?" if lore == 'billy_full'
-                         else "Was brauchst du?" if trouble else "Sonst alles ruhig, Boss.")
-        elif lore == 'full':
-            parts.append("Der Maschinengeist ist besänftigt. Lob dem Omnissiah.")
-        elif lore == 'light' and not any(w.startswith("Warnung") for w in warnings):
-            parts.append("Maschinengeist ruhig. Befehl erwartet.")
+            name = ('billy_full' if lore == 'billy_full' else
+                    'billy_trouble' if trouble else 'billy')
+            parts.append(pick(f'close.{name}', STATUS_CLOSE, name))
+        elif lore in ('full', 'light') and not (lore == 'light' and trouble):
+            parts.append(pick(f'close.{lore}', STATUS_CLOSE, lore))
         else:
-            parts.append("Befehl erwartet.")
+            parts.append(pick('close.off', STATUS_CLOSE, 'off'))
     return " ".join(parts)
 
 

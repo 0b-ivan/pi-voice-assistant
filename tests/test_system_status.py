@@ -43,21 +43,80 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(ss.sanitize_snapshot({'log_checked_at': value}), {})
 
 
+class FirstChoice:
+    """rng for variants.pick: always the first wording (exact strings in tests)."""
+    @staticmethod
+    def choice(options):
+        return options[0]
+
+
 class StatusTextTests(unittest.TestCase):
     NOMINAL = dict(temp_c=45, load_pct=10, mem_free_pct=40, disk_free_pct=70,
                    uptime_s=7380, battery_pct=83, battery_charging=True,
                    battery_plugged=True, throttled=0, server="ok", llm="openrouter")
 
+    def setUp(self):
+        import variants
+        variants.reset()
+
+    def status(self, snapshot, **kw):
+        import variants
+        variants.reset()          # pick() avoids the last wording on purpose
+        return ss.status_text(snapshot, rng=FirstChoice, **kw)
+
     def test_nominal_status_is_short_and_ordered(self):
         self.assertEqual(
-            ss.status_text(self.NOMINAL),
+            self.status(self.NOMINAL),
             "Status nominal. Energiespeicher 83 Prozent. Ladung aktiv. Kerntemperatur 45 Grad. "
-            "Verbindung zum Server stabil. Laufzeit zwei Stunden drei Minuten. Befehl erwartet.")
+            "Verbindung zum Server stabil. Laufzeit zwei Stunden und drei Minuten. "
+            "Befehl erwartet.")
+
+    def test_opening_and_closing_vary_but_facts_stay(self):
+        texts = {ss.status_text(self.NOMINAL) for _ in range(20)}
+        self.assertGreater(len(texts), 1)
+        for text in texts:
+            self.assertTrue(text.startswith(ss.STATUS_OPEN['servitor']), text)
+            self.assertTrue(text.endswith(ss.STATUS_CLOSE['off']), text)
+            self.assertIn("Energiespeicher 83 Prozent. Ladung aktiv.", text)
+            self.assertIn("45 Grad.", text)
+            self.assertIn("zwei Stunden und drei Minuten.", text)
+            self.assertTrue(any(server in text for server in ss.STATUS_FACTS['server']), text)
+            # The facts keep their order whatever the wording.
+            self.assertLess(text.index("83 Prozent"), text.index("45 Grad"))
+            self.assertLess(text.index("45 Grad"), text.index("zwei Stunden"))
+
+    def test_network_and_cpu_profile(self):
+        text = self.status(dict(self.NOMINAL, wifi_dbm=-60, net_ms=40, dns='ok', cpu='eco'))
+        self.assertIn("Kerntemperatur 45 Grad. WLAN-Empfang gut, Internet erreichbar. "
+                      "Verbindung zum Server stabil. Prozessor im Sparmodus.", text)
+        self.assertIn("WLAN-Empfang schwach, Namensauflösung gestört.",
+                      self.status(dict(self.NOMINAL, wifi_dbm=-85, dns='fail')))
+        self.assertIn("WLAN-Empfang mittel, Kein Internet.".replace('Kein', 'kein'),
+                      self.status(dict(self.NOMINAL, wifi_dbm=-70, dns='ok')))
+        self.assertIn("Internet langsam.", self.status(dict(self.NOMINAL, net_ms=900)))
+        # Not measured yet, WLAN off (a warning already), balanced CPU: no words.
+        for quiet in (self.NOMINAL, dict(self.NOMINAL, wlan='off', wifi_dbm=-60),
+                      dict(self.NOMINAL, cpu='balanced')):
+            text = self.status(quiet)
+            self.assertNotIn("WLAN-Empfang", text)
+            self.assertNotIn("Prozessor", text)
+        self.assertIn("Prozessor übertaktet.", self.status(dict(self.NOMINAL, cpu='overclock')))
+        self.assertNotIn("übertaktet", self.status(dict(self.NOMINAL, cpu='overclock',
+                                                        throttled=0x4)))
+
+    def test_uptime_words(self):
+        for seconds, words in ((30, "unter einer Minute"), (60, "eine Minute"),
+                               (7200, "zwei Stunden"), (86400, "ein Tag"),
+                               (90000, "ein Tag und eine Stunde")):
+            self.assertEqual(ss._uptime_from_seconds(seconds), words)
+        self.assertEqual(ss._uptime_from_seconds(3 * 86400 + 3600, dative=True),
+                         "drei Tagen und einer Stunde")
+        self.assertEqual(ss._uptime_from_seconds(30, dative=True), "weniger als einer Minute")
 
     def test_warnings_come_first(self):
-        text = ss.status_text(dict(self.NOMINAL, battery_pct=12, battery_charging=False,
-                                   battery_plugged=False, temp_c=78, throttled=0x50005,
-                                   mem_free_pct=5, load_pct=95))
+        text = self.status(dict(self.NOMINAL, battery_pct=12, battery_charging=False,
+                                battery_plugged=False, temp_c=78, throttled=0x50005,
+                                mem_free_pct=5, load_pct=95))
         self.assertTrue(text.startswith(
             "Status eingeschränkt. Warnung: Unterspannung. "
             "Warnung: Energiespeicher kritisch, 12 Prozent. Warnung: Kerntemperatur 78 Grad. "
@@ -67,15 +126,15 @@ class StatusTextTests(unittest.TestCase):
         self.assertEqual(text.count("Energiespeicher"), 1)
 
     def test_connection_states(self):
-        self.assertIn("Sprachkern im Notbetrieb.", ss.status_text(dict(self.NOMINAL, llm="offline")))
-        down = ss.status_text(dict(self.NOMINAL, server="down"))
+        self.assertIn("Sprachkern im Notbetrieb.", self.status(dict(self.NOMINAL, llm="offline")))
+        down = self.status(dict(self.NOMINAL, server="down"))
         self.assertIn("Server nicht erreichbar. Lokaler Betrieb.", down)
         self.assertTrue(down.startswith("Status nominal."))  # informational, not a warning
-        self.assertIn("Nur lokaler Betrieb.", ss.status_text(dict(self.NOMINAL, server="off")))
+        self.assertIn("Nur lokaler Betrieb.", self.status(dict(self.NOMINAL, server="off")))
 
     def test_processing_and_missing_data(self):
-        self.assertEqual(ss.status_text({}, processing=True), "Direktive in Bearbeitung.")
-        self.assertEqual(ss.status_text({}), "Status nominal. Befehl erwartet.")
+        self.assertEqual(self.status({}, processing=True), "Direktive in Bearbeitung.")
+        self.assertEqual(self.status({}), "Status nominal. Befehl erwartet.")
 
     def test_persona_and_voice_are_whitelisted(self):
         self.assertEqual(ss.sanitize_snapshot({"persona": "mensch", "voice": "natural"}),
@@ -83,14 +142,17 @@ class StatusTextTests(unittest.TestCase):
         self.assertEqual(ss.sanitize_snapshot({"persona": "chaos", "voice": 1}), {})
 
     def test_lore_levels(self):
-        light = ss.status_text(dict(self.NOMINAL, lore="light"))
+        light = self.status(dict(self.NOMINAL, lore="light"))
         self.assertTrue(light.endswith("Maschinengeist ruhig. Befehl erwartet."))
-        full = ss.status_text(dict(self.NOMINAL, lore="full"))
+        full = self.status(dict(self.NOMINAL, lore="full"))
         self.assertTrue(full.startswith("Status-Litanei beginnt."))
         self.assertTrue(full.endswith("Lob dem Omnissiah."))
-        warned = ss.status_text(dict(self.NOMINAL, lore="full", throttled=1))
+        warned = self.status(dict(self.NOMINAL, lore="full", throttled=1))
         self.assertIn("Makel am Maschinengeist erkannt. Warnung: Unterspannung.", warned)
-        self.assertTrue(ss.status_text(dict(self.NOMINAL, lore="off")).endswith("Befehl erwartet."))
+        self.assertTrue(self.status(dict(self.NOMINAL, lore="off")).endswith("Befehl erwartet."))
+        # Light lore with a real problem closes plainly.
+        self.assertTrue(self.status(dict(self.NOMINAL, lore="light", throttled=1))
+                        .endswith(". Befehl erwartet."))
         self.assertEqual(ss.sanitize_snapshot({"lore": "full"}), {"lore": "full"})
         self.assertEqual(ss.sanitize_snapshot({"lore": "chaos"}), {})
 

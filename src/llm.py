@@ -394,8 +394,10 @@ def _extract_text(payload, label="OpenRouter"):
 
 
 def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=NO_MEMORY,
-          persona=None, mood=None, story=None):
-    if story is not None:
+          persona=None, mood=None, story=None, messages=None):
+    if messages is not None:
+        pass                                 # a caller-built conversation (rephrase)
+    elif story is not None:
         import story as stories
         messages = stories.messages(story)   # its own compact state, no chat history
     else:
@@ -477,6 +479,70 @@ def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None, persona=None
                  {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, memory, persona,
                  mood, story)
     return text, model
+
+
+# --- Rephrasing fixed answers (server only) --------------------------------
+
+REPHRASE_PROMPT = """Sprich den folgenden Bericht mit deinen eigenen Worten, so wie du ihn \
+gerade sagen würdest, abwechslungsreich und gut verständlich vorgelesen.
+Regeln:
+- Jede Zahl genau so übernehmen, wie sie dasteht, in Ziffern; keine Zahl weglassen, keine dazu.
+- Zahlwörter wie "zwei Stunden" bleiben Wörter.
+- Nichts erfinden, nichts bewerten, was nicht im Bericht steht.
+- Warnungen zuerst und klar als Warnung erkennbar.
+- Keine Abkürzungen, keine Einheitenzeichen, keine Listen, keine Anführungszeichen.
+- Höchstens {sentences} kurze Sätze. Nur der gesprochene Text.
+
+Bericht: {text}"""
+WARNING_WORDS = ('warnung', 'achtung', 'alarm', 'kritisch', 'unterspannung', 'vorsicht')
+MACHINE_WORDS = ('Diese Einheit', 'Omnissiah', 'Maschinengeist', 'Energiespeicher',
+                 'Kogitator', 'Noosphäre', 'Bediener')
+_NUMBER = re.compile(r'\d+(?:,\d+)?')
+
+
+def same_facts(original, candidate, persona=None):
+    """True when ``candidate`` may be spoken instead of ``original``: the same
+    numbers (as a multiset), any warning still sounds like one, a sensible
+    length, no markup, and Billy keeps out of machine words."""
+    if not candidate or any(ch in candidate for ch in '[]{}<>*#'):
+        return False
+    if sorted(_NUMBER.findall(original)) != sorted(_NUMBER.findall(candidate)):
+        return False
+    if not len(original) * 0.4 <= len(candidate) <= len(original) * 1.5 + 80:
+        return False
+    lowered = candidate.lower()
+    if (any(word in original.lower() for word in WARNING_WORDS)
+            and not any(word in lowered for word in WARNING_WORDS)):
+        return False
+    if persona_name(persona) == 'mensch' and any(word in candidate for word in MACHINE_WORDS):
+        return False
+    return True
+
+
+def rephrase(text, lore=None, persona=None, timeout=None):
+    """``text`` (a fixed answer of the Pi or server) in the persona's own,
+    varied words via OpenRouter; None when the result does not keep the
+    facts (same_facts). Raises LLMError when the model cannot be reached."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key or "REPLACE_ME" in api_key:
+        raise LLMError("OPENROUTER_API_KEY is not configured")
+    persona = persona_name(persona)
+    sentences = max(2, min(8, text.count('.') + 1))
+    messages = [{"role": "system",
+                 "content": '\n\n'.join((PERSONA_PROMPTS[persona],
+                                          LORE_PROMPTS[persona][lore_level(lore)]))},
+                {"role": "user",
+                 "content": REPHRASE_PROMPT.format(sentences=sentences, text=text)}]
+    timeout = timeout or _float_env("SERVITOR_REPHRASE_TIMEOUT_SECONDS", 2.5, 0.5, 30.0)
+    url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
+    answer = _chat(url, "-", configured_model(), timeout,
+                   {"max_completion_tokens": _int_env("SERVITOR_REPHRASE_MAX_TOKENS", 220,
+                                                      64, 1024),
+                    "temperature": 0.9},
+                   {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, NO_MEMORY,
+                   persona, messages=messages)
+    answer = speech_text(answer)
+    return answer if same_facts(text, answer, persona) else None
 
 
 def local_model_name():

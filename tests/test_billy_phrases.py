@@ -48,10 +48,14 @@ class BillyWordingTests(unittest.TestCase):
 
     def test_status_keeps_the_facts(self):
         text = status_text(dict(persona='mensch', battery_pct=12, temp_c=80, server='down'))
-        self.assertTrue(text.startswith('Lagebericht. Nicht alles rund.'))
+        import system_status
+        self.assertTrue(any(text.startswith(opening + ' Nicht alles rund.')
+                            for opening in system_status.STATUS_OPEN['billy']), text)
         self.assertIn('12 Prozent', text)
         self.assertIn('80 Grad', text)
-        self.assertIn('Server nicht erreichbar', text)
+        self.assertIn('Der Server antwortet nicht', text)
+        self.assertHuman(text)
+        self.assertNotIn('Kerntemperatur', text)
 
     def test_alarms_in_billys_words(self):
         snapshot = dict(battery_pct=9, temp_c=78, load_pct=95)

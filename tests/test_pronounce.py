@@ -49,6 +49,16 @@ class PronounceTests(unittest.TestCase):
                          "Proximus dient.")
         self.assertEqual(pronounce.spoken("Proximusse", raw_phonemes=True), "Proximusse")
 
+    def test_english_reading_traps(self):
+        # espeak read "PiSugar" as "Pi Suhgar" and the whole compound
+        # "Gerätesoftware" as English ("Dschäritt...").
+        self.assertEqual(pronounce.spoken("Der PiSugar meldet", raw_phonemes=False),
+                         "Der Pai-Schugger meldet")
+        self.assertEqual(pronounce.spoken("eine aktuelle Gerätesoftware.", raw_phonemes=False),
+                         "eine aktuelle Geräte-Software.")
+        self.assertEqual(pronounce.spoken("Software und Systemsoftware", raw_phonemes=False),
+                         "Software und System-Software")
+
     def test_piper_gets_the_respelling(self):
         class Voice:
             def synthesize_wav(self, text, audio):

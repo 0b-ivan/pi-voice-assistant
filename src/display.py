@@ -11,7 +11,10 @@ import subprocess
 import time
 
 from alarms import ALARMS
+import cpu_state
 import menu
+import hotspot_config as ap_config
+import hotspot_control
 from mood import EMOTIONS as MOODS
 from netprobe import ServerProbe, server_state  # noqa: F401 (server_state re-exported)
 from power import Battery, BATTERY_SAMPLE_SECONDS, throttled_flags
@@ -26,7 +29,7 @@ VOICE_EVENT_FILE = Path(
 )
 PROBE_INTERVAL_SECONDS = 2.0
 EVENT_INTERVAL_SECONDS = 0.1
-SLEEP_POLL_SECONDS = 0.3  # screen off: check for wake-ups less often
+SLEEP_POLL_SECONDS = 0.5  # screen off: only the status file, twice a second
 ERROR_HOLD_SECONDS = 3.0
 
 VOICE_EVENT_STATES = {
@@ -155,7 +158,7 @@ def read_status(path=None):
     if (isinstance(index, int) and not isinstance(index, bool)
             and (group is None or group in menu.GROUPS)
             and 0 <= index < len(menu.entries(group))
-            and value.get('menu_page') in ('list', 'info')):
+            and value.get('menu_page') in ('list', *menu.PAGES.values())):
         status['menu_index'] = index
         status['menu_page'] = value['menu_page']
         if group:
@@ -168,7 +171,9 @@ def read_status(path=None):
                          ('opt_emotions', ('on', 'off')), ('mood', MOODS),
                          ('opt_voice', ('servitor', 'natural')),
                          ('opt_wlan', ('on', 'off')), ('opt_alarms', ('on', 'off')),
+                         ('opt_power_notices', ('on', 'off')),
                          ('opt_llm', ('auto', 'free', 'local')),
+                         ('opt_cpu', ('eco', 'balanced', 'power')),
                          ('alarm', tuple(ALARMS)),
                          ('wake_word', tuple(WAKE_WORD_LABELS)),
                          ('screen', ('on', 'off')),
@@ -222,15 +227,24 @@ def last_answer_text(status):
     return f'Zuletzt {seconds} s · {source}'
 
 
-def power_line(battery, throttled):
-    """Idle detail line: power warnings first, then the battery state."""
+def power_warning(throttled, now_only=False):
+    """(text, colour) of a firmware power warning, or None; ``now_only``
+    leaves out the sticky "since boot" under-voltage."""
     if throttled is not None:
         if throttled & 0x1:
             return 'UNTERSPANNUNG!', (255, 70, 70)
         if throttled & 0x6:
             return 'CPU gedrosselt', (255, 180, 0)
-        if throttled & 0x10000:
+        if throttled & 0x10000 and not now_only:
             return 'Unterspannung seit Start', (255, 180, 0)
+    return None
+
+
+def power_line(battery, throttled):
+    """Idle detail line: power warnings first, then the battery state."""
+    warning = power_warning(throttled)
+    if warning:
+        return warning
     if not battery:
         return None
     volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
@@ -656,6 +670,8 @@ def _draw_header(draw, info):
             draw.polygon(diamond, fill=MEMORY_ON)
         else:
             draw.polygon(diamond, outline=(90, 90, 90))
+    name_end = 18 + draw.textlength(DEVICE_NAME, font=font(17)) + (
+        11 if info.get('memory') in ('on', 'off') else 0)
     right_edge = 228
     if info.get('battery'):
         right_edge = draw_battery(draw, 228, 14, info['battery']) - 8
@@ -663,7 +679,85 @@ def _draw_header(draw, info):
     if temp is not None:
         _right(draw, right_edge, 15, f'{temp}°C', 12,
                (255, 120, 90) if temp >= 70 else (145, 155, 165))
+        right_edge -= draw.textlength(f'{temp}°C', font=font(12)) + 3
+    _draw_cpu_tag(draw, right_edge, info, name_end)
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+
+
+# --- CPU profile in effect (cpu_state.classify) -----------------------------
+
+# How the skull looks per profile: picture gain, rain gain while idle, eye
+# breathing (period, low, swing) and the idle frame rate. BALANCED is the
+# unchanged look; ECO is dim and slow (and redraws half as often), POWER
+# glows stronger and breathes faster at the same frame rate.
+SKULL_LOOK = {
+    'eco': dict(gain=0.7, rain=0.3, period=5.0, low=0.3, swing=0.12, fps=2),
+    'balanced': dict(gain=1.0, rain=0.55, period=3.2, low=0.45, swing=0.3, fps=4),
+    'power': dict(gain=1.0, rain=0.8, period=2.2, low=0.68, swing=0.3, fps=4),
+}
+SKULL_LOOK['overclock'] = SKULL_LOOK['power']
+CPU_GOLD = (215, 187, 67)
+# Header tag left of the CPU temperature: ECO, PWR, OC; BALANCED shows none
+# (the usual look), '?' when the state cannot be read.
+CPU_TAG = {
+    'eco': ('ECO', (120, 220, 160)),
+    'power': ('PWR', (255, 150, 40)),
+    'overclock': ('OC', CPU_GOLD),
+    'unknown': ('?', (145, 155, 165)),
+}
+CPU_MISMATCH = (255, 180, 0)
+
+
+def cpu_look(cpu):
+    """Skull look for the CPU state; unknown, missing or limited: BALANCED."""
+    profile = (cpu or {}).get('profile')
+    if (cpu or {}).get('warning'):
+        profile = 'balanced' if profile == 'overclock' else profile
+    return SKULL_LOOK.get(profile, SKULL_LOOK['balanced'])
+
+
+def cpu_badge(cpu, selected=None):
+    """(text, colour, outline) of the CPU tag in the header, or None.
+
+    The text is the profile really in effect; a firmware limit now replaces
+    it (UV under-voltage, DRS throttled) and an overclock is never shown
+    then. The outline turns amber when the menu choice is not what runs
+    (e.g. POWER chosen, battery standby holds powersave)."""
+    if not cpu:
+        return None
+    profile, warning = cpu.get('profile'), cpu.get('warning')
+    if warning == 'undervolt':
+        text, color = 'UV', (255, 70, 70)
+    elif warning == 'throttled':
+        text, color = 'DRS', (255, 180, 0)
+    elif profile in CPU_TAG:
+        text, color = CPU_TAG[profile]
+    else:
+        text, color = None, None
+    outline = color
+    base = cpu.get('base')
+    if selected in cpu_state.GOVERNOR_PROFILE.values() and base in (
+            'eco', 'balanced', 'power') and base != selected:
+        text, color = text or 'NRM', color or (145, 155, 165)
+        outline = CPU_MISMATCH
+    if text is None:
+        return None
+    return text, color, outline
+
+
+def _draw_cpu_tag(draw, x_right, info, x_min):
+    """The CPU tag right-aligned at ``x_right``; returns its left edge."""
+    badge = cpu_badge(info.get('cpu'), info.get('cpu_selected'))
+    if badge is None:
+        return x_right
+    text, color, outline = badge
+    width = draw.textlength(text, font=font(9))
+    left = x_right - width - 4
+    if left < x_min:                       # never over name or memory mark
+        return x_right
+    draw.rectangle((left, 16, x_right, 27), outline=outline)
+    draw.text((left + 2, 17), text, font=font(9), fill=color)
+    return left
 
 
 REST_LEVEL = 0.12        # red eye while resting: low and steady
@@ -692,23 +786,34 @@ def render_rest(display, skull, network, info=None, picture=None):
     display.image(image, 180)
 
 
-def render_skull(display, skull, state, network, level, info=None, frame=0, details=None):
+def render_skull(display, skull, state, network, level, info=None, frame=0, details=None,
+                 blessed=False):
     """The servo skull: red eye glowing with ``level``, the other eye in the
-    status-LED colour, litany streams ("thoughts") falling on both sides."""
+    status-LED colour, litany streams ("thoughts") falling on both sides.
+    The CPU profile in effect (info['cpu']) dims or brightens it. ``blessed``
+    (a real overclock): the eye glows gold and, while idle, gold litanies
+    of the Omnissiah fall instead of the green ones."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     _draw_header(draw, info)
     light = status_light(state, info)
+    look = cpu_look(info.get('cpu'))
     if state in THINKING_STATES:
         mode, gain = 'think', 1.0
     elif state in ('AUSGABE', 'SPRECHEN'):
         mode, gain = 'speak', 0.45 + 0.55 * min(1.0, max(0.0, (level - 0.55) / 0.45))
     else:
-        mode, gain = 'idle', 0.55
-    rain().draw(image, frame, mode, light, font(10), gain)
-    image.paste(skull.frame(level, light), ((WIDTH - skull.base.width) // 2, 42))
+        mode, gain = 'idle', look['rain']
+    rain_color = light
+    if blessed and mode == 'idle' and state == 'BEREIT':
+        mode, rain_color = 'blessed', CPU_GOLD    # listening etc. keep the status colour
+    if look['gain'] < 1.0:
+        gain *= look['gain']
+    rain().draw(image, frame, mode, rain_color, font(10), gain)
+    image.paste(skull.frame(level, light, look['gain'], gold=blessed),
+                ((WIDTH - skull.base.width) // 2, 42))
     _state_line(draw, state, info, details, light)
     _draw_footer(draw, network, info)
     display.image(image, 180)
@@ -721,8 +826,11 @@ def _state_line(draw, state, info, details, light):
         text = f'{state} · {description}' if description else state
         color = VOICE_COLORS.get(state, light)
     elif state == 'BEREIT':
+        warning = power_warning(info.get('throttled'), now_only=True)
         if info.get('alarm'):
             text, color = ALARMS[info['alarm']][1], (255, 70, 70)
+        elif warning:
+            text, color = warning
         elif info.get('last'):
             text, color = info['last'], (145, 155, 165)
         elif info.get('wake'):
@@ -733,6 +841,81 @@ def _state_line(draw, state, info, details, light):
         text, color = 'AUSGABE', VOICE_COLORS['AUSGABE']
     width = draw.textlength(text, font=font(11))
     draw.text(((WIDTH - width) / 2, 181), text, font=font(11), fill=color)
+
+
+# --- Charger plugged in / pulled: a short pictogram ------------------------
+
+POWER_CARD_SECONDS = 2.5
+PLUG_POLL_SECONDS = 1.0
+PLUG_COLOR = (80, 210, 235)        # like the charging battery gauge
+UNPLUG_COLOR = (255, 180, 0)
+
+
+def _plug_pictogram(draw, cx, cy, color):
+    """Mains plug in its socket with a lightning bolt (charger connected)."""
+    # Socket on the right, plug body with two prongs entering it, cable left.
+    draw.rounded_rectangle((cx + 6, cy - 26, cx + 46, cy + 26), radius=8, outline=color, width=3)
+    draw.rounded_rectangle((cx - 30, cy - 18, cx + 2, cy + 18), radius=6, fill=color)
+    for dy in (-9, 6):
+        draw.rectangle((cx + 2, cy + dy, cx + 20, cy + dy + 3), fill=color)
+    draw.line((cx - 30, cy, cx - 44, cy, cx - 50, cy + 10, cx - 62, cy + 14), fill=color, width=4)
+    bolt = ((cx + 30, cy - 14), (cx + 20, cy + 3), (cx + 27, cy + 3), (cx + 23, cy + 16),
+            (cx + 36, cy - 3), (cx + 29, cy - 3))
+    draw.polygon(bolt, fill='white')
+
+
+def _battery_pictogram(draw, cx, cy, color, percent):
+    """Big battery with its charge, the plug pulled away (battery power)."""
+    left, right, top, bottom = cx - 34, cx + 26, cy - 18, cy + 18
+    draw.rounded_rectangle((left, top, right, bottom), radius=5, outline=color, width=3)
+    draw.rectangle((right + 2, cy - 7, right + 7, cy + 7), fill=color)
+    fill = round((right - left - 10) * max(0, min(100, percent or 0)) / 100)
+    if fill:
+        draw.rectangle((left + 5, top + 5, left + 5 + fill, bottom - 5), fill=color)
+    # The pulled plug beside it: grey head, prongs towards the battery, cable.
+    grey = (110, 115, 120)
+    draw.rounded_rectangle((cx + 48, cy + 8, cx + 62, cy + 24), radius=3, fill=grey)
+    for dy in (11, 18):
+        draw.rectangle((cx + 40, cy + dy, cx + 48, cy + dy + 2), fill=grey)
+    draw.line((cx + 62, cy + 16, cx + 70, cy + 16, cx + 74, cy + 26), fill=grey, width=3)
+
+
+def render_power_card(display, plugged, network, info=None):
+    """Charger connected or pulled: for POWER_CARD_SECONDS a big pictogram
+    with the battery state, same header and footer as the live screens."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, info)
+    battery = info.get('battery') or {}
+    percent = battery.get('percent')
+    if plugged:
+        color, title = PLUG_COLOR, 'NETZTEIL VERBUNDEN'
+        _plug_pictogram(draw, 120, 104, color)
+        detail = ('lädt' if battery.get('charging') else 'voll') if battery else ''
+    else:
+        color = (255, 70, 70) if percent is not None and percent <= 15 else UNPLUG_COLOR
+        title = 'AKKUBETRIEB'
+        _battery_pictogram(draw, 112, 104, color, percent)
+        detail = 'Netzteil getrennt'
+    width = draw.textlength(title, font=font(15))
+    draw.text(((WIDTH - width) / 2, 146), title, font=font(15), fill=color)
+    line = ' · '.join(part for part in (f'{percent} %' if percent is not None else '', detail)
+                      if part)
+    if line:
+        width = draw.textlength(line, font=font(12))
+        draw.text(((WIDTH - width) / 2, 170), line, font=font(12), fill=(170, 175, 180))
+    _draw_footer(draw, network, info)
+    display.image(image, 180)
+
+
+def plug_change(previous, current):
+    """True/False when the charger was connected/pulled between two polls,
+    None when nothing changed or a reading is missing."""
+    if previous is None or current is None or previous == current:
+        return None
+    return current
 
 
 WEATHER_FILE = Path(os.environ.get('PI_DISPLAY_WEATHER_FILE', '/run/pi-ptt/display-weather.json'))
@@ -821,12 +1004,24 @@ FACE_PANEL = ((52, 52, 52), (92, 92, 92), (24, 24, 24))  # fill, light edge, dar
 FACE_TOP = 43
 
 
-def _face_panel(draw, image, picture):
-    """Billy's face in a bevelled grey box, like Doom's status bar."""
+# Panel edge per CPU profile: POWER a warm accent, overclock pulsing gold.
+PANEL_ACCENT = {'power': ((120, 96, 60), (40, 30, 20))}
+PANEL_GOLD = (((150, 110, 30), (60, 40, 10)), ((215, 187, 67), (110, 75, 15)))
+
+
+def _face_panel(draw, image, picture, cpu=None, glow=None):
+    """Billy's face in a bevelled grey box, like Doom's status bar.
+    ``glow`` (0..1): overclock god mode, the bevel turns gold and pulses."""
     width, height = picture.size
     x0, y0 = (WIDTH - width) // 2 - 4, FACE_TOP
     x1, y1 = x0 + width + 7, y0 + height + 7
     fill, light, dark = FACE_PANEL
+    if glow is not None:
+        (l0, d0), (l1, d1) = PANEL_GOLD
+        light = tuple(int(a + (b - a) * glow) for a, b in zip(l0, l1))
+        dark = tuple(int(a + (b - a) * glow) for a, b in zip(d0, d1))
+    elif cpu in PANEL_ACCENT:
+        light, dark = PANEL_ACCENT[cpu]
     draw.rectangle((x0, y0, x1, y1), fill=fill)
     draw.line((x0, y1, x0, y0, x1, y0), fill=light, width=2)
     draw.line((x1, y0, x1, y1, x0, y1), fill=dark, width=2)
@@ -885,15 +1080,17 @@ def glitch_picture(skull_image, face_image, frame):
     return result.resize((face_image.width, face_image.height))
 
 
-def render_face(display, picture, state, network, info=None, details=None):
+def render_face(display, picture, state, network, info=None, details=None, glow=None):
     """Billy (persona "mensch"): the face picked by face.choose() instead of
-    the skull, same header, status line and footer."""
+    the skull, same header, status line and footer. ``glow``: overclock
+    pulse 0..1 for the golden panel (the eyes come golden in ``picture``)."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
     _draw_header(draw, info)
-    _face_panel(draw, image, picture)
+    cpu = info.get('cpu') or {}
+    _face_panel(draw, image, picture, None if cpu.get('warning') else cpu.get('profile'), glow)
     _state_line(draw, state, info, details, status_light(state, info))
     _draw_footer(draw, network, info)
     display.image(image, 180)
@@ -958,13 +1155,16 @@ def render_voice(display, state, network, details=None, tick=0, elapsed=0, info=
 
 
 def _menu_value(item, status):
+    if item == 'cpu_mode':
+        return {'eco': 'ECO', 'balanced': 'NORMAL',
+                'power': 'POWER'}.get(status.get('opt_cpu'), '')
     if item == 'server':
         return {'on': 'AN', 'off': 'AUS', 'none': '—'}.get(status.get('opt_server'), '')
     if item == 'led':
         return {'on': 'AN', 'off': 'AUS'}.get(status.get('opt_led'), '')
     if item == 'llm':
         return {'auto': 'AUTO', 'free': 'FREI', 'local': 'LOKAL'}.get(status.get('opt_llm'), '')
-    if item in ('wlan', 'alarms'):
+    if item in ('wlan', 'alarms', 'power_notices'):
         return {'on': 'AN', 'off': 'AUS'}.get(status.get(f'opt_{item}'), '')
     if item == 'lore':
         return {'off': 'AUS', 'light': 'DEZENT', 'full': 'VOLL'}.get(status.get('opt_lore'), '')
@@ -1082,7 +1282,7 @@ def render_enroll(display, status, info=None):
     display.image(image, 180)
 
 
-PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', '/run/pi-ptt/display-people.json'))
+PEOPLE_FILE = Path(os.environ.get('PI_DISPLAY_PEOPLE_FILE', str(ap_config.DISPLAY_VIEW_FILE)))
 ENROLL_FILE = Path(os.environ.get('PI_DISPLAY_ENROLL_FILE', '/run/pi-ptt/display-enroll.json'))
 ENROLL_CONDITIONS = {'near': 'nah', 'far': 'fern', 'quiet': 'leise'}
 
@@ -1108,6 +1308,22 @@ def read_people(path=None):
     items = [str(i)[:28] for i in data.get('items', []) if isinstance(i, str)][:14]
     details = data.get('details') if isinstance(data.get('details'), dict) else {}
     index = data.get('index') if isinstance(data.get('index'), int) else 0
+    expires_at = data.get('expires_at')
+    if data.get('page') == 'wifi_qr':
+        # Never keep an expired QR on screen, even if pi-ptt has died or lost
+        # its runtime state. This check is independent of its 1-second watch.
+        ssid, password = data.get('ssid'), data.get('password')
+        if (ssid != ap_config.SSID or not isinstance(password, str)
+                or not 8 <= len(password) <= 63
+                or any(not (33 <= ord(ch) <= 126) for ch in password)
+                or not ap_config.live_expiration(expires_at, time.time())):
+            return None
+        return dict(page='wifi_qr', ssid=ssid, password=password,
+                    title='WLAN VERBINDEN')
+    if (data.get('title') == 'HOTSPOT BEREIT'
+            and not ap_config.live_expiration(expires_at, time.time())):
+        # The manual text view must expire as strictly as the QR view.
+        return None
     return dict(page=data.get('page') if data.get('page') in ('list', 'actions', 'details')
                 else 'list', index=index, items=items,
                 person=str(data.get('person') or '')[:28], details=details,
@@ -1115,8 +1331,67 @@ def read_people(path=None):
                 title=str(data.get('title') or '')[:16])
 
 
+def wifi_qr_payload(ssid, password):
+    """Standard Wi-Fi QR code: scan with Android/iOS camera to join the AP."""
+    def escaped(value):
+        return ''.join('\\' + ch if ch in '\\;,:"' else ch for ch in value)
+    return 'WIFI:T:WPA;S:' + escaped(ssid) + ';P:' + escaped(password) + ';;'
+
+
+def render_wifi_qr(display, ssid, password, info=None):
+    """High contrast pixel-perfect QR for the 240x240 ST7789 display."""
+    from PIL import Image, ImageDraw
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    draw.text((12, 7), 'PROXIMUS · WLAN', font=font(16), fill=(150, 240, 230))
+    draw.text((12, 26), ssid, font=font(12), fill=(215, 225, 225))
+    try:
+        import qrcode  # Debian python3-qrcode; optional, no network required
+        code = qrcode.QRCode(
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=1, border=4,
+        )
+        code.add_data(wifi_qr_payload(ssid, password), optimize=0)
+        code.make(fit=True)
+        matrix = code.get_matrix()  # includes the 4-module white quiet zone
+        modules = len(matrix)
+        scale = min(220 // modules, 165 // modules)
+        if scale < 2:
+            raise ValueError('Setup QR exceeds PiTFT resolution')
+        side = modules * scale
+        left = (WIDTH - side) // 2
+        top = 44 + (165 - side) // 2
+        draw.rectangle((left, top, left + side - 1, top + side - 1),
+                       fill='white')
+        for row, values in enumerate(matrix):
+            for col, dark in enumerate(values):
+                if dark:
+                    x, y = left + col * scale, top + row * scale
+                    draw.rectangle((x, y, x + scale - 1, y + scale - 1),
+                                   fill='black')
+    except (ImportError, AttributeError, ValueError):
+        draw.text((15, 94), 'QR nicht verfuegbar', font=font(15), fill='white')
+        draw.text((15, 116), 'E: Passwort anzeigen', font=font(12),
+                  fill=(185, 195, 200))
+    draw.line((12, 213, 228, 213), fill=(65, 65, 65))
+    ap = (info or {}).get('ap')
+    if ap and ap['joined']:
+        draw.text((12, 218), 'NEUER CLIENT VERBUNDEN', font=font(11),
+                  fill=(180, 130, 255))
+    elif ap is not None:
+        draw.text((12, 218), f"{ap['count']} verb.  ·  E: Code  B: zurueck",
+                  font=font(10), fill=(145, 155, 165))
+    else:
+        draw.text((12, 218), 'E: Code  ·  B: zurueck', font=font(11),
+                  fill=(145, 155, 165))
+    display.image(image, 180)
+
+
 def render_people(display, view, info=None):
-    """Known people, a person's actions, or their details."""
+    """Known people, a person's actions, their details, or setup QR."""
+    if view.get('page') == 'wifi_qr':
+        render_wifi_qr(display, view['ssid'], view['password'], info)
+        return
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
@@ -1149,7 +1424,13 @@ def render_people(display, view, info=None):
             if row == view['index']:
                 draw.rectangle((10, y - 1, 230, y + 18), fill=(0, 60, 52))
                 draw.text((14, y), '›', font=font(15), fill=accent)
-            draw.text((28, y), label, font=font(15),
+            # Full AP station MACs and WPA2 passwords must fit in 240px.
+            size = 15
+            if ((title == 'HOTSPOT BEREIT' and label.startswith('Code: '))
+                    or title in ('AP CLIENTS', 'NETZWERKINFO')):
+                size = next((v for v in (15, 14, 13, 12, 11, 10)
+                             if draw.textlength(label, font=font(v)) <= 197), 10)
+            draw.text((28, y), label, font=font(size),
                       fill=accent if row == view['index'] else (215, 220, 225))
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
     if view['confirm_delete']:
@@ -1157,7 +1438,9 @@ def render_people(display, view, info=None):
         draw.text((14, 203), 'Profil löschen?', font=font(12), fill='white')
         _right(draw, 226, 214, 'E = Ja · B = Nein', 11, (255, 210, 210))
     else:
-        draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+        footer = ('▲▼ scroll · E: Neu · B: zurück' if title == 'NETZWERKINFO'
+                  else '▲▼ wählen · E: OK · B: zurück')
+        draw.text((12, 209), footer, font=font(11), fill=(145, 155, 165))
     display.image(image, 180)
 
 
@@ -1205,43 +1488,194 @@ def render_maintenance(display, status, info=None):
     display.image(image, 180)
 
 
+MENU_ACCENT = (150, 120, 255)
+MENU_TEXT = (215, 220, 225)
+MENU_GREY = (145, 155, 165)
+MENU_ON = (120, 220, 160)
+MENU_DANGER = (255, 110, 90)
+MENU_ROW = 19          # eight rows between header and footer
+MENU_ROWS = 8
+
+
+def _menu_icon(draw, kind, x, y, color):
+    """12 x 12 pictogram of a top-level group, drawn with lines only."""
+    if kind == 'persona':                                   # face
+        draw.ellipse((x, y, x + 11, y + 11), outline=color)
+        draw.point(((x + 4, y + 4), (x + 7, y + 4)), fill=color)
+        draw.arc((x + 3, y + 4, x + 8, y + 9), 20, 160, fill=color)
+    elif kind == 'voice':                                   # speech bubble
+        draw.rounded_rectangle((x, y + 1, x + 11, y + 8), radius=2, outline=color)
+        draw.polygon(((x + 3, y + 8), (x + 3, y + 11), (x + 6, y + 8)), fill=color)
+    elif kind == 'network':                                 # wifi arcs
+        for r in (2, 5, 8):
+            draw.arc((x + 6 - r, y + 10 - r, x + 6 + r, y + 10 + r), 225, 315, fill=color)
+        draw.point((x + 6, y + 10), fill=color)
+    elif kind == 'audio':                                   # speaker
+        draw.polygon(((x, y + 4), (x + 3, y + 4), (x + 7, y), (x + 7, y + 11),
+                      (x + 3, y + 7), (x, y + 7)), outline=color)
+        draw.arc((x + 6, y + 2, x + 11, y + 9), 300, 60, fill=color)
+    elif kind == 'energy':                                  # lightning bolt
+        draw.polygon(((x + 7, y), (x + 2, y + 7), (x + 6, y + 7), (x + 4, y + 11),
+                      (x + 10, y + 4), (x + 6, y + 4)), fill=color)
+    elif kind == 'people':                                  # person
+        draw.ellipse((x + 3, y, x + 8, y + 5), outline=color)
+        draw.arc((x + 1, y + 6, x + 10, y + 15), 180, 360, fill=color)
+    elif kind == 'system':                                  # gear
+        draw.ellipse((x + 2, y + 2, x + 9, y + 9), outline=color)
+        for dx, dy in ((5, 0), (5, 10), (0, 5), (10, 5)):
+            draw.rectangle((x + dx, y + dy, x + dx + 1, y + dy + 1), fill=color)
+    elif kind == 'close':                                   # cross
+        draw.line((x + 2, y + 2, x + 9, y + 9), fill=color, width=2)
+        draw.line((x + 9, y + 2, x + 2, y + 9), fill=color, width=2)
+
+
+def _menu_summary(item, status):
+    """Short state of a top-level group, shown at its right edge, or ''."""
+    if item == 'persona':
+        return _menu_value('persona', status)
+    if item == 'energy':
+        return _menu_value('cpu_mode', status)
+    if item == 'network' and status.get('opt_wlan') == 'off':
+        return 'WLAN AUS'
+    return ''
+
+
+def _fit(draw, text, size, width):
+    """``text`` shortened with an ellipsis to fit ``width`` pixels."""
+    if draw.textlength(text, font=font(size)) <= width:
+        return text
+    while text and draw.textlength(text + '…', font=font(size)) > width:
+        text = text[:-1]
+    return text.rstrip() + '…'
+
+
 def render_menu(display, status, info=None):
-    """Menu list: PiTFT buttons move, SHIM E confirms, SHIM B closes."""
+    """Menu list: PiTFT buttons move, SHIM E confirms, SHIM B goes back.
+
+    Top level with pictograms and a short state per group; in a group the
+    title is "MENÜ › GROUP". Values sit right and never overlap the label;
+    a bar at the right edge shows where a longer list is scrolled; the
+    footer says what the selected row does."""
     from PIL import Image, ImageDraw
     info = info or {}
     image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
     draw = ImageDraw.Draw(image)
-    accent = (150, 120, 255)
     group = status.get('menu_group')
     right = 228
     if info.get('battery'):
         right = draw_battery(draw, 228, 14, info['battery']) - 8
-    # In a group the title is the group name; shrink it rather than run into the battery.
-    title = 'MENÜ' if group is None else menu.LABELS[group].upper()
-    size = next((n for n in (17, 15, 13) if 12 + draw.textlength(title, font=font(n)) <= right), 12)
-    draw.text((12, 12 + (17 - size) // 2), title, font=font(size), fill='white')
+    if group is None:
+        draw.text((12, 12), 'MENÜ', font=font(17), fill='white')
+    else:
+        trail = 'MENÜ ›' if group not in menu.PARENTS else '… ›'
+        draw.text((12, 16), trail, font=font(11), fill=MENU_GREY)
+        x = 16 + draw.textlength(trail, font=font(11))
+        title = menu.LABELS[group].upper()
+        size = next((n for n in (17, 15, 13) if x + draw.textlength(title, font=font(n)) <= right),
+                    12)
+        draw.text((x, 12 + (17 - size) // 2), _fit(draw, title, size, right - x), font=font(size),
+                  fill='white')
     draw.line((12, 40, 228, 40), fill=(65, 65, 65))
     selected = status.get('menu_index', 0)
-    rows = [(item, menu.label(item, group)) for item in menu.entries(group)]
-    visible = 7  # scroll so the selection stays on screen
-    first = max(0, min(selected - 3, len(rows) - visible))
-    for row, (item, label) in enumerate(rows):
-        if not first <= row < first + visible:
+    rows = menu.entries(group)
+    first = max(0, min(selected - MENU_ROWS // 2 + 1, len(rows) - MENU_ROWS))
+    for row, item in enumerate(rows):
+        if not first <= row < first + MENU_ROWS:
             continue
-        y = 45 + (row - first) * 21
-        if row == selected:
-            draw.rectangle((10, y - 1, 230, y + 18), fill=(40, 32, 70))
-            draw.text((14, y), '›', font=font(15), fill=accent)
-        color = accent if row == selected else (215, 220, 225)
-        if group is None and item in menu.GROUPS:
-            label += ' ›'
-        draw.text((28, y), label, font=font(15), fill=color)
-        value = _menu_value(item, status)
+        y = 44 + (row - first) * MENU_ROW
+        chosen = row == selected
+        if chosen:
+            draw.rectangle((10, y - 1, 229, y + MENU_ROW - 3), fill=(40, 32, 70))
+            draw.rectangle((10, y - 1, 11, y + MENU_ROW - 3), fill=MENU_ACCENT)
+        danger = item in menu.DANGER
+        color = MENU_DANGER if danger else MENU_ACCENT if chosen else MENU_TEXT
+        x = 16
+        if group is None:
+            _menu_icon(draw, item, 16, y + 2, color if chosen else MENU_GREY)
+            x = 34
+        value = (_menu_summary(item, status) if group is None
+                 else _menu_value(item, status))
+        arrow = menu.is_group(item, group)
+        end = 226 - (10 if arrow else 0)
         if value:
-            value_color = (120, 220, 160) if value == 'AN' else (170, 170, 170)
-            _right(draw, 226, y + 1, value, 13, value_color)
+            size = 11 if group is None else 12       # a group's state is only a hint
+            width = draw.textlength(value, font=font(size))
+            value_color = (MENU_ON if value == 'AN' else MENU_GREY if value in ('AUS', '—')
+                           else (190, 175, 255))
+            _right(draw, end, y + 2 + (12 - size), value, size, value_color)
+            end -= width + 6
+        draw.text((x, y), _fit(draw, menu.label(item, group), 14, end - x), font=font(14),
+                  fill=color)
+        if arrow:
+            draw.text((219, y), '›', font=font(14), fill=color)
+    if len(rows) > MENU_ROWS:                               # scroll position
+        top, height = 44, MENU_ROWS * MENU_ROW - 4
+        bar = max(12, height * MENU_ROWS // len(rows))
+        offset = (height - bar) * first // (len(rows) - MENU_ROWS)
+        draw.line((233, top, 233, top + height), fill=(55, 55, 60))
+        draw.rectangle((232, top + offset, 234, top + offset + bar), fill=MENU_GREY)
     draw.line((12, 197, 228, 197), fill=(65, 65, 65))
-    draw.text((12, 209), '▲▼ wählen · E: OK · B: zurück', font=font(11), fill=(145, 155, 165))
+    if info.get('ap') is not None:
+        ap = info['ap']
+        label = 'AP: NEUER CLIENT' if ap['joined'] else f"AP AKTIV · {ap['count']} CLIENTS"
+        draw.text((12, 209), label, font=font(11), fill=(180, 130, 255))
+    else:
+        item = rows[selected] if 0 <= selected < len(rows) else None
+        text = menu.hint(item, group) if item else None
+        draw.text((12, 203), _fit(draw, text or '▲▼ wählen · E: OK · B: zurück', 11, 216),
+                  font=font(11), fill=MENU_DANGER if item in menu.DANGER else MENU_GREY)
+        if text:
+            draw.text((12, 219), '▲▼ wählen · E: OK · B: zurück', font=font(10),
+                      fill=(95, 100, 110))
+    display.image(image, 180)
+
+
+def energy_rows(battery=None, cpu=None, temp=None, throttled=None, selected=None):
+    """Rows of the "Akku & Strom" page, from the display's own readings."""
+    rows = []
+    if battery:
+        volts = f"{battery['mv'] / 1000:.2f}".replace('.', ',')
+        rows.append(('Akku', f"{battery['percent']} % · {volts} V", battery_color(battery)))
+        source = ('Netz · lädt' if battery['charging'] else
+                  'Netz · voll' if battery['plugged'] else 'Akkubetrieb')
+        rows.append(('Versorgung', source, MENU_TEXT))
+        if battery.get('output_current_ma'):
+            rows.append(('Verbrauch', f"{battery['output_current_ma']} mA", MENU_TEXT))
+        if battery.get('board_c') is not None:
+            rows.append(('Akkumodul', f"{battery['board_c']} °C", MENU_TEXT))
+    else:
+        rows.append(('Akku', 'keine Daten', MENU_DANGER))
+    names = {'eco': 'ECO', 'balanced': 'NORMAL', 'power': 'POWER',
+             'overclock': 'ÜBERTAKTET', 'unknown': '?'}
+    if cpu:
+        mhz = f" · {cpu['mhz']} MHz" if cpu.get('mhz') else ''
+        color = CPU_GOLD if cpu.get('profile') == 'overclock' else MENU_TEXT
+        rows.append(('CPU', names.get(cpu.get('profile'), '?') + mhz, color))
+        if selected and cpu.get('base') not in (None, 'unknown') and cpu['base'] != selected:
+            rows.append(('Gewählt', names[selected], CPU_MISMATCH))   # e.g. battery standby
+    if temp is not None:
+        rows.append(('CPU-Temp.', f'{temp} °C', (255, 120, 90) if temp >= 70 else MENU_TEXT))
+    warning = power_warning(throttled)
+    rows.append(('Drosselung', warning[0] if warning else 'keine',
+                 warning[1] if warning else MENU_ON))
+    return rows
+
+
+def render_energy(display, rows, info=None):
+    """The "Akku & Strom" page of the energy menu (E, B or ▲▼ return)."""
+    from PIL import Image, ImageDraw
+    info = info or {}
+    image = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+    draw = ImageDraw.Draw(image)
+    draw.text((12, 12), 'AKKU & STROM', font=font(17), fill='white')
+    _menu_icon(draw, 'energy', 214, 16, CPU_GOLD)
+    draw.line((12, 40, 228, 40), fill=(65, 65, 65))
+    for row, (label, value, color) in enumerate(rows[:8]):
+        y = 46 + row * 18
+        draw.text((12, y), label, font=font(12), fill=(135, 145, 150))
+        _right(draw, 228, y, _fit(draw, value, 13, 140), 13, color)
+    draw.line((12, 197, 228, 197), fill=(65, 65, 65))
+    draw.text((12, 209), 'E oder ▲▼: zurück', font=font(11), fill=MENU_GREY)
     display.image(image, 180)
 
 
@@ -1325,21 +1759,63 @@ def render_info(display, rows):
     display.image(image, 180)
 
 
+def ap_screen_info(snapshot, now=None):
+    """Private local station snapshot -> tiny display-only status, no MAC logs."""
+    t = time.time() if now is None else now
+    if snapshot is None:
+        return None
+    joined = snapshot.get('last_joined_at')
+    return dict(count=len(snapshot['clients']),
+                joined=(isinstance(joined, (float, int)) and 0 <= t - joined < 8))
+
+
+def _network_pictogram(draw, x, y, kind, strength, color):
+    """Four miniature signal bars or a radiating AP glyph in the UI palette."""
+    if kind == 'ap':
+        draw.ellipse((x+6, y+6, x+10, y+10), fill=color)
+        draw.arc((x+1, y+1, x+15, y+15), 210, 330, fill=color, width=2)
+        draw.arc((x-2, y-2, x+18, y+18), 210, 330, fill=color, width=1)
+    elif kind == 'wifi':
+        for n in range(4):
+            xx = x + 3 + 4*n
+            top = y + 12 - 3*n
+            draw.rectangle((xx, top, xx+2, y+12),
+                           fill=color if n < strength else (50, 55, 58))
+    elif kind == 'lan':
+        draw.rectangle((x+2, y+4, x+16, y+12), outline=color, width=1)
+        for xx in (6, 10, 14):
+            draw.line((x+xx, y+4, x+xx, y+7), fill=color)
+    else:
+        draw.line((x+2, y+3, x+16, y+13), fill=color, width=2)
+        draw.arc((x+1, y, x+17, y+17), 220, 320, fill=color, width=1)
+
+
+def network_view(network, info):
+    """Single selection point for WLAN strength / isolated AP / LAN / offline."""
+    ap = info.get('ap')
+    if ap is not None:
+        return ('ap', ('AP + NEU' if ap['joined'] else f"AP {ap['count']}"),
+                (180, 130, 255), 4)
+    if info.get('wlan') == 'off':
+        return ('off', 'WLAN AUS', (140, 145, 150), 0)
+    if info.get('wifi_dbm') is not None and network:
+        level = info['wifi_dbm']
+        bars = 4 if level >= -55 else 3 if level >= -67 else 2 if level >= -78 else 1
+        color = (120, 220, 160) if bars >= 3 else (255, 180, 0) if bars == 2 else (255, 90, 90)
+        return ('wifi', '', color, bars)
+    if network:
+        return ('lan', 'LAN', (120, 220, 160), 0)
+    return ('off', 'OFFLINE', (170, 175, 180), 0)
+
+
 def _draw_footer(draw, network, info):
     draw.line((12,197,228,197), fill=(65,65,65))
     server_text, server_color = SERVER_FOOTER.get(info.get('server'), ('VOICE LIVE', (170,170,170)))
     draw.text((12, 209), server_text, font=font(13), fill=server_color)
-    if info.get('wlan') == 'off':
-        link, link_color = 'WLAN AUS', (150, 150, 150)
-    elif not network:
-        link, link_color = 'OFFLINE', (180, 180, 180)
-    elif info.get('wifi_dbm') is not None:
-        dbm = info['wifi_dbm']
-        link = f'WLAN {dbm}'
-        link_color = (120,220,160) if dbm >= -67 else (255,180,0) if dbm >= -78 else (255,90,90)
-    else:
-        link, link_color = 'NET OK', (120, 220, 160)
-    draw.text((100, 209), link, font=font(13), fill=link_color)
+    kind, text, color, bars = network_view(network, info)
+    _network_pictogram(draw, 100, 207, kind, bars, color)
+    if text:
+        draw.text((121, 209), text, font=font(11), fill=color)
     if info.get('clock'):
         _right(draw, 228, 209, info['clock'], 13, (170, 170, 170))
 
@@ -1432,7 +1908,8 @@ def main():
     except Exception:  # never let the artwork take the status display down
         skull = None
     try:
-        from face import Face, choose as choose_face, health_row, resting as face_resting
+        from face import (Face, GOLD_STEPS, choose as choose_face, gold_step, health_row,
+                          resting as face_resting)
         face = Face()
     except Exception:  # without the sheet Billy keeps the skull
         face = None
@@ -1445,15 +1922,32 @@ def main():
     battery_monitor = Battery()
     battery = None
     throttled = None
+    cpu, cpu_stock = None, cpu_state.board_stock_khz()
     next_battery = 0.0
+    next_plug, plug_seen, power_card = 0.0, None, None   # (plugged, until)
     voice_state = None
     last_event = None
     error_until = None
     next_probe = 0.0
+    next_ap_probe = 0.0
+    ap_snapshot = None
     previous_screen = None
 
     while True:
         now = time.monotonic()
+        status = read_status()
+        # Menu "Display aus" or the idle sleep stage: backlight off, no rendering
+        # and no probes (systemctl, ip, vcgencmd): only this file is watched.
+        lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
+        if lit != screen_lit:
+            backlight.value = lit
+            screen_lit = lit
+        if not lit:
+            previous_screen = None  # redraw at once when the screen comes back
+            plug_seen = None        # no late pictogram for a change while dark
+            next_probe = next_battery = 0.0   # fresh readings on wake-up
+            time.sleep(SLEEP_POLL_SECONDS)
+            continue
 
         if states is None or now >= next_probe:
             states = collect_system_states()
@@ -1464,7 +1958,24 @@ def main():
             temp, wifi = cpu_temp_c(), wifi_dbm()
             battery = battery_monitor.read()
             throttled = throttled_flags()
+            try:      # effective governor/clock, never just the menu choice
+                cpu = cpu_state.classify(cpu_state.read(stock=cpu_stock, throttled=throttled))
+            except Exception:  # noqa: BLE001 - a status read must not stop the screen
+                cpu = None
             next_battery = now + BATTERY_SAMPLE_SECONDS
+
+        if now >= next_plug:
+            # One register each second: the charger shows at once, not after
+            # the next 5 s battery sample.
+            plugged_now = battery_monitor.plugged()
+            changed = plug_change(plug_seen, plugged_now)
+            if plugged_now is not None:
+                plug_seen = plugged_now
+            if changed is not None:
+                power_card = (changed, now + POWER_CARD_SECONDS)
+                battery = battery_monitor.read() or battery   # percent and charging now
+                next_battery = now + BATTERY_SAMPLE_SECONDS
+            next_plug = now + PLUG_POLL_SECONDS
 
         current_event = read_voice_event()
         if current_event is not None and current_event != last_event:
@@ -1506,16 +2017,11 @@ def main():
             )
             error_until = None
 
-        status = read_status()
-        # Menu "Display aus" or the idle sleep stage: backlight off, no rendering.
-        lit = status.get('screen') != 'off' and status.get('power') != 'sleep'
-        if lit != screen_lit:
-            backlight.value = lit
-            screen_lit = lit
-        if not lit:
-            previous_screen = None  # redraw at once when the screen comes back
-            time.sleep(SLEEP_POLL_SECONDS)
-            continue
+        if now >= next_ap_probe:
+            # Private local RAM file, never published to display status/LLM.
+            ap_snapshot = hotspot_control.read_clients()
+            next_ap_probe = now + 2.0
+        ap = ap_screen_info(ap_snapshot)
         if status.get('enroll'):
             screen = ('enroll', tuple(sorted(status.items())), read_enroll_text(),
                       battery_view(battery))
@@ -1524,9 +2030,10 @@ def main():
                 previous_screen = screen
         elif status.get('people') == 'on' and read_people() is not None:
             view = read_people()
-            screen = ('people', json.dumps(view, sort_keys=True), battery_view(battery))
+            screen = ('people', json.dumps(view, sort_keys=True), battery_view(battery),
+                      None if ap is None else (ap['count'], ap['joined']))
             if screen != previous_screen:
-                render_people(display, view, dict(battery=battery))
+                render_people(display, view, dict(battery=battery, ap=ap))
                 previous_screen = screen
         elif status.get('maint') == 'on':  # takes the screen even over a stale menu
             screen = ('maintenance', tuple(sorted(status.items())), battery_view(battery))
@@ -1534,7 +2041,13 @@ def main():
                 render_maintenance(display, status, dict(battery=battery))
                 previous_screen = screen
         elif status.get('menu_index') is not None and states is not None and is_ready(states):
-            if status['menu_page'] == 'info':
+            if status['menu_page'] == 'energy':
+                rows = energy_rows(battery, cpu, temp, throttled, status.get('opt_cpu'))
+                screen = ('energy', tuple(rows))
+                if screen != previous_screen:
+                    render_energy(display, rows)
+                    previous_screen = screen
+            elif status['menu_page'] == 'info':
                 if info_rows is None or now >= next_info:
                     info_rows, next_info = (system_info_rows(battery=battery,
                                                              memory=status.get('memory')),
@@ -1544,9 +2057,10 @@ def main():
                     render_info(display, info_rows)
                     previous_screen = screen
             else:
-                screen = ('menu', tuple(sorted(status.items())), battery_view(battery))
+                screen = ('menu', tuple(sorted(status.items())), battery_view(battery),
+                          None if ap is None else (ap['count'], ap['joined']))
                 if screen != previous_screen:
-                    render_menu(display, status, dict(battery=battery))
+                    render_menu(display, status, dict(battery=battery, ap=ap))
                     previous_screen = screen
         elif states is None or not is_ready(states) or voice_state is None:
             screen = ("boot", tuple(sorted((states or {}).items())))
@@ -1565,13 +2079,16 @@ def main():
                         last=last_answer_text(status), throttled=throttled,
                         battery=battery, volume=volume_overlay(status),
                         alarm=status.get('alarm'), wlan=status.get('opt_wlan'),
-                        memory=status.get('memory'),
+                        memory=status.get('memory'), ap=ap,
+                        cpu=cpu, cpu_selected=status.get('opt_cpu'),
                         wake=(WAKE_WORD_LABELS.get(status.get('wake_word'))
                               if status.get('opt_wake') == 'on' else None))
             # Redraw only when something visible changes: the averaged battery
             # voltage moves by a few mV on almost every sample.
             shown_info = dict(info, battery=battery_view(battery))
             resting = status.get('power') == 'rest' and shown == 'BEREIT'
+            # Gold only for an overclock the firmware really runs, unlimited.
+            overclock = bool(cpu and cpu['profile'] == 'overclock' and not cpu['warning'])
             billy = face is not None and status.get('opt_persona') == 'mensch'
             persona = 'mensch' if billy else 'servitor'
             if (persona_shown is not None and persona != persona_shown
@@ -1580,7 +2097,15 @@ def main():
             persona_shown = persona
             weather_view = (read_weather() if status.get('weather_day') is not None
                             and info.get('volume') is None else None)
-            if weather_view is not None:
+            if power_card is not None and now >= power_card[1]:
+                power_card = None
+            if power_card is not None and info.get('volume') is None:
+                # Charger connected or pulled: a short pictogram over the live screen.
+                screen = ('power', power_card[0], states['network'], shown_info['battery'])
+                if screen != previous_screen:
+                    render_power_card(display, power_card[0], states['network'], info)
+                    previous_screen = screen
+            elif weather_view is not None:
                 # Morning report or a weather question: the forecast while it is said.
                 frame = int(now * WEATHER_FPS)
                 day = int(status['weather_day'])
@@ -1616,7 +2141,8 @@ def main():
             elif billy and resting and info.get('volume') is None:
                 screen = ('rest-face', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']),
+                          cpu_badge(cpu, status.get('opt_cpu')))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info,
                                 picture=face.frame(face_resting(battery)))
@@ -1639,29 +2165,35 @@ def main():
                 key = choose_face(shown, time.time(), level, battery, mood=mood_now(status),
                                   viseme=mouth_now(envelope, time.time()),
                                   alarm=bool(info.get('alarm')), hushed_at=hushed_at,
-                                  plugged_at=plugged_at)
+                                  plugged_at=plugged_at, cpu=None if (cpu or {}).get('warning')
+                                  else (cpu or {}).get('profile'))
+                gold = gold_step(now) if overclock else None
                 # Only a new face (or text) is drawn: idle costs a redraw every few seconds.
-                screen = ('face', shown, states['network'], key,
+                screen = ('face', shown, states['network'], key, gold,
                           tuple(sorted(shown_info.items())))
                 if screen != previous_screen:
-                    render_face(display, face.frame(key), shown, states['network'], info,
-                                (description, icon, step))
+                    picture = face.frame(key) if gold is None else face.godlike(key, gold)
+                    render_face(display, picture, shown, states['network'], info,
+                                (description, icon, step),
+                                None if gold is None else gold / (GOLD_STEPS - 1))
                     previous_screen = screen
             elif skull is not None and resting and info.get('volume') is None:
                 # Temperature and WLAN dBm wobble constantly; at rest they may
                 # lag up to a minute, so the screen is redrawn about once a minute.
                 screen = ('rest', states['network'], info['clock'], shown_info['battery'],
                           info.get('alarm'), info.get('server'), info.get('wlan'),
-                          info.get('memory'))
+                          info.get('memory'), None if ap is None else (ap['count'], ap['joined']),
+                          cpu_badge(cpu, status.get('opt_cpu')))
                 if screen != previous_screen:
                     render_rest(display, skull, states['network'], info)
                     previous_screen = screen
             elif skull is not None and shown in SKULL_STATES and info.get('volume') is None:
-                fps = 4 if shown in ('BEREIT', 'ZUHÖREN') else 10
+                look = cpu_look(cpu)
+                fps = look['fps'] if shown in ('BEREIT', 'ZUHÖREN') else 10
                 frame = int(now * fps)
                 if shown not in ('AUSGABE', 'SPRECHEN'):
                     # Breathing is slow; the rain sets the frame rate.
-                    level = idle_level(frame / fps)
+                    level = idle_level(frame / fps, look['period'], look['low'], look['swing'])
                 else:
                     try:
                         mtime = ENVELOPE_FILE.stat().st_mtime
@@ -1674,7 +2206,7 @@ def main():
                           tuple(sorted(shown_info.items())))
                 if screen != previous_screen:
                     render_skull(display, skull, shown, states['network'], level, info,
-                                 frame, (description, icon, step))
+                                 frame, (description, icon, step), overclock)
                     previous_screen = screen
             else:
                 screen = ('voice', current, states['network'], tick,

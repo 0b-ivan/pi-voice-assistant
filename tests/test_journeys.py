@@ -72,6 +72,16 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(journeys.parse('nur bus', 'offers'),
                          dict(type='filter', mode='bus'))
 
+    def test_words_starting_with_bus_are_not_bus_requests(self):
+        for utterance in ('wann geht mein business meeting los', 'wann ist die bussi party'):
+            with self.subTest(utterance=utterance):
+                self.assertIsNone(journeys.parse(utterance, 'on'))
+        for utterance in ('welche busse fahren zum hauptbahnhof', 'wann fährt die buslinie 14'):
+            with self.subTest(utterance=utterance):
+                self.assertEqual(journeys.parse(utterance, 'on')['mode'], 'bus')
+        self.assertEqual(journeys.parse('nur noch busse', 'offers'),
+                         dict(type='filter', mode='bus'))
+
     def test_examples_from_the_assignment(self):
         cases = [
             ('Wann fährt die nächste Straßenbahn in die Stadt?', 'on',
@@ -199,10 +209,12 @@ class ControllerTests(unittest.TestCase):
                    tram_journey(utc(12, 8))])
         text = self.offers(rig)
         self.assertIn('2 Verbindungen nach Nürnberg', text)
-        # Several options: one short sentence each, details after the choice.
+        # Only the earliest connection is spoken, alternatives stay selectable.
         self.assertIn('1. Straßenbahn 4, ab DJK-Sportzentrum 14 Uhr 32, direkt, an 14 Uhr 45, '
                       'losgehen 14 Uhr 20.', text)
-        self.assertIn('Zeiten teils laut Fahrplan.', text)   # the second has no realtime
+        self.assertNotIn('14 Uhr 47', text)
+        self.assertIn('Weitere Verbindung verfügbar.', text)
+        self.assertIn('Sag die zweite.', text)
         self.assertNotIn('Richtung', text)
         self.assertEqual(rig.client.calls[-1][1], ('coord',) + HOME)
         self.assertEqual(rig.c.state(), 'offers')
@@ -237,6 +249,8 @@ class ControllerTests(unittest.TestCase):
         rig = Rig([rail_journey(utc(12, 32), utc(12, 50), delay=4)])
         text = self.offers(rig)
         self.assertIn('1 Umstieg', text)
+        self.assertNotIn('Gleis 8', text)  # details only after choosing
+        text = rig.say('die erste')
         self.assertIn('ICE 623 Richtung München Hbf ab Würzburg Hbf 14 Uhr 54, '
                       '4 Minuten später als geplant, Gleis 4.', text)
         self.assertIn('Gleis 8', text)
@@ -275,7 +289,7 @@ class ControllerTests(unittest.TestCase):
         rig = Rig(departures=board)
         text = rig.say('wann fährt der nächste zug ab würzburg hbf')
         self.assertIn('ICE 623 Richtung München Hbf, 14 Uhr 10, Gleis 4.', text)
-        self.assertIn('RE 4612 Richtung Nürnberg Hbf, 14 Uhr 20, Gleis 5. Laut Fahrplan.', text)
+        self.assertNotIn('RE 4612', text)  # not synthesized until selected
         text = rig.say('nur regionalzüge')
         self.assertNotIn('ICE', text)
         self.assertIn('RE 4612', text)
@@ -291,9 +305,12 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn('Straßenbahn', response)
         self.assertIn('Steig', response)
         mixed = rig.say('wann fährt die nächste bahn ab würzburg hbf')
-        self.assertIn('Bus 14', mixed)
-        self.assertIn('ICE', mixed)
-        self.assertIn('Straßenbahn', mixed)
+        self.assertIn('ICE', mixed)  # the earliest departure is spoken
+        self.assertNotIn('Bus 14', mixed)
+        self.assertEqual([o['vehicles'][0]['kind'] for o in rig.c.options],
+                         ['long', 'bus', 'tram'])
+        self.assertIn('Bus 14', rig.say('die zweite'))
+        self.assertIn('Straßenbahn 4', rig.say('die dritte'))
 
     def test_reminder_needs_consent_and_runs_exactly_once(self):
         rig = Rig([tram_journey(utc(12, 32)), tram_journey(utc(12, 47))])

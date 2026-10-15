@@ -1,0 +1,11 @@
+// Exact CPU-governor-only instances, no arbitrary units or arguments.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "obivan" &&
+        action.id === "org.freedesktop.systemd1.manage-units" &&
+        ["proximus-cpu-mode@eco.service",
+         "proximus-cpu-mode@balanced.service",
+         "proximus-cpu-mode@power.service"].indexOf(action.lookup("unit")) !== -1 &&
+        action.lookup("verb") === "start") {
+        return polkit.Result.YES;
+    }
+});

@@ -16,6 +16,7 @@ import servitor_server as ss  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from transcribe import NoSpeechError  # noqa: E402
 import memory  # noqa: E402
+import system_status  # noqa: E402
 
 TOKEN = 'x' * 40
 
@@ -641,11 +642,16 @@ class IntentServerTest(ServerTest):
         self.assertEqual(events[-1]['event'], 'done')
 
     def test_briefing_fetches_weather_on_the_server(self):
+        import datetime
+        import zoneinfo
         self.pipeline.transcript = 'guten morgen'
         self.pipeline.fail_llm = True
         self.service.weather = unittest.mock.Mock()
         self.service.weather.get.return_value = dict(now=12, code=3, high=14, low=6, rain=10)
-        _, data = self.request('/v1/turn', b'\1' * 16000)
+        fixed = datetime.datetime(2026, 10, 8, 8, 0,
+                                  tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            _, data = self.request('/v1/turn', b'\1' * 16000)
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertEqual(reply['model'], 'local/intent')
         self.assertIn('Außentemperatur 12 Grad, bedeckt.', reply['text'])
@@ -740,6 +746,16 @@ class IntentServerTest(ServerTest):
             text, _ = self.device_turn('lerne meine stimme', {'memory': 'on'}, copy)
         self.assertEqual(text, memory.GUEST_TEXT)
 
+    def test_enroll_command_without_a_memory_copy_does_not_crash(self):
+        # Status without memory (old Pi, dropped header) or an unknown session
+        # after a server restart: llm.NO_MEMORY reached unknown_speaker() and
+        # the turn failed with AttributeError (audit 14.10.2026).
+        import enroll
+        for transcript in ('stimme kennenlernen', 'lerne meine stimme'):
+            with self.subTest(transcript=transcript):
+                text, _ = self.device_turn(transcript, {'devctl': 'on'})
+                self.assertEqual(text, enroll.MENU_ONLY)
+
     def device_turn(self, transcript, status, memory_copy=None):
         import memory
         self.pipeline.transcript = transcript
@@ -831,9 +847,133 @@ class IntentServerTest(ServerTest):
         conn.close()
         reply = next(e for e in self.events(data) if e['event'] == 'reply')
         self.assertIn('Energiespeicher 83 Prozent. Ladung aktiv.', reply['text'])
-        self.assertIn('Verbindung zum Server stabil.', reply['text'])  # server knows it is up
+        self.assertTrue(any(server in reply['text']                   # server knows it is up
+                            for server in system_status.STATUS_FACTS['server']), reply['text'])
         self.assertNotIn('nicht erreichbar', reply['text'])
 
+    def turn_reply(self, transcript, status):
+        self.pipeline.transcript = transcript
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps(status)})
+        data = conn.getresponse().read()
+        conn.close()
+        return next(e for e in self.events(data) if e['event'] == 'reply')
+
+    def test_information_answers_get_fresh_words_from_the_llm(self):
+        calls = []
+
+        def rephrase(text, lore=None, persona=None, mode=None):
+            calls.append((text, persona, mode))
+            return 'Ich habe 83 Prozent im Akku und lade.'
+        self.pipeline.rephrase = rephrase
+        reply = self.turn_reply('wie ist der akkustand', {'battery_pct': 83,
+                                                         'battery_charging': True})
+        self.assertEqual(reply['text'], 'Ich habe 83 Prozent im Akku und lade.')
+        self.assertEqual(reply['model'], 'local/intent+rephrase')
+        self.assertIn('Energiespeicher 83 Prozent', calls[0][0])   # the fixed facts went in
+        # Times are not rephrased, nor the status report: it must be fast.
+        self.turn_reply('wie spät ist es', {})
+        status = self.turn_reply('wie ist dein status', {'battery_pct': 83})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(status['model'], 'local/intent')
+
+    def test_rephrase_failure_keeps_the_fixed_answer(self):
+        for result in (None, RuntimeError('boom')):
+            def rephrase(text, lore=None, persona=None, mode=None, result=result):
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            self.pipeline.rephrase = rephrase
+            reply = self.turn_reply('wie ist der akkustand', {'battery_pct': 83})
+            self.assertIn('Energiespeicher 83 Prozent', reply['text'])
+            self.assertEqual(reply['model'], 'local/intent')
+
+    def turn_events(self, transcript, status):
+        self.pipeline.transcript = transcript
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers={
+            'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Status': json.dumps(status)})
+        data = conn.getresponse().read()
+        conn.close()
+        return self.events(data)
+
+    def test_long_status_comes_in_parts_for_pis_that_queue_them(self):
+        status = {'battery_pct': 83, 'temp_c': 45, 'uptime_s': 7380, 'wifi_dbm': -60,
+                  'net_ms': 40, 'story': 'on'}
+        events = self.turn_events('wie ist dein status', status)
+        audio = [e for e in events if e['event'] == 'audio']
+        self.assertGreater(len(audio), 1)
+        self.assertEqual([e['part'] for e in audio], list(range(len(audio))))
+        self.assertTrue(all(e['parts'] == len(audio) for e in audio))
+        self.assertLessEqual(len(audio[0]['text']), 80)              # the voice starts early
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual(' '.join(e['text'] for e in audio), reply['text'])
+        self.assertEqual(events[-1]['event'], 'done')
+        self.assertFalse(any(e['event'] == 'story' for e in events))  # no story state
+        # An older Pi (no story support) gets one file as before.
+        audio = [e for e in self.turn_events('wie ist dein status', dict(status, story=None))
+                 if e['event'] == 'audio']
+        self.assertEqual(len(audio), 1)
+        self.assertNotIn('part', audio[0])
+
+    def test_speech_parts(self):
+        self.assertEqual(ss.speech_parts('Kurz. Ende.'), ['Kurz. Ende.'])
+        text = ('Status nominal. Energiespeicher 80 Prozent. Akkubetrieb. Kerntemperatur 48 '
+                'Grad. Verbindung zum Server stabil. Laufzeit zwei Stunden. Befehl erwartet.')
+        parts = ss.speech_parts(text)
+        self.assertEqual(' '.join(parts), text)
+        self.assertGreaterEqual(len(parts[0]), ss.FIRST_PART_CHARS)
+        self.assertTrue(all(p.endswith('.') for p in parts))
+        self.assertTrue(all(len(p) >= ss.FIRST_PART_CHARS for p in parts))
+
+
+class RephraseGuardTests(unittest.TestCase):
+    def setUp(self):
+        import llm
+        self.llm = llm
+
+    def test_same_facts(self):
+        fixed = ("Status eingeschränkt. Warnung: Unterspannung. Energiespeicher 83 Prozent. "
+                 "Zellspannung 4,02 Volt. Laufzeit zwei Stunden.")
+        good = ("Achtung, Unterspannung! Der Speicher hat 83 Prozent, die Zelle 4,02 Volt, "
+                "und ich laufe seit zwei Stunden.")
+        self.assertTrue(self.llm.same_facts(fixed, good))
+        for bad in ("Achtung, Unterspannung! 84 Prozent, 4,02 Volt.",          # changed
+                    "Achtung, Unterspannung! 83 Prozent.",                       # dropped
+                    "Alles gut. 83 Prozent, 4,02 Volt, zwei Stunden.",           # no warning
+                    "Achtung: [stimmung:ruhig] 83 Prozent, 4,02 Volt.",          # markup
+                    "Achtung. 83 Prozent, 4,02 Volt. " + "Blabla. " * 40,         # too long
+                    ""):
+            self.assertFalse(self.llm.same_facts(fixed, bad), bad)
+        self.assertFalse(self.llm.same_facts("Akku bei 80 Prozent.",
+                                             "Energiespeicher bei 80 Prozent.", 'mensch'))
+
+    def test_rephrase_checks_the_answer_and_needs_a_key(self):
+        with unittest.mock.patch.dict(os.environ, {'OPENROUTER_API_KEY': 'k'}):
+            with unittest.mock.patch.object(self.llm, '_chat',
+                                            return_value='Ich habe 80 Prozent im Akku.') as chat:
+                self.assertEqual(self.llm.rephrase('Energiespeicher 80 Prozent.'),
+                                 'Ich habe 80 Prozent im Akku.')
+                messages = chat.call_args.kwargs['messages']
+                self.assertIn('Energiespeicher 80 Prozent.', messages[-1]['content'])
+            with unittest.mock.patch.object(self.llm, '_chat', return_value='Ich habe 90 Prozent.'):
+                self.assertIsNone(self.llm.rephrase('Energiespeicher 80 Prozent.'))
+        with unittest.mock.patch.dict(os.environ, {'OPENROUTER_API_KEY': ''}):
+            with self.assertRaises(self.llm.LLMError):
+                self.llm.rephrase('Energiespeicher 80 Prozent.')
+
+    def test_real_pipeline_respects_switch_and_local_mode(self):
+        pipeline = ss.RealPipeline.__new__(ss.RealPipeline)
+        pipeline.clock, pipeline.openrouter_retry_at = (lambda: 100.0), 0.0
+        with unittest.mock.patch('llm.rephrase', return_value='neu') as rephrase:
+            self.assertEqual(pipeline.rephrase('alt'), 'neu')
+            self.assertIsNone(pipeline.rephrase('alt', mode='local'))
+            with unittest.mock.patch.dict(os.environ, {'SERVITOR_REPHRASE': 'off'}):
+                self.assertIsNone(pipeline.rephrase('alt'))
+            pipeline.openrouter_retry_at = 200.0              # OpenRouter cooling down
+            self.assertIsNone(pipeline.rephrase('alt'))
+            self.assertEqual(rephrase.call_count, 1)
 
 
 class WhisperQuickPathTests(unittest.TestCase):
