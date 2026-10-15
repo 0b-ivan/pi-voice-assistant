@@ -53,6 +53,7 @@ const root = path.resolve(__dirname, '..');
     });
     await page.goto('http://proximus.test/');
     await page.evaluate(async () => { Vox.connect(); await pollJournal(); });
+    await page.waitForFunction(() => journal.pending.length === 0);
     assert.equal(await page.locator('#journal [data-kind="log"]').count(), 2);
     assert.match(await page.locator('#journal').innerText(), /servitor-llm Modell bereit/);
 
@@ -84,6 +85,51 @@ const root = path.resolve(__dirname, '..');
     await page.evaluate(() => pollJournal());
     assert.match(await page.locator('#journal').innerText(), /servitor-voice Kanal neu verbunden/);
     assert.equal(await page.evaluate(() => journal.instance), 'second');
+
+    // Execution metadata is readable; content is still inserted as text only.
+    const traceText = await page.evaluate(() => describe({ ts: 1792008002, text: JSON.stringify({
+      event: 'processing', turn: '1234abcd', step: 'sources', archive: 'Lore', ids: ['E29'],
+    }) }));
+    assert.match(traceText, /VOX 1234abcd.*Quelle Lore: E29.*Kontext/);
+    const usageText = await page.evaluate(() => describe({ ts: 1792008002, text: JSON.stringify({
+      event: 'processing', turn: '1234abcd', step: 'provider', name: 'OpenRouter',
+      state: 'done', ms: 731, total_tokens: 24,
+    }) }));
+    assert.match(usageText, /OpenRouter fertig.*24 Token.*731 ms/);
+
+    // Batches flow row by row; existing rows move between frames, then settle.
+    await page.evaluate(() => {
+      document.body.dataset.connected = 'yes'; $('dial').hidden = true;
+      journal.pending.push(...Array.from({ length: 8 }, (_, i) => ({ text: `Fluss ${i}`, kind: '' })));
+      flowJournal();
+    });
+    assert(await page.evaluate(() => journal.pending.length > 0));
+    await page.waitForFunction(() => journal.pending.length === 0);
+    await page.waitForTimeout(300);
+    const motion = await page.evaluate(async () => {
+      const previous = $('journal').querySelector('[data-kind="log"]');
+      const before = previous.getBoundingClientRect().top;
+      journalLine('Flussprobe');
+      await new Promise(resolve => setTimeout(resolve, 90));
+      const middle = previous.getBoundingClientRect().top;
+      await new Promise(resolve => setTimeout(resolve, 240));
+      return { before, middle, after: previous.getBoundingClientRect().top };
+    });
+    assert(motion.middle > motion.before + 1, JSON.stringify(motion));
+    assert(motion.after > motion.middle + 1, JSON.stringify(motion));
+    await page.evaluate(() => {
+      journal.pending.push({ text: 'Veraltete Warteschlange', kind: '' });
+      journal.flowTimer = setTimeout(flowJournal, 160);
+      stopJournal();
+    });
+    await page.waitForTimeout(300);
+    assert(!await page.locator('#journal').innerText().then(text => text.includes('Veraltete Warteschlange')));
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.evaluate(() => {
+      journal.pending.push({ text: 'Reduzierte Bewegung', kind: '' }); flowJournal();
+    });
+    assert.equal(await page.evaluate(() => $('journal').getAnimations({ subtree: true }).length), 0);
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
 
     // A response from a disconnected channel cannot change the new channel's state.
     hold = true;

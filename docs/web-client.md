@@ -140,6 +140,10 @@ weitergelaufen ist als vorher.
 - Neueste Zeile oben, ältere blenden nach unten aus. Zeit, Dienst, Meldung
   (`19:41:36 servitor-voice READY load_seconds=9.84`);
   Warnungen bernsteinfarben, Fehler rot.
+- Neue Meldungen laufen einzeln im Abstand von 160 ms ein; vorhandene Zeilen
+  werden während 240 ms weich weitergeschoben. Ohne neue Meldungen ruht die
+  Anzeige. „Bewegung reduzieren“ zeigt neue Zeilen ohne Animation. Beim
+  Auflegen wird die noch wartende Anzeige geleert.
 - Die Anzeige hält 60 echte Meldungen und höchstens drei Effektzeilen.
   Litaneien und Störungen kommen weiterhin alle 4–12 s; sie verdrängen keine
   echten Meldungen mehr, wenn das System ruhig ist.
@@ -227,6 +231,28 @@ der Empfänger gesondert prüfen und bereinigen; lokale Journale erhalten.
 
 **Pi-Weiterleitung bleibt aus**, bis es einen ausschließlich auf
 Proximus-Dienste eingeschränkten, authentifizierten Transport gibt.
+
+### Arbeitsprotokoll von Proximus
+
+Das Journal zeigt beobachtbare Verarbeitungsschritte mit einer Anfragekennung:
+Spracherkennung, Stimmprüfung, erkannte feste Regel, Wetterdatenabruf
+(Dienst oder Cache), LLM-Dienst/Modell, lokalen Rückfall, Sprachsynthese,
+Funkfilter und Audio-Kodierung. Beginn, Abschluss, Fehlerklasse und tatsächliche
+Laufzeiten machen sichtbar, wo eine Antwort Zeit braucht.
+
+Bei Lore und Geschichten werden nur die tatsächlich in den Modellkontext
+übernommenen Archiv-IDs angezeigt. Das belegt die Kontextauswahl, nicht die
+Nutzung jedes Eintrags durch das Modell. Tokenzahlen erscheinen nur, wenn
+der Anbieter sie zurückliefert. Das aktuelle LLM ruft keine autonomen
+Recherche-Tools auf: Wetter und andere feste Werkzeuge steuert die Anwendung.
+Allgemeines Modellwissen hat keine nachträglich ermittelbare Quellenliste.
+
+Dieses Arbeitsprotokoll enthält keine internen Modellgedanken, vollständigen
+Prompts, Nutzerfragen, Antworttexte, persönlichen Gedächtnisinhalte, Tokens
+oder API-Schlüssel. Es liegt im begrenzten RAM-Journal hinter derselben
+Anmeldung wie die bisherigen Dienstlogs. Bestehende sonstige Dienstlogs
+bleiben davon unabhängig. Die Kennung verbindet Schritte derselben Anfrage;
+sie ist keine Benutzerkennung.
 
 ### Zeigerinstrument
 

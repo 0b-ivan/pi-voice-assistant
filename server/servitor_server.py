@@ -81,6 +81,7 @@ import logwatch  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
 import protocol  # noqa: E402
+import processing_trace  # noqa: E402
 import speaker  # noqa: E402
 import voice_profile  # noqa: E402
 import voice_quality  # noqa: E402
@@ -319,6 +320,7 @@ class RealPipeline:
                 primary = str(exc)
                 retry = float(os.environ.get('SERVITOR_OPENROUTER_RETRY_SECONDS', '60'))
                 self.openrouter_retry_at = self.clock() + retry
+        processing_trace.record('fallback', provider='local')
         print(json.dumps(dict(event='llm_fallback', reason=primary)), flush=True)
         try:
             return successful(generate_local_reply(text, lore=lore, memory=memory, persona=persona,
@@ -823,6 +825,7 @@ class Service:
                               persona=persona, ids=state['ids'])), flush=True)
         self._story_section(state, emit, fmt, device, timings)
 
+    @processing_trace.turn
     def run_story(self, state, emit, fmt, device=None):
         """POST /v1/story: the next section of a running story."""
         timings = {}
@@ -901,6 +904,7 @@ class Service:
                       bytes=len(data), part=index, parts=len(parts), text=part,
                       data=base64.b64encode(data).decode('ascii')))
 
+    @processing_trace.turn
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None, appointments_tomorrow=None,
                  voice=None, nightwatch_copy=None, typed=None):
@@ -919,8 +923,17 @@ class Service:
 
         def timed(name, function, *args):
             started = time.monotonic()
+            processing_trace.record('operation', name=name, state='start')
             try:
-                return function(*args)
+                result = function(*args)
+            except Exception as exc:
+                processing_trace.record('operation', name=name, state='failed',
+                                        error=type(exc).__name__)
+                raise
+            else:
+                processing_trace.record('operation', name=name, state='done',
+                                        ms=round((time.monotonic() - started) * 1000))
+                return result
             finally:
                 timings[name] = round(time.monotonic() - started, 3)
 
@@ -979,6 +992,7 @@ class Service:
                 # timetable is queried on the Pi. Say so instead of letting the LLM guess.
                 elsewhere = trip_state is None and journeys.parse(text, 'on') is not None
                 if trip is not None:
+                    processing_trace.record('route', name='journey_pi')
                     # Trams/trains, reminder, calendar: the Pi queries and acts itself
                     # (home and calendar stay there). Structured, no LLM, no audio.
                     if keep:
@@ -1039,6 +1053,7 @@ class Service:
                         emit(dict(event='memory', op=op, text=memory.clean_text(argument)))
                     model = 'local/memory'
                 elif intent is not None:
+                    processing_trace.record('route', name=intent)
                     snapshot = dict(device or {}, server='ok')
                     if intent.startswith('night_') or intent == 'briefing':
                         snapshot['nightwatch'] = (dict(denied=True)

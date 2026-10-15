@@ -312,6 +312,8 @@ def messages(state):
     known = lore.by_id()
     current = [known[i] for i in _section_ids(state)
                if i in known and lore.visible(known[i], persona, level)]
+    import processing_trace
+    processing_trace.record('sources', archive='Geschichtenarchiv', ids=[e['id'] for e in current])
     if current:
         parts.append(lore.block(current, persona))
     upcoming = [known[i].get('thema', i) for i in state['ids'][state['ids'].index(current[-1]['id']) + 1:]

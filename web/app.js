@@ -660,7 +660,7 @@ function talkLabel() {
 // The service's own log lines (GET /v1/journal) run dimly behind the transcript.
 // With effects on, litanies and noospheric interference are mixed in.
 
-const journal = { seq: 0, instance: '', timers: [], murmurTimer: null, host: '', controller: null };
+const journal = { seq: 0, instance: '', timers: [], murmurTimer: null, host: '', controller: null, pending: [], flowTimer: null };
 
 function journalLine(text, kind) {
   const list = $('journal');
@@ -670,10 +670,35 @@ function journalLine(text, kind) {
   const ambient = ['litany', 'noise', 'crosstalk'].includes(kind);
   item.dataset.kind = ambient ? 'ambient' : 'log';
   list.prepend(item);
+  // Grow the new row in the layout, so existing rows move continuously too.
+  // This is independent of the optional sound/interference effects.
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches && !document.hidden) {
+    const height = item.getBoundingClientRect().height;
+    item.animate([
+      { height: '0px', marginTop: '-3px', opacity: 0 },
+      { height: `${height}px`, marginTop: '0px', opacity: 1 },
+    ], { duration: 240, easing: 'linear' });
+  }
   // Effects keep their cadence, but cannot evict the system log or fill the
   // entire visible tube when the machines are quiet.
   const entries = [...list.querySelectorAll(`[data-kind="${item.dataset.kind}"]`)];
-  entries.slice(ambient ? 3 : 60).forEach((entry) => entry.remove());
+  entries.slice(ambient ? 3 : 60).forEach((entry) => {
+    entry.getAnimations().forEach((animation) => animation.cancel());
+    entry.remove();
+  });
+}
+
+// Polls arrive in batches. Feed them into the display one row at a time,
+// keeping the waiting queue bounded during busy periods.
+function flowJournal() {
+  journal.flowTimer = null;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  do {
+    const next = journal.pending.shift();
+    if (!next) return;
+    journalLine(next.text, next.kind);
+  } while (reduced);
+  if (journal.pending.length) journal.flowTimer = setTimeout(flowJournal, 160);
 }
 
 function journalStatus(message) {
@@ -699,6 +724,29 @@ function describe(entry) {
   let text = entry.text;
   try {
     const data = JSON.parse(text);
+    if (data && data.event === 'processing') {
+      const steps = { stt_finalize: 'Sprache erkennen', speaker: 'Stimme prüfen',
+        weather: 'Wetterdaten abrufen (Dienst/Cache)', intent: 'Feste Antwort erzeugen',
+        rephrase: 'Formulierung prüfen', llm: 'Sprachmodell anfragen',
+        synthesis: 'Stimme erzeugen · Piper', render: 'Funkfilter anwenden',
+        encode: 'Audio kodieren', journey_pi: 'Fahrtauskunft an Pi weitergeben', recognize: 'Sprache erkennen', think: 'Antwort vorbereiten',
+        synthesize: 'Stimme erzeugen', status: 'Systemstatus', network: 'Netzwerkstatus' };
+      const states = { start: 'gestartet', done: 'fertig', failed: 'fehlgeschlagen' };
+      const duration = typeof data.ms === 'number' ? ` · ${data.ms} ms` : '';
+      let detail = '';
+      if (data.step === 'turn') detail = `Anfrage ${states[data.state] || ''}`
+        + (data.channel ? ` · ${{ text: 'Texteingabe', voice: 'Sprachkanal', speak: 'Sprachausgabe', story: 'Geschichte' }[data.channel] || data.channel}` : '');
+      else if (data.step === 'sources') detail = `Quelle ${data.archive}: ${data.ids?.length
+        ? `${data.ids.join(', ')} · in den Kontext übernommen` : 'keine Archivtreffer'}`;
+      else if (data.step === 'provider') detail = `LLM-Dienst ${data.name} ${states[data.state] || ''}`
+        + (data.model ? ` · ${data.model}` : '')
+        + (Number.isInteger(data.total_tokens) ? ` · ${data.total_tokens} Token` : '');
+      else if (data.step === 'fallback') detail = 'LLM: Wechsel auf lokalen Sprachkern';
+      else if (data.step === 'answer') detail = `Antwortpfad: ${data.model}`;
+      else if (data.step === 'route') detail = `Regel erkannt: ${steps[data.name] || data.name}`;
+      else detail = `${steps[data.name] || data.name || data.step} ${states[data.state] || ''}`;
+      return `${time} VOX ${data.turn} ▸ ${detail}${duration}${data.error ? ` · ${data.error}` : ''}`;
+    }
     if (data && data.event === 'request') {   // who talked to the server
       return `${time} ${String(data.client).toUpperCase()} ▸ ${data.method} ${data.path} → ${data.status}`;
     }
@@ -738,8 +786,10 @@ async function pollJournal() {
     journal.host = data.host || journal.host;
     for (const entry of data.lines) {
       const pi = /"event": ?"request", ?"client": ?"pi"/.test(entry.text);
-      journalLine(describe(entry), severity(entry) || (pi ? 'traffic' : ''));
+      journal.pending.push({ text: describe(entry), kind: severity(entry) || (pi ? 'traffic' : '') });
     }
+    journal.pending = journal.pending.slice(-120);
+    if (journal.flowTimer === null) flowJournal();
     journal.seq = data.seq;
     journal.instance = data.instance || '';
     journalStatus(data.source?.error ? `Journal gestört: ${data.source.error}`
@@ -786,6 +836,10 @@ function stopJournal() {
   clearTimeout(journal.murmurTimer);
   journal.controller?.abort();
   journal.controller = null;
+  clearTimeout(journal.flowTimer);
+  journal.flowTimer = null;
+  journal.pending = [];
+  $('journal').getAnimations({ subtree: true }).forEach((animation) => animation.finish());
 }
 
 // --- server state: the link lamp, the signal needle --------------------------------

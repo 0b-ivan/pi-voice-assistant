@@ -4,6 +4,8 @@ This module intentionally contains no GPIO, audio, Piper or recorder logic.
 Configuration and the API key are read from the process environment only.
 """
 import datetime
+import time
+import processing_trace
 import http.client
 import json
 import os
@@ -298,6 +300,7 @@ def turn_parts(query, lore=None, memory=NO_MEMORY, persona=None, mood=None):
     if archive.game_question(query):
         parts.append(GAME_FACT)
     engrams = [] if followup == 'repeat' else _engrams(query, persona, level, followup)
+    processing_trace.record('sources', archive='Lore', ids=[e['id'] for e in engrams])
     if engrams:
         parts.append(archive.block(engrams, persona))
     told = [i for i in archive.RECENT.ids if i not in {e['id'] for e in engrams}]
@@ -424,21 +427,37 @@ def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=
         headers={"Content-Type": "application/json", **headers},
     )
 
+    started = time.monotonic()
+    processing_trace.record('provider', name=label, model=model, state='start')
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
+        processing_trace.record('provider', name=label, state='failed', error='HTTPError')
         raise LLMError(f"{label} request failed: {_http_error_message(exc)}") from exc
     except (http.client.HTTPException, urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+        processing_trace.record('provider', name=label, state='failed', error=type(exc).__name__)
         reason = getattr(exc, "reason", exc)
         raise LLMError(f"{label} request failed: {reason}") from exc
 
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
+        processing_trace.record('provider', name=label, state='failed', error='InvalidJSON')
         raise LLMError(f"{label} returned invalid JSON") from exc
 
-    return guest_address(_extract_text(payload, label), memory)
+    try:
+        answer = guest_address(_extract_text(payload, label), memory)
+    except LLMError:
+        processing_trace.record('provider', name=label, state='failed', error='InvalidResponse')
+        raise
+    usage = payload.get('usage') if isinstance(payload, dict) else None
+    counts = {k: v for k, v in (usage.items() if isinstance(usage, dict) else [])
+              if k in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+              and type(v) is int and v >= 0}
+    processing_trace.record('provider', name=label, state='done',
+                            ms=round((time.monotonic() - started) * 1000), **counts)
+    return answer
 
 
 def _prompt(prompt):
