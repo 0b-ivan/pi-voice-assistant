@@ -96,6 +96,9 @@ class WebConversations:
             for job in reversed(chat['jobs']):
                 if job['status'] not in FINAL:
                     return dict(job), False   # singleflight: double click / retries
+                if self.clock() - (job['finished'] or self.clock()) < 10:
+                    return dict(job), False   # short retry window after completion
+                break
             job = dict(id=secrets.token_hex(12), status='gestartet', period=period,
                        created=self.clock(), started=None, finished=None, report=None)
             chat['jobs'].append(job)
