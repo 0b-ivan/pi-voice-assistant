@@ -311,6 +311,20 @@ class WebDiagnosticTests(unittest.TestCase):
                          'Es ist 22 Uhr 15.', ''):
             self.assertFalse(web_context.claims_job_action(harmless), harmless)
 
+    def test_next_step_only_when_there_is_something_to_check(self):
+        clean = dict(self.c, read=40)
+        spoken = web_diagnostics.describe(web_diagnostics.analyse([], clean))
+        self.assertIn('kein Handlungsbedarf', spoken)
+        self.assertNotIn('Nächster Schritt', spoken)
+        items = [entry(11900 + i, 'servitor-voice.service',
+                       json.dumps({'event': 'turn_error', 'code': 'llm'})) for i in range(6)]
+        spoken = web_diagnostics.describe(web_diagnostics.analyse(items, dict(self.c, read=6)))
+        self.assertIn('Nächster Schritt: betroffenen Dienst', spoken)
+        spoken = web_diagnostics.describe(web_diagnostics.analyse(
+            [], dict(clean, limited=True, sources={'own': dict(read=40, limited=True)})))
+        self.assertIn('direkt einsehen', spoken)
+        self.assertNotIn('kein Handlungsbedarf', spoken)
+
     def test_previous_snapshot_is_never_used(self):
         def fake(command):
             return b'', 0, False, False

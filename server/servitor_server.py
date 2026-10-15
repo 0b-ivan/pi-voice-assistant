@@ -250,6 +250,7 @@ class RealPipeline:
         # After an OpenRouter failure, go straight to the local model for a
         # while instead of paying the full timeout on every turn of an outage.
         self.openrouter_retry_at = 0.0
+        self.ready_logged = None   # last provider whose success went to the journal
 
     def load(self):
         import transcribe
@@ -307,10 +308,22 @@ class RealPipeline:
         """OpenRouter first; on any LLM error (offline, no credits, timeout)
         the resident llama.cpp server answers when SERVITOR_LOCAL_LLM=1.
         ``story``: a long story's state; the reply is its next section."""
+        try:
+            return self._reply(text, lore, mode, memory, persona, mood, story)
+        except Exception:
+            self.ready_logged = None   # the next success proves recovery (logwatch)
+            raise
+
+    def _reply(self, text, lore, mode, memory, persona, mood, story):
         from llm import LLMError, free_model, generate_local_reply, generate_reply
         def successful(result):
+            # Only a change of provider or the first success after a failure goes
+            # to the journal: logwatch needs that line as recovery proof, every
+            # further one (~80 a day) only crowded the diagnosis window.
             event = 'local_llm_ready' if result[1].startswith('local/') else 'openrouter_ready'
-            print(json.dumps(dict(event=event)), flush=True)
+            if event != self.ready_logged:
+                print(json.dumps(dict(event=event)), flush=True)
+                self.ready_logged = event
             return result
 
         local = os.environ.get('SERVITOR_LOCAL_LLM') == '1'
@@ -327,6 +340,7 @@ class RealPipeline:
                 return successful(generate_reply(text, lore=lore, memory=memory, model=chosen,
                                                  persona=persona, mood=mood, story=story))
             except LLMError as exc:
+                self.ready_logged = None
                 if not local:
                     raise
                 primary = str(exc)

@@ -288,5 +288,15 @@ def describe(report, timezone='Europe/Berlin'):
     if report['excerpts']:
         item = report['excerpts'][-1]
         parts.append(f"Auszug ({item['unit']}): {item['text']}.")
-    parts.append('Nächster Schritt: betroffenen Dienst und konkretes Ereignis gezielt prüfen.')
+    # Ein Prüfschritt nur, wenn es etwas zu prüfen gibt; ohne Befund keiner.
+    if not c['read'] and not c['limited']:
+        parts.append('Nächster Schritt: Journalzugriff von servitor-voice auf CT 107 prüfen.')
+    elif (report['findings'] or report['unknown_count']
+            or report['system_error_count']):
+        parts.append('Nächster Schritt: betroffenen Dienst und konkretes Ereignis gezielt prüfen.')
+    elif c['limited']:
+        parts.append('Nächster Schritt: Journal auf CT 107 direkt einsehen, '
+                     'um den fehlenden Teil zu prüfen.')
+    else:
+        parts.append('Aus diesen Protokollen ergibt sich kein Handlungsbedarf.')
     return ' '.join(parts)
