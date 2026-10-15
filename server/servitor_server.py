@@ -1019,6 +1019,11 @@ class Service:
                     # A guest asking to be learned: say no instead of letting the LLM
                     # claim "Stimme erkannt" (system test 10.10.2026).
                     answer, model = memory.GUEST_TEXT, 'local/enroll'
+                elif enroll.command(intents.normalize(text)):
+                    # No memory copy this turn (server restarted, session unknown):
+                    # nobody checked the voice, so only point to the menu, which
+                    # still works at the device; never let the LLM answer.
+                    answer, model = enroll.MENU_ONLY, 'local/enroll'
                 elif service_op is not None and memory_copy is not NO_MEMORY:
                     # Only Pis that know maintenance send a memory state too.
                     answer = self._maintenance_reply(service_op, device or {})
@@ -1679,11 +1684,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = read_chunked(self.rfile, limit) if chunked else read_length(self.rfile, length)
         device = None
         header = self.headers.get('X-Servitor-Status', '')
-        if header and len(header) <= 1024:
+        if header and len(header) <= protocol.STATUS_HEADER_MAX:
             try:
                 device = sanitize_snapshot(json.loads(header))
             except ValueError:
                 device = None
+        elif header:
+            # Without the snapshot the turn loses journeys, device commands,
+            # memory and "Sprachkern LOKAL": make that visible in the journal.
+            print(json.dumps(dict(event='status_dropped', length=len(header))), flush=True)
         memory_copy, session_event = self._memory(device)
         voice = self._voice()
         import nightwatch

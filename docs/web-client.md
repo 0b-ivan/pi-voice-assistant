@@ -322,11 +322,14 @@ das LLM und Geschichten funktionieren wie am Pi.
 
 ## Ausrollen auf CT 107
 
-`/opt/servitor-voice/repo` ist ein Git-Checkout, `web/` kommt mit dem Commit:
+`/opt/servitor-voice/repo` ist ein Git-Checkout, `web/` kommt mit dem Commit.
+Vorher den Merge-/Deploy-Auftrag und den vollständigen freigegebenen
+Commit-SHA prüfen. Im folgenden Beispiel den Platzhalter durch diesen
+40-stelligen SHA ersetzen; keine alten Entwicklungsbranches ausrollen:
 
 ```sh
 ssh root@172.22.2.11
-pct exec 107 -- sh -c 'cd /opt/servitor-voice/repo && git fetch origin <branch-oder-main> \
+pct exec 107 -- sh -c 'cd /opt/servitor-voice/repo && git fetch origin <freigegebener-40-stelliger-commit-sha> \
   && git checkout --detach FETCH_HEAD && git rev-parse HEAD > /opt/servitor-voice/DEPLOYED \
   && systemctl restart servitor-voice'
 ```

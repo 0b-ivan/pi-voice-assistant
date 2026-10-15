@@ -44,6 +44,12 @@ class SetupValidationTests(unittest.TestCase):
         with self.assertRaises(ps.SetupError):
             ps.keyfile_text("SSID", "secret\nbad", "11111111-2222-3333-4444-555555555555")
 
+    def test_keyfile_keeps_spaces_in_passwords_and_ssids(self):
+        # GKeyFile drops unescaped leading blanks; WPA2 allows them.
+        data = ps.keyfile_text("Home Net", "  lead pass", "11111111-2222-3333-4444-555555555555")
+        self.assertIn("\npsk=\\s\\slead\\spass\n", data)
+        self.assertIn("\nssid=Home\\sNet\n", data)
+
     def test_file_written_atomically_with_owner_only_mode(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "secret"
@@ -143,6 +149,8 @@ class ProvisioningTests(unittest.TestCase):
         with patch.object(app, "connect"):
             self.assertFalse(app.try_connect("Home", "validpassword", "wrong-token"))
             self.assertFalse(app.try_connect("hi\nthere", "validpassword", app.csrf))
+            # Non-ASCII form tokens must be rejected, not crash the handler.
+            self.assertFalse(app.try_connect("Home", "validpassword", "tökén"))
         self.assertEqual(app.attempts, 0)
 
     def test_expired_setup_rejects_new_requests_without_disrupting_radio(self):

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import servitor_server as ss  # noqa: E402
 from test_servitor_server import FakePipeline, TOKEN  # noqa: E402
 from ptt import Recorder, VoiceController  # noqa: E402
+import protocol  # noqa: E402
 from remote_turn import (  # noqa: E402
     NO_FALLBACK_CODES, RemoteCapableSpeech, RemoteSpeakUplink, RemoteTurnJob,
     RemoteTurnUplink, load_remote_config,
@@ -651,6 +652,15 @@ class LocalIntentTests(RemoteControllerTests):
         self.assertEqual(json.loads(sent['X-Servitor-Status']), {'battery_pct': 83})
         self.assertEqual(sent['X-Servitor-Agenda'], 'W10=')   # Pi's appointments go along
         self.assertEqual(sent['X-Servitor-Agenda-Tomorrow'], 'W10=')
+
+        # A long snapshot is trimmed to what the server accepts, routing kept.
+        uplink.status = dict(devctl='on', trip='on', memory='on',
+                             log_last={f'code{i}': 1760446400.123456 for i in range(60)})
+        uplink._request('http://h:1')
+        self.assertLessEqual(len(sent['X-Servitor-Status']), protocol.STATUS_HEADER_MAX)
+        self.assertEqual({k: v for k, v in json.loads(sent['X-Servitor-Status']).items()
+                          if k in ('devctl', 'trip', 'memory')},
+                         dict(devctl='on', trip='on', memory='on'))
 
 
 if __name__ == '__main__':

@@ -57,6 +57,7 @@ NEED_SERVER = "Kennenlernen braucht den Server. Verbindung prüfen."
 FAILED = "Kennenlern-Sitzung abgebrochen. Mikrofon nicht verfügbar."
 WAKE_INTRO = "Aktivierungswort aufnehmen. Sage nach jedem Signalton Proximus. Abbrechen mit Taste B."
 MENU_HINT = "Kennenlernen bereit. Taste E startet, Taste B bricht ab."
+MENU_ONLY = "Kennenlernen bitte im Menü Personen starten."
 CHOOSE_PERSON = "Mehrere Personen bekannt. Bitte im Menü Personen auswählen."
 NO_PROFILE = "Noch kein Stimmprofil vorhanden. Erst Stimme kennenlernen."
 # Problems that keep a clip out of a voiceprint or the wake-word samples.
@@ -88,8 +89,8 @@ def wake_done_text(count):
 def phrases():
     """Fixed sentences, for prerecorded clips."""
     import voice_enroll
-    return [ANNOUNCE, CANCELLED, FAILED, WAKE_INTRO, MENU_HINT, CHOOSE_PERSON, NO_PROFILE,
-            NEED_STICK, NEED_SERVER, wake_done_text(WAKE_COUNT), *WAKE_HINTS.values(),
+    return [ANNOUNCE, CANCELLED, FAILED, WAKE_INTRO, MENU_HINT, MENU_ONLY, CHOOSE_PERSON,
+            NO_PROFILE, NEED_STICK, NEED_SERVER, wake_done_text(WAKE_COUNT), *WAKE_HINTS.values(),
             *(q for _, q, _, _ in QUESTIONS), *voice_enroll.phrases()]
 
 

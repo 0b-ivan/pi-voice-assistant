@@ -1,8 +1,9 @@
 # Übergabe: Proximus-Web-Client (Vox-Terminal)
 
-Stand 14.10.2026, aktueller Branch `codex/proximus-web-journal-20261014`,
-Basis `claude/wizardly-euler-ogqg5u` (letzter Code-Commit siehe `git log`),
-**kein PR** nach `main`. Bedienerdoku: [`docs/web-client.md`](../../web-client.md).
+Stand 15.10.2026, aktueller Branch `fix/proximus-journal-nur-dienste-20261014`,
+auf `main` einschließlich #116 und #119 (`92c2d46`) aktualisiert.
+Der konsolidierte Web-PR ersetzt den älteren Gateway-Entwurf #105.
+Bedienerdoku: [`docs/web-client.md`](../../web-client.md).
 
 ## Korrektur: kein fremdes Systemjournal im Web
 
@@ -64,33 +65,20 @@ Mechanicus) mit Bedienteil im Stil von Bundeswehr-Funkgeräten.
   Nachtprüfung, Stimmdaten bleiben **token-only**. Der Pi ist unverändert (Token).
 - `GET /v1/journal?after=N` → `{seq, host, lines:[{seq, ts, text, unit, prio, host}]}`.
 
-## Journal: Stand nach der Weiterarbeit am 14.10.2026
+## Journal: gültiger Stand
 
-Branch der Weiterarbeit: `codex/proximus-web-journal-20261014`, auf Basis des
-aktuellen `claude/wizardly-euler-ogqg5u` einschließlich Handy-Fix `de75251`.
-
-- Der Sprachdienst sieht das System-Journal von CT 107. Gegenprobe mit den
-  **tatsächlichen Zusatzgruppen** zeigte dieselben Systemmeldungen wie root.
-  `runuser -u servitor` allein übernimmt die Zusatzgruppen der Unit nicht;
-  daraus darf man keine fehlenden Journal-Rechte ableiten. Keine ACL-Änderung nötig.
-- Host-Weiterleitung eingerichtet und live geprüft: `wgz-pve-01` sendet alle
-  lokalen Journal-Meldungen über `systemd-journal-upload` an CT 107. In der
-  Browser-API kamen Kernel, SSH, systemd-logind und Rclone an (in einer Abfrage
-  34 Host-Zeilen, darunter 16 Kernelmeldungen).
-- Der Empfänger hat je einen HTTP-Socket/Dienst an `172.22.2.107:19532` und
-  `172.22.9.107:19532`. **Je Adresse eine Instanz:** der native Empfänger kann
-  nicht zwei geerbte Sockets gleichzeitig als HTTP behandeln. Der Host nutzt
-  das direkt erreichbare Verwaltungsnetz (`http://172.22.2.107:19532`), der Pi
-  später das Pi-LAN (`http://172.22.9.107:19532`). Der geroutete Weg vom Host
-  zur Pi-LAN-Adresse war für diesen Port nicht erreichbar.
-- Skripte: `deploy/journal-forward/install.sh server [LAN-IP ...]` bzw.
-  `client <URL>` und `seed-cursor.py`. Cursor im RAM; nach Boot etwa 80 alte
-  Einträge plus alle neuen. Remote-Dateien unter `/var/log/journal/remote/`;
-  Gruppenrechte per Sprachdienst-Drop-in. HTTP im LAN ist unverschlüsselt
-  und ohne Client-Authentifizierung; nicht über den Tunnel veröffentlichen.
-- **Pi ausgeschaltet:** Installer vorbereitet, dort noch nicht installiert oder
-  abgenommen. Bei der nächsten Pi-Sitzung den Client einrichten (Befehle und
-  Prüfung in `docs/web-client.md`).
+- Der Sprachdienst liest ausschließlich lokale `servitor-voice.service`- und
+  `servitor-llm.service`-Einträge. Units und Rechnername werden zusätzlich im
+  Server geprüft; fremde Systemdienste gehören nicht in die Browseranzeige.
+- Der frühere Volljournal-Versuch vom 14.10.2026 übertrug auch Proxmox-,
+  Kernel-, SSH- und Rclone-Meldungen. Dieser Versuchsstand ist verworfen.
+- `deploy/journal-forward/install.sh` ist gesperrt. Keine Host- oder
+  Pi-Vollweiterleitung einrichten. Bereits vorhandene Host-Uploader und
+  CT-Empfänger gemäß [Bedienerdoku](../../web-client.md#journal-sicherheit-und-abschaltung-der-vollweiterleitung)
+  stilllegen; dort auch bereits empfangene Dateien prüfen.
+- Auf dem ausgeschalteten Pi wurde keine Weiterleitung abgenommen.
+  Pi-Forwarding bleibt aus, bis eine ausschließlich auf Proximus-Dienste
+  begrenzte, separat geprüfte Lösung vorliegt.
 - Browser hält 60 echte Logs und höchstens drei Effektzeilen. Litaneien und
   Störungen bleiben alle 4–12 s; sie verdrängen keine echten Einträge mehr.
 - Eine feste Warnzeile zeigt Quellfehler, unterbrochene Abfragen und abgelaufene
@@ -106,27 +94,29 @@ aktuellen `claude/wizardly-euler-ogqg5u` einschließlich Handy-Fix `de75251`.
 
 Validierung: 130 Server-Tests, 37 Journal-/Upload-Tests; echter Chrome mit
 simulierter API für lange Ruhephasen, Anmeldung, Quellfehler, Neustart,
-Abbruch, Zeitlimit, Texteingabe und fünf mobile Größen. Beide LAN-Empfänger
-und echter Host-Upload geprüft. Keine Pi-Abnahme bei ausgeschaltetem Gerät.
+Abbruch, Zeitlimit, Texteingabe und fünf mobile Größen. Die frühere Prüfung
+der LAN-Empfänger und des Host-Uploads ist nur ein historischer Nachweis des verworfenen Versuchs. Keine Pi-Abnahme bei
+ausgeschaltetem Gerät; keine bestätigte Stilllegung der alten Dienste.
 
 ## Weitere offene Punkte / Ideen
 
-- „system status?“ trifft nicht die Status-Regel (`src/intents.py`) und landet
-  beim LLM, das „alles optimal“ erfindet – betrifft auch den Pi. Angeboten,
-  nicht umgesetzt.
+- „system status?“ ist inzwischen als Status-Intent abgesichert. Fehlende
+  Pi-Messwerte werden ausdrücklich als nicht verfügbar gemeldet.
+- Echte neue LLM-Dialoge mit Servitor/Billy und Lore light/full auf CT 107
+  qualitativ abnehmen; Prompt-/Regressionstests ersetzen diese Prüfung nicht.
 - Servitor-Schädel mit bionischer Hälfte (AdMech-Transferbogen) als Variante für
   Persona „Servitor“ – angeboten, nicht umgesetzt.
 - Größeres LLM: `OPENROUTER_LLM_MODEL` in `/etc/servitor-voice.env`; Bediener
   hat abgelehnt („passt schon“).
-- PR nach `main` noch nicht erstellt.
+- Konsolidierten Web-PR nach aktueller CI prüfen; Merge und Deployment
+  benötigen weiterhin eine ausdrückliche Anweisung.
 
 ## Ausrollen und Prüfen
 
-```sh
-# Proxmox-Host
-pct exec 107 -- sh -c 'cd /opt/servitor-voice/repo && git fetch origin claude/wizardly-euler-ogqg5u && git checkout --detach FETCH_HEAD && git rev-parse HEAD > /opt/servitor-voice/DEPLOYED && systemctl restart servitor-voice'
-curl -s https://proximus.obivan.org/health
-```
+Nur den ausdrücklich freigegebenen vollständigen Commit-SHA ausrollen.
+Die alten Entwicklungsbranches sind keine Deployment-Ziele. Aktuelle
+Anleitung: [Ausrollen auf CT 107](../../web-client.md#ausrollen-auf-ct-107).
+Vor dem Neustart die Stilllegung der Volljournal-Weiterleitung separat prüfen.
 
 Neustart meldet alle Browser-Sitzungen ab (Sitzungen nur im RAM).
 
@@ -135,7 +125,7 @@ Neustart meldet alle Browser-Sitzungen ab (Sitzungen nur im RAM).
 ```sh
 python3 -m unittest tests.test_servitor_server      # ~60 s
 python3 -m unittest discover -s tests               # ~150 s; test_hotspot_qr braucht das Paket qrcode
-node --check web/app.js web/vox.js
+node --check web/app.js && node --check web/vox.js
 ```
 
 Browser-Tests liefen mit Playwright/Chromium gegen einen lokalen Server mit

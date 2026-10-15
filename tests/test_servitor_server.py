@@ -974,6 +974,16 @@ class IntentServerTest(ServerTest):
             text, _ = self.device_turn('lerne meine stimme', {'memory': 'on'}, copy)
         self.assertEqual(text, memory.GUEST_TEXT)
 
+    def test_enroll_command_without_a_memory_copy_does_not_crash(self):
+        # Status without memory (old Pi, dropped header) or an unknown session
+        # after a server restart: llm.NO_MEMORY reached unknown_speaker() and
+        # the turn failed with AttributeError (audit 14.10.2026).
+        import enroll
+        for transcript in ('stimme kennenlernen', 'lerne meine stimme'):
+            with self.subTest(transcript=transcript):
+                text, _ = self.device_turn(transcript, {'devctl': 'on'})
+                self.assertEqual(text, enroll.MENU_ONLY)
+
     def device_turn(self, transcript, status, memory_copy=None):
         import memory
         self.pipeline.transcript = transcript
