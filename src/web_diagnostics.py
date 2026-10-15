@@ -10,6 +10,7 @@ import selectors
 import socket
 import subprocess
 import time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import logwatch
 
@@ -231,15 +232,21 @@ def analyse(entries, coverage):
     )
 
 
-def describe(report):
+def describe(report, timezone='Europe/Berlin'):
+    # CT 107 läuft in UTC; Bedienerzeit und benannte Zeitzone sind notwendig.
+    try:
+        tz = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        tz = datetime.timezone.utc
+        timezone = 'UTC'
     c = report['coverage']
-    a = datetime.datetime.fromtimestamp(c['since']).strftime('%d.%m. %H:%M')
-    b = datetime.datetime.fromtimestamp(c['until']).strftime('%d.%m. %H:%M')
+    a = datetime.datetime.fromtimestamp(c['since'], tz).strftime('%d.%m. %H:%M')
+    b = datetime.datetime.fromtimestamp(c['until'], tz).strftime('%d.%m. %H:%M')
     scopes = c.get('sources', {})
     own_count = scopes.get('own', {}).get('read', c['read'])
     system_count = scopes.get(SYSTEM_SOURCE, {}).get('read', 0)
     parts = [f"Lesende Diagnose von servitor-voice.service und servitor-llm.service "
-             f"sowie aggregierten Systemfehlern auf CT 107, {a}–{b}.",
+             f"sowie aggregierten Systemfehlern auf CT 107, {a}–{b} ({timezone}).",
              f"{own_count} eigene und {system_count} lokale Systemeinträge ausgewertet; "
              f"{c['discarded']} verworfen. Fremde Rohlogs werden nicht angezeigt."]
     if c['limited']:
@@ -250,7 +257,7 @@ def describe(report):
     elif not c['read']:
         parts.append('Keine Protokolle im Zeitraum lesbar; keine Entwarnung möglich.')
     for item in report['findings']:
-        when = datetime.datetime.fromtimestamp(item['last']).strftime('%d.%m. %H:%M')
+        when = datetime.datetime.fromtimestamp(item['last'], tz).strftime('%d.%m. %H:%M')
         parts.append(f"{item['category']} bei {', '.join(item['units'])}: "
                      f"{item['count']} Ereignisse, zuletzt {when}; "
                      f"Wiederherstellung {item['recovery']}. "
