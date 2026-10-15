@@ -932,6 +932,32 @@ class IntentServerTest(ServerTest):
         watch.result['findings'] = {}
         self.assertNotIn('Selbsttest', reply('guten morgen', dict(log_findings={})))
 
+    def test_watch_answers_from_the_server_and_feeds_the_briefing(self):
+        import systemwache
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_systemwache import FakeKuma
+        self.pipeline.fail_llm = True
+        kuma = FakeKuma()
+        with tempfile.TemporaryDirectory() as directory:
+            watch = systemwache.KumaWatch('https://u', ['cloud', 'vault'], directory=directory,
+                                          fetch=kuma)
+            watch.poll()
+            kuma.beat(16, systemwache.DOWN, slug='vault')
+            watch.poll()
+            watch.poll()
+            self.service.watch = watch
+
+            def reply(text):
+                self.pipeline.transcript = text
+                _, data = self.request_with_status({})
+                return next(e for e in self.events(data) if e['event'] == 'reply')
+
+            answer = reply('was ist bei uptime kuma los')
+            self.assertEqual(answer['model'], 'local/intent')
+            self.assertIn('Von 8 überwachten Diensten ist einer ausgefallen: vault.obivan.org',
+                          answer['text'])
+            self.assertIn('Systemwache: vault.obivan.org ist seit', reply('guten morgen')['text'])
+
     def request_with_status(self, status):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
         conn.request('POST', '/v1/turn', body=b'\1' * 16000,

@@ -1,5 +1,5 @@
 """Questions answered without the LLM: time, date, status, battery, identity,
-weather, today's appointments, the self-test and the morning litany (a short
+weather, today's appointments, the self-test, the Systemwache and the morning litany (a short
 briefing).
 
 Runs on the server (normal path, before OpenRouter) and on the Pi (local
@@ -15,6 +15,7 @@ import agenda
 import energy
 import logwatch
 import nightwatch
+import systemwache
 import variants
 import weather
 
@@ -85,6 +86,16 @@ _PATTERNS = (
     # Vosk hears "Akkustand" as "akkus dann" (system test 10.10.2026).
     ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
                            r'ladestand|ladezustand|energiereserve\w*)\b|\bwie (?:viel|viele) prozent hast du (?:noch|übrig)\b')),
+    # Systemwache (src/systemwache.py), before "status": its "uptime" means the
+    # own running time, "Uptime Kuma" the monitoring. Vosk small: "up time kuma",
+    # "uptime kumar".
+    ('watch', re.compile(r'\b(up ?time ?kum\w*|systemwache|überwachung|'
+                         r'(was|wie) (ist|steht) (es )?(mit|um|bei) (den |die |meinen |meine |unseren |unsere )?dienste\w*|'
+                         r'(sind|laufen) (alle |meine )?dienste( \w+)?|'
+                         r'wie geht es (der |dem |den |meinen )?(nextcloud|vaultwarden|vault|cloud|diensten|servern)|'
+                         r'(status|zustand|lage) (der |meiner |unserer )?(server ?systeme|dienste|server)\w*|'
+                         r'server ?systeme|'
+                         r'was hat sich (\w+ ){0,3}verändert)\b')),
     ('status', re.compile(r'\b(dein(en)? status|system ?status|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht|'
                           r'(?:deine? |system ?)(?:temperatur|auslastung|betriebszeit|messwerte)|'
@@ -148,6 +159,7 @@ IDENTITY = {
 _HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|können)\b')
 
 # Questions about the unit itself (not about hardware in general).
+_WATCH = dict(_PATTERNS)['watch']
 _SELF = re.compile(r'\b(du|dein\w*|dich|dir|hast|einheit|proximus|billy|servitor)\b')
 
 # The unit's own readings, the possessive right before them ("deine cpu
@@ -221,6 +233,8 @@ def match(text, persona=None):
     if len(text.split()) > 12:
         if _CALENDAR_ASK.search(text):
             return 'calendar'
+        if _WATCH.search(text):
+            return 'watch'   # "wie ist der status der serversysteme, wie geht es der cloud ..."
         if _SELF.search(text):
             for name, pattern in _PATTERNS:
                 if name in ('hardware', 'battery', 'status', 'network', 'updates', 'model') \
@@ -390,6 +404,9 @@ def briefing_text(now, snapshot, lore='off'):
     logs = logwatch.briefing_sentence(snapshot, lore, now)  # None when nothing is notable
     if logs:
         parts.append(logs)
+    watch = systemwache.briefing_sentence(snapshot, lore, now)  # None when quiet
+    if watch:
+        parts.append(watch)
     night = nightwatch.answer('night_report', snapshot.get('nightwatch'), brief=True)
     if night:
         parts.append(night)
@@ -434,6 +451,8 @@ def answer(intent, now, snapshot=None, lore=None):
         return calendar_text(snapshot, lore)
     if intent == 'selftest':
         return logwatch.selftest_text(snapshot, lore, now)
+    if intent == 'watch':
+        return systemwache.answer_text(snapshot, lore, now, snapshot.get('watch_question'))
     if intent == 'hardware':
         return hardware_text(snapshot, lore)
     if intent == 'model':

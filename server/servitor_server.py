@@ -89,6 +89,7 @@ import speaker  # noqa: E402
 import voice_profile  # noqa: E402
 import voice_quality  # noqa: E402
 import story as stories  # noqa: E402
+import systemwache  # noqa: E402
 from llm import NO_MEMORY  # noqa: E402
 from mood import emergency, split_tag  # noqa: E402
 from system_status import phrase_style, sanitize_snapshot  # noqa: E402
@@ -691,6 +692,7 @@ class Service:
         self.maintenance_at = None  # last accepted maintenance request (monotonic)
         self.weather = weather.Forecast()  # WEATHER_LAT/WEATHER_LON, else no weather
         self.logwatch = None  # logwatch.server_watch(), started by main()
+        self.watch = None     # systemwache.from_env(), started by main()
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
         self.journal = Journal()
@@ -1364,6 +1366,13 @@ class Service:
                         snapshot.update(self.logwatch.snapshot_fields('server_log'))
                         if intent == 'selftest' and not is_browser:
                             self.logwatch.refresh(force=True)  # Pi self-test repair only
+                    if intent in ('briefing', 'watch') and self.watch is not None:
+                        # Infrastructure data, like the agenda: not for an unknown voice.
+                        if isinstance(memory_copy, dict) and memory.unknown_speaker(memory_copy):
+                            snapshot['watch_denied'] = True
+                        else:
+                            snapshot.update(self.watch.snapshot_fields())
+                            snapshot['watch_question'] = text
                     if intent in ('calendar', 'briefing'):
                         day = intents.calendar_day(text, self.now().date()) if intent == 'calendar' else 0
                         snapshot['agenda_day'] = day
@@ -1757,7 +1766,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             state = getattr(self.service.pipeline, 'llm_state', None)
             self._json(200, dict(updates=self.service.updates,
                                  llm=state() if state else None,
-                                 maintenance=maintenance.status(self.service.maintenance_dir)))
+                                 maintenance=maintenance.status(self.service.maintenance_dir),
+                                 watch=self.service.watch.status() if self.service.watch else None))
         else:
             self._json(404, dict(error='not found'))
 
@@ -2252,6 +2262,15 @@ def main():
             print(json.dumps(dict(event='selftest', findings=result['findings'],
                                   repairs=result['repairs'])), flush=True)
         service.logwatch = logwatch.server_watch(report=selftest_report).start()
+
+    def watch_report(events):
+        for item in events:
+            print(json.dumps(dict(event='watch', **{k: item.get(k) for k in
+                                  ('kind', 'name', 'page', 'dur', 'days') if item.get(k) is not None})),
+                  flush=True)
+    service.watch = systemwache.from_env(report=watch_report)
+    if service.watch is not None:
+        service.watch.start()
 
     print(json.dumps(dict(event='listening', bind=config.bind, port=config.port)), flush=True)
     server.serve_forever()
