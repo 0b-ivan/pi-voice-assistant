@@ -261,10 +261,8 @@ function statusHeader() {
 }
 
 async function exchange(path, body, type) {
-  if (!state.conversation) {
-    addLog('error', 'Kein aktives Gespräch. Kanal neu verbinden.');
-    return;
-  }
+  // Compatibility: legacy token-only browsers still send turns, but without
+  // session-scoped conversational context until an explicit chat is opened.
   const controller = new AbortController();
   state.request = controller;
   $('talk').disabled = true;
