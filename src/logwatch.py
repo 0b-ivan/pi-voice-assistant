@@ -542,7 +542,7 @@ ADVICE = {
     'speaker': ("Meine Stimmerkennung ist wiederholt gescheitert",
                 "Die Stimme im Menü neu einlernen"),
     'errors': ("{Bei} stehen {n} weitere Fehlermeldungen im Systemprotokoll",
-               "Nichts Dringendes. Bei Gelegenheit das Protokoll auf dem Gedächtniskern ansehen"),
+               "Die Ursache und Dringlichkeit sind ungeklärt. Die konkreten Dienstprotokolle prüfen"),
     'limited': ("Ich darf {log} nicht lesen",
                 "Den Dienst neu einspielen, ihm fehlt die Gruppe systemd-journal"),
 }
@@ -594,7 +594,7 @@ ADVICE_LORE = {
     'speaker': ("Meine Stimmerkennung irrte wiederholt",
                 "Die Stimme des Bedieners im Menü neu einprägen"),
     'errors': ("{Bei} verzeichnet das Protokoll {n} weitere Klagen der Maschinengeister",
-               "Nichts Dringendes. Bei Gelegenheit die Protokolle im Gedächtniskern deuten"),
+               "Die Ursache ist ungeklärt; die konkreten Dienstprotokolle untersuchen"),
     'limited': ("Mir ist der Blick in {log} verwehrt",
                 "Den Dienst neu einspielen, ihm fehlt die Gruppe systemd-journal"),
 }
@@ -749,10 +749,10 @@ def selftest_text(snapshot, lore='off', now=None):
     billy, full = lore in ('billy', 'billy_full'), lore == 'full'
     if 'log_findings' not in snapshot and 'server_log_findings' not in snapshot:
         if billy:
-            return "Hab meine Logs noch nicht durch, frag gleich nochmal."
+            return "Für diesen Selbsttest liegt noch kein belegter Befund vor. Frag später erneut."
         if full:
-            return "Der Auspex meiner Protokolle läuft noch. Ergebnis folgt in wenigen Minuten."
-        return "Ich prüfe meine Protokolle noch. Ergebnis folgt in wenigen Minuten."
+            return "Der Auspex hat noch keinen belegten Befund. Erneute Anfrage erforderlich."
+        return "Es liegt noch kein belegtes Prüfergebnis vor. Bitte später erneut nachfragen."
     findings = _findings(snapshot, now)
     repairs = [REPAIR_DONE[code][1 if full else 0] + '.' for code in _repairs(snapshot)]
     current = sum(f['current'] for f in findings)
