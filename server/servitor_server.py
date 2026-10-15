@@ -84,6 +84,7 @@ import protocol  # noqa: E402
 import processing_trace  # noqa: E402
 import web_context  # noqa: E402
 import web_diagnostics  # noqa: E402
+import web_jobs  # noqa: E402
 import speaker  # noqa: E402
 import voice_profile  # noqa: E402
 import voice_quality  # noqa: E402
@@ -99,6 +100,9 @@ FEATURES = ('voice2',)  # announced in the welcome: v2 voice core and enrollment
 VOICE_MISSING = object()  # the Pi named a v2 voice core this server does not hold
 VOICE_MIN_SECONDS = 1.5   # v2: less speech is 'insufficient' (concept, section 5)
 CLIP_MAX_SECONDS = 12
+MAX_DIAGNOSE_HOURS = 24
+HOUR_WORDS = dict(eine=1, einen=1, einer=1, zwei=2, drei=3, vier=4, fünf=5, sechs=6,
+                  sieben=7, acht=8, neun=9, zehn=10, elf=11, zwölf=12)
 FORMATS = {'wav': 'audio/wav', 'opus': 'audio/ogg'}
 # TurnError codes caused by the input, not by the server (logwatch ignores them).
 OPERATOR_CODES = ('no_speech', 'too_short', 'too_large', 'bad_request')
@@ -218,6 +222,12 @@ class Config:
         self.trusted_proxies = {
             value.strip() for value in
             env.get('SERVITOR_TRUSTED_PROXIES', '127.0.0.1,::1').split(',') if value.strip()}
+        # Web-Selbsttest: Standardzeitraum; „letzte 6 Stunden“ in der Frage geht vor.
+        self.diagnose_hours = int(env.get('SERVITOR_DIAGNOSE_HOURS', '2'))
+        if not 1 <= self.diagnose_hours <= MAX_DIAGNOSE_HOURS:
+            raise ValueError(f'SERVITOR_DIAGNOSE_HOURS must be between 1 and {MAX_DIAGNOSE_HOURS}')
+        # Kennung und Befund der Diagnoseaufträge überdauern einen Neustart.
+        self.diagnose_archive = web_jobs.default_path(env)
 
     @property
     def max_bytes(self):
@@ -673,13 +683,19 @@ class Service:
         self.seen = protocol.Seen()
         self.journal = Journal()
         self.web_sessions = WebSessions()
-        self.web_chats = web_context.WebConversations()  # RAM only, never a Pi identity
+        self.job_archive = web_jobs.JobArchive(
+            config.diagnose_archive, log=lambda message: print(message, file=sys.stderr, flush=True))
+        # Conversation in RAM only, never a Pi identity; finished jobs are archived.
+        self.web_chats = web_context.WebConversations(archive=self.job_archive)
         self.ready = False
         import nightwatch_server
         self.nightwatch = nightwatch_server.Manager(self)
 
     def start_diagnosis(self, chat_id, principal, persona='servitor',
-                        period='letzte 2 Stunden', bounds=None):
+                        period=None, bounds=None, hours=None):
+        hours = hours or self.config.diagnose_hours
+        if period is None:
+            period = 'letzte Stunde' if hours == 1 else f'letzte {hours} Stunden'
         job, created = self.web_chats.job_start(chat_id, principal, period)
         if created:
             # An unresponsive backend cannot leave a promised result pending
@@ -692,7 +708,8 @@ class Service:
             timeout.daemon = True
             timeout.start()
             threading.Thread(target=self._run_diagnosis,
-                             args=(chat_id, principal, job['id'], persona, bounds),
+                             args=(chat_id, principal, job['id'], persona,
+                                   bounds, hours * 3600),
                              name='web-diagnose', daemon=True).start()
         return job, created
 
@@ -702,11 +719,18 @@ class Service:
                               r'diagnose(?:auftrag)?|job)\s*[:#]?\s*'
                               r'([a-f0-9]{8,24})\b', question, re.IGNORECASE)
         if reference:
-            item = self.web_chats.job(chat_id, principal, reference.group(1).lower())
+            ident = reference.group(1).lower()
+            item = (self.web_chats.job(chat_id, principal, ident)
+                    or self.job_archive.get(ident))
             if item is None:
-                return ('Diese Auftragskennung ist in diesem Browsergespräch nicht '
-                        'vorhanden. Andere Sitzungen und den Zustand vor einem '
-                        'Neustart kann ich nicht überprüfen.')
+                answer = ('Diese Auftragskennung ist in diesem Browsergespräch nicht '
+                          'vorhanden und steht auch nicht im Auftragsarchiv der '
+                          f'letzten {self.job_archive.days} Tage.')
+                if len(ident) < 24:
+                    answer += (' Archivierte Aufträge finde ich nur mit der '
+                               'vollständigen 24-stelligen Kennung.')
+                return answer
+            self.web_chats.set_focus(chat_id, principal, item['id'])
             return self._job_text(item)
 
         yesterday = bool(re.search(r'\bgestern\b', question, re.IGNORECASE))
@@ -751,8 +775,22 @@ class Service:
                     'ausdrücklich freigegebene technische Diagnoseergebnisse. '
                     'Über andere gespeicherte Inhalte kann ich nichts belegen.')
 
-        latest = self.web_chats.latest(chat_id, principal)
+        focus = self.web_chats.focus(chat_id, principal)
+        latest = ((self.web_chats.job(chat_id, principal, focus)
+                   or self.job_archive.get(focus)) if focus else None)
+        latest = latest or self.web_chats.latest(chat_id, principal)
         is_selftest = intents.match(question, persona) == 'selftest'
+        hours = self._requested_hours(question)
+        if hours is not None and (logs or is_selftest):
+            if not 1 <= hours <= MAX_DIAGNOSE_HOURS:
+                return (f'Die lesende Diagnose umfasst höchstens {MAX_DIAGNOSE_HOURS} '
+                        'Stunden. Für einen ganzen Vortag frage nach den Logs von gestern.')
+            job, created = self.start_diagnosis(chat_id, principal, persona, hours=hours)
+            if created or job['status'] not in web_context.FINAL:
+                return (f"Die lesende Prüfung ({job['period']}) läuft unter "
+                        f"Auftragskennung {job['id']}. "
+                        'Das Ergebnis erscheint hier nach Abschluss automatisch.')
+            return self._job_text(job)
         follows = bool(re.search(r'\b(protokoll|fehler|fehlermeldungen|'
                                   r'prüfung|ergebnis|fertig|inzwischen)\b',
                                   question, re.IGNORECASE))
@@ -771,15 +809,34 @@ class Service:
         return self._job_text(latest)
 
     @staticmethod
+    def _requested_hours(question):
+        """„letzte Stunde“, „letzten 6 Stunden“, „der letzten zwölf Stunden“."""
+        if re.search(r'\bletzten?\s+stunde\b', question, re.IGNORECASE):
+            return 1
+        found = re.search(r'\bletzten?\s+(\d{1,3}|' + '|'.join(HOUR_WORDS)
+                          + r')\s+stunden?\b', question, re.IGNORECASE)
+        if not found:
+            return None
+        value = found.group(1).lower()
+        return int(value) if value.isdigit() else HOUR_WORDS[value]
+
+    @staticmethod
     def _job_text(job):
         ident, status = job['id'], job['status']
-        if status == 'abgeschlossen' and job.get('report'):
-            return f"Prüfauftrag {ident} abgeschlossen. " + job['report']['summary']
+        report = job.get('report')
+        summary = job.get('summary') or (report.get('summary')
+                                         if isinstance(report, dict) else None)
+        if status == 'abgeschlossen' and summary:
+            return f"Prüfauftrag {ident} ({job['period']}) abgeschlossen. " + summary
+        if job.get('interrupted'):
+            return (f"Prüfauftrag {ident} wurde durch einen Neustart des Servers "
+                    'unterbrochen; kein belegter Befund vorhanden.')
         if status not in web_context.FINAL:
             return f"Prüfauftrag {ident} läuft noch ({status})."
         return f"Prüfauftrag {ident} ist {status}; kein belegter Befund vorhanden."
 
-    def _run_diagnosis(self, chat_id, principal, job_id, persona, bounds=None):
+    def _run_diagnosis(self, chat_id, principal, job_id, persona, bounds=None,
+                       window=None):
         def update(status, stage, **fields):
             accepted = self.web_chats.job_update(
                 chat_id, principal, job_id, status, stage, **fields)
@@ -798,7 +855,7 @@ class Service:
             return
         try:
             entries, coverage = (web_diagnostics.read(since=bounds[0], until=bounds[1])
-                                 if bounds else web_diagnostics.read())
+                                 if bounds else web_diagnostics.read(window=window))
             if not update('läuft', 'diagnose_sources', services=list(web_diagnostics.UNITS),
                           period=[coverage['since'], coverage['until']],
                           read=coverage['read'], discarded=coverage['discarded'],
@@ -1361,6 +1418,10 @@ class Service:
                         emit(dict(event='mood', emotion=feeling))
                     # Facts/directives the model picked up are never spoken.
                     answer, learned = memory.split_learned(answer)
+                    if web_chat_id and web_context.claims_job_action(answer):
+                        # Nur der Server kennt Aufträge; eine Modellbehauptung
+                        # darüber („als erledigt markiert“) wird nicht gesendet.
+                        answer, model = web_context.JOB_ACTION_TEXT, 'local/diagnose'
                     if (memory_copy not in (None, NO_MEMORY)
                             and not memory.unknown_speaker(memory_copy)):
                         for op, value in learned:
@@ -1457,6 +1518,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         sys.stderr.write('%s %s\n' % (self.address_string(), fmt % args))
+
+    def log_error(self, fmt, *args):
+        # http.server reports every keep-alive connection that cloudflared
+        # leaves idle past `timeout` (~40 per hour). No request was received,
+        # so there is nothing to log; the lines only crowded the web
+        # self-test's 120-line journal window out of real events.
+        if fmt.startswith('Request timed out'):
+            return
+        super().log_error(fmt, *args)
 
     # Static files, health checks and the browser's own polling are not worth a line.
     QUIET = ('/', '/web', '/health', '/v1/journal', '/v1/session', '/v1/web/jobs')

@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 import logwatch
 import web_context
 import web_diagnostics
+import web_jobs
 
 
 def entry(at, unit, message, priority=3):
@@ -277,6 +278,39 @@ class WebDiagnosticTests(unittest.TestCase):
             web_diagnostics.read(now=190000, since=10, until=190000,
                                  capture=fake)
 
+    def test_line_budget_grows_with_window(self):
+        self.assertEqual(web_diagnostics.budget(3600), web_diagnostics.MIN_LINES)
+        self.assertEqual(web_diagnostics.budget(6 * 3600), 600)
+        self.assertEqual(web_diagnostics.budget(25 * 3600), web_diagnostics.MAX_LINES)
+        captured = []
+        def fake(cmd):
+            captured.append(cmd)
+            return b'', 0, False, False
+        web_diagnostics.read(now=100000, window=6 * 3600, capture=fake)
+        for command in captured:
+            self.assertEqual(command[command.index('-n') + 1], '601')
+        # 383 Zeilen in sechs Stunden (gemessen 15.10.2026) passen vollständig.
+        rows = [json.dumps(dict(_SYSTEMD_UNIT='servitor-voice.service',
+                                MESSAGE=json.dumps({'event': 'request'}), PRIORITY='6',
+                                __REALTIME_TIMESTAMP=str((80000 + i * 50) * 1000000)))
+                for i in range(383)]
+        def busy(cmd):
+            return ('' if '--system' in cmd else '\n'.join(rows)).encode(), 0, False, False
+        found, coverage = web_diagnostics.read(now=100000, window=6 * 3600, capture=busy)
+        self.assertEqual(len(found), 383)
+        self.assertFalse(coverage['limited'])
+
+    def test_model_claims_about_jobs_are_detected(self):
+        for invented in ('Auftrag 23183fb368fa53ef142350bd als erledigt markiert.',
+                         'Auftrag 1976f081ce6c709d02817097 abgebrochen.',
+                         'Die Prüfung wurde erfolgreich beendet.',
+                         'Diagnose 1976f081 läuft.'):
+            self.assertTrue(web_context.claims_job_action(invented), invented)
+        for harmless in ('Sprachserver erreichbar. Aktuelle Pi-Messwerte nicht verfügbar.',
+                         'Diese Einheit hat keine eigenen Sensoren.',
+                         'Es ist 22 Uhr 15.', ''):
+            self.assertFalse(web_context.claims_job_action(harmless), harmless)
+
     def test_previous_snapshot_is_never_used(self):
         def fake(command):
             return b'', 0, False, False
@@ -295,6 +329,165 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'server'))
 import servitor_server as ss
 from test_servitor_server import FakePipeline, TOKEN
+
+
+class JobArchiveTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'state' / 'diagnose-jobs.json'
+        self.now = [100000.0]
+        self.clock = lambda: self.now[0]
+
+    def finished(self, archive):
+        chats = web_context.WebConversations(clock=self.clock, archive=archive)
+        principal = 'cookie:' + 'a' * 64
+        chat = chats.create(principal)
+        job, _ = chats.job_start(chat, principal, 'letzte 2 Stunden')
+        chats.job_update(chat, principal, job['id'], 'läuft', 'diagnose_running')
+        chats.job_update(chat, principal, job['id'], 'abgeschlossen', 'diagnose_done',
+                         report=dict(summary='Zwei belegte Fehler.',
+                                     excerpts=[dict(text='geheimer Logtext')]),
+                         text='Modelltext')
+        return job
+
+    def test_finished_job_survives_restart_without_private_content(self):
+        job = self.finished(web_jobs.JobArchive(self.path, clock=self.clock))
+        again = web_jobs.JobArchive(self.path, clock=self.clock).get(job['id'])
+        self.assertEqual(again['status'], 'abgeschlossen')
+        self.assertEqual(again['summary'], 'Zwei belegte Fehler.')
+        self.assertEqual(again['period'], 'letzte 2 Stunden')
+        stored = self.path.read_text(encoding='utf-8')
+        for private in ('geheimer Logtext', 'Modelltext', 'cookie:', 'principal'):
+            self.assertNotIn(private, stored)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
+    def test_only_full_id_and_retention(self):
+        archive = web_jobs.JobArchive(self.path, clock=self.clock, days=7)
+        job = self.finished(archive)
+        self.assertIsNone(archive.get(job['id'][:8]))
+        self.now[0] += 8 * 86400
+        self.assertIsNone(archive.get(job['id']))
+        self.assertIsNone(web_jobs.JobArchive(self.path, clock=self.clock).get(job['id']))
+
+    def test_running_job_is_marked_interrupted_after_restart(self):
+        archive = web_jobs.JobArchive(self.path, clock=self.clock)
+        chats = web_context.WebConversations(clock=self.clock, archive=archive)
+        principal = 'token:' + 'b' * 32
+        chat = chats.create(principal)
+        job, _ = chats.job_start(chat, principal, 'gestern (14.10.2026)')
+        again = web_jobs.JobArchive(self.path, clock=self.clock).get(job['id'])
+        self.assertEqual(again['status'], 'abgebrochen')
+        self.assertTrue(again['interrupted'])
+        self.assertIsNone(again['summary'])
+
+    def test_broken_or_unwritable_archive_does_not_stop_service(self):
+        self.path.parent.mkdir()
+        self.path.write_text('{kaputt')
+        archive = web_jobs.JobArchive(self.path, clock=self.clock)
+        self.assertEqual(archive.jobs, {})
+        blocked = web_jobs.JobArchive(Path(self.tmp.name) / 'datei' / 'x.json',
+                                      clock=self.clock)
+        (Path(self.tmp.name) / 'datei').write_text('kein Verzeichnis')
+        self.finished(blocked)  # kein Fehler, nur RAM
+
+    def test_default_path_follows_systemd_state_directory(self):
+        self.assertIsNone(web_jobs.default_path({}))
+        self.assertEqual(web_jobs.default_path({'STATE_DIRECTORY': '/var/lib/servitor-voice'}),
+                         Path('/var/lib/servitor-voice/diagnose-jobs.json'))
+        self.assertIsNone(web_jobs.default_path({'SERVITOR_DIAGNOSE_ARCHIVE': 'off',
+                                                 'STATE_DIRECTORY': '/var/lib/x'}))
+
+
+class DiagnosisServiceTests(unittest.TestCase):
+    """Service ohne HTTP-Server: Archiv nach Neustart und Zeitfenster."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {'SERVITOR_API_TOKEN': TOKEN, 'SERVITOR_WORKDIR': self.tmp.name,
+                    'STATE_DIRECTORY': self.tmp.name}
+        self.principal = 'cookie:' + 'c' * 64
+        self.coverage = dict(read=0, discarded=0, since=4800, until=12000,
+                             limited=False, error=None)
+
+    def service(self, **env):
+        service = ss.Service(ss.Config(dict(self.env, **env)), FakePipeline(self.tmp.name))
+        service.ready = True
+        return service, service.web_chats.create(self.principal)
+
+    def wait(self, service, chat):
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            job = service.web_chats.latest(chat, self.principal)
+            if job and job['status'] in web_context.FINAL:
+                return job
+            time.sleep(0.01)
+        self.fail('Job did not finish')
+
+    def test_job_id_is_found_after_restart_and_relogin(self):
+        first, chat = self.service()
+        with mock.patch.object(web_diagnostics, 'read',
+                               return_value=([], self.coverage)):
+            first.diagnostic_text('Selbsttest', chat, self.principal)
+            job = self.wait(first, chat)
+        self.assertEqual(job['status'], 'abgeschlossen')
+        restarted, fresh = self.service()
+        reply = restarted.diagnostic_text('Prüfe Auftrag: ' + job['id'], fresh, self.principal)
+        self.assertIn(job['id'], reply)
+        self.assertIn('abgeschlossen', reply)
+        self.assertIn('Keine Protokolle', reply)
+        reply = restarted.diagnostic_text('Prüfe Auftrag: ' + job['id'][:8], fresh,
+                                          self.principal)
+        self.assertIn('vollständigen 24-stelligen', reply)
+
+    def test_job_running_during_restart_is_reported_as_interrupted(self):
+        first, chat = self.service()
+        job, _ = first.web_chats.job_start(chat, self.principal, 'letzte 2 Stunden')
+        restarted, fresh = self.service()
+        reply = restarted.diagnostic_text('auftrag ' + job['id'], fresh, self.principal)
+        self.assertIn('Neustart', reply)
+        self.assertIn('kein belegter Befund', reply)
+
+    def test_question_sets_window_and_limit(self):
+        service, chat = self.service()
+        with mock.patch.object(web_diagnostics, 'read',
+                               return_value=([], self.coverage)) as read:
+            reply = service.diagnostic_text('Was steht in den Logs der letzten 6 Stunden?',
+                                            chat, self.principal)
+            self.assertIn('letzte 6 Stunden', reply)
+            self.wait(service, chat)
+            read.assert_called_once_with(window=6 * 3600)
+            reply = service.diagnostic_text('Selbsttest der letzten zwölf Stunden',
+                                            chat, self.principal)
+            self.assertIn('letzte 12 Stunden', reply)
+        reply = service.diagnostic_text('Logs der letzten 48 Stunden', chat, self.principal)
+        self.assertIn('höchstens 24', reply)
+
+    def test_follow_up_refers_to_last_queried_job(self):
+        first, chat = self.service()
+        with mock.patch.object(web_diagnostics, 'read',
+                               return_value=([], self.coverage)):
+            first.diagnostic_text('Selbsttest', chat, self.principal)
+            job = self.wait(first, chat)
+        restarted, fresh = self.service()
+        restarted.diagnostic_text('Prüfe Auftrag: ' + job['id'], fresh, self.principal)
+        reply = restarted.diagnostic_text('fehler behoben ?', fresh, self.principal)
+        self.assertIn(job['id'], reply)
+        self.assertNotIn('kein Diagnoseauftrag', reply)
+
+    def test_default_window_is_configurable(self):
+        with self.assertRaises(ValueError):
+            ss.Config(dict(self.env, SERVITOR_DIAGNOSE_HOURS='0'))
+        service, chat = self.service(SERVITOR_DIAGNOSE_HOURS='4')
+        with mock.patch.object(web_diagnostics, 'read',
+                               return_value=([], self.coverage)) as read:
+            reply = service.diagnostic_text('Selbsttest', chat, self.principal)
+            self.wait(service, chat)
+        read.assert_called_once_with(window=4 * 3600)
+        self.assertEqual(service.web_chats.latest(chat, self.principal)['period'],
+                         'letzte 4 Stunden')
+        self.assertIn('Auftragskennung', reply)
 
 
 class WebHTTPTests(unittest.TestCase):
@@ -416,6 +609,19 @@ class WebHTTPTests(unittest.TestCase):
         status, _ = self.ask(chat, 'prüfe auftrag:' + job['id'], browser='b' * 32)
         self.assertEqual(status, 409)
 
+    def test_model_cannot_invent_job_actions(self):
+        chat = self.new()
+        self.pipe.suffix = ' Auftrag 1976f081ce6c709d02817097 als erledigt markiert.'
+        status, events = self.ask(chat, 'los')
+        self.assertEqual(status, 200)
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertEqual(reply['text'], web_context.JOB_ACTION_TEXT)
+        self.assertEqual(reply['model'], 'local/diagnose')
+        self.pipe.suffix = ''
+        status, events = self.ask(chat, 'Wie spät ist es auf dem Mars?')
+        reply = next(e for e in events if e['event'] == 'reply')
+        self.assertNotEqual(reply['text'], web_context.JOB_ACTION_TEXT)
+
     def test_web_speicherkern_does_not_claim_private_archives(self):
         chat = self.new()
         status, events = self.ask(chat, 'Was steht in deinem Speicherkern?')
@@ -461,7 +667,7 @@ class WebHTTPTests(unittest.TestCase):
         gate = threading.Event()
         coverage = dict(read=0, discarded=0, since=4800, until=12000,
                         limited=False, error=None)
-        def slow():
+        def slow(**kwargs):
             gate.wait(2)
             return [], coverage
         with mock.patch.object(web_diagnostics, 'read', side_effect=slow) as reader:
