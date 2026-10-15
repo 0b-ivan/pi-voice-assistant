@@ -736,6 +736,18 @@ class Service:
             return ('Dieses Webgespräch enthält keinen verifizierten Verlauf '
                     'von gestern. Ob gestern in anderen Sitzungen gesprochen '
                     'wurde, kann ich nicht feststellen.')
+        # Kein Modell darf für den Browser Zugriff auf einen Pi-Speicherkern
+        # oder angeblich bekannte Archiv-Engramme behaupten.
+        if (re.search(r'\b(?:speicherkern|gedächtnis|archiv\w*|'
+                      r'erinnerungsspeicher)\b', question, re.IGNORECASE)
+                and re.search(r'\b(?:was|welche|zeige|inhalt|gespeichert|'
+                              r'enthalten|zugriff|liest du)\b',
+                              question, re.IGNORECASE)):
+            return ('Im Browser habe ich keinen Zugriff auf den persönlichen '
+                    'Speicherkern des Pi oder auf frühere Archive. Ich kenne '
+                    'nur die Fragen dieses flüchtigen Webgesprächs und '
+                    'ausdrücklich freigegebene technische Diagnoseergebnisse. '
+                    'Über andere gespeicherte Inhalte kann ich nichts belegen.')
 
         latest = self.web_chats.latest(chat_id, principal)
         is_selftest = intents.match(question, persona) == 'selftest'
