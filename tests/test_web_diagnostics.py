@@ -51,6 +51,18 @@ class WebConversationTests(unittest.TestCase):
         with self.assertRaises(web_context.MissingChat):
             self.chats.events(self.a, self.bob)
 
+    def test_receipt_is_confirmed_once_and_scoped(self):
+        job, _ = self.chats.job_start(self.a, self.alice, '2h')
+        self.assertFalse(self.chats.acknowledge(self.a, self.alice, job['id']))
+        self.chats.job_update(self.a, self.alice, job['id'], 'abgeschlossen',
+                              'diagnose_done', text='Fertig')
+        self.assertTrue(self.chats.acknowledge(self.a, self.alice, job['id']))
+        self.assertFalse(self.chats.acknowledge(self.a, self.alice, job['id']))
+        with self.assertRaises(web_context.MissingChat):
+            self.chats.acknowledge(self.a, self.bob, job['id'])
+        self.assertEqual(sum(e['stage'] == 'diagnose_delivered'
+                             for e in self.chats.events(self.a, self.alice)['events']), 1)
+
     def test_two_threads_get_distinct_jobs(self):
         a, _ = self.chats.job_start(self.a, self.alice, '2h')
         b, _ = self.chats.job_start(self.b, self.bob, '2h')
@@ -282,6 +294,38 @@ class WebHTTPTests(unittest.TestCase):
             self.assertEqual(status, 409)
             gate.set()
             self.await_job(chat)
+
+    def test_browser_without_chat_cannot_trigger_selftest_repair(self):
+        status, payload = self.ask('', 'Selbsttest')
+        self.assertEqual(status, 409)
+        self.assertIn('aktives Gespräch', payload['error'])
+
+    def test_http_receipt_once_and_never_across_browser(self):
+        chat = self.new()
+        job, _ = self.service.web_chats.job_start(chat, 'token:' + self.browser, '2h')
+        self.service.web_chats.job_update(
+            chat, 'token:' + self.browser, job['id'], 'abgeschlossen',
+            'diagnose_done', text='Fertig')
+        args = dict(conversation=chat, job=job['id'])
+        status, body = self.request('/v1/web/ack', args)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)['newly_confirmed'])
+        status, body = self.request('/v1/web/ack', args)
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(body)['newly_confirmed'])
+        status, body = self.request('/v1/web/ack', args, browser='b' * 32)
+        self.assertEqual(status, 404)
+
+    def test_browser_journal_redacts_structured_private_fields(self):
+        journal = self.service.journal
+        journal.add(json.dumps(dict(event='turn_error', code='llm',
+                                    prompt='mein Passwort ist geheim',
+                                    token='abc123', text='test@example.de')))
+        visible = journal.since(0)['lines'][-1]['text']
+        self.assertIn('turn_error', visible)
+        self.assertNotIn('abc123', visible)
+        self.assertNotIn('example.de', visible)
+        self.assertNotIn('Passwort ist geheim', visible)
 
     def test_logout_cancels_and_forgets_web_conversation(self):
         chat = self.new()
