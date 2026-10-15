@@ -483,6 +483,32 @@ class Journal:
     IPV6 = re.compile(r'(?<![\w:])(?:[0-9a-f]{0,4}:){3,7}[0-9a-f]{0,4}(?![\w:])', re.IGNORECASE)
     ANSI = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')   # colour codes (onnxruntime, llama.cpp)
 
+    PRIVATE = re.compile(r'(?i)(?:Bearer\s+\S+|\b(?:token|password|secret|api[_-]?key|authorization)\b\s*[:=]\s*[^,;\s]+)')
+    EMAIL = re.compile(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b')
+    PUBLIC_FIELDS = frozenset({
+        'event', 'turn', 'job', 'step', 'status', 'stage', 'code', 'client',
+        'method', 'path', 'name', 'state', 'model', 'provider', 'channel',
+        'unit', 'services', 'read', 'discarded', 'limited', 'categories',
+        'ms', 'source', 'mode', 'ready',
+    })
+
+    @classmethod
+    def public_line(cls, line):
+        """Retain operational metadata, never arbitrary prompt/log JSON values."""
+        try:
+            item = json.loads(line) if line.startswith('{') else None
+        except ValueError:
+            item = None
+        if isinstance(item, dict) and isinstance(item.get('event'), str):
+            selected = {key: value for key, value in item.items()
+                        if key in cls.PUBLIC_FIELDS and
+                        (isinstance(value, (str, int, float, bool)) or
+                         isinstance(value, list) and
+                         all(isinstance(x, str) and len(x) <= 64 for x in value))}
+            line = json.dumps(selected, ensure_ascii=False)
+        line = cls.PRIVATE.sub('[GEHEIMNIS AUSGEBLENDET]', line)
+        return cls.EMAIL.sub('[E-MAIL AUSGEBLENDET]', line)
+
     def __init__(self, size=300, clock=time.time):
         self.items = collections.deque(maxlen=size)
         self.seq = 0
@@ -495,6 +521,7 @@ class Journal:
         line = self.ANSI.sub('', line).strip()
         if not line or self.ACCESS.search(line):
             return
+        line = self.public_line(line)
         line = self.IPV4.sub(lambda m: f'*.*.*.{m.group(1)}', line)
         line = self.IPV6.sub('*:*', line)[:300]
         unit = re.sub(r'\.service$', '', unit or '')[:40]
