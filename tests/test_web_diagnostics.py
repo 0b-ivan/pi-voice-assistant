@@ -1,4 +1,5 @@
 import json
+import socket
 import sys
 import threading
 import unittest
@@ -135,11 +136,16 @@ class WebDiagnosticTests(unittest.TestCase):
                  PRIORITY='3', __REALTIME_TIMESTAMP='11901000000')]
         def fake(command):
             captured.append(command)
+            if '--system' in command:
+                return b'', 0, False, False
             return ('\n'.join(json.dumps(p) for p in payloads)).encode(), 0, False, False
         rows, coverage = web_diagnostics.read(now=self.now, capture=fake)
         self.assertEqual(len(rows), 1)
         self.assertEqual(coverage['discarded'], 1)
         self.assertEqual(captured[0].count('-u'), 2)
+        self.assertIn('--system', captured[1])
+        self.assertIn('0..4', captured[1])
+        self.assertNotIn('-u', captured[1])
         self.assertNotIn('postgresql.service', captured[0])
         self.assertNotIn('sh', captured[0])
         self.assertFalse(coverage['limited'])
@@ -153,6 +159,79 @@ class WebDiagnosticTests(unittest.TestCase):
             self.assertTrue(coverage['limited'])
             self.assertIn('unvollständig', web_diagnostics.describe(
                 web_diagnostics.analyse(rows, coverage)))
+
+    def test_system_kernel_and_other_service_errors_only_aggregate(self):
+        host = socket.gethostname()
+        secret = 'client@example.net Authorization: Bearer sensitive-api-key'
+        own = [dict(_SYSTEMD_UNIT='servitor-voice.service',
+                    MESSAGE=json.dumps({'event': 'ready'}),
+                    PRIORITY='6', __REALTIME_TIMESTAMP='11900000000')]
+        system = [
+            dict(_HOSTNAME=host, _TRANSPORT='kernel', PRIORITY='3',
+                 MESSAGE='invoked oom-killer: killed process 99',
+                 __REALTIME_TIMESTAMP='11901000000'),
+            dict(_HOSTNAME=host, _TRANSPORT='kernel', PRIORITY='3',
+                 MESSAGE='EXT4-fs error on virtual volume',
+                 __REALTIME_TIMESTAMP='11902000000'),
+        ] + [
+            dict(_HOSTNAME=host, _SYSTEMD_UNIT='unrelated-foreign.service',
+                 PRIORITY='3', MESSAGE=secret + ' out of memory',
+                 __REALTIME_TIMESTAMP=str((11910 + i) * 1000000))
+            for i in range(5)
+        ]
+        def fake(command):
+            rows = system if '--system' in command else own
+            return '\n'.join(json.dumps(row) for row in rows).encode(), 0, False, False
+        rows, meta = web_diagnostics.read(now=self.now, capture=fake)
+        self.assertFalse(meta['limited'])
+        self.assertEqual(meta['sources']['own']['read'], 1)
+        self.assertEqual(meta['sources']['ct107_system']['read'], 7)
+        report = web_diagnostics.analyse(rows, meta)
+        groups = {f['code']: f for f in report['findings']}
+        self.assertEqual(groups['oom']['count'], 1)
+        self.assertEqual(groups['disk_io']['count'], 1)
+        self.assertEqual(groups['errors']['count'], 5)
+        self.assertEqual(groups['errors']['units'], ['CT 107 (Systemjournal)'])
+        self.assertFalse(groups['errors']['evidence'])
+        output = web_diagnostics.describe(report)
+        serialized = json.dumps(report, ensure_ascii=False)
+        for forbidden in ('unrelated-foreign.service', 'sensitive-api-key',
+                          'client@example.net', 'virtual volume', 'killed process'):
+            self.assertNotIn(forbidden, serialized)
+            self.assertNotIn(forbidden, output)
+        self.assertIn('Systemjournal', output)
+        self.assertIn('Wiederherstellung nicht belegt', output)
+
+    def test_remote_host_cannot_be_mistaken_for_ct107(self):
+        system = [dict(_HOSTNAME='fremder-proxmox-host', _TRANSPORT='kernel',
+                       PRIORITY='3', MESSAGE='invoked oom-killer',
+                       __REALTIME_TIMESTAMP='11900000000')]
+        def fake(command):
+            rows = system if '--system' in command else []
+            return json.dumps(rows[0]).encode() if rows else b'', 0, False, False
+        rows, coverage = web_diagnostics.read(now=self.now, capture=fake)
+        self.assertEqual(rows, [])
+        self.assertTrue(coverage['limited'])
+        self.assertEqual(coverage['sources']['ct107_system']['read'], 0)
+        self.assertNotIn('Arbeitsspeicher erschöpft',
+                         web_diagnostics.describe(web_diagnostics.analyse(rows, coverage)))
+
+    def test_system_journal_permission_failure_is_not_all_clear(self):
+        def fake(command):
+            return (b'', 1, False, True) if '--system' in command else (
+                json.dumps(dict(_SYSTEMD_UNIT='servitor-voice.service',
+                                MESSAGE='ready', PRIORITY='6',
+                                __REALTIME_TIMESTAMP='11900000000')).encode(),
+                0, False, False)
+        rows, coverage = web_diagnostics.read(now=self.now, capture=fake)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(coverage['limited'])
+        self.assertIn('ct107_system', web_diagnostics.describe(
+            web_diagnostics.analyse(rows, coverage)))
+        # Analyse ist ein reiner Datenpfad, LogWatch.check() darf niemals laufen.
+        with mock.patch.object(logwatch, 'request', side_effect=AssertionError('repair')), \
+             mock.patch.object(logwatch, 'unit_failed', side_effect=AssertionError('repair')):
+            web_diagnostics.analyse(rows, coverage)
 
     def test_previous_snapshot_is_never_used(self):
         def fake(command):
