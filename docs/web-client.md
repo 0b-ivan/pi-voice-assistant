@@ -352,6 +352,19 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   Nach der Anzeige bestätigt es den Empfang über `POST /v1/web/ack`;
   der Server protokolliert diese Bestätigung genau einmal. Eine Unterbrechung
   lässt sich über den Ereigniszähler wieder aufnehmen.
+- Auftragsfragen mit vollständiger Kennung oder eindeutigem Präfix ab acht
+  Hex-Zeichen werden direkt gegen die **eigene** RAM-Sitzung aufgelöst, niemals
+  aus dem LLM oder dem Journal geraten. Andere Browsergespräche und Aufträge
+  vor einem Serverneustart sind nicht abfragbar.
+- Fragen nach den **Logs von gestern** lösen einen gesonderten, lesenden
+  Diagnoseauftrag für den gestrigen Kalendertag in der konfigurierten Zeitzone
+  aus. Beide Journalabfragen bleiben hart begrenzt; bei mehr als 120 Zeilen
+  pro Quelle wird die unvollständige Abdeckung ausgewiesen. Ältere Journale
+  sind nur verfügbar, sofern CT 107 sie noch vorhält.
+- Das CT-107-Systemjournal ist **kein Gesprächsarchiv**. Der Web-Chat besitzt
+  ausschließlich den laufenden, flüchtigen Browserdialog und kann Aussagen
+  über Gespräche von gestern oder aus anderen Sitzungen weder bestätigen
+  noch widerlegen. Solche Fragen dürfen keine erfundenen Archivbelege erzeugen.
 - Unbekannte Fehler, fehlende Leserechte, abgeschnittene Logs und fehlende
   Recovery-Belege sind **keine Entwarnung**. Der Browser zeigt diese Grenzen.
 
