@@ -652,6 +652,15 @@ class Service:
     def start_diagnosis(self, chat_id, principal, persona='servitor'):
         job, created = self.web_chats.job_start(chat_id, principal, 'letzte 2 Stunden')
         if created:
+            # An unresponsive backend cannot leave a promised result pending
+            # indefinitely; late worker results lose the terminal-state race.
+            timeout = threading.Timer(
+                55, self.web_chats.job_update,
+                args=(chat_id, principal, job['id'], 'fehlgeschlagen', 'diagnose_failed'),
+                kwargs={'text': 'Prüfung wegen Zeitüberschreitung beendet. '
+                                'Es gibt kein belegtes Ergebnis.'})
+            timeout.daemon = True
+            timeout.start()
             threading.Thread(target=self._run_diagnosis,
                              args=(chat_id, principal, job['id'], persona),
                              name='web-diagnose', daemon=True).start()
