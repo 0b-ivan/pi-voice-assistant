@@ -1502,6 +1502,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write('%s %s\n' % (self.address_string(), fmt % args))
 
+    def log_error(self, fmt, *args):
+        # http.server reports every keep-alive connection that cloudflared
+        # leaves idle past `timeout` (~40 per hour). No request was received,
+        # so there is nothing to log; the lines only crowded the web
+        # self-test's 120-line journal window out of real events.
+        if fmt.startswith('Request timed out'):
+            return
+        super().log_error(fmt, *args)
+
     # Static files, health checks and the browser's own polling are not worth a line.
     QUIET = ('/', '/web', '/health', '/v1/journal', '/v1/session', '/v1/web/jobs')
 
