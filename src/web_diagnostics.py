@@ -10,6 +10,7 @@ import selectors
 import socket
 import subprocess
 import time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import logwatch
 
@@ -124,26 +125,31 @@ def _scope(command, source, since, now, capture, hostname):
                          if incomplete else None)
 
 
-def read(now=None, capture=_capture):
+def read(now=None, capture=_capture, since=None, until=None):
+    """Nur zwei festgelegte Quellen. Optionaler Tageszeitraum wird serverseitig erstellt."""
     now = time.time() if now is None else now
-    since = int(now - WINDOW)
+    end = int(now if until is None else until)
+    since = int(end - WINDOW if since is None else since)
+    # Ein Kalendertag kann wegen der Zeitumstellung 25 Stunden haben.
+    if not 0 < end - since <= 25 * 3600 or end > now + 60:
+        raise ValueError('Diagnosezeitraum außerhalb des erlaubten Bereichs')
     args = ['--no-pager', '-q', '-o', 'json',
             '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
             '__REALTIME_TIMESTAMP,_HOSTNAME',
             '-n', str(MAX_LINES + 1),
-            '--since=@' + str(since), '--until=@' + str(int(now))]
+            '--since=@' + str(since), '--until=@' + str(end)]
     own_command = ['journalctl', *args, '-u', UNITS[0], '-u', UNITS[1]]
     # Nur CT 107, nur Priority 0..4. Kein Journal anderer Proxmox-Knoten,
     # kein journalctl --machine/--directory, keine fremde Logausgabe.
     system_command = ['journalctl', '--system', *args, '-p', '0..4']
-    own, own_coverage = _scope(own_command, 'own', since, now, capture,
+    own, own_coverage = _scope(own_command, 'own', since, end, capture,
                                socket.gethostname())
-    system, system_coverage = _scope(system_command, SYSTEM_SOURCE, since, now,
+    system, system_coverage = _scope(system_command, SYSTEM_SOURCE, since, end,
                                      capture, socket.gethostname())
     coverage = dict(
         read=own_coverage['read'] + system_coverage['read'],
         discarded=own_coverage['discarded'] + system_coverage['discarded'],
-        since=since, until=int(now),
+        since=since, until=end,
         limited=own_coverage['limited'] or system_coverage['limited'],
         error=own_coverage['error'] or system_coverage['error'],
         sources={'own': own_coverage, SYSTEM_SOURCE: system_coverage},
@@ -226,15 +232,21 @@ def analyse(entries, coverage):
     )
 
 
-def describe(report):
+def describe(report, timezone='Europe/Berlin'):
+    # CT 107 läuft in UTC; Bedienerzeit und benannte Zeitzone sind notwendig.
+    try:
+        tz = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        tz = datetime.timezone.utc
+        timezone = 'UTC'
     c = report['coverage']
-    a = datetime.datetime.fromtimestamp(c['since']).strftime('%d.%m. %H:%M')
-    b = datetime.datetime.fromtimestamp(c['until']).strftime('%d.%m. %H:%M')
+    a = datetime.datetime.fromtimestamp(c['since'], tz).strftime('%d.%m. %H:%M')
+    b = datetime.datetime.fromtimestamp(c['until'], tz).strftime('%d.%m. %H:%M')
     scopes = c.get('sources', {})
     own_count = scopes.get('own', {}).get('read', c['read'])
     system_count = scopes.get(SYSTEM_SOURCE, {}).get('read', 0)
     parts = [f"Lesende Diagnose von servitor-voice.service und servitor-llm.service "
-             f"sowie aggregierten Systemfehlern auf CT 107, {a}–{b}.",
+             f"sowie aggregierten Systemfehlern auf CT 107, {a}–{b} ({timezone}).",
              f"{own_count} eigene und {system_count} lokale Systemeinträge ausgewertet; "
              f"{c['discarded']} verworfen. Fremde Rohlogs werden nicht angezeigt."]
     if c['limited']:
@@ -245,7 +257,7 @@ def describe(report):
     elif not c['read']:
         parts.append('Keine Protokolle im Zeitraum lesbar; keine Entwarnung möglich.')
     for item in report['findings']:
-        when = datetime.datetime.fromtimestamp(item['last']).strftime('%d.%m. %H:%M')
+        when = datetime.datetime.fromtimestamp(item['last'], tz).strftime('%d.%m. %H:%M')
         parts.append(f"{item['category']} bei {', '.join(item['units'])}: "
                      f"{item['count']} Ereignisse, zuletzt {when}; "
                      f"Wiederherstellung {item['recovery']}. "

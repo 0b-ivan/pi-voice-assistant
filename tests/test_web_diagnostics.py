@@ -1,8 +1,10 @@
+import datetime
 import json
 import socket
 import sys
 import threading
 import unittest
+import zoneinfo
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
@@ -64,6 +66,22 @@ class WebConversationTests(unittest.TestCase):
         self.assertEqual(sum(e['stage'] == 'diagnose_delivered'
                              for e in self.chats.events(self.a, self.alice)['events']), 1)
 
+    def test_lookup_by_id_and_prefix_is_scoped_and_unambiguous(self):
+        job, _ = self.chats.job_start(self.a, self.alice, '2h')
+        self.assertEqual(self.chats.job(self.a, self.alice, job['id'])['id'], job['id'])
+        self.assertEqual(self.chats.job(self.a, self.alice, job['id'][:8])['id'],
+                         job['id'])
+        self.assertIsNone(self.chats.job(self.a, self.alice, '0' * 24))
+        with self.assertRaises(web_context.MissingChat):
+            self.chats.job(self.a, self.bob, job['id'])
+        self.assertIsNone(self.chats.job(self.b, self.bob, job['id']))
+
+    def test_different_diagnostic_periods_have_distinct_jobs(self):
+        current, _ = self.chats.job_start(self.a, self.alice, 'letzte 2 Stunden')
+        historical, created = self.chats.job_start(self.a, self.alice, 'gestern')
+        self.assertTrue(created)
+        self.assertNotEqual(current['id'], historical['id'])
+
     def test_two_threads_get_distinct_jobs(self):
         a, _ = self.chats.job_start(self.a, self.alice, '2h')
         b, _ = self.chats.job_start(self.b, self.bob, '2h')
@@ -115,6 +133,16 @@ class WebDiagnosticTests(unittest.TestCase):
         self.assertEqual(finding['last'], 11905)
         self.assertEqual(finding['recovery'], 'nicht belegt')
         self.assertIn('nicht bewiesen', web_diagnostics.describe(result).lower())
+
+    def test_diagnosis_times_are_local_not_server_utc(self):
+        begin = int(datetime.datetime(2026, 10, 15, 15, 4,
+                                      tzinfo=datetime.timezone.utc).timestamp())
+        coverage = dict(read=0, discarded=0, since=begin, until=begin + 7200,
+                        limited=False, error=None)
+        report = web_diagnostics.analyse([], coverage)
+        spoken = web_diagnostics.describe(report, 'Europe/Berlin')
+        self.assertIn('17:04–15.10. 19:04 (Europe/Berlin)', spoken)
+        self.assertNotIn('15:04–15.10. 17:04', spoken)
 
     def test_bad_log_cannot_exfiltrate_secrets(self):
         raw = 'Authorization: Bearer private-token user@example.com 10.1.2.3'
@@ -233,6 +261,22 @@ class WebDiagnosticTests(unittest.TestCase):
              mock.patch.object(logwatch, 'unit_failed', side_effect=AssertionError('repair')):
             web_diagnostics.analyse(rows, coverage)
 
+    def test_yesterday_bounds_are_not_a_live_two_hour_snapshot(self):
+        captured = []
+        def fake(cmd):
+            captured.append(cmd)
+            return b'', 0, False, False
+        since, until = 100000, 186400
+        _, coverage = web_diagnostics.read(
+            now=190000, since=since, until=until, capture=fake)
+        self.assertEqual((coverage['since'], coverage['until']), (since, until))
+        for command in captured:
+            self.assertIn('--since=@100000', command)
+            self.assertIn('--until=@186400', command)
+        with self.assertRaises(ValueError):
+            web_diagnostics.read(now=190000, since=10, until=190000,
+                                 capture=fake)
+
     def test_previous_snapshot_is_never_used(self):
         def fake(command):
             return b'', 0, False, False
@@ -350,6 +394,67 @@ class WebHTTPTests(unittest.TestCase):
             status, data = self.request('/v1/web/jobs?conversation=' + chat
                                         + '&after=' + str(last), method='GET')
             self.assertEqual(json.loads(data)['events'], [])
+
+    def test_actual_job_reference_is_not_hallucinated_by_llm(self):
+        chat = self.new()
+        principal = 'token:' + self.browser
+        job, _ = self.service.web_chats.job_start(chat, principal, 'letzte 2 Stunden')
+        self.service.web_chats.job_update(chat, principal, job['id'],
+                                          'abgeschlossen', 'diagnose_done',
+                                          report={'summary': 'Sechs belegte Fehler.'},
+                                          text='Fertig')
+        for suffix in (job['id'], job['id'][:8]):
+            status, events = self.ask(chat, 'prüfe auftrag:' + suffix)
+            self.assertEqual(status, 200)
+            reply = next(e['text'] for e in events if e['event'] == 'reply')
+            self.assertIn('Sechs belegte Fehler.', reply)
+            self.assertIn(job['id'], reply)
+        status, events = self.ask(chat, 'prüfe auftrag:' + 'f' * 24)
+        self.assertEqual(status, 200)
+        self.assertIn('in diesem Browsergespräch nicht', events[1]['text'])
+        self.assertNotIn('Dienstaufzeichnungen nicht', events[1]['text'])
+        status, _ = self.ask(chat, 'prüfe auftrag:' + job['id'], browser='b' * 32)
+        self.assertEqual(status, 409)
+
+    def test_web_speicherkern_does_not_claim_private_archives(self):
+        chat = self.new()
+        status, events = self.ask(chat, 'Was steht in deinem Speicherkern?')
+        self.assertEqual(status, 200)
+        reply = next(e['text'] for e in events if e['event'] == 'reply')
+        self.assertIn('keinen Zugriff', reply)
+        self.assertIn('flüchtigen Webgesprächs', reply)
+        self.assertNotIn('Archiv-Engramme', reply)
+
+    def test_yesterday_logs_and_conversation_are_separated(self):
+        chat = self.new()
+        local = datetime.datetime(2026, 10, 15, 19, 4,
+                                  tzinfo=zoneinfo.ZoneInfo('Europe/Berlin'))
+        yesterday = datetime.date(2026, 10, 14)
+        start = datetime.datetime.combine(yesterday, datetime.time.min,
+                                          tzinfo=local.tzinfo)
+        stop = start + datetime.timedelta(days=1)
+        coverage = dict(read=0, discarded=0, since=int(start.timestamp()),
+                        until=int(stop.timestamp()), limited=False, error=None)
+        def reader(**kwargs):
+            self.assertEqual(kwargs, dict(since=int(start.timestamp()),
+                                          until=int(stop.timestamp())))
+            return [], coverage
+        with (mock.patch.object(self.service, 'now', return_value=local),
+              mock.patch.object(web_diagnostics, 'read', side_effect=reader) as read):
+            status, events = self.ask(
+                chat, 'was steht in denn Logs von gestern ? und worüber haben wir gesprochen ?')
+            self.assertEqual(status, 200)
+            reply = next(e['text'] for e in events if e['event'] == 'reply')
+            self.assertIn('14.10.2026', reply)
+            self.assertIn('Gesprächsinhalte', reply)
+            job = self.await_job(chat)
+            self.assertEqual(job['status'], 'abgeschlossen')
+            self.assertEqual(read.call_count, 1)
+        status, events = self.ask(chat, 'Was haben wir gestern gesprochen?')
+        self.assertEqual(status, 200)
+        reply = next(e['text'] for e in events if e['event'] == 'reply')
+        self.assertIn('nicht feststellen', reply)
+        self.assertNotIn('keine Gespräche', reply)
 
     def test_double_selftest_and_other_browser_cannot_read(self):
         chat = self.new()
