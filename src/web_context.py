@@ -100,7 +100,8 @@ class WebConversations:
                     return dict(job), False   # short retry window after completion
                 break
             job = dict(id=secrets.token_hex(12), status='gestartet', period=period,
-                       created=self.clock(), started=None, finished=None, report=None)
+                       created=self.clock(), started=None, finished=None,
+                       delivered_at=None, report=None)
             chat['jobs'].append(job)
             chat['jobs'] = chat['jobs'][-MAX_JOBS:]
             self._event(chat, job, 'diagnose_start', period=period)
@@ -143,6 +144,19 @@ class WebConversations:
                         jobs=[dict(j) for j in chat['jobs'][-MAX_JOBS:]],
                         gap=bool(chat['events'] and after and
                                  after < chat['events'][0]['seq'] - 1))
+
+    def acknowledge(self, chat_id, principal, job_id):
+        """Idempotent browser receipt, never inferred from a background job."""
+        with self.lock:
+            chat = self._get(chat_id, principal)
+            job = next((j for j in chat['jobs'] if j['id'] == job_id), None)
+            if job is None or job['status'] not in FINAL:
+                return False
+            if job.get('delivered_at') is not None:
+                return False
+            job['delivered_at'] = self.clock()
+            self._event(chat, job, 'diagnose_delivered', status=job['status'])
+            return True
 
     def cancel(self, chat_id, principal):
         with self.lock:
