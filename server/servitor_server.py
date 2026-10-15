@@ -676,8 +676,9 @@ class Service:
         import nightwatch_server
         self.nightwatch = nightwatch_server.Manager(self)
 
-    def start_diagnosis(self, chat_id, principal, persona='servitor'):
-        job, created = self.web_chats.job_start(chat_id, principal, 'letzte 2 Stunden')
+    def start_diagnosis(self, chat_id, principal, persona='servitor',
+                        period='letzte 2 Stunden', bounds=None):
+        job, created = self.web_chats.job_start(chat_id, principal, period)
         if created:
             # An unresponsive backend cannot leave a promised result pending
             # indefinitely; late worker results lose the terminal-state race.
@@ -689,17 +690,58 @@ class Service:
             timeout.daemon = True
             timeout.start()
             threading.Thread(target=self._run_diagnosis,
-                             args=(chat_id, principal, job['id'], persona),
+                             args=(chat_id, principal, job['id'], persona, bounds),
                              name='web-diagnose', daemon=True).start()
         return job, created
 
     def diagnostic_text(self, question, chat_id, principal, persona='servitor'):
-        """A referenced job, never a previous assistant assertion, is evidence."""
+        """Nur serverseitige Jobdaten dieser Browser-Sitzung belegen einen Auftrag."""
+        reference = re.search(r'\b(?:prüf(?:ungs)?auftrag|auftrag(?:skennung)?|'
+                              r'diagnose(?:auftrag)?|job)\s*[:#]?\s*'
+                              r'([a-f0-9]{8,24})\b', question, re.IGNORECASE)
+        if reference:
+            item = self.web_chats.job(chat_id, principal, reference.group(1).lower())
+            if item is None:
+                return ('Diese Auftragskennung ist in diesem Browsergespräch nicht '
+                        'vorhanden. Andere Sitzungen und den Zustand vor einem '
+                        'Neustart kann ich nicht überprüfen.')
+            return self._job_text(item)
+
+        yesterday = bool(re.search(r'\bgestern\b', question, re.IGNORECASE))
+        logs = bool(re.search(r'\b(?:logs?|protokoll(?:e|en)?|journal|'
+                              r'dienstaufzeichnungen)\b', question, re.IGNORECASE))
+        earlier_talk = bool(re.search(r'\b(?:gespräche?|gesprächsverlauf|'
+                                      r'gesprochen|besprochen|unterhalten)\b',
+                                      question, re.IGNORECASE))
+        if yesterday and logs:
+            # Historische Systemdiagnose mit deutschen Tagesgrenzen.
+            local_now = self.now()
+            day = local_now.date() - datetime.timedelta(days=1)
+            start = datetime.datetime.combine(day, datetime.time.min,
+                                              tzinfo=local_now.tzinfo)
+            stop = start + datetime.timedelta(days=1)
+            period = 'gestern (' + day.strftime('%d.%m.%Y') + ')'
+            job, created = self.start_diagnosis(
+                chat_id, principal, persona, period,
+                bounds=(int(start.timestamp()), int(stop.timestamp())))
+            answer = (f"Lesende Systemdiagnose für {period}: Auftrag {job['id']}. "
+                      'Das Ergebnis erscheint nach Abschluss automatisch.'
+                      if created else self._job_text(job))
+            if earlier_talk:
+                answer += (' Gesprächsinhalte von gestern gehören nicht zu '
+                           'diesem Systemprotokoll. Das flüchtige Webgespräch '
+                           'enthält keinen verifizierten Verlauf von gestern.')
+            return answer
+        if yesterday and earlier_talk:
+            return ('Dieses Webgespräch enthält keinen verifizierten Verlauf '
+                    'von gestern. Ob gestern in anderen Sitzungen gesprochen '
+                    'wurde, kann ich nicht feststellen.')
+
         latest = self.web_chats.latest(chat_id, principal)
         is_selftest = intents.match(question, persona) == 'selftest'
         follows = bool(re.search(r'\b(protokoll|fehler|fehlermeldungen|'
-                                 r'prüfung|ergebnis|fertig|inzwischen)\b',
-                                 question, re.IGNORECASE))
+                                  r'prüfung|ergebnis|fertig|inzwischen)\b',
+                                  question, re.IGNORECASE))
         if not is_selftest and not follows:
             return None
         if is_selftest:
@@ -707,18 +749,23 @@ class Service:
             if created or job['status'] not in web_context.FINAL:
                 return (f"Die lesende Prüfung läuft unter Auftragskennung {job['id']}. "
                         'Das Ergebnis erscheint hier nach Abschluss automatisch.')
-            return f"Prüfauftrag {job['id']} ist {job['status']}."
+            return self._job_text(job)
         if latest is None:
-            return ('Zu diesem Gespräch existiert kein laufender Diagnoseauftrag. '
-                    'Die frühere Ankündigung ist kein technischer Prüfnachweis. '
+            return ('Zu diesem Gespräch existiert kein Diagnoseauftrag. '
+                    'Eine frühere Modellbehauptung ist kein Prüfnachweis. '
                     'Starte einen neuen Selbsttest.')
-        if latest['status'] not in web_context.FINAL:
-            return f"Prüfauftrag {latest['id']} läuft noch ({latest['status']})."
-        if latest['status'] == 'abgeschlossen' and latest.get('report'):
-            return latest['report']['summary']
-        return f"Prüfauftrag {latest['id']} ist {latest['status']}; kein belegter Befund vorhanden."
+        return self._job_text(latest)
 
-    def _run_diagnosis(self, chat_id, principal, job_id, persona):
+    @staticmethod
+    def _job_text(job):
+        ident, status = job['id'], job['status']
+        if status == 'abgeschlossen' and job.get('report'):
+            return f"Prüfauftrag {ident} abgeschlossen. " + job['report']['summary']
+        if status not in web_context.FINAL:
+            return f"Prüfauftrag {ident} läuft noch ({status})."
+        return f"Prüfauftrag {ident} ist {status}; kein belegter Befund vorhanden."
+
+    def _run_diagnosis(self, chat_id, principal, job_id, persona, bounds=None):
         def update(status, stage, **fields):
             accepted = self.web_chats.job_update(
                 chat_id, principal, job_id, status, stage, **fields)
@@ -736,7 +783,8 @@ class Service:
         if not update('läuft', 'diagnose_running'):
             return
         try:
-            entries, coverage = web_diagnostics.read()
+            entries, coverage = (web_diagnostics.read(since=bounds[0], until=bounds[1])
+                                 if bounds else web_diagnostics.read())
             if not update('läuft', 'diagnose_sources', services=list(web_diagnostics.UNITS),
                           period=[coverage['since'], coverage['until']],
                           read=coverage['read'], discarded=coverage['discarded'],
