@@ -29,6 +29,31 @@ class ParseTests(unittest.TestCase):
                               mode=None))
         self.assertIsNone(journeys.parse('was kostet die stadt', 'on'))
 
+    def test_debug_questions_about_departures_never_trigger_a_trip(self):
+        # Real 11.10. transcript was wrongly used as a stop-finder
+        # query and EFA returned (-8012, 'Any-input invalid').
+        utterances = (
+            'grabe bist du abgestürzt beim erfassen von abfahrtszeiten '
+            'hast du das mit geschnitten sind da loks dafür',
+            'bist du abgestürzt beim erfassen von abfahrtszeiten '
+            'hast du logs dafür',
+            'was steht in den logs über die abfahrtszeiten',
+            'was ist der fehler bei der verbindung zu efa',
+            'was steht in den logs über die fahrplanauskunft',
+        )
+        for utterance in utterances:
+            with self.subTest(utterance=utterance):
+                self.assertIsNone(journeys.parse(utterance, "on"))
+        for utterance in (
+            'wann fährt die nächste straßenbahn in die stadt',
+            'abfahrten ab hauptbahnhof',
+            'zeige mir die abfahrten vom hauptbahnhof',
+            'verbindungen nach nürnberg',
+            'wann fährt der bus ab hauptbahnhof',
+        ):
+            with self.subTest(utterance=utterance):
+                self.assertEqual(journeys.parse(utterance, "on")["type"], "query")
+
     def test_bus_and_generic_bahn_follow_actual_spoken_requests(self):
         cases = (
             ('wann fährt die nächste bus vom hauptbahnhof', 'departures', 'bus'),
