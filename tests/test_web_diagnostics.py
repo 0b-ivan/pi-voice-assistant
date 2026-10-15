@@ -134,6 +134,16 @@ class WebDiagnosticTests(unittest.TestCase):
         self.assertEqual(finding['recovery'], 'nicht belegt')
         self.assertIn('nicht bewiesen', web_diagnostics.describe(result).lower())
 
+    def test_diagnosis_times_are_local_not_server_utc(self):
+        begin = int(datetime.datetime(2026, 10, 15, 15, 4,
+                                      tzinfo=datetime.timezone.utc).timestamp())
+        coverage = dict(read=0, discarded=0, since=begin, until=begin + 7200,
+                        limited=False, error=None)
+        report = web_diagnostics.analyse([], coverage)
+        spoken = web_diagnostics.describe(report, 'Europe/Berlin')
+        self.assertIn('17:04–15.10. 19:04 (Europe/Berlin)', spoken)
+        self.assertNotIn('15:04–15.10. 17:04', spoken)
+
     def test_bad_log_cannot_exfiltrate_secrets(self):
         raw = 'Authorization: Bearer private-token user@example.com 10.1.2.3'
         self.assertEqual(web_diagnostics.evidence(entry(
