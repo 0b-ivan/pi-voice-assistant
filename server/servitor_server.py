@@ -1048,7 +1048,7 @@ class Service:
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None, appointments_tomorrow=None,
                  voice=None, nightwatch_copy=None, typed=None, web_history=None,
-                 web_chat_id=None, web_principal=None):
+                 web_chat_id=None, web_principal=None, is_browser=False):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` and
         ``typed`` are None. ``typed``: a typed question (web client, /v1/ask)
         that takes the whole way of a transcript; ``text`` is spoken as it is.
@@ -1124,6 +1124,14 @@ class Service:
                         code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
                         raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
+                if is_browser and not web_chat_id and typed is None and not transcribe_only and intents.match(text) == 'selftest':
+                    special = ('Für eine lesende Diagnose brauche ich ein aktives '
+                               'Webgespräch. Bitte öffne ein neues Gespräch.')
+                    emit(dict(event='reply', text=special, model='local/diagnose'))
+                    self._speak_parts([special], (device or {}).get('voice', 'servitor'),
+                                      fmt, emit, timings, temporary)
+                    emit(dict(event='done', timings=timings))
+                    return
                 if web_chat_id and web_principal and typed is None and not transcribe_only:
                     special = self.diagnostic_text(
                         text, web_chat_id, web_principal,
@@ -1223,7 +1231,7 @@ class Service:
                             emit(dict(event='show', screen='weather', day=day))
                     if intent in ('briefing', 'selftest') and self.logwatch is not None:
                         snapshot.update(self.logwatch.snapshot_fields('server_log'))
-                        if intent == 'selftest' and web_principal is None:
+                        if intent == 'selftest' and not is_browser:
                             self.logwatch.refresh(force=True)  # Pi self-test repair only
                     if intent in ('calendar', 'briefing'):
                         day = intents.calendar_day(text, self.now().date()) if intent == 'calendar' else 0
@@ -1955,6 +1963,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     web_history = self.service.web_chats.history(chat_id, principal, typed)
             except web_context.MissingChat:
                 return self._json(409, dict(error='Gespräch abgelaufen; neues Gespräch öffnen'))
+        if (typed is not None and self.headers.get('X-Servitor-Client') == 'web'
+                and intents.match(typed) == 'selftest' and not (chat_id and principal)):
+            return self._json(409, dict(
+                error='Für die lesende Diagnose ist ein aktives Gespräch nötig. '
+                      'Bitte neu verbinden.'))
         if not self.service.turn_lock.acquire(timeout=max(0.0, self.service.config.busy_wait)):
             return self._json(503, dict(error='busy'), {'Retry-After': '2'})
         try:
@@ -1991,7 +2004,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           voice=voice, nightwatch_copy=nightwatch_copy,
                                           typed=typed, web_history=web_history,
                                           web_chat_id=chat_id if principal else None,
-                                          web_principal=principal)
+                                          web_principal=principal,
+                                          is_browser=self.headers.get('X-Servitor-Client') == 'web')
                 if (principal and chat_id and observed.get('done')
                         and observed.get('question') and observed.get('answer')):
                     self.service.web_chats.append(
