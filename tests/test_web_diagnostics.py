@@ -74,8 +74,7 @@ class WebConversationTests(unittest.TestCase):
         self.assertIsNone(self.chats.job(self.a, self.alice, '0' * 24))
         with self.assertRaises(web_context.MissingChat):
             self.chats.job(self.a, self.bob, job['id'])
-        with self.assertRaises(web_context.MissingChat):
-            self.chats.job(self.b, self.bob, job['id'])
+        self.assertIsNone(self.chats.job(self.b, self.bob, job['id']))
 
     def test_different_diagnostic_periods_have_distinct_jobs(self):
         current, _ = self.chats.job_start(self.a, self.alice, 'letzte 2 Stunden')
