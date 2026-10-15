@@ -55,8 +55,23 @@ const state = {
   recording: null,   // the running capture, see startRecording()
   request: null,     // AbortController of the running request
   story: null,       // state of a running long story (src/story.py)
+  conversation: null,  // ephemeral web-only thread, never a Pi voice identity
 };
 for (const name of SETTINGS) state[name] = store.get(`servitor.${name}`) || DEFAULTS[name];
+
+const tab = {
+  get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
+  set(key, value) {
+    try { value === null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); }
+    catch { /* session-only fallback */ }
+  },
+};
+const browserKey = tab.get('proximus.browser') || Array.from(
+  crypto.getRandomValues(new Uint8Array(16)), (x) => x.toString(16).padStart(2, '0')).join('');
+tab.set('proximus.browser', browserKey);
+state.conversation = tab.get('proximus.conversation');
+// Reload replays job events because the chat DOM starts empty.
+const diagnostic = { timer: null, fetching: false, seq: 0, awaitingAck: new Set() };
 
 const FORMAT = new Audio().canPlayType('audio/ogg; codecs=opus') ? 'opus' : 'wav';
 
@@ -247,6 +262,8 @@ function statusHeader() {
 }
 
 async function exchange(path, body, type) {
+  // Compatibility: legacy token-only browsers still send turns, but without
+  // session-scoped conversational context until an explicit chat is opened.
   const controller = new AbortController();
   state.request = controller;
   $('talk').disabled = true;
@@ -508,6 +525,145 @@ $('ask').addEventListener('submit', (event) => {
   Vox.sounds.cant();
   exchange('/v1/ask', JSON.stringify({ text }), 'application/json');
 });
+
+
+/* --- flüchtiger Gesprächsstand und asynchrone Diagnose ----------------------- */
+
+async function confirmDiagnostic(jobId, chatId = state.conversation) {
+  if (!chatId || chatId !== state.conversation) return;
+  const key = chatId + ':' + jobId;
+  if (diagnostic.awaitingAck.has(key)) return;
+  diagnostic.awaitingAck.add(key);
+  try {
+    await fetch('/v1/web/ack', {
+      method: 'POST', cache: 'no-store',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation: chatId, job: jobId }),
+    });
+  } catch {
+    // A reconnect may re-acknowledge: server side receipt is idempotent.
+  } finally {
+    diagnostic.awaitingAck.delete(key);
+  }
+}
+
+function stopDiagnosticPoll() {
+  if (diagnostic.timer) clearInterval(diagnostic.timer);
+  diagnostic.timer = null;
+}
+
+async function openConversation(forceNew = false) {
+  stopDiagnosticPoll();
+  if (!forceNew && state.conversation) {
+    try {
+      const response = await fetch('/v1/web/jobs?conversation=' +
+        encodeURIComponent(state.conversation) + '&after=' + diagnostic.seq, {
+        cache: 'no-store', headers: authHeaders(),
+      });
+      if (response.ok) {
+        applyDiagnosticEvents(await response.json());
+        startDiagnosticPoll();
+        return;
+      }
+      addLog('system', 'Vorheriger Gesprächsstand nicht mehr verfügbar; laufende Prüfungen müssen neu gestartet werden.');
+    } catch {
+      addLog('error', 'Verbindung zum Gesprächsspeicher unterbrochen.');
+      return;
+    }
+  }
+  const response = await fetch('/v1/web/conversation', {
+    method: 'POST', cache: 'no-store', headers: authHeaders(),
+  });
+  if (!response.ok) {
+    addLog('error', 'Neues Gespräch konnte nicht erstellt werden.');
+    return;
+  }
+  state.conversation = (await response.json()).id;
+  tab.set('proximus.conversation', state.conversation);
+  diagnostic.seq = 0;
+  tab.set('proximus.diag.seq', '0');
+  if (forceNew) {
+    player.stop();
+    $('log').replaceChildren();
+    addLog('system', '+++ Neues, flüchtiges Gespräch eröffnet +++');
+  }
+  startDiagnosticPoll();
+}
+
+function applyDiagnosticEvents(data, chatId = state.conversation) {
+  if (chatId !== state.conversation) return;
+  if (data.gap) addLog('system', 'Ein Teil der Arbeitsereignisse ist bereits aus dem RAM-Puffer gefallen.');
+  for (const item of data.events || []) {
+    if (item.seq <= diagnostic.seq) continue;
+    const short = (item.id || '').slice(0, 8);
+    const labels = {
+      diagnose_start: 'Prüfung angelegt',
+      diagnose_running: 'Prüfung läuft',
+      diagnose_sources: 'Dienstprotokolle abgefragt',
+      diagnose_categories: 'Fehlerklassen ermittelt',
+      diagnose_llm_start: 'Modellinterpretation gestartet',
+      diagnose_llm_done: 'Modellinterpretation beendet',
+      diagnose_llm_failed: 'Modellinterpretation nicht verfügbar',
+      diagnose_cancel: 'Prüfung abgebrochen',
+      diagnose_delivered: 'Empfangsbestätigung gespeichert',
+    };
+    if (item.stage === 'diagnose_done') {
+      const reply = addReply(item.text || 'Prüfung abgeschlossen, aber kein Ergebnistext verfügbar.');
+      closeReply(reply);
+      addLog('system', 'Diagnose ' + short + ' abgeschlossen · Ergebnis angezeigt');
+      confirmDiagnostic(item.id, chatId);
+    } else if (item.stage === 'diagnose_failed') {
+      addLog('error', 'Diagnose ' + short + ': ' + (item.text || 'Prüfung fehlgeschlagen.'));
+      confirmDiagnostic(item.id, chatId);
+    } else if (item.stage === 'diagnose_sources') {
+      addLog('system', 'Diagnose ' + short + ': ' + (item.services || []).join(', ')
+        + ' · gelesen ' + item.read + ', verworfen ' + item.discarded
+        + (item.limited ? ' · unvollständig' : ''));
+    } else if (item.stage === 'diagnose_categories') {
+      addLog('system', 'Diagnose ' + short + ': Kategorien '
+        + ((item.categories || []).join(', ') || 'keine nachweisbar'));
+    } else if (item.stage === 'diagnose_start') {
+      addLog('system', 'Diagnose ' + short + ': gestartet · ' + (item.period || 'Zeitraum unbekannt'));
+    } else if (labels[item.stage]) {
+      addLog('system', 'Diagnose ' + short + ': ' + labels[item.stage]);
+    }
+    // Monotonic cursor makes UI delivery idempotent even after reconnect.
+    diagnostic.seq = item.seq;
+    tab.set('proximus.diag.seq', String(diagnostic.seq));
+  }
+}
+
+async function pollDiagnostics() {
+  if (!Vox.connected || !state.conversation || diagnostic.fetching) return;
+  diagnostic.fetching = true;
+  const chatId = state.conversation;
+  try {
+    const response = await fetch('/v1/web/jobs?conversation='
+      + encodeURIComponent(chatId) + '&after=' + diagnostic.seq, {
+      cache: 'no-store', headers: authHeaders(),
+    });
+    if (chatId !== state.conversation) return;
+    if (response.status === 404) {
+      stopDiagnosticPoll();
+      addLog('error', 'Gespräch durch Sitzungsauslauf oder Neustart verloren. Neues Gespräch öffnen.');
+    } else if (response.status === 401) {
+      stopDiagnosticPoll();
+    } else if (response.ok) {
+      const data = await response.json();
+      if (chatId === state.conversation) applyDiagnosticEvents(data, chatId);
+    }
+  } catch {
+    // Transient disconnect: keep cursor; the next poll replays undelivered events.
+  } finally {
+    diagnostic.fetching = false;
+  }
+}
+
+function startDiagnosticPoll() {
+  stopDiagnosticPoll();
+  pollDiagnostics();
+  diagnostic.timer = setInterval(pollDiagnostics, 1800);
+}
 
 // --- settings --------------------------------------------------------------------
 
@@ -878,7 +1034,8 @@ function dialLine(text, kind) {
 // works in the same field; every request names the web client in a header,
 // without it the server ignores the cookie.
 function authHeaders() {
-  const headers = { 'X-Servitor-Client': 'web' };
+  const headers = { 'X-Servitor-Client': 'web', 'X-Servitor-Browser': browserKey };
+  if (state.conversation) headers['X-Servitor-Conversation'] = state.conversation;
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   return headers;
 }
@@ -1007,6 +1164,7 @@ function connect() {
   $('hint-litany').textContent = pick(LITANY.hint);
   Vox.connect();
   startJournal();
+  openConversation().catch(() => addLog('error', 'Gesprächsspeicher nicht erreichbar.'));
   $('dial-connect').disabled = false;
   $('lamp-link').dataset.on = Vox.live.link === 'ok' ? 'yes' : 'no';
   addLog('system', `+++ Vox-Verbindung zu Servitor Proximus · ${new Date().toLocaleTimeString('de-DE')} +++`);
@@ -1014,6 +1172,7 @@ function connect() {
 }
 
 function hangup() {
+  stopDiagnosticPoll();
   cancel();
   Vox.sounds.squelch();
   Vox.disconnect();
@@ -1028,6 +1187,11 @@ function hangup() {
 
 $('dial-form').addEventListener('submit', dial);
 $('hangup').addEventListener('click', hangup);
+$('new-chat').addEventListener('click', async () => {
+  if (!Vox.connected) return;
+  if (state.request) cancel();
+  await openConversation(true);
+});
 
 Vox.setEffects(state.effects);
 Vox.setVolume(state.volume / 10);

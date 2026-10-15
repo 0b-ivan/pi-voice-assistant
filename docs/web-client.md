@@ -303,7 +303,7 @@ Antworten kommen als Ogg/Opus, wenn der Browser es abspielen kann, sonst WAV.
 Der Browser ist ein **Gast**. Er schickt weder `memory` noch `devctl` noch
 `trip` im Status, daher:
 
-- kein Gedächtnis (Fakten, Direktiven, Verlauf liegen auf dem USB-Stick am Pi),
+- kein **persönliches Pi-Gedächtnis** (Fakten und Direktiven bleiben auf dem USB-Stick),
   keine Stimmerkennung, keine Termine aus Nextcloud,
 - keine Gerätesteuerung (WLAN, Neustart, Herunterfahren) und kein Wartungsmodus,
 - keine Fahrtauskunft (die fragt der Pi selbst ab),
@@ -312,6 +312,52 @@ Der Browser ist ein **Gast**. Er schickt weder `memory` noch `devctl` noch
 
 Uhrzeit, Datum, Wetter, „wer bist du“, freie Fragen an
 das LLM und Geschichten funktionieren wie am Pi.
+
+## Flüchtiges Webgespräch und nachvollziehbare Diagnose (Entwurf #121)
+
+Der Web-Client hält einen temporären Gesprächsverlauf **nur im RAM von CT 107**.
+Die Selektion der letzten und zum Thema passenden Runden benutzt die bereits
+vorhandene `src/conversation.py`, aber nicht deren personenbezogene
+Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**.
+
+- `POST /v1/web/conversation` erzeugt eine zufällige Gesprächs-ID; „Neues
+  Gespräch“ beendet die alte Konversation samt noch offener Diagnoseaufträge.
+- Die Gesprächs-ID gehört zu einem bestimmten Browser-Login (Cookie) oder
+  einer pro Tab zufällig erzeugten Kennung, die nur mit gültigem API-Token
+  akzeptiert wird. Zwei verschiedene Kennungen teilen keinen Kontext.
+- Gespräch und Jobs haben ein hartes RAM-Ablaufdatum von zwölf Stunden.
+  Abmelden löscht den Login-Kontext; Serverneustart verwirft alle Webgespräche
+  und laufenden Jobs. Der Browser zeigt dann einen ausdrücklich fehlenden
+  Auftrag an; es wird niemals still ein vermeintlich fertiger Befund gezeigt.
+- Ein Web-Selbsttest startet einen eigenen, **rein lesenden** Diagnoseauftrag.
+  `src/web_diagnostics.py` fragt in zwei festen, begrenzten
+  `journalctl`-Abfragen die Proximus-Units `servitor-voice.service` und
+  `servitor-llm.service` sowie Warnungen der Prioritäten 0–4 **aus dem
+  lokalen CT-107-Systemjournal** der letzten zwei Stunden ab (je 120
+  Einträge, 64 KiB, acht Sekunden). Das zweite Journal wird nur nach
+  lokaler Hostkennung ausgewertet: Proxmox-Host-/Remote-Journale werden
+  verworfen. Kernelmeldungen werden per bestehenden LogWatch-Regeln auf
+  OOM, Datenträgerfehler, Unterspannung und USB-Störungen klassifiziert;
+  fremde Dienste liefern ausschließlich Zählwerte, niemals Rohtexte, Units
+  oder Geheimnisse an Browser oder Modell. Fehlende Rechte, Trunkierung oder
+  unklare Hostzuordnung sind ausdrücklich keine Entwarnung. **Keine**
+  Wartungsaktionen, Reparaturen oder freien Shellbefehle im Webpfad.
+- Klassifikation und Wiederherstellungsbelege kommen deterministisch von
+  `src/logwatch.py`. Erst danach darf eine Modellinterpretation erfolgen;
+  sie ist als Hypothese markiert. Rohtranskripte, Logfreitext und Secrets
+  gelangen nicht in den Modell-Diagnosekontext.
+- `GET /v1/web/jobs?conversation=...&after=N` gibt begrenzte,
+  durchnummerierte Diagnoseereignisse zurück. Das Vox-Terminal prüft sie
+  regelmäßig und fügt abgeschlossene Ergebnisse ohne weitere Frage hinzu.
+  Nach der Anzeige bestätigt es den Empfang über `POST /v1/web/ack`;
+  der Server protokolliert diese Bestätigung genau einmal. Eine Unterbrechung
+  lässt sich über den Ereigniszähler wieder aufnehmen.
+- Unbekannte Fehler, fehlende Leserechte, abgeschnittene Logs und fehlende
+  Recovery-Belege sind **keine Entwarnung**. Der Browser zeigt diese Grenzen.
+
+Die **Pi-Selbsttest-Reparaturen** werden durch diesen Webzugriff nicht
+erweitert. Die vorhandene Pi-Integration des persönlichen Konversationsschemas
+bleibt bewusst einer späteren Identitäts- und Eigentümerprüfung vorbehalten.
 
 ## Sicherheit
 
