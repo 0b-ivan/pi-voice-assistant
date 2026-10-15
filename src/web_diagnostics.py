@@ -49,8 +49,12 @@ def _capture(command):
     finally:
         selector.close()
         if proc.poll() is None:
-            proc.kill()
-        proc.wait(timeout=1)
+            try:
+                proc.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1)
+                limited = True
     return bytes(output), proc.returncode, limited, bool(error)
 
 
@@ -59,7 +63,7 @@ def read(now=None, capture=_capture):
     since = int(now - WINDOW)
     command = ['journalctl', '--no-pager', '-q', '-o', 'json',
                '--output-fields=MESSAGE,PRIORITY,UNIT,_SYSTEMD_UNIT,_TRANSPORT,'
-               '__REALTIME_TIMESTAMP', '-n', str(MAX_LINES),
+               '__REALTIME_TIMESTAMP', '-n', str(MAX_LINES + 1),
                '--since=@' + str(since), '--until=@' + str(int(now)),
                '-u', UNITS[0], '-u', UNITS[1]]
     try:
@@ -70,13 +74,16 @@ def read(now=None, capture=_capture):
     entries = []
     discarded = 0
     lines = raw.decode('utf-8', 'replace').splitlines()
-    for line in lines[:MAX_LINES]:
+    if len(lines) > MAX_LINES:
+        limited = True
+        lines = lines[-MAX_LINES:]
+        discarded += 1
+    for line in lines:
         item = logwatch.parse_entry(line)
         if item is None or item['unit'] not in UNITS or not since <= item['at'] <= now:
             discarded += 1
         else:
             entries.append(item)
-    discarded += max(0, len(lines) - MAX_LINES)
     return entries, dict(read=len(entries), discarded=discarded, since=since,
                          until=int(now), limited=bool(limited or warning or status),
                          error='Journalabfrage fehlgeschlagen oder unvollständig'
@@ -111,6 +118,12 @@ def analyse(entries, coverage):
     findings = logwatch.analyse(entries, logwatch.SERVER_RULES, logwatch.SERVER_UNITS,
                                 last=last, recovered=recovered)
     groups = []
+    unknown_count = 0
+    ignore = logwatch.compile_ignore()
+    for e in entries:
+        if e['priority'] <= 3 and logwatch.classify(
+                e, logwatch.SERVER_RULES, logwatch.SERVER_UNITS, ignore) is None:
+            unknown_count += 1
     for code, count in sorted(findings.items()):
         affected = [e for e in entries if logwatch.classify(
             e, logwatch.SERVER_RULES, logwatch.SERVER_UNITS, logwatch.compile_ignore()) == code]
@@ -123,6 +136,7 @@ def analyse(entries, coverage):
                            evidence=[dict(at=e['at'], unit=e['unit'], text=evidence(e))
                                      for e in affected[-3:]]))
     return dict(coverage=coverage, services=list(UNITS), findings=groups,
+                unknown_count=unknown_count,
                 excerpts=[dict(at=e['at'], unit=e['unit'], text=evidence(e))
                           for e in entries if e['priority'] <= 3][-8:])
 
@@ -146,6 +160,9 @@ def describe(report):
     if not report['findings'] and c['read']:
         parts.append('Keine bekannte Fehlerkategorie über ihrer Erkennungsschwelle. '
                      'Unbekannte Ursachen sind nicht ausgeschlossen.')
+    if report['unknown_count']:
+        parts.append(f"{report['unknown_count']} unklassifizierte Fehl-/Warnmeldungen "
+                     'in eigenen Diensten, Ursache und Dringlichkeit ungeklärt.')
     if report['excerpts']:
         entry = report['excerpts'][-1]
         parts.append(f"Auszug ({entry['unit']}): {entry['text']}.")
