@@ -330,11 +330,18 @@ Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**
   und laufenden Jobs. Der Browser zeigt dann einen ausdrücklich fehlenden
   Auftrag an; es wird niemals still ein vermeintlich fertiger Befund gezeigt.
 - Ein Web-Selbsttest startet einen eigenen, **rein lesenden** Diagnoseauftrag.
-  `src/web_diagnostics.py` fragt per festem `journalctl`-Aufruf ausschließlich
-  `servitor-voice.service` und `servitor-llm.service` im Zeitraum der letzten
-  zwei Stunden ab, begrenzt auf 120 Einträge, 64 KiB und acht Sekunden.
-  Die Prüfung darf weder Wartungsaktionen auslösen noch freie Shellbefehle,
-  Pfade, andere Units oder globale Proxmox-Warnungen lesen.
+  `src/web_diagnostics.py` fragt in zwei festen, begrenzten
+  `journalctl`-Abfragen die Proximus-Units `servitor-voice.service` und
+  `servitor-llm.service` sowie Warnungen der Prioritäten 0–4 **aus dem
+  lokalen CT-107-Systemjournal** der letzten zwei Stunden ab (je 120
+  Einträge, 64 KiB, acht Sekunden). Das zweite Journal wird nur nach
+  lokaler Hostkennung ausgewertet: Proxmox-Host-/Remote-Journale werden
+  verworfen. Kernelmeldungen werden per bestehenden LogWatch-Regeln auf
+  OOM, Datenträgerfehler, Unterspannung und USB-Störungen klassifiziert;
+  fremde Dienste liefern ausschließlich Zählwerte, niemals Rohtexte, Units
+  oder Geheimnisse an Browser oder Modell. Fehlende Rechte, Trunkierung oder
+  unklare Hostzuordnung sind ausdrücklich keine Entwarnung. **Keine**
+  Wartungsaktionen, Reparaturen oder freien Shellbefehle im Webpfad.
 - Klassifikation und Wiederherstellungsbelege kommen deterministisch von
   `src/logwatch.py`. Erst danach darf eine Modellinterpretation erfolgen;
   sie ist als Hypothese markiert. Rohtranskripte, Logfreitext und Secrets
