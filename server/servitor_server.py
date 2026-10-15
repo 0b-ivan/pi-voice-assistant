@@ -657,6 +657,31 @@ class Service:
                              name='web-diagnose', daemon=True).start()
         return job, created
 
+    def diagnostic_text(self, question, chat_id, principal, persona='servitor'):
+        """A referenced job, never a previous assistant assertion, is evidence."""
+        latest = self.web_chats.latest(chat_id, principal)
+        is_selftest = intents.match(question, persona) == 'selftest'
+        follows = bool(re.search(r'\b(protokoll|fehler|fehlermeldungen|'
+                                 r'prüfung|ergebnis|fertig|inzwischen)\b',
+                                 question, re.IGNORECASE))
+        if not is_selftest and not follows:
+            return None
+        if is_selftest:
+            job, created = self.start_diagnosis(chat_id, principal, persona)
+            if created or job['status'] not in web_context.FINAL:
+                return (f"Die lesende Prüfung läuft unter Auftragskennung {job['id']}. "
+                        'Das Ergebnis erscheint hier nach Abschluss automatisch.')
+            return f"Prüfauftrag {job['id']} ist {job['status']}."
+        if latest is None:
+            return ('Zu diesem Gespräch existiert kein laufender Diagnoseauftrag. '
+                    'Die frühere Ankündigung ist kein technischer Prüfnachweis. '
+                    'Starte einen neuen Selbsttest.')
+        if latest['status'] not in web_context.FINAL:
+            return f"Prüfauftrag {latest['id']} läuft noch ({latest['status']})."
+        if latest['status'] == 'abgeschlossen' and latest.get('report'):
+            return latest['report']['summary']
+        return f"Prüfauftrag {latest['id']} ist {latest['status']}; kein belegter Befund vorhanden."
+
     def _run_diagnosis(self, chat_id, principal, job_id, persona):
         update = lambda status, stage, **fields: self.web_chats.job_update(
             chat_id, principal, job_id, status, stage, **fields)
@@ -688,14 +713,21 @@ class Service:
                           'Erfinde weder Logzeilen noch Belege, Reparaturen oder Entwarnungen. '
                           'Antworte knapp auf Deutsch. DATEN: '
                           + json.dumps(facts, ensure_ascii=False))
-                try:
-                    interpretation, _ = self.pipeline.reply(
-                        prompt, lore='off', memory=NO_MEMORY, persona=persona)
-                except Exception as exc:
-                    update('läuft', 'diagnose_llm_failed', error=type(exc).__name__)
+                # A diagnosis must not compete with a live voice synthesis or
+                # invoke the local model concurrently with a user turn.
+                if not self.turn_lock.acquire(blocking=False):
+                    update('läuft', 'diagnose_llm_failed', error='busy')
                 else:
-                    if not update('läuft', 'diagnose_llm_done'):
-                        return
+                    try:
+                        interpretation, _ = self.pipeline.reply(
+                            prompt, lore='off', memory=NO_MEMORY, persona=persona)
+                    except Exception as exc:
+                        update('läuft', 'diagnose_llm_failed', error=type(exc).__name__)
+                    else:
+                        if not update('läuft', 'diagnose_llm_done'):
+                            return
+                    finally:
+                        self.turn_lock.release()
             final_text = deterministic + ((' Modellinterpretation (nicht bewiesen): '
                                          + interpretation) if interpretation else '')
             report['summary'] = deterministic
@@ -967,7 +999,8 @@ class Service:
     @processing_trace.turn
     def run_turn(self, pcm_chunks, emit, fmt, text=None, device=None, memory_copy=NO_MEMORY,
                  transcribe_only=False, appointments=None, appointments_tomorrow=None,
-                 voice=None, nightwatch_copy=None, typed=None, web_history=None):
+                 voice=None, nightwatch_copy=None, typed=None, web_history=None,
+                 web_chat_id=None, web_principal=None):
         """Drive one turn. ``pcm_chunks`` is consumed only when ``text`` and
         ``typed`` are None. ``typed``: a typed question (web client, /v1/ask)
         that takes the whole way of a transcript; ``text`` is spoken as it is.
@@ -1043,6 +1076,16 @@ class Service:
                         code = 'no_speech' if isinstance(exc, NoSpeechError) else 'stt'
                         raise TurnError('recognize', code, str(exc)) from exc
                 emit(dict(event='transcript', text=text))
+                if web_chat_id and web_principal and typed is None and not transcribe_only:
+                    special = self.diagnostic_text(
+                        text, web_chat_id, web_principal,
+                        (device or {}).get('persona', 'servitor'))
+                    if special is not None:
+                        emit(dict(event='reply', text=special, model='local/diagnose'))
+                        self._speak_parts([special], (device or {}).get('voice', 'servitor'),
+                                          fmt, emit, timings, temporary)
+                        emit(dict(event='done', timings=timings))
+                        return
                 if transcribe_only:  # enrollment answers: the Pi stores them itself
                     emit(dict(event='done', timings=timings))
                     return
@@ -1132,8 +1175,8 @@ class Service:
                             emit(dict(event='show', screen='weather', day=day))
                     if intent in ('briefing', 'selftest') and self.logwatch is not None:
                         snapshot.update(self.logwatch.snapshot_fields('server_log'))
-                        if intent == 'selftest':
-                            self.logwatch.refresh(force=True)  # repair now, not in 30 min
+                        if intent == 'selftest' and web_principal is None:
+                            self.logwatch.refresh(force=True)  # Pi self-test repair only
                     if intent in ('calendar', 'briefing'):
                         day = intents.calendar_day(text, self.now().date()) if intent == 'calendar' else 0
                         snapshot['agenda_day'] = day
@@ -1382,9 +1425,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return None
 
     def _new_conversation(self):
+        self.close_connection = True
         if not self._web_authorized() or not self._browser_principal():
             return self._json(401, dict(error='unauthorized'))
         try:
+            old = self.headers.get('X-Servitor-Conversation', '')[:96]
+            if old:
+                try:
+                    self.service.web_chats.close(old, self._browser_principal())
+                except web_context.MissingChat:
+                    pass
             ident = self.service.web_chats.create(self._browser_principal())
         except ValueError as exc:
             return self._json(429, dict(error=str(exc)))
@@ -1405,29 +1455,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self._json(200, data, {'Cache-Control': 'no-store'})
 
     def _diagnostic_reply(self, question, chat_id, principal, persona):
-        """The web diagnostic is a real async job, never a fake promise."""
-        latest = self.service.web_chats.latest(chat_id, principal)
-        is_selftest = intents.match(question, persona) == 'selftest'
-        if not is_selftest and latest is None:
+        answer = self.service.diagnostic_text(question, chat_id, principal, persona)
+        if answer is None:
             return False
-        follows = bool(re.search(
-            r'\b(protokoll|fehler|fehlermeldungen|selbsttest|prüfung|'
-            r'ergebnis|fertig|inzwischen)\b', question, re.IGNORECASE))
-        if not is_selftest and not follows:
-            return False
-        if is_selftest:
-            job, created = self.service.start_diagnosis(chat_id, principal, persona)
-            answer = (f"Die lesende Prüfung läuft unter Auftragskennung {job['id']}. "
-                      'Das Ergebnis erscheint hier nach Abschluss automatisch.'
-                      if created or job['status'] not in web_context.FINAL else
-                      f"Prüfauftrag {job['id']} ist {job['status']}.")
-        elif latest['status'] not in web_context.FINAL:
-            answer = f"Prüfauftrag {latest['id']} läuft noch ({latest['status']})."
-        elif latest['status'] == 'abgeschlossen' and latest.get('report'):
-            answer = latest['report']['summary']
-        else:
-            answer = (f"Prüfauftrag {latest['id']} ist {latest['status']}. "
-                      'Es gibt kein belegtes Ergebnis.')
         self.service.web_chats.append(chat_id, principal, question, answer, persona)
         payload = [dict(event='transcript', text=question),
                    dict(event='reply', text=answer, model='local/diagnose'),
@@ -1911,7 +1941,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           appointments=appointments,
                                           appointments_tomorrow=appointments_tomorrow,
                                           voice=voice, nightwatch_copy=nightwatch_copy,
-                                          typed=typed, web_history=web_history)
+                                          typed=typed, web_history=web_history,
+                                          web_chat_id=chat_id if principal else None,
+                                          web_principal=principal)
                 if (principal and chat_id and observed.get('done')
                         and observed.get('question') and observed.get('answer')):
                     self.service.web_chats.append(
