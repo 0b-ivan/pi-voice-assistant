@@ -6,6 +6,7 @@ kein memory.json und keine Übertragung in persönliche Pi-Konversationen.
 Alle Zugriffe sind an die jeweilige authentifizierte Browser-Capability
 gebunden; ein anderer Browser kann nicht über eine Gesprächs-ID mitlesen.
 """
+import re
 import secrets
 import threading
 import time
@@ -134,6 +135,15 @@ class WebConversations:
         with self.lock:
             jobs = self._get(chat_id, principal)['jobs']
             return dict(jobs[-1]) if jobs else None
+
+    def job(self, chat_id, principal, job_id):
+        """Read-only lookup by full ID or unique prefix, never across browsers."""
+        if not isinstance(job_id, str) or not re.fullmatch(r'[0-9a-f]{8,24}', job_id):
+            return None
+        with self.lock:
+            jobs = self._get(chat_id, principal)['jobs']
+            found = [item for item in jobs if item['id'].startswith(job_id)]
+            return dict(found[0]) if len(found) == 1 else None
 
     def events(self, chat_id, principal, after=0):
         with self.lock:
