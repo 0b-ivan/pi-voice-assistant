@@ -1156,6 +1156,18 @@ class IntentServerTest(ServerTest):
         self.assertTrue(all(len(p) >= ss.FIRST_PART_CHARS for p in parts))
 
 
+class IdleTimeoutLogTests(unittest.TestCase):
+    def test_idle_keepalive_timeout_is_not_logged_other_errors_are(self):
+        handler = ss.Handler.__new__(ss.Handler)   # no socket needed
+        handler.client_address = ('172.22.2.100', 40000)
+        with unittest.mock.patch.object(sys, 'stderr') as stderr:
+            handler.log_error('Request timed out: %r', TimeoutError('timed out'))
+            stderr.write.assert_not_called()
+            handler.log_error('code %d, message %s', 400, 'Bad request syntax')
+        written = ''.join(call.args[0] for call in stderr.write.call_args_list)
+        self.assertIn('172.22.2.100 code 400, message Bad request syntax', written)
+
+
 class RephraseGuardTests(unittest.TestCase):
     def setUp(self):
         import llm
