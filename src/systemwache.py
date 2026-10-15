@@ -456,11 +456,14 @@ def briefing_sentence(snapshot, lore='off', now=None):
 
 
 def _matching(monitors, text):
-    """Monitors whose name shares a word (4+ letters) with the question."""
+    """Monitors whose status page or name shares a word (4+ letters) with the
+    question: "der Cloud" is the page cloud, "Nextcloud" its containers."""
     words = {w for w in re.findall(r'\w{4,}', str(text or '').lower())
              if w not in ('geht', 'dienste', 'diensten', 'uptime', 'kuma', 'systemwache',
-                          'server', 'überwachung', 'status', 'verändert', 'ihnen')}
-    return [m for m in monitors if words & set(re.findall(r'\w{4,}', m['name'].lower()))]
+                          'server', 'servern', 'serversysteme', 'systeme', 'überwachung',
+                          'status', 'zustand', 'verändert', 'ihnen', 'oder', 'meinen')}
+    return [m for m in monitors if m.get('page') in words
+            or words & set(re.findall(r'\w{4,}', m['name'].lower()))]
 
 
 def answer_text(snapshot, lore='off', now=None, question=None):

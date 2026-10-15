@@ -216,6 +216,14 @@ class SentenceTests(Base):
                          'Systemwache: Container Vaultwarden ist erreichbar. '
                          'In den letzten 24 Stunden keine Veränderung.')
 
+    def test_cloud_and_vault_mean_the_status_pages(self):
+        self.poll()
+        text = w.answer_text(self.snapshot(), now=self.at(22, 5),
+                             question='wie geht es der cloud oder dem vault')
+        self.assertTrue(text.startswith('Systemwache: Alle 8 passenden Dienste'), text)
+        text = w.answer_text(self.snapshot(), now=self.at(22, 5), question='wie geht es dem vault')
+        self.assertTrue(text.startswith('Systemwache: Alle 2 passenden Dienste'), text)
+
     def test_outage_in_briefing_and_answer(self):
         self.poll()
         self.kuma.beat(3, w.DOWN)
@@ -265,7 +273,9 @@ class IntentTests(Base):
         for text in ('was ist bei uptime kuma los', 'up time kuma', 'systemwache',
                      'wie geht es nextcloud', 'was hat sich verändert',
                      'sind alle dienste erreichbar', 'wie steht es um die dienste',
-                     'was ist mit den diensten'):
+                     'was ist mit den diensten', 'wie ist der status der serversysteme',
+                     'wie ist der status der serversysteme wie geht es der cloud oder dem vault',
+                     'wie geht es den diensten'):
             self.assertEqual(intents.match(text), 'watch', text)
         self.assertEqual(intents.match('wie geht es dir'), 'status')
         self.assertEqual(intents.match('uptime'), 'status')

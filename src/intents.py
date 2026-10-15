@@ -92,7 +92,9 @@ _PATTERNS = (
     ('watch', re.compile(r'\b(up ?time ?kum\w*|systemwache|überwachung|'
                          r'(was|wie) (ist|steht) (es )?(mit|um|bei) (den |die |meinen |meine |unseren |unsere )?dienste\w*|'
                          r'(sind|laufen) (alle |meine )?dienste( \w+)?|'
-                         r'wie geht es (der |dem )?(nextcloud|vaultwarden|vault|cloud)|'
+                         r'wie geht es (der |dem |den |meinen )?(nextcloud|vaultwarden|vault|cloud|diensten|servern)|'
+                         r'(status|zustand|lage) (der |meiner |unserer )?(server ?systeme|dienste|server)\w*|'
+                         r'server ?systeme|'
                          r'was hat sich (\w+ ){0,3}verändert)\b')),
     ('status', re.compile(r'\b(dein(en)? status|system ?status|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht|'
@@ -157,6 +159,7 @@ IDENTITY = {
 _HOWTO = re.compile(r'^(wie|was|warum|wieso|weshalb|wann|welche\w*|kann man|können)\b')
 
 # Questions about the unit itself (not about hardware in general).
+_WATCH = dict(_PATTERNS)['watch']
 _SELF = re.compile(r'\b(du|dein\w*|dich|dir|hast|einheit|proximus|billy|servitor)\b')
 
 # The unit's own readings, the possessive right before them ("deine cpu
@@ -230,6 +233,8 @@ def match(text, persona=None):
     if len(text.split()) > 12:
         if _CALENDAR_ASK.search(text):
             return 'calendar'
+        if _WATCH.search(text):
+            return 'watch'   # "wie ist der status der serversysteme, wie geht es der cloud ..."
         if _SELF.search(text):
             for name, pattern in _PATTERNS:
                 if name in ('hardware', 'battery', 'status', 'network', 'updates', 'model') \
