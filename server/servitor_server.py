@@ -1525,10 +1525,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                        for v in (chat_id, job_id)):
                 raise ValueError('ids')
             accepted = self.service.web_chats.acknowledge(chat_id, principal, job_id)
+        except web_context.MissingChat:
+            # MissingChat erbt von ValueError; deshalb zuerst behandeln,
+            # damit fremde Browser weder Daten noch einen 400er erhalten.
+            return self._json(404, dict(error='Gespräch nicht gefunden'))
         except (ValueError, TypeError, KeyError):
             return self._json(400, dict(error='ungültige Empfangsbestätigung'))
-        except web_context.MissingChat:
-            return self._json(404, dict(error='Gespräch nicht gefunden'))
         if accepted:
             self.service.journal.add(
                 json.dumps(dict(event='processing', job=job_id,
