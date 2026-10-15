@@ -346,6 +346,24 @@ class ServerTest(unittest.TestCase):
             pipeline.reply('c')
             self.assertEqual(remote.call_count, 2)  # retried after it
 
+    def test_ready_event_only_on_change_or_after_failure(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+        import llm
+        pipeline = ss.RealPipeline(self.tmp.name)
+        replies = [('a', 'x/model'), ('b', 'x/model'), llm.LLMError('timed out'),
+                   ('c', 'x/model'), ('d', 'x/model')]
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_LOCAL_LLM': '0'}), \
+                unittest.mock.patch('llm.generate_reply', side_effect=replies), \
+                unittest.mock.patch('sys.stdout') as stdout:
+            pipeline.reply('1')
+            pipeline.reply('2')
+            with self.assertRaises(llm.LLMError):
+                pipeline.reply('3')
+            pipeline.reply('4')   # first success after the failure: recovery proof
+            pipeline.reply('5')
+        lines = [c.args[0] for c in stdout.write.call_args_list if 'openrouter_ready' in c.args[0]]
+        self.assertEqual(len(lines), 2)
+
     def test_incomplete_headers_time_out_before_auth(self):
         import socket
         self.service.config.idle_timeout = 0.3
