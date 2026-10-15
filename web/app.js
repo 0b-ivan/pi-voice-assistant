@@ -70,7 +70,8 @@ const browserKey = tab.get('proximus.browser') || Array.from(
   crypto.getRandomValues(new Uint8Array(16)), (x) => x.toString(16).padStart(2, '0')).join('');
 tab.set('proximus.browser', browserKey);
 state.conversation = tab.get('proximus.conversation');
-const diagnostic = { timer: null, fetching: false, seq: Number(tab.get('proximus.diag.seq') || 0) };
+// Reload replays job events because the chat DOM starts empty.
+const diagnostic = { timer: null, fetching: false, seq: 0, awaitingAck: new Set() };
 
 const FORMAT = new Audio().canPlayType('audio/ogg; codecs=opus') ? 'opus' : 'wav';
 
@@ -528,6 +529,24 @@ $('ask').addEventListener('submit', (event) => {
 
 /* --- flüchtiger Gesprächsstand und asynchrone Diagnose ----------------------- */
 
+async function confirmDiagnostic(jobId, chatId = state.conversation) {
+  if (!chatId || chatId !== state.conversation) return;
+  const key = chatId + ':' + jobId;
+  if (diagnostic.awaitingAck.has(key)) return;
+  diagnostic.awaitingAck.add(key);
+  try {
+    await fetch('/v1/web/ack', {
+      method: 'POST', cache: 'no-store',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation: chatId, job: jobId }),
+    });
+  } catch {
+    // A reconnect may re-acknowledge: server side receipt is idempotent.
+  } finally {
+    diagnostic.awaitingAck.delete(key);
+  }
+}
+
 function stopDiagnosticPoll() {
   if (diagnostic.timer) clearInterval(diagnostic.timer);
   diagnostic.timer = null;
@@ -571,7 +590,8 @@ async function openConversation(forceNew = false) {
   startDiagnosticPoll();
 }
 
-function applyDiagnosticEvents(data) {
+function applyDiagnosticEvents(data, chatId = state.conversation) {
+  if (chatId !== state.conversation) return;
   if (data.gap) addLog('system', 'Ein Teil der Arbeitsereignisse ist bereits aus dem RAM-Puffer gefallen.');
   for (const item of data.events || []) {
     if (item.seq <= diagnostic.seq) continue;
@@ -585,13 +605,16 @@ function applyDiagnosticEvents(data) {
       diagnose_llm_done: 'Modellinterpretation beendet',
       diagnose_llm_failed: 'Modellinterpretation nicht verfügbar',
       diagnose_cancel: 'Prüfung abgebrochen',
+      diagnose_delivered: 'Empfangsbestätigung gespeichert',
     };
     if (item.stage === 'diagnose_done') {
       const reply = addReply(item.text || 'Prüfung abgeschlossen, aber kein Ergebnistext verfügbar.');
       closeReply(reply);
-      addLog('system', 'Diagnose ' + short + ' abgeschlossen · Ergebnis zugestellt');
+      addLog('system', 'Diagnose ' + short + ' abgeschlossen · Ergebnis angezeigt');
+      confirmDiagnostic(item.id, chatId);
     } else if (item.stage === 'diagnose_failed') {
       addLog('error', 'Diagnose ' + short + ': ' + (item.text || 'Prüfung fehlgeschlagen.'));
+      confirmDiagnostic(item.id, chatId);
     } else if (item.stage === 'diagnose_sources') {
       addLog('system', 'Diagnose ' + short + ': ' + (item.services || []).join(', ')
         + ' · gelesen ' + item.read + ', verworfen ' + item.discarded
@@ -599,6 +622,8 @@ function applyDiagnosticEvents(data) {
     } else if (item.stage === 'diagnose_categories') {
       addLog('system', 'Diagnose ' + short + ': Kategorien '
         + ((item.categories || []).join(', ') || 'keine nachweisbar'));
+    } else if (item.stage === 'diagnose_start') {
+      addLog('system', 'Diagnose ' + short + ': gestartet · ' + (item.period || 'Zeitraum unbekannt'));
     } else if (labels[item.stage]) {
       addLog('system', 'Diagnose ' + short + ': ' + labels[item.stage]);
     }
@@ -611,18 +636,21 @@ function applyDiagnosticEvents(data) {
 async function pollDiagnostics() {
   if (!Vox.connected || !state.conversation || diagnostic.fetching) return;
   diagnostic.fetching = true;
+  const chatId = state.conversation;
   try {
     const response = await fetch('/v1/web/jobs?conversation='
-      + encodeURIComponent(state.conversation) + '&after=' + diagnostic.seq, {
+      + encodeURIComponent(chatId) + '&after=' + diagnostic.seq, {
       cache: 'no-store', headers: authHeaders(),
     });
+    if (chatId !== state.conversation) return;
     if (response.status === 404) {
       stopDiagnosticPoll();
       addLog('error', 'Gespräch durch Sitzungsauslauf oder Neustart verloren. Neues Gespräch öffnen.');
     } else if (response.status === 401) {
       stopDiagnosticPoll();
     } else if (response.ok) {
-      applyDiagnosticEvents(await response.json());
+      const data = await response.json();
+      if (chatId === state.conversation) applyDiagnosticEvents(data, chatId);
     }
   } catch {
     // Transient disconnect: keep cursor; the next poll replays undelivered events.
