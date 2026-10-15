@@ -806,7 +806,7 @@ class Service:
             categories = [item['code'] for item in report['findings']]
             if not update('läuft', 'diagnose_categories', categories=categories):
                 return
-            deterministic = web_diagnostics.describe(report)
+            deterministic = web_diagnostics.describe(report, self.config.timezone)
             interpretation = None
             if report['findings'] and not coverage['limited']:
                 # Only redacted structured metadata/excerpts enter the model.
