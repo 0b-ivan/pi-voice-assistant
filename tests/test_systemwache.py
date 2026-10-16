@@ -274,6 +274,29 @@ class SentenceTests(Base):
                          'Der Auspex der fernen Wachen meldet: Container Nextcloud Talk war '
                          '3 Stunden ausgefallen, seit 1 Uhr 4 wieder da.')
 
+    def test_a_night_of_short_page_outages_is_over(self):
+        # CT 107, night to 16.10.2026: vault three times for 2 minutes, then both pages.
+        self.poll()
+        for pages, minutes in ((['vault'], 1), (['vault'], 1), (['vault'], 1),
+                               (['vault', 'cloud'], 14)):
+            self.kuma.broken.update(pages)
+            self.poll()
+            self.poll()
+            self.kuma.broken.clear()
+            self.poll(minutes)
+            self.poll()
+        text = w.answer_text(self.snapshot(), now=self.at(23, 30))
+        self.assertNotIn('unerreichbar geworden', text)
+        self.assertIn('Die Statusseite vault war 4-mal nicht abrufbar, zusammen', text)
+        self.assertIn('Die Statusseite cloud war 15 Minuten nicht abrufbar, seit', text)
+        # Still away: the outage stays, without a recovery.
+        self.kuma.broken.add('vault')
+        self.poll()
+        self.poll()
+        text = w.answer_text(self.snapshot(), now=self.at(23, 30))
+        self.assertIn('Die Statusseite vault ist nicht abrufbar.', text)
+        self.assertIn('Die Statusseite vault ist um', text)
+
     def test_unreachable_page_and_no_data(self):
         self.poll()
         self.kuma.broken.add('vault')
@@ -309,7 +332,7 @@ class IntentTests(Base):
         for text in ('was ist bei optimal kummer los', 'was ist bei ob die kummer los',
                      'die optimal koma', 'wie ist der status der sehr für systeme',
                      'wie geht es der clou', 'wie geht ist der clou', 'wie geht es dem wow',
-                     'wie geht s next glück', 'wie geht fault waden', 'wie geht es wollt waden',
+                     'wie geht es dem bauen', 'wie geht s next lu', 'wie geht s next glück', 'wie geht fault waden', 'wie geht es wollt waden',
                      'wie geht es audiobook fällt', 'wie geht es audiobooks helfen',
                      'ist die glut erreichbar', 'ist die knut erreichbar',
                      'gibt es probleme mit den servern', 'gibt es probleme mit den sehr fand',
