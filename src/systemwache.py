@@ -409,8 +409,17 @@ def _event_sentence(event, now):
     name = clean_name(event.get('name') or event.get('page'))
     when, since = _clock(event['at'], now), _clock(event['at'], now, um=False)
     kind = event['kind']
+    times = event.get('times', 1)
+    total = duration(event.get('dur'))
+    if kind == 'up' and times > 1:
+        return f"{name} war {times}-mal ausgefallen, zusammen {total}, seit {since} wieder da."
     if kind == 'up':
-        return f"{name} war {duration(event.get('dur'))} ausgefallen, seit {since} wieder da."
+        return f"{name} war {total} ausgefallen, seit {since} wieder da."
+    if kind == 'reachable' and times > 1:
+        return (f"Die Statusseite {name} war {times}-mal nicht abrufbar, zusammen {total}, "
+                f"seit {since} wieder erreichbar.")
+    if kind == 'reachable' and event.get('dur'):
+        return f"Die Statusseite {name} war {total} nicht abrufbar, seit {since} wieder erreichbar."
     if kind == 'down':
         return f"{name} ist {when} ausgefallen."
     if kind == 'unstable':
@@ -426,6 +435,32 @@ def _event_sentence(event, now):
     if kind == 'unreachable':
         return f"Die Statusseite {name} ist {when} unerreichbar geworden."
     return f"Die Statusseite {name} ist {since} wieder erreichbar."
+
+
+def _settled(events):
+    """A recovery replaces the outage it ends, and repeated recoveries of one
+    page or monitor become one entry: "war 4-mal nicht abrufbar, zusammen
+    21 Minuten" instead of four "unerreichbar geworden" that sound current."""
+    def key(e):
+        return e.get('name') or e.get('page')
+    back = {'down': 'up', 'unreachable': 'reachable'}
+    recoveries = {}
+    for e in events:
+        if e['kind'] in ('up', 'reachable'):
+            recoveries.setdefault((e['kind'], key(e)), []).append(e)
+    out = []
+    for e in events:
+        if e['kind'] in back and any(r['at'] >= e['at']
+                                     for r in recoveries.get((back[e['kind']], key(e)), ())):
+            continue
+        if e['kind'] in ('up', 'reachable'):
+            group = recoveries[(e['kind'], key(e))]
+            if e is not max(group, key=lambda r: r['at']):
+                continue
+            if len(group) > 1:
+                e = dict(e, times=len(group), dur=sum(r.get('dur') or 0 for r in group))
+        out.append(e)
+    return out
 
 
 def _head(lore):
@@ -461,11 +496,11 @@ SPOKEN = tuple((re.compile(pattern), spelling) for pattern, spelling in (
     (r'\b(?:optimal|ob die|kimme|up time|uptime) (?:kumm\w*|koma|kuma\w*)\b', 'uptime kuma'),
     (r'\b(?:sehr|her) für systeme\b', 'serversysteme'),
     (r'\bden sehr fand\b', 'den servern'),
-    (r'\bnext (?:glück|klug|clou)\b', 'nextcloud'),
+    (r'\bnext (?:glück|klug|clou|lu)\b', 'nextcloud'),
     (r'\b(?:fault|wollt|volt) waden\b', 'vaultwarden'),
     (r'\baudiobooks? (?:fällt|helfen|shelf)\b', 'audiobookshelf'),
     (r'\b(der|die) (?:clou|glut|knut)\b', r'\1 cloud'),
-    (r'\bdem wow\b', 'dem vault'),
+    (r'\b(wie geht (?:es |s |ist )?)dem (?:wow|bauen)\b', r'\1dem vault'),
     (r'\bwie geht (?:s |ist )?(?!es\b)', 'wie geht es '),
 ))
 
@@ -558,9 +593,9 @@ def answer_text(snapshot, lore='off', now=None, question=None):
     parts = [verdict]
     parts += [f"Die Statusseite {clean_name(s)} ist nicht abrufbar." for s in _unreachable(snapshot)]
     names = {m['name'] for m in chosen}
-    recent = [e for e in _events(snapshot, now, 24 * 3600.0)
-              if e.get('name') in names or (chosen is monitors and e['kind'] in
-                                            ('unreachable', 'reachable', 'gone'))]
+    recent = _settled([e for e in _events(snapshot, now, 24 * 3600.0)
+                       if e.get('name') in names or (chosen is monitors and e['kind'] in
+                                                     ('unreachable', 'reachable', 'gone'))])
     recent.sort(key=lambda e: (e['severity'], -e['at']))
     if recent:
         parts.append("In den letzten 24 Stunden:")
