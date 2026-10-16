@@ -1552,8 +1552,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(getattr(self, 'path', '') or '').path
         if path in self.QUIET or path.startswith('/web/'):
             return
+        # "pi" only with the right token: a wrong one is a stranger, not the Pi.
         client = ('web' if headers.get('X-Servitor-Client') == 'web'
-                  else 'pi' if headers.get('Authorization') else 'anon')
+                  else 'pi' if self.service.authorized(headers.get('Authorization')) else 'anon')
         try:
             status = int(code)
         except (TypeError, ValueError):

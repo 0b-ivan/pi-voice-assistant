@@ -224,6 +224,30 @@ class SentenceTests(Base):
         text = w.answer_text(self.snapshot(), now=self.at(22, 5), question='wie geht es dem vault')
         self.assertTrue(text.startswith('Systemwache: Alle 2 passenden Dienste'), text)
 
+    def test_vosk_spellings_and_exact_names(self):
+        self.poll()
+        at = self.at(22, 5)
+        for question, start in (('wie geht es der clou', 'Alle 6 passenden'),
+                                ('ist die glut erreichbar', 'Alle 6 passenden'),
+                                ('wie geht s next glück', 'Alle 5 passenden'),
+                                ('wie geht es wollt waden', 'Container Vaultwarden ist'),
+                                ('Ist vault.obivan.org erreichbar?', 'vault.obivan.org ist'),
+                                ('gibt es probleme mit den servern', 'Alle 8 überwachten')):
+            text = w.answer_text(self.snapshot(), now=at, question=question)
+            self.assertTrue(text.startswith(f'Systemwache: {start}'), (question, text))
+
+    def test_a_service_on_no_status_page_is_not_all_well(self):
+        self.poll()
+        at = self.at(22, 5)
+        for question, name in (('Wie geht es Audiobookshelf?', 'Audiobookshelf'),
+                               ('wie geht es audiobook fällt', 'Audiobookshelf'),
+                               ('Ist jellyfin.obivan.org erreichbar?', 'jellyfin.obivan.org')):
+            self.assertEqual(w.answer_text(self.snapshot(), now=at, question=question),
+                             f'Systemwache: {name} steht auf keiner Statusseite, '
+                             'dazu habe ich keine Daten.', question)
+        self.assertTrue(w.answer_text(self.snapshot(), now=at, question='wie geht es den diensten')
+                        .startswith('Systemwache: Alle 8 überwachten'))
+
     def test_outage_in_briefing_and_answer(self):
         self.poll()
         self.kuma.beat(3, w.DOWN)
@@ -279,6 +303,27 @@ class IntentTests(Base):
             self.assertEqual(intents.match(text), 'watch', text)
         self.assertEqual(intents.match('wie geht es dir'), 'status')
         self.assertEqual(intents.match('uptime'), 'status')
+
+    def test_what_vosk_hears(self):
+        # Vosk small on CT 107, Piper voice, 16.10.2026.
+        for text in ('was ist bei optimal kummer los', 'was ist bei ob die kummer los',
+                     'die optimal koma', 'wie ist der status der sehr für systeme',
+                     'wie geht es der clou', 'wie geht ist der clou', 'wie geht es dem wow',
+                     'wie geht s next glück', 'wie geht fault waden', 'wie geht es wollt waden',
+                     'wie geht es audiobook fällt', 'wie geht es audiobooks helfen',
+                     'ist die glut erreichbar', 'ist die knut erreichbar',
+                     'gibt es probleme mit den servern', 'gibt es probleme mit den sehr fand',
+                     'ist vault obivan org erreichbar'):
+            self.assertEqual(intents.match(text), 'watch', text)
+        for text in ('wie geht es dem wohl', 'ich habe kummer', 'wie geht es deiner oma',
+                     'die glut im kamin'):
+            self.assertNotEqual(intents.match(text), 'watch', text)
+
+    def test_status_alone_is_the_own_status(self):
+        for text in ('wie ist der status', 'was ist der status', 'wie ist dein status',
+                     'status'):
+            self.assertEqual(intents.match(text), 'status', text)
+        self.assertIsNone(intents.match('wie ist der status meiner bestellung'))
 
     def test_briefing_names_the_watch(self):
         self.poll()

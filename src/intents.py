@@ -87,19 +87,24 @@ _PATTERNS = (
     ('battery', re.compile(r'\b(akku|akkustand|akkus (stand|dann)|batterie|energiespeicher|'
                            r'ladestand|ladezustand|energiereserve\w*)\b|\bwie (?:viel|viele) prozent hast du (?:noch|übrig)\b')),
     # Systemwache (src/systemwache.py), before "status": its "uptime" means the
-    # own running time, "Uptime Kuma" the monitoring. Vosk small: "up time kuma",
-    # "uptime kumar".
+    # own running time, "Uptime Kuma" the monitoring. Matched against
+    # systemwache.respell(text), which fixes Vosk's "optimal kummer", "der clou" ...
     ('watch', re.compile(r'\b(up ?time ?kum\w*|systemwache|überwachung|'
                          r'(was|wie) (ist|steht) (es )?(mit|um|bei) (den |die |meinen |meine |unseren |unsere )?dienste\w*|'
                          r'(sind|laufen) (alle |meine )?dienste( \w+)?|'
-                         r'wie geht es (der |dem |den |meinen )?(nextcloud|vaultwarden|vault|cloud|diensten|servern)|'
+                         r'wie geht es (der |dem |den |meinen )?(nextcloud|vaultwarden|vault|cloud|audiobookshelf|diensten|servern)|'
                          r'(status|zustand|lage) (der |meiner |unserer )?(server ?systeme|dienste|server)\w*|'
                          r'server ?systeme|'
+                         r'probleme mit (den |meinen |unseren )?(servern|diensten)|'
+                         r'(nextcloud|vaultwarden|vault|cloud|audiobookshelf|obivan)( [\w.-]+){0,3} (erreichbar|online|down|ausgefallen)|'
                          r'was hat sich (\w+ ){0,3}verändert)\b')),
+    # "Wie ist der Status?" alone: the unit's own readings, not an invented
+    # "Alle Systeme innerhalb der Parameter" from the model.
     ('status', re.compile(r'\b(dein(en)? status|system ?status|statusbericht|status bericht|'
                           r'wie geht es dir|wie gehts dir|wie geht\'s dir|zustandsbericht|'
                           r'(?:deine? |system ?)(?:temperatur|auslastung|betriebszeit|messwerte)|'
-                          r'wie (?:heiß|warm) bist du|uptime)\b|^status\b')),
+                          r'wie (?:heiß|warm) bist du|uptime)\b|^status\b|'
+                          r'^(?:wie|was) ist (?:der |dein )?status(?: bitte)?$')),
     ('network', re.compile(r'\b(netzwerk\w*|netzwerk status|wlan status|wlan signal|'
                            r'wie ist das netz|wie ist die verbindung|internetverbindung|'
                            r'verbindungsqualität|noosphäre)\b')),
@@ -230,10 +235,11 @@ def match(text, persona=None):
     # when politeness, corrections or follow-up clauses make the sentence long.
     if _OWN_MEASUREMENT.search(text):
         return 'status'
+    spoken = systemwache.respell(text)
     if len(text.split()) > 12:
         if _CALENDAR_ASK.search(text):
             return 'calendar'
-        if _WATCH.search(text):
+        if _WATCH.search(spoken):
             return 'watch'   # "wie ist der status der serversysteme, wie geht es der cloud ..."
         if _SELF.search(text):
             for name, pattern in _PATTERNS:
@@ -242,7 +248,7 @@ def match(text, persona=None):
                     return name
         return None
     for name, pattern in _PATTERNS:
-        if pattern.search(text):
+        if pattern.search(spoken if name == 'watch' else text):
             if name in ('time', 'date', 'weather') and _ELSEWHERE.search(text):
                 return None
             if persona == 'mensch' and (name == 'identity' or _PERSONAL.search(text)):

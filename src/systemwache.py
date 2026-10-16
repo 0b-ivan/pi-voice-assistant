@@ -455,15 +455,62 @@ def briefing_sentence(snapshot, lore='off', now=None):
     return f"{_head(lore)} {' '.join(parts)}"
 
 
+# How Vosk small on CT 107 hears the service names (Piper voice, 16.10.2026):
+# "optimal kummer", "sehr für systeme", "der clou", "next glück" ...
+SPOKEN = tuple((re.compile(pattern), spelling) for pattern, spelling in (
+    (r'\b(?:optimal|ob die|kimme|up time|uptime) (?:kumm\w*|koma|kuma\w*)\b', 'uptime kuma'),
+    (r'\b(?:sehr|her) für systeme\b', 'serversysteme'),
+    (r'\bden sehr fand\b', 'den servern'),
+    (r'\bnext (?:glück|klug|clou)\b', 'nextcloud'),
+    (r'\b(?:fault|wollt|volt) waden\b', 'vaultwarden'),
+    (r'\baudiobooks? (?:fällt|helfen|shelf)\b', 'audiobookshelf'),
+    (r'\b(der|die) (?:clou|glut|knut)\b', r'\1 cloud'),
+    (r'\bdem wow\b', 'dem vault'),
+    (r'\bwie geht (?:s |ist )?(?!es\b)', 'wie geht es '),
+))
+
+# Words of a question that name no service.
+_GENERIC = {'geht', 'dienste', 'diensten', 'uptime', 'kuma', 'systemwache', 'server', 'servern',
+            'serversysteme', 'systeme', 'überwachung', 'status', 'zustand', 'verändert',
+            'ihnen', 'oder', 'meinen', 'obivan', 'erreichbar', 'online', 'probleme', 'alle',
+            'laufen', 'gibt'}
+
+# "Wie geht es Audiobookshelf?" / "Ist jellyfin.obivan.org erreichbar?"
+_SUBJECT = re.compile(r'\bwie geht es (?:der |dem |den |die |das )?([\w.-]+)|'
+                      r'\bist (?:die |der |das )?([\w.-]+(?: [\w.-]+){0,2}) (?:erreichbar|online|down)\b')
+
+
+def respell(text):
+    """The question in normalized form, Vosk's mishearings of service names fixed."""
+    words = (w.strip('.-') for w in re.findall(r"[\wäöüß.-]+", str(text or '').lower()))
+    text = ' '.join(w for w in words if w)
+    for pattern, spelling in SPOKEN:
+        text = pattern.sub(spelling, text)
+    return text
+
+
 def _matching(monitors, text):
     """Monitors whose status page or name shares a word (4+ letters) with the
-    question: "der Cloud" is the page cloud, "Nextcloud" its containers."""
-    words = {w for w in re.findall(r'\w{4,}', str(text or '').lower())
-             if w not in ('geht', 'dienste', 'diensten', 'uptime', 'kuma', 'systemwache',
-                          'server', 'servern', 'serversysteme', 'systeme', 'überwachung',
-                          'status', 'zustand', 'verändert', 'ihnen', 'oder', 'meinen')}
+    question: "der Cloud" is the page cloud, "Nextcloud" its containers.
+    A monitor named exactly in the question ("vault.obivan.org") wins."""
+    text = respell(text)
+    exact = [m for m in monitors if len(m['name']) > 3 and m['name'].lower() in text]
+    if exact:
+        return exact
+    words = {w for w in re.findall(r'\w{4,}', text) if w not in _GENERIC}
     return [m for m in monitors if m.get('page') in words
             or words & set(re.findall(r'\w{4,}', m['name'].lower()))]
+
+
+def _unwatched(text):
+    """The service a question names, or None: "audiobookshelf" for "Wie geht es
+    Audiobookshelf?", None for "Wie geht es den Diensten?"."""
+    match = _SUBJECT.search(respell(text))
+    subject = match and (match.group(1) or match.group(2))
+    if not subject:
+        return None
+    words = set(re.findall(r'\w{4,}', subject)) - _GENERIC
+    return subject if words else None
 
 
 def answer_text(snapshot, lore='off', now=None, question=None):
@@ -479,7 +526,15 @@ def answer_text(snapshot, lore='off', now=None, question=None):
                 "ist dort SERVITOR_KUMA_URL gesetzt?")
     now = now or datetime.datetime.now()
     monitors = _monitors(snapshot)
-    chosen = _matching(monitors, question) or monitors
+    chosen = _matching(monitors, question)
+    unwatched = None if chosen else _unwatched(question)
+    if unwatched:
+        # Never "all 8 are fine" for a service that is on no status page.
+        name = clean_name(unwatched, 40)
+        name = name if '.' in name else name[:1].upper() + name[1:]
+        return (f"{_head(lore)} {name} steht auf keiner Statusseite, "
+                f"dazu habe ich keine Daten.")
+    chosen = chosen or monitors
     down = _down(chosen)
     maintenance = [m for m in chosen if m.get('level') == 'maintenance']
     total = len(chosen)
