@@ -744,6 +744,15 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(requests, [dict(event='request', client='pi', method='POST',
                                          path='/v1/ask', status=200)])
 
+    def test_a_wrong_token_is_not_logged_as_the_pi(self):
+        lines = []
+        with unittest.mock.patch('builtins.print', lambda *a, **k: lines.append(a[0])):
+            self.request('/v1/ask', json.dumps({'text': 'wie spät ist es'}).encode(),
+                         token='falsch')
+        requests = [json.loads(line) for line in lines if '"request"' in line]
+        self.assertEqual(requests, [dict(event='request', client='anon', method='POST',
+                                         path='/v1/ask', status=401)])
+
     def test_journal_excludes_forwarded_logs_even_with_allowed_unit(self):
         self.service.journal.add_journald(json.dumps(dict(
             MESSAGE='Unzulässiger Fremdhost', PRIORITY='6',
