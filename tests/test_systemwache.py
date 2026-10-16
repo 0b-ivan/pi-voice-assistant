@@ -338,8 +338,15 @@ class IntentTests(Base):
                      'gibt es probleme mit den servern', 'gibt es probleme mit den sehr fand',
                      'ist vault obivan org erreichbar'):
             self.assertEqual(intents.match(text), 'watch', text)
+        # Whisper small with the service names in its prompt, same day.
+        for text in ('Was ist bei Optimus koma los?', 'Wie ist der Status der Serva Systeme?',
+                     'Wie ist der Status der Servis System?', 'Wie geht es der Clute?',
+                     'Ist die Klug erreichbar?', 'Bis die Cloud erreichbar.', 'Wie geht es dem Wout?',
+                     'Wie geht es nächstes Klub?', 'Wie geht es Waldwahn?',
+                     'Wie geht es Audiobox help?', 'Liebt es Probleme mit den Serven?'):
+            self.assertEqual(intents.match(text), 'watch', text)
         for text in ('wie geht es dem wohl', 'ich habe kummer', 'wie geht es deiner oma',
-                     'die glut im kamin'):
+                     'die glut im kamin', 'bis die bahn kommt', 'wie hoch ist der eifelton'):
             self.assertNotEqual(intents.match(text), 'watch', text)
 
     def test_status_alone_is_the_own_status(self):

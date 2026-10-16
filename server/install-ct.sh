@@ -76,6 +76,10 @@ STT_PROVIDER=vosk
 # gate and answers fixed requests at once. Unset = Vosk only.
 # SERVITOR_STT=whisper
 # SERVITOR_WHISPER_MODEL=small
+# The service names let Whisper hear them (half the word errors on
+# Systemwache questions, 16.10.2026). "Systemwache" stays out: a prompt word
+# said alone is dropped as a prompt echo (src/whisper_stt.py usable()).
+# SERVITOR_WHISPER_PROMPT=Proximus, Servitor, Omnissiah, Morgenbericht, WLAN, Uptime Kuma, Nextcloud, Vaultwarden, Vault, Cloud, Audiobookshelf.
 TTS_VOICE_PROFILE=servitor
 TTS_SERVITOR_AURA=reference
 TTS_PIPER_SPEAKER_ID=4

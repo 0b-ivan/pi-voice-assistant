@@ -493,14 +493,18 @@ def briefing_sentence(snapshot, lore='off', now=None):
 # How Vosk small on CT 107 hears the service names (Piper voice, 16.10.2026):
 # "optimal kummer", "sehr für systeme", "der clou", "next glück" ...
 SPOKEN = tuple((re.compile(pattern), spelling) for pattern, spelling in (
-    (r'\b(?:optimal|ob die|kimme|up time|uptime) (?:kumm\w*|koma|kuma\w*)\b', 'uptime kuma'),
-    (r'\b(?:sehr|her) für systeme\b', 'serversysteme'),
-    (r'\bden sehr fand\b', 'den servern'),
-    (r'\bnext (?:glück|klug|clou|lu)\b', 'nextcloud'),
-    (r'\b(?:fault|wollt|volt) waden\b', 'vaultwarden'),
-    (r'\baudiobooks? (?:fällt|helfen|shelf)\b', 'audiobookshelf'),
-    (r'\b(der|die) (?:clou|glut|knut)\b', r'\1 cloud'),
-    (r'\b(wie geht (?:es |s |ist )?)dem (?:wow|bauen)\b', r'\1dem vault'),
+    # Whisper small (SERVITOR_STT=whisper, same day): "Serva Systeme", "die Klug",
+    # "dem Wout", "Bis die Cloud erreichbar".
+    (r'\b(?:optimal|optimus|optimum|ob die|kimme|up time|uptime) (?:ge)?(?:kumm\w*|koma|kuma\w*)\b',
+     'uptime kuma'),
+    (r'\b(?:sehr|her) für systeme\b|\bserv[a-zäöü]* ?systeme?\b', 'serversysteme'),
+    (r'\bden (?:sehr fand|serven)\b', 'den servern'),
+    (r'\bnext (?:glück|klug|clou|club|lu)\b|\bnächst(?:es)? ?klu\w*', 'nextcloud'),
+    (r'\b(?:fault|wollt|volt|wald) (?:waden|werden)\b|\bwaldwahn\b', 'vaultwarden'),
+    (r'\baudio ?(?:books?|box) ?(?:fällt|helfen|hell|help|shelf|self)\b', 'audiobookshelf'),
+    (r'\b(der|die) (?:clou|glut|knut|klug|club|clute)\b', r'\1 cloud'),
+    (r'\b(wie geht (?:es |s |ist )?)dem (?:wow|bauen|baut|baul|waut|wout)\b', r'\1dem vault'),
+    (r'^bis (die|der|das) ', r'ist \1 '),
     (r'\bwie geht (?:s |ist )?(?!es\b)', 'wie geht es '),
 ))
 
