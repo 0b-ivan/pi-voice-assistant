@@ -232,6 +232,8 @@ class SentenceTests(Base):
                                 ('wie geht s next glück', 'Alle 5 passenden'),
                                 ('wie geht es wollt waden', 'Container Vaultwarden ist'),
                                 ('Ist vault.obivan.org erreichbar?', 'vault.obivan.org ist'),
+                                ('wie geht es dem tresor', 'Alle 2 passenden'),
+                                ('Wie geht das nächste Cloud?', 'Alle 5 passenden'),
                                 ('gibt es probleme mit den servern', 'Alle 8 überwachten')):
             text = w.answer_text(self.snapshot(), now=at, question=question)
             self.assertTrue(text.startswith(f'Systemwache: {start}'), (question, text))
@@ -345,8 +347,14 @@ class IntentTests(Base):
                      'Wie geht es nächstes Klub?', 'Wie geht es Waldwahn?',
                      'Wie geht es Audiobox help?', 'Liebt es Probleme mit den Serven?'):
             self.assertEqual(intents.match(text), 'watch', text)
+        # Web client, real voice, 17.10.2026 (Vosk / Whisper), and "Tresor" for the vault.
+        for text in ('wie geht das der cloud', 'wie geht es dem board', 'wie geht s next glaubt',
+                     'Wie geht das nächste Cloud?', 'wie geht es dem tresor',
+                     'Ist der Passwort-Tresor erreichbar?', 'wie geht es dem passworttresor'):
+            self.assertEqual(intents.match(text), 'watch', text)
         for text in ('wie geht es dem wohl', 'ich habe kummer', 'wie geht es deiner oma',
-                     'die glut im kamin', 'bis die bahn kommt', 'wie hoch ist der eifelton'):
+                     'die glut im kamin', 'bis die bahn kommt', 'wie hoch ist der eifelton',
+                     'wie geht das', 'wie geht das nächste level', 'der tresor im keller'):
             self.assertNotEqual(intents.match(text), 'watch', text)
 
     def test_status_alone_is_the_own_status(self):

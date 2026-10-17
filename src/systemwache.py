@@ -499,13 +499,18 @@ SPOKEN = tuple((re.compile(pattern), spelling) for pattern, spelling in (
      'uptime kuma'),
     (r'\b(?:sehr|her) für systeme\b|\bserv[a-zäöü]* ?systeme?\b', 'serversysteme'),
     (r'\bden (?:sehr fand|serven)\b', 'den servern'),
-    (r'\bnext (?:glück|klug|clou|club|lu)\b|\bnächst(?:es)? ?klu\w*', 'nextcloud'),
+    # Web client, real voice (17.10.2026): "next glaubt", "das nächste Cloud", "dem board".
+    (r'\bnext (?:glück|klug|clou|club|lu|glaubt|glut)\b|\bnächst(?:e|es)? ?(?:klu\w*|cloud)\b',
+     'nextcloud'),
     (r'\b(?:fault|wollt|volt|wald) (?:waden|werden)\b|\bwaldwahn\b', 'vaultwarden'),
     (r'\baudio ?(?:books?|box) ?(?:fällt|helfen|hell|help|shelf|self)\b', 'audiobookshelf'),
     (r'\b(der|die) (?:clou|glut|knut|klug|club|clute)\b', r'\1 cloud'),
-    (r'\b(wie geht (?:es |s |ist )?)dem (?:wow|bauen|baut|baul|waut|wout)\b', r'\1dem vault'),
+    (r'\b(wie geht (?:es |s |ist |das )?)dem (?:wow|bauen|baut|baul|waut|wout|board)\b',
+     r'\1dem vault'),
+    # "Vault" is hard to say and to hear: the German word works too.
+    (r'\b(?:passwort ?)?tresor\b', 'vault'),
     (r'^bis (die|der|das) ', r'ist \1 '),
-    (r'\bwie geht (?:s |ist )?(?!es\b)', 'wie geht es '),
+    (r'\bwie geht (?:s |ist |das )?(?!es\b)', 'wie geht es '),
 ))
 
 # Words of a question that name no service.
