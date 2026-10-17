@@ -377,6 +377,20 @@ BRIEFING_END = {
     'billy': "Das war's.",
     'billy_full': "Das war's.",
 }
+# The litany's blessing follows the hour like its opening (_opening): in the
+# evening the work of the day does not begin any more.
+BRIEFING_END_FULL = {
+    'Morgen': "Lob dem Omnissiah. Das Tagwerk möge beginnen.",
+    'Tages': "Lob dem Omnissiah. Das Tagwerk möge gelingen.",
+    'Abend': "Lob dem Omnissiah. Die Maschinen ruhen, die Wache bleibt.",
+}
+
+
+def _closing(now, lore):
+    if lore == 'full':
+        part = 'Morgen' if now.hour < 11 else 'Tages' if now.hour < 18 else 'Abend'
+        return BRIEFING_END_FULL[part]
+    return BRIEFING_END.get(lore, BRIEFING_END['off'])
 
 
 def _wake_sentence(snapshot, lore):
@@ -464,7 +478,7 @@ def briefing_text(now, snapshot, lore='off'):
     night = nightwatch.answer('night_report', snapshot.get('nightwatch'), brief=True)
     if night:
         parts.append(night)
-    parts.append(BRIEFING_END.get(lore, BRIEFING_END['off']))
+    parts.append(_closing(now, lore))
     return ' '.join(parts)
 
 
