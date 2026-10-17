@@ -353,7 +353,12 @@ class AnswerTests(unittest.TestCase):
                               {"lore": "full", "operator": "Ivan"})
         self.assertTrue(text.startswith("Bediener Ivan identifiziert. Die Abendlitanei "
                                         "beginnt. Ave Omnissiah."))
-        self.assertTrue(text.endswith("Das Tagwerk möge beginnen."))
+        self.assertTrue(text.endswith("Lob dem Omnissiah. Die Maschinen ruhen, die Wache bleibt."))
+        for hour, end in ((7, "Das Tagwerk möge beginnen."), (14, "Das Tagwerk möge gelingen."),
+                          (18, "Die Maschinen ruhen, die Wache bleibt.")):
+            text = intents.answer("briefing", datetime.datetime(2026, 10, 9, hour, 0),
+                                  {"lore": "full"})
+            self.assertTrue(text.endswith(end), (hour, text))
         for hour in (7, 14, 21):
             text = intents.answer("briefing", datetime.datetime(2026, 10, 9, hour, 0), {})
             self.assertNotIn("Guten", text)
