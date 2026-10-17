@@ -1384,6 +1384,12 @@ class Service:
                                 appointments_tomorrow, start + datetime.timedelta(days=1))
                         elif day == 0 and appointments is not None:
                             snapshot['agenda'] = agenda.upcoming(appointments, self.now())
+                        if (intent == 'briefing' and appointments_tomorrow is not None
+                                and snapshot.get('agenda') != agenda.DENIED):
+                            # The briefing names tomorrow's appointments too.
+                            start, _ = agenda.day_bounds(self.now())
+                            snapshot['agenda_tomorrow'] = agenda.upcoming(
+                                appointments_tomorrow, start + datetime.timedelta(days=1))
                     if (isinstance(memory_copy, dict) and memory_copy.get('speaker')
                             and not memory.unknown_speaker(memory_copy)):
                         snapshot['operator'] = memory_copy['speaker']  # recognized voice
