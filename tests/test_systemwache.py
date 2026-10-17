@@ -205,6 +205,9 @@ class SentenceTests(Base):
         self.poll()
         self.assertIsNone(w.briefing_sentence(self.snapshot(), now=self.at(22, 5)))
         self.assertIsNone(w.briefing_sentence({}))
+        self.assertEqual(w.briefing_sentence(self.snapshot(), now=self.at(22, 5), always=True),
+                         'Systemwache: Alle 8 überwachten Dienste erreichbar.')
+        self.assertIsNone(w.briefing_sentence({}, always=True))
 
     def test_answer_all_well(self):
         self.poll()

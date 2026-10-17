@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import agenda  # noqa: E402
 import intents  # noqa: E402
 
 
@@ -268,11 +269,57 @@ class AnswerTests(unittest.TestCase):
         for part in ("Außentemperatur minus 2 Grad", "Energiespeicher 64 Prozent",
                      "Pi: 3 Aktualisierungen", "Bericht Ende."):
             self.assertIn(part, text)
-        quiet = intents.answer("briefing", self.NOW, dict(battery_pct=90, battery_plugged=True))
-        self.assertEqual(quiet, "Tagesbericht. Datum: Donnerstag, der achte Oktober. "
-                                "Zeitindex: 14 Uhr 32. Bericht Ende.")
+        plain = intents.answer("briefing", self.NOW, dict(battery_pct=90, battery_plugged=True))
+        self.assertEqual(plain, "Tagesbericht. Datum: Donnerstag, der achte Oktober. "
+                                "Zeitindex: 14 Uhr 32. Energiespeicher 90 Prozent. Netzbetrieb. "
+                                "Bericht Ende.")
         self.assertIn("Server nicht erreichbar",
                       intents.answer("briefing", self.NOW, {"server": "down"}))
+
+    def test_briefing_gives_the_full_picture(self):
+        morning = datetime.datetime(2026, 10, 9, 7, 5)
+        hours = [dict(time=f"2026-10-09T{h:02d}:00", temp=t, rain=r, code=c)
+                 for h, t, r, c in ((8, 4, 0, 45), (13, 11, 10, 2), (16, 12, 70, 61), (20, 8, 0, 0))]
+        forecast = dict(self.WEATHER, days=[dict(date="2026-10-09", code=61, high=8, low=-3,
+                                                 rain=70)], hours=hours)
+        dentist = dict(summary="Zahnarzt", start=morning.replace(hour=15, minute=30),
+                       end=None, all_day=False)
+        barber = dict(summary="Friseur", start=morning.replace(day=10, hour=10, minute=0), end=None,
+                      all_day=False)
+        monitors = [dict(id=i, name=f"Dienst {i}", page="cloud", level="up", since=0)
+                    for i in range(8)]
+        text = intents.answer("briefing", morning, dict(
+            weather=forecast, agenda=[dentist], agenda_tomorrow=[barber],
+            pisugar_rtc_alarm="on", battery_pct=88, battery_plugged=True, temp_c=51,
+            wifi_dbm=-58, net_ms=40, server="ok", watch_checked_at=1.0,
+            watch_monitors=monitors, watch_pages={}, watch_events=[]))
+        expected = ("Außentemperatur minus 2 Grad, Regen.",
+                    "Verlauf: morgens 4 Grad, Nebel; mittags 11 Grad, teils bewölkt; "
+                    "nachmittags 12 Grad, Regen; abends 8 Grad, klar. "
+                    "Niederschlag wahrscheinlich ab 16 Uhr.",
+                    "Termine heute. 15 Uhr 30: Zahnarzt.",
+                    "Termine morgen. 10 Uhr: Friseur.",
+                    "Weckzeit gestellt.",
+                    "Energiespeicher 88 Prozent. Netzbetrieb.",
+                    "Kerntemperatur 51 Grad.",
+                    "Server bereit.",
+                    "Systemwache: Alle 8 überwachten Dienste erreichbar.",
+                    "Bericht Ende.")
+        position = -1
+        for part in expected:
+            found = text.find(part)
+            self.assertGreater(found, position, (part, text))
+            position = found
+        self.assertIn("WLAN", text)
+        # Local core, hot core, server down.
+        self.assertIn("Server bereit, lokaler Sprachkern aktiv.",
+                      intents.answer("briefing", morning, dict(server="ok", llm_mode="local")))
+        self.assertIn("Warnung: Kerntemperatur 80 Grad.",
+                      intents.answer("briefing", morning, dict(temp_c=80)))
+        # A guest hears no appointments, not even tomorrow's.
+        guest = intents.answer("briefing", morning, dict(agenda=agenda.DENIED,
+                                                         agenda_tomorrow=[barber]))
+        self.assertNotIn("Friseur", guest)
 
     def test_weather_day(self):
         saturday = datetime.date(2026, 10, 10)

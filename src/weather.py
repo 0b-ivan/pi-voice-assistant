@@ -23,6 +23,9 @@ from pathlib import Path
 
 URL = 'https://api.open-meteo.com/v1/forecast'
 DAYS = 5
+HOURS = 48                  # today and tomorrow, for the course of the day
+# Course of the day in the briefing: the hour that stands for each part.
+PERIODS = (('morgens', 8), ('mittags', 13), ('nachmittags', 16), ('abends', 20))
 CACHE_SECONDS = 20 * 60
 RETRY_SECONDS = 2 * 60      # after a failed request (server)
 KEEP_SECONDS = 30 * 60      # Pi refresh
@@ -92,13 +95,33 @@ def parse(payload):
         return None
     today = days[0]
     return dict(now=now, code=_code(current.get('weather_code')), high=today['high'],
-                low=today['low'], rain=today['rain'], days=days)
+                low=today['low'], rain=today['rain'], days=days,
+                hours=_hours(payload.get('hourly')))
+
+
+def _hours(hourly):
+    """Today's and tomorrow's hours: [dict(time 'YYYY-MM-DDTHH:MM', temp, rain, code)].
+    Empty when the payload has none (older stored data, other sources)."""
+    if not isinstance(hourly, dict) or not isinstance(hourly.get('time'), list):
+        return []
+    hours = []
+    for i, moment in enumerate(hourly['time'][:HOURS]):
+        try:
+            datetime.datetime.fromisoformat(moment)
+            hours.append(dict(time=moment,
+                              temp=_number(hourly.get('temperature_2m', [])[i]),
+                              rain=_number(hourly.get('precipitation_probability', [])[i]),
+                              code=_code(hourly.get('weather_code', [])[i])))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return hours
 
 
 def fetch(lat, lon, timeout=TIMEOUT_SECONDS, opener=urllib.request.urlopen):
     query = urllib.parse.urlencode(dict(
         latitude=lat, longitude=lon, timezone='auto', forecast_days=DAYS,
         current='temperature_2m,weather_code',
+        hourly='temperature_2m,precipitation_probability,weather_code',
         daily='weather_code,temperature_2m_max,temperature_2m_min,'
               'precipitation_probability_max'))
     request = urllib.request.Request(f'{URL}?{query}', headers={'User-Agent': USER_AGENT})
@@ -121,11 +144,13 @@ def view(data, today=None, now=None):
     fresh = (isinstance(updated, (int, float)) and 0 <= now - updated <= CURRENT_FRESH_SECONDS
              and data['days'][0].get('date') == today)
     first = days[0]
+    hours = [h for h in data.get('hours') or []
+             if isinstance(h, dict) and str(h.get('time', '')) >= today]
     return dict(now=data.get('now') if fresh else None,
                 code=data.get('code') if fresh and data.get('code') is not None
                 else first.get('code'),
                 high=first.get('high'), low=first.get('low'), rain=first.get('rain'),
-                days=days)
+                days=days, hours=hours)
 
 
 class Forecast:
@@ -313,6 +338,37 @@ def sentence(data, lore='off'):
     if not parts:
         return None
     return ' '.join(parts + _rain(data.get('rain'), lore))
+
+
+def course_sentence(data, offset=0, now=None):
+    """Course of the day for the briefing: "Verlauf: mittags 15 Grad, teils
+    bewölkt; abends 11 Grad, klar. Niederschlag wahrscheinlich ab 16 Uhr."
+    Today only the parts still ahead of ``now``; None without hourly data."""
+    days = (data or {}).get('days') or []
+    if not 0 <= offset < len(days):
+        return None
+    date = days[offset].get('date', '')
+    hours = {}
+    for hour in (data or {}).get('hours') or []:
+        moment = str(hour.get('time', ''))
+        if moment.startswith(date) and len(moment) >= 13 and moment[11:13].isdigit():
+            hours[int(moment[11:13])] = hour
+    past = now.hour if (now is not None and offset == 0) else -1
+    parts = []
+    for label, at in PERIODS:
+        hour = hours.get(at)
+        if at <= past or not hour or hour.get('temp') is None:
+            continue
+        sky = condition(hour.get('code'))
+        parts.append(f"{label} {_degrees(hour['temp'])} Grad" + (f", {sky}" if sky else ''))
+    if not parts:
+        return None
+    text = f"Verlauf: {'; '.join(parts)}."
+    wet = [at for at in sorted(hours) if past < at <= 22 and at >= 6
+           and (hours[at].get('rain') or 0) >= 60]
+    if wet:
+        text += f" Niederschlag wahrscheinlich ab {wet[0]} Uhr."
+    return text
 
 
 def day_label(offset, date):

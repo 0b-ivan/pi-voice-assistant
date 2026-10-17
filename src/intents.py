@@ -9,8 +9,8 @@ Piper reads well (numbers as digits, dates as words).
 """
 import re
 
-from system_status import (battery_sentence, is_billy, network_text, phrase_style, status_text,
-                           updates_sentence, updates_text)
+from system_status import (battery_sentence, is_billy, network_sentence, network_text,
+                           phrase_style, status_text, updates_sentence, updates_text)
 import agenda
 import energy
 import logwatch
@@ -379,38 +379,86 @@ BRIEFING_END = {
 }
 
 
+def _wake_sentence(snapshot, lore):
+    """The PiSugar wake time (the unit switches itself on). Proximus has no
+    alarm clock of its own; the module reports only on or off, no time."""
+    state = snapshot.get('pisugar_rtc_alarm')
+    if state not in ('on', 'off'):
+        return None
+    if is_billy(lore):
+        return "Eine Weckzeit ist gestellt." if state == 'on' else "Keine Weckzeit gestellt."
+    return "Weckzeit gestellt." if state == 'on' else "Keine Weckzeit gestellt."
+
+
+def _unit_sentences(snapshot, lore):
+    """State of the unit and the server for the briefing: battery, core
+    temperature, network, server and language core. Only what was measured."""
+    billy = is_billy(lore)
+    parts = []
+    if snapshot.get('battery_pct') is not None:
+        parts.append(battery_sentence(snapshot, lore))
+    temperature = snapshot.get('temp_c')
+    if temperature is not None:
+        hot = temperature >= 75
+        parts.append((f"Achtung, Prozessor bei {temperature} Grad." if hot
+                      else f"Prozessor bei {temperature} Grad.") if billy else
+                     (f"Warnung: Kerntemperatur {temperature} Grad." if hot
+                      else f"Kerntemperatur {temperature} Grad."))
+    if snapshot.get('wlan') == 'off':
+        parts.append("WLAN ist aus." if billy else "WLAN deaktiviert.")
+    else:
+        net = network_sentence(snapshot, billy)
+        if net:
+            parts.append(net)
+    if snapshot.get('server') == 'down':
+        parts.append("Der Server antwortet nicht, ich mach allein weiter." if billy
+                     else "Server nicht erreichbar. Lokaler Betrieb.")
+    elif snapshot.get('server') == 'ok':
+        local = snapshot.get('llm_mode') == 'local' or snapshot.get('llm') == 'offline'
+        if billy:
+            parts.append("Der Server läuft" + (", ich denke gerade lokal." if local else "."))
+        else:
+            parts.append("Server bereit" + (", lokaler Sprachkern aktiv." if local else "."))
+    return parts
+
+
 def briefing_text(now, snapshot, lore='off'):
-    """Morning litany: opening, date, time, weather, then only what needs
-    attention (battery, server, updates, notable log findings)."""
+    """Morning litany, the full picture: opening, date, time, weather with the
+    course of the day, appointments today and tomorrow, wake time, the state of
+    the unit and the server, updates, log findings, the Systemwache (always
+    one line) and the night watch."""
     parts = [_opening(now, lore, snapshot.get('operator'))]
     clock = f"{now.hour} Uhr" if now.minute == 0 else f"{now.hour} Uhr {now.minute}"
     day = f"{WEEKDAYS[now.weekday()]}, der {ORDINALS[now.day - 1]} {MONTHS[now.month - 1]}"
     parts.append(f"Heute ist {day}, es ist {clock}." if is_billy(lore)
                  else f"Datum: {day}. Zeitindex: {clock}.")
     day = briefing_day(now)
-    sky = weather.day_sentence(snapshot.get('weather'), day, lore)
+    forecast = snapshot.get('weather')
+    sky = weather.day_sentence(forecast, day, lore)
     if sky:
         parts.append(sky)
+        course = weather.course_sentence(forecast, day, now)
+        if course:
+            parts.append(course)
     elif day:
         parts.append("Wetterdaten für morgen nicht verfügbar.")
     appointments = snapshot.get('agenda')
     if appointments is not None and appointments != agenda.DENIED:  # guests: just left out
         parts.append(agenda.sentence(appointments, lore))
-    battery = snapshot.get('battery_pct')
-    if battery is not None and not snapshot.get('battery_plugged'):
-        parts.append(battery_sentence(snapshot, lore))
-    if snapshot.get('wlan') == 'off':
-        parts.append("WLAN ist aus." if is_billy(lore) else "WLAN deaktiviert.")
-    elif snapshot.get('server') == 'down':
-        parts.append("Der Server antwortet nicht, ich mach allein weiter." if is_billy(lore)
-                     else "Server nicht erreichbar. Lokaler Betrieb.")
+        tomorrow = snapshot.get('agenda_tomorrow')
+        if tomorrow is not None and tomorrow != agenda.DENIED:
+            parts.append(agenda.sentence(tomorrow, lore, day=1))
+    wake = _wake_sentence(snapshot, lore)
+    if wake:
+        parts.append(wake)
+    parts += _unit_sentences(snapshot, lore)
     updates = updates_sentence(snapshot, short=True)
     if updates:
         parts.append(updates)
     logs = logwatch.briefing_sentence(snapshot, lore, now)  # None when nothing is notable
     if logs:
         parts.append(logs)
-    watch = systemwache.briefing_sentence(snapshot, lore, now)  # None when quiet
+    watch = systemwache.briefing_sentence(snapshot, lore, now, always=True)
     if watch:
         parts.append(watch)
     night = nightwatch.answer('night_report', snapshot.get('nightwatch'), brief=True)

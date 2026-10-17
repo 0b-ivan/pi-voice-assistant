@@ -35,8 +35,16 @@ class Clock:
 class ParseTests(unittest.TestCase):
     def test_parse(self):
         self.assertEqual(weather.parse(PAYLOAD),
-                         dict(now=12, code=3, high=14, low=6, rain=40, days=DAYS))
+                         dict(now=12, code=3, high=14, low=6, rain=40, days=DAYS, hours=[]))
         self.assertIsNone(weather.parse({}))
+
+    def test_parse_hours(self):
+        hourly = {'time': ['2026-10-10T08:00', '2026-10-10T09:00', 'kaputt'],
+                  'temperature_2m': [7.6, 9.2, 1], 'precipitation_probability': [10, 70, 0],
+                  'weather_code': [45, 61, 0]}
+        self.assertEqual(weather.parse(dict(PAYLOAD, hourly=hourly))['hours'],
+                         [dict(time='2026-10-10T08:00', temp=8, rain=10, code=45),
+                          dict(time='2026-10-10T09:00', temp=9, rain=70, code=61)])
         self.assertIsNone(weather.parse({'current': {}, 'daily': {}}))
 
     def test_fetch_builds_query(self):
@@ -50,6 +58,7 @@ class ParseTests(unittest.TestCase):
         self.assertIn('latitude=52.5', seen['url'])
         self.assertIn('longitude=13.4', seen['url'])
         self.assertEqual(seen['agent'], 'pi-voice-assistant/1')
+        self.assertIn('hourly=temperature_2m%2Cprecipitation_probability%2Cweather_code', seen['url'])
         self.assertEqual(seen['timeout'], weather.TIMEOUT_SECONDS)
 
     def test_location(self):
@@ -144,6 +153,32 @@ class SentenceTests(unittest.TestCase):
                          "Dienstag: minus 3 bis 2 Grad, Schnee. Niederschlag möglich, 50 Prozent.")
         self.assertIsNone(weather.day_sentence(data, 7))
         self.assertTrue(weather.day_sentence(data, 0).startswith("Außentemperatur 12 Grad"))
+
+
+class CourseTests(unittest.TestCase):
+    @staticmethod
+    def hours(date, values):
+        return [dict(time=f'{date}T{hour:02d}:00', temp=temp, rain=rain, code=code)
+                for hour, (temp, rain, code) in values.items()]
+
+    def test_course_of_the_day(self):
+        import datetime
+        hours = self.hours('2026-10-10', {8: (6, 0, 45), 13: (13, 10, 2), 15: (14, 70, 61),
+                                          16: (12, 80, 61), 20: (9, 20, 0)})
+        hours += self.hours('2026-10-11', {8: (-1, 0, 0), 13: (5, 0, 0)})
+        data = dict(now=12, code=3, high=14, low=6, rain=40, days=DAYS, hours=hours)
+        morning = datetime.datetime(2026, 10, 10, 7, 0)
+        self.assertEqual(weather.course_sentence(data, 0, morning),
+                         'Verlauf: morgens 6 Grad, Nebel; mittags 13 Grad, teils bewölkt; '
+                         'nachmittags 12 Grad, Regen; abends 9 Grad, klar. '
+                         'Niederschlag wahrscheinlich ab 15 Uhr.')
+        # Later in the day only what is still ahead.
+        self.assertEqual(weather.course_sentence(data, 0, datetime.datetime(2026, 10, 10, 17, 0)),
+                         'Verlauf: abends 9 Grad, klar.')
+        self.assertEqual(weather.course_sentence(data, 1, datetime.datetime(2026, 10, 10, 19, 0)),
+                         'Verlauf: morgens minus 1 Grad, klar; mittags 5 Grad, klar.')
+        self.assertIsNone(weather.course_sentence(dict(data, hours=[]), 0, morning))
+        self.assertIsNone(weather.course_sentence(None, 0, morning))
 
 
 class KeeperTests(unittest.TestCase):

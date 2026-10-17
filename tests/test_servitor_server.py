@@ -1016,6 +1016,31 @@ class IntentServerTest(ServerTest):
         self.assertIn('nicht als Bediener erkannt', text)
         self.assertNotIn('Zahnarzt', text)
 
+    def test_briefing_names_today_and_tomorrow(self):
+        import agenda
+        import datetime
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo('Europe/Berlin')
+        fixed = datetime.datetime(2026, 10, 9, 7, 5, tzinfo=tz)
+        dentist = dict(summary='Zahnarzt', start=fixed.replace(hour=9, minute=30), end=None,
+                       all_day=False)
+        barber = dict(summary='Friseur', start=fixed.replace(day=10, hour=10, minute=0),
+                      end=None, all_day=False)
+        headers = {'Authorization': f'Bearer {TOKEN}',
+                   'X-Servitor-Agenda': agenda.encode_header([dentist]),
+                   'X-Servitor-Agenda-Tomorrow': agenda.encode_header([barber])}
+        self.pipeline.transcript = 'morgenbericht'
+        self.pipeline.fail_llm = True
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1],
+                                              timeout=10)
+            conn.request('POST', '/v1/turn', body=b'\1' * 16000, headers=headers)
+            data = conn.getresponse().read()
+            conn.close()
+        text = next(e for e in self.events(data) if e['event'] == 'reply')['text']
+        self.assertIn('Termine heute. 9 Uhr 30: Zahnarzt. Termine morgen. 10 Uhr: Friseur.', text)
+        self.assertIn('Server bereit', text)
+
     def test_guest_cannot_start_enrollment(self):
         # "Lerne meine Stimme" from an unknown voice: a refusal, not the LLM.
         import memory

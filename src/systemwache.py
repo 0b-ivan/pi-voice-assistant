@@ -469,9 +469,10 @@ def _head(lore):
     return "Der Auspex der fernen Wachen meldet:" if lore == 'full' else "Systemwache:"
 
 
-def briefing_sentence(snapshot, lore='off', now=None):
+def briefing_sentence(snapshot, lore='off', now=None, always=False):
     """Current outages first, then at most two notable events of the night;
-    None when everything is quiet."""
+    None when everything is quiet, unless ``always`` ("Alle 8 überwachten
+    Dienste erreichbar.")."""
     if 'watch_checked_at' not in snapshot:
         return None
     now = now or datetime.datetime.now()
@@ -485,6 +486,8 @@ def briefing_sentence(snapshot, lore='off', now=None):
              and e.get('name') not in down_names]
     night.sort(key=lambda e: (e['severity'], -e['at']))
     parts += [_event_sentence(e, now) for e in night[:max(0, BRIEFING_ITEMS - len(parts))]]
+    if not parts and always and monitors:
+        parts.append(f"Alle {len(monitors)} überwachten Dienste erreichbar.")
     if not parts:
         return None
     return f"{_head(lore)} {' '.join(parts)}"
