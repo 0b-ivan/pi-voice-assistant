@@ -652,6 +652,13 @@ def prompt_section(context):
                      "nur für den erkannten Bediener. Sprich den Gast ohne Namen, Rang oder "
                      "Titel an, insbesondere nicht als Kommandant, Boss oder Bediener.")
         return '\n\n'.join(parts)
+    if context.get('channel') == 'web':
+        # Signed in with the web password: the operator, but without a memory
+        # core (only the Pi strips MERKE lines and stores them).
+        return (f"Sprecher: {context.get('speaker') or 'der Bediener'}, der Bediener, angemeldet "
+                "im Web-Client. Den Namen nur gelegentlich verwenden, nicht in jeder Antwort. "
+                "In diesem Gespräch gibt es keinen Gedächtniskern: schreibe keine MERKE- oder "
+                "DIREKTIVE-Zeilen.")
     parts = [LEARN_INSTRUCTION]
     if context.get('speaker'):
         parts.append(f"Sprecher: an der Stimme erkannt als {context['speaker']}, der Bediener. "

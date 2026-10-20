@@ -564,7 +564,9 @@ class WebHTTPTests(unittest.TestCase):
         status, events = self.ask(chat, 'Was habe ich gefragt?')
         self.assertEqual(status, 200)
         self.assertIn('history', self.pipe.memory)
-        self.assertEqual(self.pipe.memory['speaker'], 'unknown')
+        # Signed in: the operator (SERVITOR_WEB_OPERATOR), still without the Pi's core.
+        self.assertEqual((self.pipe.memory['speaker'], self.pipe.memory['channel']),
+                         ('Ivan', 'web'))
         self.assertEqual(self.pipe.memory['history'][-1]['q'], 'Wie heißt mein Protokoll?')
         self.assertNotIn('facts', self.pipe.memory)
 

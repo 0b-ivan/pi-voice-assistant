@@ -177,6 +177,13 @@ def operator_name(memory_copy):
     return None
 
 
+def web_operator_name(environ=os.environ):
+    """Who a signed-in web client is (password session or token): the
+    operator named by SERVITOR_WEB_OPERATOR (default Ivan); None for "off"."""
+    name = environ.get('SERVITOR_WEB_OPERATOR', 'Ivan').strip()
+    return None if not name or name.lower() == 'off' else name[:40]
+
+
 def device_mood(device, text=''):
     """The Pi's mood for the prompt; None when its feelings are off (or an old Pi).
     The Pi allows refusing before it knows the words; a cry for help never is."""
@@ -1022,28 +1029,30 @@ class Service:
         emit(dict(event='device', op=op))
         return device_control.reply(op, device.get('wlan'), style, device.get('cpu_mode'))
 
-    def _nextcloud_turn(self, memory_copy, typed, is_browser):
-        """May this turn use the Nextcloud tools? Recognized operator, spoken on
-        the Pi (not typed, not the browser) and the feature configured."""
+    def _nextcloud_turn(self, memory_copy, typed, is_browser, web_operator=None):
+        """May this turn use the Nextcloud tools? The feature configured and
+        either the signed-in web client (the operator) or the recognized
+        operator's voice on the Pi (not typed)."""
         enabled = getattr(self.pipeline, 'nextcloud_enabled', None)
-        return bool(operator_name(memory_copy) and typed is None and not is_browser
-                    and enabled is not None and enabled())
+        if enabled is None or not enabled():
+            return False
+        return bool(web_operator or (operator_name(memory_copy) and typed is None
+                                     and not is_browser))
 
-    def _watch_turn(self, memory_copy, is_browser, web_principal):
+    def _watch_turn(self, memory_copy, web_operator=None):
         """May this turn ask the model with the Systemwache tool? The recognized
-        operator on the Pi, or a signed-in web client (password session or
-        token); never an unknown voice."""
+        operator on the Pi or the signed-in web client; never an unknown voice."""
         if self.watch is None or memory.unknown_speaker(memory_copy):
             return False
-        return bool(operator_name(memory_copy) or (is_browser and web_principal))
+        return bool(operator_name(memory_copy) or web_operator)
 
-    def _nextcloud_answer(self, text, memory_copy):
+    def _nextcloud_answer(self, text, owner):
         """Reply to an open Nextcloud proposal (docs/nextcloud.md), or None.
         Yes from the operator's voice runs it once; no cancels it; anything
         else drops it and the turn is answered as usual. A yes whose voice was
-        not recognized keeps it open and asks for a longer confirmation."""
-        owner = self.nextcloud_pending.open_for()
-        if owner is None:
+        not recognized keeps it open and asks for a longer confirmation.
+        ``owner``: this turn's browser login or recognized voice (None: neither)."""
+        if self.nextcloud_pending.open_for() is None:
             return None
         reply = nextcloud_mcp.confirmation(text)
         if reply is None:
@@ -1052,10 +1061,9 @@ class Service:
         if reply == 'cancel':
             self.nextcloud_pending.take(None)
             return nextcloud_mcp.CANCELLED
-        speaker = operator_name(memory_copy)
-        if speaker is None:
+        if owner is None:                        # the Pi did not recognize the voice
             return nextcloud_mcp.VOICE_UNSURE
-        proposal = self.nextcloud_pending.take(speaker)
+        proposal = self.nextcloud_pending.take(owner)
         if proposal is None:
             return nextcloud_mcp.CANCELLED
         call = getattr(self.pipeline, 'nextcloud_call', None)
@@ -1394,15 +1402,24 @@ class Service:
                     memory_copy = timed('speaker', self._identify, audio, memory_copy, emit,
                                         voice)
                 intent = intents.match(text, (device or {}).get('persona'))
-                nextcloud_turn = self._nextcloud_turn(memory_copy, typed, is_browser)
+                # A signed-in web client is the operator (docs/web-client.md).
+                web_operator = (web_operator_name() if is_browser and web_principal
+                                else None)
+                # Who may answer an open Nextcloud proposal: the same browser
+                # login, or on the Pi the operator's recognized voice.
+                owner = (f'web:{web_principal}' if web_operator
+                         else operator_name(memory_copy))
+                nextcloud_turn = self._nextcloud_turn(memory_copy, typed, is_browser,
+                                                      web_operator)
                 calendar_handed_over = False
                 if (intent == 'calendar' and nextcloud_turn
-                        and (nextcloud_mcp.writes(text)
+                        and (web_operator or nextcloud_mcp.writes(text)
                              or intents.calendar_day(text, self.now().date()) not in (0, 1))):
-                    # The Pi's agenda covers reading today and tomorrow; other days
-                    # and new entries go to the operator's Nextcloud (docs/nextcloud.md).
+                    # The Pi's agenda covers reading today and tomorrow; other days,
+                    # new entries and the browser (no agenda) go to the operator's
+                    # Nextcloud (docs/nextcloud.md).
                     intent, calendar_handed_over = None, True
-                watch_turn = self._watch_turn(memory_copy, is_browser, web_principal)
+                watch_turn = self._watch_turn(memory_copy, web_operator)
                 watch_handed_over = False
                 if intent == 'watch' and watch_turn and systemwache.detail(text):
                     # "Wie lange war Vault gestern down?": more than the fixed
@@ -1414,7 +1431,7 @@ class Service:
                 device_reply = self._device_reply(intents.normalize(text), device or {},
                                                   memory_copy, emit)
                 nextcloud_reply = (None if device_reply is not None
-                                   else self._nextcloud_answer(text, memory_copy))
+                                   else self._nextcloud_answer(text, owner))
                 if elsewhere:
                     persona = 'mensch' if (device or {}).get('persona') == 'mensch' else 'servitor'
                     answer, model = JOURNEY_ELSEWHERE[persona], 'local/journey'
@@ -1499,6 +1516,8 @@ class Service:
                     if (isinstance(memory_copy, dict) and memory_copy.get('speaker')
                             and not memory.unknown_speaker(memory_copy)):
                         snapshot['operator'] = memory_copy['speaker']  # recognized voice
+                    elif web_operator:
+                        snapshot['operator'] = web_operator
                     answer = timed('intent', intents.answer, intent, self.now(), snapshot)
                     model = 'local/intent'
                     rephrase = getattr(self.pipeline, 'rephrase', None)
@@ -1531,9 +1550,14 @@ class Service:
                         lore = (device or {}).get('lore')
                         mode = (device or {}).get('llm_mode')
                         persona = (device or {}).get('persona')
-                        model_memory = (dict(history=web_history, speaker='unknown')
-                                        if typed is not None and web_history is not None
-                                        else memory_copy)
+                        if web_operator:
+                            model_memory = dict(history=web_history or [],
+                                                speaker=web_operator, channel='web')
+                        elif typed is not None and web_history is not None:
+                            # SERVITOR_WEB_OPERATOR=off: the browser stays a guest.
+                            model_memory = dict(history=web_history, speaker='unknown')
+                        else:
+                            model_memory = memory_copy
                         found = None
                         # A watch question naming "Nextcloud" is about the service,
                         # not the operator's calendar.
@@ -1543,8 +1567,7 @@ class Service:
                             watch_handed_over
                             or systemwache.wants(text, self.watch.snapshot_fields()))
                         if wants_nextcloud or wants_watch:
-                            # Nextcloud only for the recognized operator's own Pi
-                            # turn; the Systemwache also for the signed-in web client.
+                            # Only the operator: recognized voice or signed-in web.
                             local = ([systemwache.StatusTool(self.watch, self.now)]
                                      if wants_watch else [])
                             found = timed('tools', self.pipeline.nextcloud_reply, text,
@@ -1553,7 +1576,7 @@ class Service:
                         if found is not None:
                             (kind, value), model = found
                             if kind == 'propose':
-                                self.nextcloud_pending.offer(value, operator_name(memory_copy))
+                                self.nextcloud_pending.offer(value, owner)
                                 value = value.question()
                             answer = value
                         elif calendar_handed_over:

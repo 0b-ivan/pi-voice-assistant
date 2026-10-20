@@ -14,7 +14,7 @@ Bediener: „Ja, bitte eintragen.“ → Termin angelegt → „Termin eingetrag
 Alle Bedingungen müssen erfüllt sein, sonst antwortet Proximus wie bisher ohne Werkzeuge (kein Umweg, keine zusätzliche Wartezeit):
 
 - `SERVITOR_NEXTCLOUD_MCP_URL` ist auf CT 107 gesetzt.
-- Die Stimme wurde als **Bediener** erkannt (Gäste, unbekannte Stimmen, Web-Client und getippte Fragen bekommen keine Werkzeuge).
+- Die Stimme wurde am Pi als **Bediener** erkannt, oder der Web-Client ist angemeldet (Kennwort oder Token, gilt als Bediener `SERVITOR_WEB_OPERATOR`, Standard Ivan). Gäste, unbekannte Stimmen und am Pi getippte Fragen bekommen keine Werkzeuge. Im Web bestätigt nur dieselbe Browser-Sitzung eine Rückfrage, und Kalenderfragen gehen dort immer an Nextcloud (der Browser hat keine Termine vom Pi).
 - Die Frage handelt von Kalender, Terminen, Aufgaben, Kontakten, Deck, Notizen, Einkaufsliste oder Dateien (`nextcloud_mcp.wants`); feste Absichten wie „Was steht heute an?“ beantwortet weiterhin das Regelwerk mit den Terminen vom Pi.
 - Sprachkern nicht LOKAL, OpenRouter nicht in der Abkühlpause nach einem Fehler. Das lokale Modell bekommt nie Werkzeuge.
 
@@ -59,7 +59,7 @@ Stand 20.10.2026. Derselbe Werkzeugweg kennt ein zweites, nur lesendes Werkzeug 
 „Hatte Vaultwarden heute Ärger?“            → Modell + kuma_status (Name eines überwachten Dienstes)
 ```
 
-- **Wer:** erkannter Bediener am Pi **und** der angemeldete Web-Client (Kennwort-Sitzung oder Token, gesprochen oder getippt). Unbekannte Stimmen bekommen weiter „Zugriff verweigert“. Nextcloud-Werkzeuge bleiben beim Pi-Bediener, weil Schreiben ein „Ja“ derselben Stimme braucht.
+- **Wer:** wie oben, erkannter Bediener am Pi oder angemeldeter Web-Client (gesprochen oder getippt). Unbekannte Stimmen bekommen weiter „Zugriff verweigert“.
 - **Wann:** Allgemeine Fragen beantwortet die feste Absicht `watch`. Fragt man nach mehr („wann“, „wie lange“, „wie oft“, „gestern“, „Woche“, „Verfügbarkeit“, „Zertifikat“, „zuletzt“ – `systemwache.detail`) oder frei formuliert nach Ausfällen, Störungen oder einem überwachten Dienst (`systemwache.wants`), geht die Frage mit dem Werkzeug an das Modell.
 - **Ausfall:** Klappt der Werkzeugweg nicht (OpenRouter weg, Sprachkern LOKAL), kommt die feste Antwort der Systemwache, nie ein geratener Zustand.
 - **Voraussetzung:** nur `SERVITOR_KUMA_URL` und `SERVITOR_KUMA_PAGES`; `SERVITOR_NEXTCLOUD_MCP_URL` ist dafür nicht nötig. Sichtbar ist, was auf den eingestellten Statusseiten steht.

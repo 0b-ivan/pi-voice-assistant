@@ -997,11 +997,11 @@ class IntentServerTest(ServerTest):
         self.service.watch = watch
         return watch
 
-    def web_ask(self, text):
+    def web_ask(self, text, browser='a' * 32):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
         conn.request('POST', '/v1/ask', body=json.dumps({'text': text}).encode(),
                      headers={'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Client': 'web',
-                              'X-Servitor-Browser': 'a' * 32})
+                              'X-Servitor-Browser': browser})
         events = self.events(conn.getresponse().read())
         conn.close()
         return next(e for e in events if e['event'] == 'reply')
@@ -1025,6 +1025,31 @@ class IntentServerTest(ServerTest):
             self.pipeline.fail_llm = False
             self.web_ask('Wie hoch ist der Eiffelturm?')
             self.assertEqual(len(self.pipeline.tools_asked), 2)          # no tools off topic
+
+    def test_the_signed_in_web_client_is_the_operator(self):
+        self.web_ask('Wie hoch ist der Eiffelturm?')
+        self.assertEqual(self.pipeline.memory, dict(history=[], speaker='Ivan', channel='web'))
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_WEB_OPERATOR': 'off'}):
+            self.web_ask('Wie hoch ist der Eiffelturm?')
+        self.assertNotIsInstance(self.pipeline.memory, dict)   # no operator, no memory
+        self.assertIsNone(ss.web_operator_name({'SERVITOR_WEB_OPERATOR': 'off'}))
+        self.assertEqual(ss.web_operator_name({}), 'Ivan')
+
+    def test_web_operator_gets_nextcloud_and_confirms_in_the_same_browser(self):
+        import nextcloud_mcp
+        proposal = nextcloud_mcp.Proposal('nc_calendar_create_todo', {'summary': 'Müll'})
+        self.pipeline.nextcloud_result = (('answer', 'Freitag: Zahnarzt.'), 'test/model')
+        answer = self.web_ask('Was steht heute im Kalender?')   # no Pi agenda in the browser
+        self.assertEqual(answer['text'], 'Freitag: Zahnarzt.')
+        self.assertEqual(self.pipeline.tools_asked[-1][2], True)
+        self.pipeline.nextcloud_result = (('propose', proposal), 'test/model')
+        self.assertEqual(self.web_ask('Leg eine Aufgabe Müll rausbringen an')['text'],
+                         proposal.question())
+        self.assertEqual(self.web_ask('ja', browser='b' * 32)['text'], nextcloud_mcp.CANCELLED)
+        self.assertEqual(getattr(self.pipeline, 'nextcloud_written', []), [])
+        self.web_ask('Leg eine Aufgabe Müll rausbringen an')
+        self.assertEqual(self.web_ask('ja')['text'], 'Aufgabe angelegt.')
+        self.assertEqual(self.pipeline.nextcloud_written, ['nc_calendar_create_todo'])
 
     def test_kuma_tool_down_falls_back_to_the_fixed_answer(self):
         self.pipeline.fail_llm = True
