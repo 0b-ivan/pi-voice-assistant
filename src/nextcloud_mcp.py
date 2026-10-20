@@ -297,13 +297,19 @@ def _arguments(call):
     return value if isinstance(value, dict) else None
 
 
-def run(messages, chat, client, max_rounds=MAX_ROUNDS):
+def run(messages, chat, client, max_rounds=MAX_ROUNDS, local=()):
     """Tool loop. ``chat(messages, specs)`` returns the assistant message dict
     (``content``, optional ``tool_calls``). Reading tools run, the first writing
-    tool ends the loop as a Proposal, anything else is refused to the model."""
-    specs = tool_specs(client.tools())
-    if not specs:
+    tool ends the loop as a Proposal, anything else is refused to the model.
+    ``client`` may be None; ``local``: read-only tools of the server itself
+    (``name``, ``spec``, ``call(arguments)``), such as systemwache.StatusTool."""
+    local = {tool.name: tool for tool in local}
+    specs = tool_specs(client.tools()) if client is not None else []
+    if client is not None and not specs:
         raise MCPError('no allowed Nextcloud tools offered')
+    specs += [tool.spec for tool in local.values()]
+    if not specs:
+        raise MCPError('no tools offered')
     messages = list(messages)
     for _ in range(max_rounds):
         message = chat(messages, specs) or {}
@@ -315,9 +321,14 @@ def run(messages, chat, client, max_rounds=MAX_ROUNDS):
         for call in calls:
             name = (call.get('function') or {}).get('name', '')
             args = _arguments(call)
-            if name in WRITE_TOOLS and args is not None:
+            if name in local and args is not None:
+                try:
+                    result = local[name].call(args)
+                except Exception as exc:  # noqa: BLE001 - the model hears it failed
+                    result = f'Fehler: {type(exc).__name__}'
+            elif client is not None and name in WRITE_TOOLS and args is not None:
                 return 'propose', Proposal(name, args)
-            if name not in READ_TOOLS or args is None:
+            elif client is None or name not in READ_TOOLS or args is None:
                 result = 'Nicht erlaubt.' if args is not None else 'Ungültige Argumente.'
             else:
                 try:

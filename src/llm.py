@@ -513,8 +513,10 @@ def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None, persona=None
 
 
 def generate_nextcloud_reply(prompt, client, lore=None, memory=NO_MEMORY, model=None,
-                             persona=None, mood=None):
-    """Answer with the operator's Nextcloud tools (src/nextcloud_mcp.py), OpenRouter only.
+                             persona=None, mood=None, local=()):
+    """Answer with the operator's tools, OpenRouter only: Nextcloud through
+    ``client`` (src/nextcloud_mcp.py; None: none) and ``local`` read-only tools
+    of the server (systemwache.StatusTool for Uptime Kuma).
     Returns (('answer', text) or ('propose', Proposal), model); LLMError or
     nextcloud_mcp.MCPError when it cannot, so the caller answers without tools."""
     import nextcloud_mcp
@@ -532,7 +534,9 @@ def generate_nextcloud_reply(prompt, client, lore=None, memory=NO_MEMORY, model=
         from memory import history_messages
         history = history_messages(memory)
     system = system_prompt(lore, memory, persona, mood, query=prompt)
-    messages = [{"role": "system", "content": f"{system}\n\n{nextcloud_mcp.TOOL_HINT}"},
+    local = list(local)
+    hints = ([nextcloud_mcp.TOOL_HINT] if client is not None else []) + [t.hint for t in local]
+    messages = [{"role": "system", "content": '\n\n'.join([system, *hints])},
                 *history, {"role": "user", "content": prompt}]
 
     def chat(conversation, specs):
@@ -551,7 +555,7 @@ def generate_nextcloud_reply(prompt, client, lore=None, memory=NO_MEMORY, model=
         _trace_done(payload, "OpenRouter", started)
         return message if isinstance(message, dict) else {}
 
-    kind, value = nextcloud_mcp.run(messages, chat, client)
+    kind, value = nextcloud_mcp.run(messages, chat, client, local=local)
     if kind == 'answer':
         value = speech_text(guest_address(value, memory))
         if not value:

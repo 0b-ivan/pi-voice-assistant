@@ -98,6 +98,31 @@ class LLMTests(unittest.TestCase):
             "Bearer test-key",
         )
 
+    def test_tool_reply_with_the_watch_only(self):
+        import systemwache
+
+        class Watch:
+            def snapshot_fields(self):
+                return {}
+
+        first = FakeResponse({"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "kuma_status", "arguments": "{}"}}]}}]})
+        second = FakeResponse({"choices": [{"message": {"content": "Keine Daten."}}]})
+        with (
+            patch.dict("os.environ", self.base_env(), clear=True),
+            patch("llm.urllib.request.urlopen", side_effect=[first, second]) as urlopen,
+        ):
+            (kind, text), _ = llm.generate_nextcloud_reply(
+                "Gab es Ausfälle?", None, local=[systemwache.StatusTool(Watch())])
+        self.assertEqual((kind, text), ("answer", "Keine Daten."))
+        sent = [json.loads(c.args[0].data.decode("utf-8")) for c in urlopen.call_args_list]
+        self.assertEqual([t["function"]["name"] for t in sent[0]["tools"]], ["kuma_status"])
+        system = sent[0]["messages"][0]["content"]
+        self.assertIn("kuma_status", system)
+        self.assertNotIn("Nextcloud des Bedieners", system)
+        self.assertIn("fehler", sent[1]["messages"][-1]["content"])
+
     def test_nextcloud_reply_sends_tools_and_returns_the_spoken_answer(self):
         class Client:
             calls = []

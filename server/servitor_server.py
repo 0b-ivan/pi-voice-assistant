@@ -368,19 +368,21 @@ class RealPipeline:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
 
     def nextcloud_reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None,
-                        mood=None):
-        """((kind, value), model) from the Nextcloud tool path, or None to answer
-        as usual: feature off, "Sprachkern LOKAL", OpenRouter cooling down, or
-        any failure (logged; the plain reply then answers as before)."""
-        if self.nextcloud is None or mode == 'local':
+                        mood=None, local=(), nextcloud=True):
+        """((kind, value), model) from the tool path (Nextcloud unless
+        ``nextcloud`` is False, plus the ``local`` tools such as the
+        Systemwache), or None to answer as usual: no tools, "Sprachkern LOKAL",
+        OpenRouter cooling down, or any failure (logged)."""
+        client = self.nextcloud if nextcloud else None
+        if (client is None and not local) or mode == 'local':
             return None
         if os.environ.get('SERVITOR_LOCAL_LLM') == '1' and self.clock() < self.openrouter_retry_at:
             return None
         from llm import generate_nextcloud_reply
         try:
             # Always the configured model: the FREI model offers no tool calls.
-            return generate_nextcloud_reply(text, self.nextcloud, lore=lore, memory=memory,
-                                            persona=persona, mood=mood)
+            return generate_nextcloud_reply(text, client, lore=lore, memory=memory,
+                                            persona=persona, mood=mood, local=local)
         except Exception as exc:  # noqa: BLE001 - never worse than without tools
             print(json.dumps(dict(event='nextcloud_failed', reason=str(exc)[:200])), flush=True)
             return None
@@ -1027,6 +1029,14 @@ class Service:
         return bool(operator_name(memory_copy) and typed is None and not is_browser
                     and enabled is not None and enabled())
 
+    def _watch_turn(self, memory_copy, is_browser, web_principal):
+        """May this turn ask the model with the Systemwache tool? The recognized
+        operator on the Pi, or a signed-in web client (password session or
+        token); never an unknown voice."""
+        if self.watch is None or memory.unknown_speaker(memory_copy):
+            return False
+        return bool(operator_name(memory_copy) or (is_browser and web_principal))
+
     def _nextcloud_answer(self, text, memory_copy):
         """Reply to an open Nextcloud proposal (docs/nextcloud.md), or None.
         Yes from the operator's voice runs it once; no cancels it; anything
@@ -1392,6 +1402,12 @@ class Service:
                     # The Pi's agenda covers reading today and tomorrow; other days
                     # and new entries go to the operator's Nextcloud (docs/nextcloud.md).
                     intent, calendar_handed_over = None, True
+                watch_turn = self._watch_turn(memory_copy, is_browser, web_principal)
+                watch_handed_over = False
+                if intent == 'watch' and watch_turn and systemwache.detail(text):
+                    # "Wie lange war Vault gestern down?": more than the fixed
+                    # answer says, the model asks the watch itself.
+                    intent, watch_handed_over = None, True
                 command = (memory.command(intents.normalize(text))
                            if memory_copy is not NO_MEMORY else None)
                 service_op = maintenance.command(intents.normalize(text))
@@ -1519,11 +1535,21 @@ class Service:
                                         if typed is not None and web_history is not None
                                         else memory_copy)
                         found = None
-                        if nextcloud_turn and nextcloud_mcp.wants(text):
-                            # Only the recognized operator's own Pi turn gets the tools.
-                            found = timed('nextcloud', self.pipeline.nextcloud_reply, text,
+                        # A watch question naming "Nextcloud" is about the service,
+                        # not the operator's calendar.
+                        wants_nextcloud = (nextcloud_turn and not watch_handed_over
+                                           and nextcloud_mcp.wants(text))
+                        wants_watch = watch_turn and (
+                            watch_handed_over
+                            or systemwache.wants(text, self.watch.snapshot_fields()))
+                        if wants_nextcloud or wants_watch:
+                            # Nextcloud only for the recognized operator's own Pi
+                            # turn; the Systemwache also for the signed-in web client.
+                            local = ([systemwache.StatusTool(self.watch, self.now)]
+                                     if wants_watch else [])
+                            found = timed('tools', self.pipeline.nextcloud_reply, text,
                                           lore, mode, model_memory, persona,
-                                          device_mood(device, text))
+                                          device_mood(device, text), local, wants_nextcloud)
                         if found is not None:
                             (kind, value), model = found
                             if kind == 'propose':
@@ -1533,6 +1559,11 @@ class Service:
                         elif calendar_handed_over:
                             # Without Nextcloud the model would only guess the dates.
                             answer, model = nextcloud_mcp.UNAVAILABLE, 'local/nextcloud'
+                        elif wants_watch and not wants_nextcloud:
+                            # Tools unavailable: the fixed answer, never a guessed state.
+                            answer = systemwache.answer_text(
+                                dict(self.watch.snapshot_fields()), lore, self.now(), text)
+                            model = 'local/intent'
                         else:
                             answer, model = timed('llm', self.pipeline.reply, text, lore, mode,
                                                   model_memory, persona,
