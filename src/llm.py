@@ -149,6 +149,7 @@ def speech_text(text):
     text = re.sub(r'(?m)^\s*(?:[-–•*]|\d+[.)])\s+', '', text)  # list markers
     text = re.sub(r'[*_#`>|•]+', ' ', text)
     text = re.sub(r'\s+[–—]\s+|[–—]', ', ', text)
+    text = re.sub(r'\s*&\s*', ' und ', text)          # "Luca&Ivan": a calendar name
     text = ''.join(ch for ch in text if unicodedata.category(ch) not in ('So', 'Cs', 'Co'))
     text = re.sub(r'\s+', ' ', text).strip()
     return re.sub(r'\s+([.,!?;:])', r'\1', text)

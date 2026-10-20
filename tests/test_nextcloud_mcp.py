@@ -199,6 +199,10 @@ class CalendarArgumentTests(unittest.TestCase):
                                          'start_date': '2026-10-20'})])
         self.assertIn('alle durchsuchen', nc.TOOL_HINT)
         self.assertIn('nie, es gäbe keine Einträge', nc.TOOL_HINT)
+        self.assertIn('in welchem Kalender er steht', nc.TOOL_HINT)
+        import llm
+        self.assertEqual(llm.speech_text('Theon Impfen, im Kalender Luca&Ivan.'),
+                         'Theon Impfen, im Kalender Luca und Ivan.')
 
 
 class LocalToolTests(unittest.TestCase):

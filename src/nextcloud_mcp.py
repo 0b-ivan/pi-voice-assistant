@@ -88,7 +88,9 @@ TOOL_HINT = (
     "und erfinde keine Einträge. Schreibende Werkzeuge (Termin, Aufgabe, Notiz, Einkaufsliste) "
     "führen nichts sofort aus: Rufe sie mit vollständigen Angaben auf, der Bediener bestätigt "
     "danach. Löschen, Mails und Freigaben kannst du nicht. Termine stehen in mehreren "
-    "Kalendern: ohne genannten Kalender alle durchsuchen. Meldet ein Werkzeug einen Fehler, "
+    "Kalendern: ohne genannten Kalender alle durchsuchen, nach Datum ordnen und bei jedem "
+    "Termin sagen, in welchem Kalender er steht (calendar_display_name, etwa „im Kalender "
+    "Privat“). Meldet ein Werkzeug einen Fehler, "
     "sag, dass die Abfrage nicht geklappt hat, und behaupte nie, es gäbe keine Einträge. "
     "Antworte danach kurz und sprechbar.")
 
