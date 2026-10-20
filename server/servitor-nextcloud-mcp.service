@@ -1,0 +1,28 @@
+[Unit]
+Description=Servitor Nextcloud MCP server (operator's Nextcloud tools, loopback only)
+After=network-online.target
+Wants=network-online.target
+Before=servitor-voice.service
+
+[Service]
+Type=simple
+User=servitor-mcp
+Group=servitor-mcp
+# NEXTCLOUD_HOST, NEXTCLOUD_USERNAME, NEXTCLOUD_PASSWORD (own app password),
+# MCP_DEPLOYMENT_MODE=single_user_basic; root 0600, see docs/nextcloud.md.
+EnvironmentFile=/etc/servitor-nextcloud-mcp.env
+# Loopback only; the voice service is the sole client.
+ExecStart=/opt/servitor-voice/nextcloud-mcp/bin/nextcloud-mcp-server run \
+  --host 127.0.0.1 --port 8770 --transport streamable-http --log-level warning
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+StateDirectory=servitor-nextcloud-mcp
+WorkingDirectory=/var/lib/servitor-nextcloud-mcp
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

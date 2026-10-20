@@ -80,6 +80,7 @@ import journeys  # noqa: E402
 import logwatch  # noqa: E402
 import maintenance  # noqa: E402
 import memory  # noqa: E402
+import nextcloud_mcp  # noqa: E402
 import protocol  # noqa: E402
 import processing_trace  # noqa: E402
 import web_context  # noqa: E402
@@ -168,6 +169,14 @@ if 'SERVITOR_REPHRASE_INTENTS' in os.environ:
                               os.environ['SERVITOR_REPHRASE_INTENTS'].split(',') if name.strip())
 
 
+def operator_name(memory_copy):
+    """The recognized operator's name for this turn, or None (guest, unknown, no stick)."""
+    if (isinstance(memory_copy, dict) and isinstance(memory_copy.get('speaker'), str)
+            and memory_copy['speaker'] and not memory.unknown_speaker(memory_copy)):
+        return memory_copy['speaker']
+    return None
+
+
 def device_mood(device, text=''):
     """The Pi's mood for the prompt; None when its feelings are off (or an old Pi).
     The Pi allows refusing before it knows the words; a cry for help never is."""
@@ -252,6 +261,9 @@ class RealPipeline:
         # while instead of paying the full timeout on every turn of an outage.
         self.openrouter_retry_at = 0.0
         self.ready_logged = None   # last provider whose success went to the journal
+        # Operator's Nextcloud through the MCP server (docs/nextcloud.md); None: off.
+        url = nextcloud_mcp.configured_url()
+        self.nextcloud = nextcloud_mcp.Client(url) if url else None
 
     def load(self):
         import transcribe
@@ -354,6 +366,40 @@ class RealPipeline:
                                                    mood=mood, story=story))
         except LLMError as exc:
             raise LLMError(f'{primary}; local fallback failed: {exc}') from exc
+
+    def nextcloud_reply(self, text, lore=None, mode=None, memory=NO_MEMORY, persona=None,
+                        mood=None):
+        """((kind, value), model) from the Nextcloud tool path, or None to answer
+        as usual: feature off, "Sprachkern LOKAL", OpenRouter cooling down, or
+        any failure (logged; the plain reply then answers as before)."""
+        if self.nextcloud is None or mode == 'local':
+            return None
+        if os.environ.get('SERVITOR_LOCAL_LLM') == '1' and self.clock() < self.openrouter_retry_at:
+            return None
+        from llm import generate_nextcloud_reply
+        try:
+            # Always the configured model: the FREI model offers no tool calls.
+            return generate_nextcloud_reply(text, self.nextcloud, lore=lore, memory=memory,
+                                            persona=persona, mood=mood)
+        except Exception as exc:  # noqa: BLE001 - never worse than without tools
+            print(json.dumps(dict(event='nextcloud_failed', reason=str(exc)[:200])), flush=True)
+            return None
+
+    def nextcloud_enabled(self):
+        return self.nextcloud is not None
+
+    def nextcloud_call(self, proposal):
+        """Run a confirmed proposal; the sentence to speak."""
+        if self.nextcloud is None:
+            return nextcloud_mcp.UNAVAILABLE
+        try:
+            self.nextcloud.call(proposal.name, proposal.arguments)
+        except nextcloud_mcp.MCPError as exc:
+            print(json.dumps(dict(event='nextcloud_write_failed', tool=proposal.name,
+                                  reason=str(exc)[:200])), flush=True)
+            return "Das hat nicht geklappt, nichts eingetragen."
+        print(json.dumps(dict(event='nextcloud_write', tool=proposal.name)), flush=True)
+        return proposal.done_text()
 
     def rephrase(self, text, lore=None, persona=None, mode=None):
         """A fixed answer in fresh words (llm.rephrase), or None to keep it:
@@ -696,6 +742,7 @@ class Service:
         self.sessions = protocol.Sessions()
         self.seen = protocol.Seen()
         self.journal = Journal()
+        self.nextcloud_pending = nextcloud_mcp.Pending()  # one open write proposal
         self.web_sessions = WebSessions()
         self.job_archive = web_jobs.JobArchive(
             config.diagnose_archive, log=lambda message: print(message, file=sys.stderr, flush=True))
@@ -972,6 +1019,37 @@ class Service:
             return device_control.cancelled_text(style)
         emit(dict(event='device', op=op))
         return device_control.reply(op, device.get('wlan'), style, device.get('cpu_mode'))
+
+    def _nextcloud_turn(self, memory_copy, typed, is_browser):
+        """May this turn use the Nextcloud tools? Recognized operator, spoken on
+        the Pi (not typed, not the browser) and the feature configured."""
+        enabled = getattr(self.pipeline, 'nextcloud_enabled', None)
+        return bool(operator_name(memory_copy) and typed is None and not is_browser
+                    and enabled is not None and enabled())
+
+    def _nextcloud_answer(self, text, memory_copy):
+        """Reply to an open Nextcloud proposal (docs/nextcloud.md), or None.
+        Yes from the operator's voice runs it once; no cancels it; anything
+        else drops it and the turn is answered as usual. A yes whose voice was
+        not recognized keeps it open and asks for a longer confirmation."""
+        owner = self.nextcloud_pending.open_for()
+        if owner is None:
+            return None
+        reply = nextcloud_mcp.confirmation(text)
+        if reply is None:
+            self.nextcloud_pending.take(None)
+            return None
+        if reply == 'cancel':
+            self.nextcloud_pending.take(None)
+            return nextcloud_mcp.CANCELLED
+        speaker = operator_name(memory_copy)
+        if speaker is None:
+            return nextcloud_mcp.VOICE_UNSURE
+        proposal = self.nextcloud_pending.take(speaker)
+        if proposal is None:
+            return nextcloud_mcp.CANCELLED
+        call = getattr(self.pipeline, 'nextcloud_call', None)
+        return call(proposal) if call is not None else nextcloud_mcp.UNAVAILABLE
 
     def _identify(self, audio, memory_copy, emit, voice=None):
         """Compare the turn's voice with the enrolled voiceprints; returns the
@@ -1306,16 +1384,28 @@ class Service:
                     memory_copy = timed('speaker', self._identify, audio, memory_copy, emit,
                                         voice)
                 intent = intents.match(text, (device or {}).get('persona'))
+                nextcloud_turn = self._nextcloud_turn(memory_copy, typed, is_browser)
+                calendar_handed_over = False
+                if (intent == 'calendar' and nextcloud_turn
+                        and (nextcloud_mcp.writes(text)
+                             or intents.calendar_day(text, self.now().date()) not in (0, 1))):
+                    # The Pi's agenda covers reading today and tomorrow; other days
+                    # and new entries go to the operator's Nextcloud (docs/nextcloud.md).
+                    intent, calendar_handed_over = None, True
                 command = (memory.command(intents.normalize(text))
                            if memory_copy is not NO_MEMORY else None)
                 service_op = maintenance.command(intents.normalize(text))
                 device_reply = self._device_reply(intents.normalize(text), device or {},
                                                   memory_copy, emit)
+                nextcloud_reply = (None if device_reply is not None
+                                   else self._nextcloud_answer(text, memory_copy))
                 if elsewhere:
                     persona = 'mensch' if (device or {}).get('persona') == 'mensch' else 'servitor'
                     answer, model = JOURNEY_ELSEWHERE[persona], 'local/journey'
                 elif device_reply is not None:
                     answer, model = device_reply, 'local/device'
+                elif nextcloud_reply is not None:
+                    answer, model = nextcloud_reply, 'local/nextcloud'
                 elif (enroll.command(intents.normalize(text)) and memory_copy is not NO_MEMORY
                         and not memory.unknown_speaker(memory_copy)):
                     # Only the operator (or anyone before enrollment) may start it.
@@ -1428,8 +1518,25 @@ class Service:
                         model_memory = (dict(history=web_history, speaker='unknown')
                                         if typed is not None and web_history is not None
                                         else memory_copy)
-                        answer, model = timed('llm', self.pipeline.reply, text, lore, mode,
-                                              model_memory, persona, device_mood(device, text))
+                        found = None
+                        if nextcloud_turn and nextcloud_mcp.wants(text):
+                            # Only the recognized operator's own Pi turn gets the tools.
+                            found = timed('nextcloud', self.pipeline.nextcloud_reply, text,
+                                          lore, mode, model_memory, persona,
+                                          device_mood(device, text))
+                        if found is not None:
+                            (kind, value), model = found
+                            if kind == 'propose':
+                                self.nextcloud_pending.offer(value, operator_name(memory_copy))
+                                value = value.question()
+                            answer = value
+                        elif calendar_handed_over:
+                            # Without Nextcloud the model would only guess the dates.
+                            answer, model = nextcloud_mcp.UNAVAILABLE, 'local/nextcloud'
+                        else:
+                            answer, model = timed('llm', self.pipeline.reply, text, lore, mode,
+                                                  model_memory, persona,
+                                                  device_mood(device, text))
                     except Exception as exc:
                         raise TurnError('think', 'llm', str(exc)) from exc
                     # The model's [stimmung:...] reaction is never spoken.

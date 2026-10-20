@@ -62,6 +62,8 @@ Nach Konfigurationsänderungen `sudo systemctl restart pi-ptt.service`. Für Ove
 
 Akku- und eigene Messwertfragen werden auch bei längeren Formulierungen direkt aus dem Gerätestatus beantwortet, einschließlich Sprachkern LOKAL. Fehlt ein Akkumesswert, wird das gesagt. „Welches Sprachmodell bist du?“ hat eine feste Antwort als Proximus beziehungsweise Billy. Ab 18 Uhr verwendet der Abendbericht die Wettervorhersage für morgen; fehlt sie, meldet er das ausdrücklich.
 
+**Nextcloud über MCP (Server):** `SERVITOR_NEXTCLOUD_MCP_URL` in `/etc/servitor-voice.env` auf den MCP-Server zeigen lassen (nur von CT 107 erreichbar) und `servitor-voice` neu starten; ohne den Wert bleibt die Funktion aus. Einzelheiten: [Nextcloud](nextcloud.md).
+
 **Fahrten (Straßenbahn, Zug, Erinnerung, Kalender):** `TRANSIT_HOME` und `TRANSIT_CITY_STOP` in `/etc/pi-voice-assistant.env` setzen; Kalendereinträge nutzen die `CALDAV_*`-Werte und brauchen Schreibrecht. Einzelheiten und offene Voraussetzungen: [Fahrten](journeys.md).
 
 Der Quittungston lässt sich mit `PTT_CUE=0` in `/etc/pi-ptt.env` abschalten (auch im Menü).

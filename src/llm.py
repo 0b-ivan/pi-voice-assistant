@@ -402,27 +402,11 @@ def _extract_text(payload, label="OpenRouter"):
     return text
 
 
-def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=NO_MEMORY,
-          persona=None, mood=None, story=None, messages=None):
-    if messages is not None:
-        pass                                 # a caller-built conversation (rephrase)
-    elif story is not None:
-        import story as stories
-        messages = stories.messages(story)   # its own compact state, no chat history
-    else:
-        history = []
-        if memory is not NO_MEMORY:
-            from memory import history_messages
-            history = history_messages(memory)
-        messages = [{"role": "system",
-                     "content": system_prompt(lore, memory, persona, mood, query=prompt)},
-                    *history, {"role": "user", "content": prompt}]
-    body = json.dumps(
-        {"model": model, "stream": False, **limit, "messages": messages}).encode("utf-8")
-
+def _post(url, body, timeout, headers, label, model):
+    """POST one chat-completions body; (decoded JSON payload, start time) or LLMError."""
     request = urllib.request.Request(
         url,
-        data=body,
+        data=json.dumps(body).encode("utf-8"),
         method="POST",
         headers={"Content-Type": "application/json", **headers},
     )
@@ -441,22 +425,44 @@ def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=
         raise LLMError(f"{label} request failed: {reason}") from exc
 
     try:
-        payload = json.loads(raw.decode("utf-8"))
+        return json.loads(raw.decode("utf-8")), started
     except (UnicodeError, json.JSONDecodeError) as exc:
         processing_trace.record('provider', name=label, state='failed', error='InvalidJSON')
         raise LLMError(f"{label} returned invalid JSON") from exc
 
-    try:
-        answer = guest_address(_extract_text(payload, label), memory)
-    except LLMError:
-        processing_trace.record('provider', name=label, state='failed', error='InvalidResponse')
-        raise
+
+def _trace_done(payload, label, started):
     usage = payload.get('usage') if isinstance(payload, dict) else None
     counts = {k: v for k, v in (usage.items() if isinstance(usage, dict) else [])
               if k in ('prompt_tokens', 'completion_tokens', 'total_tokens')
               and type(v) is int and v >= 0}
     processing_trace.record('provider', name=label, state='done',
                             ms=round((time.monotonic() - started) * 1000), **counts)
+
+
+def _chat(url, prompt, model, timeout, limit, headers, label, lore=None, memory=NO_MEMORY,
+          persona=None, mood=None, story=None, messages=None):
+    if messages is not None:
+        pass                                 # a caller-built conversation (rephrase)
+    elif story is not None:
+        import story as stories
+        messages = stories.messages(story)   # its own compact state, no chat history
+    else:
+        history = []
+        if memory is not NO_MEMORY:
+            from memory import history_messages
+            history = history_messages(memory)
+        messages = [{"role": "system",
+                     "content": system_prompt(lore, memory, persona, mood, query=prompt)},
+                    *history, {"role": "user", "content": prompt}]
+    payload, started = _post(url, {"model": model, "stream": False, **limit,
+                                   "messages": messages}, timeout, headers, label, model)
+    try:
+        answer = guest_address(_extract_text(payload, label), memory)
+    except LLMError:
+        processing_trace.record('provider', name=label, state='failed', error='InvalidResponse')
+        raise
+    _trace_done(payload, label, started)
     return answer
 
 
@@ -504,6 +510,53 @@ def generate_reply(prompt, lore=None, memory=NO_MEMORY, model=None, persona=None
                  {"Authorization": f"Bearer {api_key}"}, "OpenRouter", lore, memory, persona,
                  mood, story)
     return text, model
+
+
+def generate_nextcloud_reply(prompt, client, lore=None, memory=NO_MEMORY, model=None,
+                             persona=None, mood=None):
+    """Answer with the operator's Nextcloud tools (src/nextcloud_mcp.py), OpenRouter only.
+    Returns (('answer', text) or ('propose', Proposal), model); LLMError or
+    nextcloud_mcp.MCPError when it cannot, so the caller answers without tools."""
+    import nextcloud_mcp
+    prompt = _prompt(prompt)
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key or "REPLACE_ME" in api_key:
+        raise LLMError("OPENROUTER_API_KEY is not configured")
+    model = model or configured_model()
+    timeout = _float_env("OPENROUTER_LLM_TIMEOUT_SECONDS", 15.0, 1.0, 120.0)
+    # Tool calls carry JSON arguments; the everyday 180 tokens can cut them off.
+    max_tokens = _int_env("OPENROUTER_TOOLS_MAX_TOKENS", 400, 64, 2048)
+    url = os.environ.get("OPENROUTER_LLM_URL", DEFAULT_LLM_URL).strip() or DEFAULT_LLM_URL
+    history = []
+    if memory is not NO_MEMORY:
+        from memory import history_messages
+        history = history_messages(memory)
+    system = system_prompt(lore, memory, persona, mood, query=prompt)
+    messages = [{"role": "system", "content": f"{system}\n\n{nextcloud_mcp.TOOL_HINT}"},
+                *history, {"role": "user", "content": prompt}]
+
+    def chat(conversation, specs):
+        payload, started = _post(url, {"model": model, "stream": False,
+                                       "max_completion_tokens": max_tokens,
+                                       "messages": conversation, "tools": specs,
+                                       "tool_choice": "auto"},
+                                 timeout, {"Authorization": f"Bearer {api_key}"},
+                                 "OpenRouter", model)
+        try:
+            message = payload["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            processing_trace.record('provider', name="OpenRouter", state='failed',
+                                    error='InvalidResponse')
+            raise LLMError("OpenRouter returned no message") from exc
+        _trace_done(payload, "OpenRouter", started)
+        return message if isinstance(message, dict) else {}
+
+    kind, value = nextcloud_mcp.run(messages, chat, client)
+    if kind == 'answer':
+        value = speech_text(guest_address(value, memory))
+        if not value:
+            raise LLMError("OpenRouter returned an empty answer")
+    return (kind, value), model
 
 
 # --- Rephrasing fixed answers (server only) --------------------------------
