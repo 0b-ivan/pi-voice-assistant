@@ -271,7 +271,9 @@ class RealPipeline:
         # Operator's Nextcloud through the MCP server (docs/nextcloud.md); None: off.
         url = nextcloud_mcp.configured_url()
         self.nextcloud = nextcloud_mcp.Client(url) if url else None
-        self.nextcloud_down = False     # last call failed: the next success is logged
+        # True at start: the first success after a restart is logged too, logwatch
+        # needs it to close failures from before the restart.
+        self.nextcloud_down = True
         self.agenda_cache = None        # (monotonic time, day, events) for the browser
 
     def load(self):
