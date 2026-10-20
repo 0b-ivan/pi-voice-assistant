@@ -68,6 +68,12 @@ class FakePipeline:
             (text, [t.name for t in local], nextcloud)]
         return self.nextcloud_result
 
+    agenda_result = None   # events for nextcloud_agenda (the browser's briefing)
+
+    def nextcloud_agenda(self, now):
+        self.agenda_asked = getattr(self, 'agenda_asked', 0) + 1
+        return self.agenda_result
+
     def nextcloud_call(self, proposal):
         self.nextcloud_written = getattr(self, 'nextcloud_written', []) + [proposal.name]
         return proposal.done_text()
@@ -1051,6 +1057,24 @@ class IntentServerTest(ServerTest):
         self.assertEqual(self.web_ask('ja')['text'], 'Aufgabe angelegt.')
         self.assertEqual(self.pipeline.nextcloud_written, ['nc_calendar_create_todo'])
 
+    def test_the_web_litany_reads_the_calendar_from_nextcloud(self):
+        import datetime
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo('Europe/Berlin')
+        fixed = datetime.datetime(2026, 10, 26, 7, 5, tzinfo=tz)
+        self.pipeline.agenda_result = [
+            dict(summary='Musikwiege', start=fixed.replace(hour=11, minute=0), end=None,
+                 all_day=False),
+            dict(summary='Zahnarzt', start=fixed.replace(day=27, hour=9, minute=30), end=None,
+                 all_day=False)]
+        with unittest.mock.patch.object(ss.Service, 'now', lambda self: fixed):
+            text = self.web_ask('Morgenbericht')['text']
+        self.assertIn('Termine heute. 11 Uhr: Musikwiege.', text)
+        self.assertIn('Zahnarzt', text)
+        self.assertEqual(self.pipeline.agenda_asked, 1)
+        self.device_turn('morgenbericht', {})          # the Pi brings its own calendar
+        self.assertEqual(self.pipeline.agenda_asked, 1)
+
     def test_kuma_tool_down_falls_back_to_the_fixed_answer(self):
         self.pipeline.fail_llm = True
         self.pipeline.nextcloud_result = None          # OpenRouter or the tool path failed
@@ -1330,6 +1354,32 @@ class IntentServerTest(ServerTest):
                 self.assertEqual(shows, [] if day is None
                                  else [dict(event='show', screen='weather', day=day)])
         self.assertIn('fünf Tage', reply)
+
+    def test_the_browser_gets_the_weather_card_along(self):
+        import datetime
+        today = datetime.date(2026, 10, 10)
+        days = [dict(date=(today + datetime.timedelta(days=i)).isoformat(), code=code,
+                     high=9 + i, low=4, rain=80 if code == 61 else 10)
+                for i, code in enumerate((0, 61, 3, 71, 95, 45))]
+        self.service.weather = unittest.mock.Mock()
+        self.service.weather.get.return_value = dict(now=7, code=0, days=days)
+        fixed = datetime.datetime(2026, 10, 10, 7, 5)
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1],
+                                              timeout=10)
+            conn.request('POST', '/v1/ask', body=json.dumps(
+                {'text': 'Wie wird das Wetter morgen?'}).encode(),
+                headers={'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Client': 'web',
+                         'X-Servitor-Browser': 'a' * 32})
+            events = self.events(conn.getresponse().read())
+        show = next(e for e in events if e['event'] == 'show')
+        card = show['weather']
+        self.assertEqual((show['day'], card['day']), (1, 1))
+        self.assertEqual(card['chosen'], dict(date='2026-10-11', weekday='So', kind='rain',
+                                              label='REGEN', high=10, low=4, rain=80,
+                                              title='Morgen'))
+        self.assertEqual([d['kind'] for d in card['days']],
+                         ['clear', 'rain', 'cloudy', 'snow', 'thunder'])
 
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')

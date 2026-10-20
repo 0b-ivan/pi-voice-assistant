@@ -311,11 +311,15 @@ Er schickt weder `memory` noch `devctl` noch `trip` im Status, daher:
 
 - kein **persönliches Pi-Gedächtnis** (Fakten und Direktiven bleiben auf dem USB-Stick,
   das Modell schreibt im Web keine MERKE-Zeilen), keine Stimmerkennung, keine Termine
-  vom Pi (Kalenderfragen gehen an Nextcloud),
+  vom Pi (Kalenderfragen und die Termine im Morgen- und Abendbericht kommen aus Nextcloud),
 - keine Gerätesteuerung (WLAN, Neustart, Herunterfahren) und kein Wartungsmodus,
 - keine Fahrtauskunft (die fragt der Pi selbst ab),
 - Akku-, Temperatur- und Netzfragen antworten „nicht verfügbar“ – es gibt kein
   Gerät, das sie messen könnte.
+
+Wetterfragen und Morgen-/Abendbericht zeigen im Chat eine Wetterkarte wie die
+AUSPEX-Anzeige des Pi: Piktogramm, Temperatur, fünf Tage (`show` mit `weather`,
+nur für den Browser; Zahlen und feste Wörter aus `weather.card`).
 
 Uhrzeit, Datum, Wetter, „wer bist du“, freie Fragen an
 das LLM und Geschichten funktionieren wie am Pi.

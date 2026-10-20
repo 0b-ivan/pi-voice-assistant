@@ -67,6 +67,7 @@ CODES = {
     'wake': (2, 'Weckwort gestört'),
     'server_link': (2, 'Serververbindung abgebrochen'),
     'openrouter': (2, 'OpenRouter ausgefallen'),
+    'nextcloud': (2, 'Nextcloud-Anbindung gestört'),
     'speaker': (2, 'Stimmerkennung gestört'),
     'errors': (2, 'Fehlermeldungen im Systemprotokoll'),
     'limited': (2, 'Systemprotokoll nicht lesbar'),
@@ -107,6 +108,7 @@ SERVER_RULES = (
     Rule('load', events=('load_failed',)),
     Rule('local_llm', events=('local_llm_warmup_failed',)),
     Rule('openrouter', 3, events=('llm_fallback',)),
+    Rule('nextcloud', 2, events=('nextcloud_failed',)),
     Rule('speaker', 3, events=('speaker_error',)),
     Rule('turn', 3, events=('turn_error',)),
 )
@@ -141,6 +143,7 @@ RECOVERY_EVENTS = {
     ('servitor-voice.service', 'ready'): ('load', 'crash_voice'),
     ('servitor-voice.service', 'local_llm_ready'): ('local_llm', 'crash_llm'),
     ('servitor-voice.service', 'openrouter_ready'): ('openrouter',),
+    ('servitor-voice.service', 'nextcloud_ready'): ('nextcloud',),
     ('pi-ptt.service', 'speech_finished'): ('tts',),
     ('pi-ptt.service', 'transcript'): ('stt',),
 }
@@ -539,6 +542,9 @@ ADVICE = {
                     "Den WLAN-Empfang am Standort prüfen"),
     'openrouter': ("OpenRouter war wiederholt nicht erreichbar, ich bin auf meinen lokalen "
                    "Sprachkern ausgewichen", "Nichts zu tun, solange es nicht anhält"),
+    'nextcloud': ("Meine Nextcloud war wiederholt nicht erreichbar, Kalender und Kontakte "
+                  "fehlten", "Den Dienst servitor-nextcloud-mcp prüfen. Oft sperrt Nextcloud "
+                  "nach Fehlanmeldungen die Heimadresse"),
     'speaker': ("Meine Stimmerkennung ist wiederholt gescheitert",
                 "Die Stimme im Menü neu einlernen"),
     'errors': ("{Bei} stehen {n} weitere Fehlermeldungen im Systemprotokoll",
@@ -591,6 +597,9 @@ ADVICE_LORE = {
                     "Die Noosphäre am Standort prüfen"),
     'openrouter': ("Die ferne Noosphäre schwieg wiederholt, ich wich auf meinen lokalen "
                    "Kogitator aus", "Kein Eingriff nötig, solange es nicht anhält"),
+    'nextcloud': ("Die Datenarchive der Nextcloud verweigerten wiederholt den Zugang",
+                  "Den Maschinengeist servitor-nextcloud-mcp prüfen und die Sperre der "
+                  "Heimadresse lösen"),
     'speaker': ("Meine Stimmerkennung irrte wiederholt",
                 "Die Stimme des Bedieners im Menü neu einprägen"),
     'errors': ("{Bei} verzeichnet das Protokoll {n} weitere Klagen der Maschinengeister",

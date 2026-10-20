@@ -111,6 +111,120 @@ function addLog(kind, text) {
   return item;
 }
 
+// --- weather card: the Pi's AUSPEX screen as a chat entry ------------------------
+// The server sends only numbers and fixed words (src/weather.py card()); the
+// pictograms are drawn here on the Pi's 24x24 grid in its colours.
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgNode(name, attrs, parent) {
+  const node = document.createElementNS(SVG_NS, name);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  if (parent) parent.append(node);
+  return node;
+}
+
+function weatherIcon(kind, size) {
+  const svg = svgNode('svg', { viewBox: '0 0 24 24', width: size, height: size,
+                               class: `wx-icon wx-${kind}`, 'aria-hidden': 'true' });
+  const sun = (cx, cy, r) => {
+    const g = svgNode('g', { class: 'wx-sun' }, svg);
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      svgNode('line', { x1: cx + (r + 1.5) * Math.cos(a), y1: cy + (r + 1.5) * Math.sin(a),
+                        x2: cx + (r + 3.5) * Math.cos(a), y2: cy + (r + 3.5) * Math.sin(a),
+                        class: i % 2 ? 'wx-ray wx-ray-b' : 'wx-ray' }, g);
+    }
+    svgNode('circle', { cx, cy, r, class: 'wx-core' }, g);
+  };
+  const cloud = (dx, dy, dark) => {
+    // The offset sits on an outer group: the CSS drift would replace it.
+    const place = svgNode('g', { transform: `translate(${dx} ${dy})` }, svg);
+    const g = svgNode('g', { class: dark ? 'wx-cloud wx-dark' : 'wx-cloud' }, place);
+    svgNode('circle', { cx: 8, cy: 12, r: 3.5 }, g);
+    svgNode('circle', { cx: 12.5, cy: 9.5, r: 4.5 }, g);
+    svgNode('circle', { cx: 17, cy: 12.5, r: 3 }, g);
+    svgNode('rect', { x: 5, y: 12, width: 14.5, height: 3.5, rx: 1.5 }, g);
+  };
+  const fall = (cls, xs, len) => xs.forEach((x, i) => svgNode('line', {
+    x1: x, y1: 18, x2: x - 1, y2: 18 + len, class: cls, style: `animation-delay:${i * 0.15}s` }, svg));
+  if (kind === 'clear') sun(12, 12, 5);
+  else if (kind === 'partly') { sun(8.5, 8.5, 4); cloud(2, 3, false); }
+  else if (kind === 'cloudy') { cloud(-2, -2, true); cloud(1, 2, false); }
+  else if (kind === 'fog') {
+    cloud(0, -2, false);
+    [16, 19, 22].forEach((y, i) => svgNode('line', { x1: 4 + i, y1: y, x2: 20 - i, y2: y,
+                                                     class: 'wx-fog' }, svg));
+  } else if (kind === 'drizzle') { cloud(0, -1, false); fall('wx-drop', [8, 12, 16], 2); }
+  else if (kind === 'rain') { cloud(0, -1, true); fall('wx-drop', [7, 10.5, 14, 17.5], 4); }
+  else if (kind === 'snow') {
+    cloud(0, -1, false);
+    [7, 11, 15, 19].forEach((x, i) => svgNode('rect', { x, y: 18 + (i % 2) * 2, width: 1.6,
+      height: 1.6, class: 'wx-flake', style: `animation-delay:${i * 0.2}s` }, svg));
+  } else {                                   // thunder
+    cloud(0, -2, true);
+    svgNode('polygon', { points: '12,13 9,19 11.5,19 10,23 15,16 12.5,16 14,13',
+                         class: 'wx-bolt' }, svg);
+    fall('wx-drop', [6, 18], 3);
+  }
+  return svg;
+}
+
+function degrees(value) {
+  return Number.isFinite(value) ? `${Math.round(value)}°` : '–';
+}
+
+function addWeather(card) {
+  const chosen = card && card.chosen;
+  if (!chosen || !Array.isArray(card.days)) return;
+  const item = document.createElement('li');
+  item.className = 'weather';
+  const head = document.createElement('div');
+  head.className = 'wx-head';
+  head.textContent = state.persona === 'mensch' ? 'WETTER' : 'AUSPEX · WETTERDATEN';
+  const main = document.createElement('div');
+  main.className = 'wx-main';
+  main.append(weatherIcon(chosen.kind, 72));
+  const facts = document.createElement('div');
+  const line = (cls, text) => {
+    const node = document.createElement('div');
+    node.className = cls;
+    node.textContent = text;
+    facts.append(node);
+    return node;
+  };
+  line('wx-title', String(chosen.title || '').toUpperCase());
+  const now = Number.isFinite(chosen.now);
+  line('wx-big', degrees(now ? chosen.now : chosen.high));
+  line('wx-small', now ? `${degrees(chosen.low)} / ${degrees(chosen.high)}` : `min ${degrees(chosen.low)}`);
+  const label = line('wx-label', chosen.label || '');
+  if (Number.isFinite(chosen.rain) && chosen.rain >= 30) {
+    const rain = document.createElement('span');
+    rain.className = 'wx-rain';
+    rain.textContent = ` ${chosen.rain} %`;
+    label.append(rain);
+  }
+  main.append(facts);
+  const strip = document.createElement('ol');
+  strip.className = 'wx-days';
+  card.days.slice(0, 5).forEach((day, i) => {
+    const cell = document.createElement('li');
+    if (i === card.day) cell.className = 'on';
+    const name = document.createElement('span');
+    name.textContent = i === 0 ? 'HEUTE' : String(day.weekday || '').toUpperCase();
+    const temps = document.createElement('span');
+    temps.textContent = `${degrees(day.high)}/${degrees(day.low)}`;
+    cell.append(name, weatherIcon(day.kind, 26), temps);
+    cell.title = day.label || '';
+    strip.append(cell);
+  });
+  item.append(head, main, strip);
+  const log = $('log');
+  log.append(item);
+  while (log.children.length > 100) log.firstElementChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
 // --- teleprinter: Proximus writes while he speaks -----------------------------------
 // A reply waits on the screen with a blinking cursor. Each audio part types its
 // text over the time the voice needs for it, starting when the sound starts.
@@ -330,6 +444,9 @@ function handle(event, reply) {
       break;
     case 'story':
       state.story = event.state && !event.state.done ? event.state : null;
+      break;
+    case 'show':
+      if (event.screen === 'weather' && event.weather) addWeather(event.weather);
       break;
     case 'stop':
       player.stop();
