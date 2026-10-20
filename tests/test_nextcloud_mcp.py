@@ -1,8 +1,11 @@
 import http.server
 import json
+import os
 import sys
 import threading
 import unittest
+import zoneinfo
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -155,10 +158,11 @@ class LoopTests(unittest.TestCase):
                                          'start_datetime': '2026-10-21T10:00:00'})]}
         kind, proposal = nc.run([], chat, client)
         self.assertEqual(kind, 'propose')
-        self.assertEqual(client.calls, [])
+        # Only the calendar list is read to pick a real calendar; nothing is written.
+        self.assertEqual([name for name, _ in client.calls], ['nc_calendar_list_calendars'])
         self.assertEqual(proposal.question(),
-                         'Soll ich den Termin „Zahnarzt“ am 21.10. um 10:00 Uhr in privat '
-                         'eintragen? Sag ja oder nein.')
+                         'Soll ich den Termin „Zahnarzt“ am 21.10. um 10:00 Uhr im Kalender '
+                         'privat eintragen? Sag ja oder nein.')
 
     def test_forbidden_tools_are_refused_to_the_model(self):
         client, rounds = FakeClient(), []
@@ -179,6 +183,127 @@ class LoopTests(unittest.TestCase):
             nc.run([], chat, FakeClient())
         with self.assertRaises(nc.MCPError):
             nc.run([], chat, FakeClient(tools=[TOOLS[3]]))
+
+
+class CalendarArgumentTests(unittest.TestCase):
+    def test_events_without_a_calendar_search_all_calendars(self):
+        # The server refuses list_events without a name unless all calendars are
+        # searched; the model then said "keine Termine" (web test 20.10.2026).
+        client = FakeClient()
+        calls = [tool_call('nc_calendar_list_events',
+                           {'start_date': '2026-10-20', 'end_date': '2027-01-20'}, 'c1'),
+                 tool_call('nc_calendar_list_events',
+                           {'calendar_name': 'privat', 'start_date': '2026-10-20'}, 'c2')]
+        replies = iter([{'content': '', 'tool_calls': calls}, {'content': 'Annika feiert.'}])
+        nc.run([], lambda messages, specs: next(replies), client)
+        self.assertEqual(client.calls, [
+            ('nc_calendar_list_events', {'start_date': '2026-10-20', 'end_date': '2027-01-20',
+                                         'search_all_calendars': True}),
+            ('nc_calendar_list_events', {'calendar_name': 'privat',
+                                         'start_date': '2026-10-20'})])
+        self.assertIn('alle durchsuchen', nc.TOOL_HINT)
+        self.assertIn('nie, es gäbe keine Einträge', nc.TOOL_HINT)
+        self.assertIn('in welchem Kalender er steht', nc.TOOL_HINT)
+        import llm
+        self.assertEqual(llm.speech_text('Theon Impfen, im Kalender Luca&Ivan.'),
+                         'Theon Impfen, im Kalender Luca und Ivan.')
+
+
+class TidyEventTests(unittest.TestCase):
+    TZ = zoneinfo.ZoneInfo('Europe/Berlin')
+
+    def tidy(self, events, region='BY'):
+        return json.loads(nc.tidy_events(json.dumps({'events': events}), self.TZ, region))
+
+    def test_local_time_all_day_and_order(self):
+        # Recorded 20.10.2026: Musikwiege is stored as 10:00Z, its title says 10.00 Uhr.
+        data = self.tidy([
+            dict(summary='Musikwiege M04/26, Montag, 10.00 Uhr', start='2026-10-26T10:00:00+00:00',
+                 end='2026-10-26T10:45:00+00:00', calendar_display_name='Luca&Ivan'),
+            dict(summary='Einweihungsparty  Annika', start='2026-10-31', end='2026-11-01',
+                 all_day=True, calendar_display_name='Privat'),
+            dict(summary='Urlaub', start='2026-10-28', end='2026-11-02', all_day=True,
+                 calendar_display_name='Privat', description='Koffer\n packen'),
+            dict(summary='Zahnarzt', start='2026-10-28T09:30:00+01:00',
+                 end='2026-10-28T10:30:00+01:00', calendar_display_name='Privat',
+                 location='Praxis Dr. H\nHuttenstraße 24A'),
+            dict(summary='Telefonat', start='2026-10-28T18:00:00', calendar_name='privat')])
+        self.assertEqual(data['termine'], [
+            dict(datum='Mo 26.10.2026', titel='Musikwiege M04/26, Montag, 10.00 Uhr',
+                 zeit='11:00 bis 11:45', kalender='Luca&Ivan'),
+            dict(datum='Mi 28.10.2026', titel='Urlaub', zeit='ganztägig bis So 1.11.2026',
+                 kalender='Privat', notiz='Koffer packen'),
+            dict(datum='Mi 28.10.2026', titel='Zahnarzt', zeit='09:30 bis 10:30',
+                 kalender='Privat', ort='Praxis Dr. H'),
+            dict(datum='Mi 28.10.2026', titel='Telefonat', zeit='18:00', kalender='privat'),
+            dict(datum='Sa 31.10.2026', titel='Einweihungsparty Annika', zeit='ganztägig',
+                 kalender='Privat')])
+        self.assertIn('es gilt', data['hinweis'])
+
+    def test_holidays_only_where_they_apply(self):
+        holidays = [dict(summary=title, start=day, end=day, all_day=True,
+                         calendar_display_name='Feiertage', description='Lange Erklärung')
+                    for title, day in (('Reformationstag  (BB, MVP, SN)', '2026-10-31'),
+                                       ('Allerheiligen  (BW, BY, NRW)', '2026-11-01'),
+                                       ('Bußtag  (Saxony)', '2026-11-18'),
+                                       ('Weihnachten ', '2026-12-25'))]
+        titles = [t['titel'] for t in self.tidy(holidays)['termine']]
+        self.assertEqual(titles, ['Allerheiligen', 'Weihnachten'])
+        self.assertNotIn('notiz', self.tidy(holidays)['termine'][0])
+        self.assertIn('Reformationstag', [t['titel'] for t in self.tidy(holidays, 'BB')['termine']])
+
+    def test_single_event_other_results_and_the_size_limit(self):
+        one = json.loads(nc.tidy_events(json.dumps(dict(
+            title='Theon U5', start_datetime='2026-11-23T09:00:00+01:00',
+            end_datetime='2026-11-23T10:00:00+01:00')), self.TZ))
+        self.assertEqual(one['termine'][0]['zeit'], '09:00 bis 10:00')
+        for text in ('kein json', '{"calendars": []}', '[1, 2]'):
+            self.assertEqual(nc.tidy_events(text, self.TZ), text)
+        many = [dict(summary='Termin ' + 'x' * 80, start=f'2026-11-{d:02d}T09:00:00+01:00',
+                     calendar_display_name='Privat') for d in range(1, 29)] * 3
+        text = nc.tidy_events(json.dumps({'events': many}), self.TZ)
+        self.assertLessEqual(len(text), nc.MAX_RESULT_CHARS)
+        self.assertGreater(json.loads(text)['weitere_termine_danach'], 0)
+
+
+class CalendarChoiceTests(unittest.TestCase):
+    CALENDARS = json.dumps({'calendars': [
+        {'name': 'contact_birthdays', 'display_name': 'Geburtstage'},
+        {'name': 'lucaivan', 'display_name': 'Luca&Ivan'},
+        {'name': 'privat', 'display_name': 'Privat'},
+        {'name': 'x_shared_by_medvidec', 'display_name': 'WG-Kalender'}]})
+
+    class Client(FakeClient):
+        def call(self, name, args):
+            self.calls.append((name, args))
+            return CalendarChoiceTests.CALENDARS
+
+    def test_named_display_default_and_time_zone(self):
+        client = self.Client()
+        chosen = nc.resolve_calendar(client, {'title': 'T', 'start_datetime': '2026-10-24T10:00:00',
+                                              'calendar_name': 'Luca&Ivan'}, 'Europe/Berlin')
+        self.assertEqual((chosen['calendar_name'], chosen['_display'], chosen['timezone']),
+                         ('lucaivan', 'Luca&Ivan', 'Europe/Berlin'))
+        proposal = nc.Proposal('nc_calendar_create_event', chosen)
+        self.assertNotIn('_display', proposal.arguments)
+        self.assertIn('im Kalender Luca und Ivan eintragen', proposal.question())
+        chosen = nc.resolve_calendar(client, {'title': 'T', 'start_datetime': '2026-10-24T10:00:00Z'})
+        self.assertEqual(chosen['calendar_name'], 'privat')        # SERVITOR_NEXTCLOUD_CALENDAR
+        self.assertNotIn('timezone', chosen)                       # already has an offset
+        with patch.dict(os.environ, {'SERVITOR_NEXTCLOUD_CALENDAR': 'gibtsnicht'}):
+            chosen = nc.resolve_calendar(client, {'title': 'T', 'start_datetime': '2026-10-24'})
+        self.assertEqual(chosen['calendar_name'], 'lucaivan')      # first own calendar
+        self.assertNotIn('timezone', chosen)                       # all day
+
+    def test_a_proposed_event_gets_a_real_calendar(self):
+        client = self.Client()
+        replies = iter([{'content': '', 'tool_calls': [tool_call(
+            'nc_calendar_create_event', {'title': 'Zahnarzt', 'start_datetime': '2026-10-24T10:00:00',
+                                         'calendar_name': 'personal'})]}])
+        kind, proposal = nc.run([], lambda m, s: next(replies), client)
+        self.assertEqual(kind, 'propose')
+        self.assertEqual(proposal.arguments['calendar_name'], 'privat')
+        self.assertIn('im Kalender Privat', proposal.question())
 
 
 class LocalToolTests(unittest.TestCase):
@@ -219,7 +344,7 @@ class LocalToolTests(unittest.TestCase):
                           'nc_contacts_search_contacts', 'kuma_status'})
         seen = []
         nc.run([], self.chat_calling('kuma_status', seen), None, local=[self.Tool(fail=True)])
-        self.assertEqual(seen[1][0][-1]['content'], 'Fehler: ValueError')
+        self.assertEqual(seen[1][0][-1]['content'], 'Fehler, keine Daten erhalten: ValueError')
         seen = []   # without a client no Nextcloud tool runs, not even a write
         nc.run([], self.chat_calling('nc_calendar_create_event', seen), None,
                local=[self.Tool()])

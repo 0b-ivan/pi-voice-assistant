@@ -30,6 +30,12 @@ Fest im Code (`READ_TOOLS`, `WRITE_TOOLS` in [`src/nextcloud_mcp.py`](../src/nex
 | Schreiben, nur nach „Ja“ | Termin anlegen, Aufgabe anlegen, Notiz anlegen, Artikel auf die Einkaufsliste |
 | Nie | Mail, Freigaben, Löschen, Verschieben, Ändern bestehender Einträge, alles andere |
 
+## Termine lesen und anlegen
+
+- **Lesen:** Ohne genannten Kalender sucht Proximus in allen Kalendern (der Server verlangt sonst einen Namen). Bevor das Modell die Termine sieht, bereitet `nextcloud_mcp.tidy_events` sie auf: Datum mit Wochentag, Uhrzeit in Ortszeit (`SERVITOR_TIMEZONE`) oder „ganztägig“ (mehrtägig mit letztem Tag), Titel, Kalender (Anzeigename), Ort (erste Zeile), nach Datum sortiert. Feiertage zählen nur, wenn sie bundesweit oder in `SERVITOR_HOLIDAY_REGION` gelten (Standard `BY`). Das Modell nennt bei jedem Termin den Kalender und fasst Wiederholungen zusammen.
+- **Anlegen:** „Trag Freitag 10 Uhr Zahnarzt ein“ wird zur Rückfrage mit Kalender („… im Kalender Privat eintragen?“), erst „ja“ legt an, am Pi von der erkannten Stimme, im Web aus derselben Browser-Sitzung. Nennt man keinen Kalender, gilt `SERVITOR_NEXTCLOUD_CALENDAR` (Standard `privat`, sonst der erste eigene). Anzeigenamen wie „Luca&Ivan“ werden auf den echten Kalender abgebildet. Uhrzeiten ohne Zone werden mit `SERVITOR_TIMEZONE` gespeichert, nicht als UTC.
+- **Daten in Nextcloud:** Ein Termin, der als UTC gespeichert ist, steht dort und bei Proximus in Ortszeit (Musikwiege: `DTSTART:…T100000Z`, also 11:00 Uhr, obwohl der Titel „10.00 Uhr“ sagt). Proximus folgt dem Kalender, nicht dem Titel.
+
 ## Rückfrage
 
 Höchstens eine offene Rückfrage. Sie gehört der Stimme, die gefragt hat, und gilt 90 Sekunden.

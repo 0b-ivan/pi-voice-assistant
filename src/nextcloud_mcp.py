@@ -23,10 +23,12 @@ Never offered: mail, sharing, deleting, moving, anything not listed in
 READ_TOOLS or WRITE_TOOLS. Configured by SERVITOR_NEXTCLOUD_MCP_URL
 (unset: the feature is off).
 """
+import datetime
 import json
 import os
 import re
 import time
+import zoneinfo
 import urllib.error
 import urllib.request
 
@@ -57,6 +59,165 @@ WRITE_TOOLS = {
 # Arguments the model must not choose (large or private payloads).
 FORCED_ARGS = {'nc_contacts_search_contacts': {'include_photos': False}}
 
+
+def _arguments_for(name, args):
+    """The arguments sent to the server: forced ones, and for events without a
+    calendar name all calendars (the server refuses an empty name, and the
+    model then answered "keine Termine", web test 20.10.2026)."""
+    args = {**args, **FORCED_ARGS.get(name, {})}
+    if name == 'nc_calendar_list_events' and not args.get('calendar_name'):
+        args['search_all_calendars'] = True
+    return args
+
+
+# --- Calendar data, tidied before the model sees it -----------------------------
+
+EVENT_TOOLS = frozenset({'nc_calendar_list_events', 'nc_calendar_get_upcoming_events',
+                         'nc_calendar_get_event'})
+CALENDAR_WRITES = frozenset({'nc_calendar_create_event', 'nc_calendar_create_todo'})
+_WEEKDAYS = ('Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So')
+# "Reformationstag  (BB, MVP, SN)", "Bußtag  (Saxony)": regional holidays.
+_REGIONS = re.compile(r'\s*\(([^()]*)\)\s*$')
+_REGION_NAMES = {'BY': ('by', 'bayern', 'bavaria')}
+
+
+def zone():
+    """The operator's time zone (SERVITOR_TIMEZONE, as the server)."""
+    try:
+        return zoneinfo.ZoneInfo(os.environ.get('SERVITOR_TIMEZONE', 'Europe/Berlin'))
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        return zoneinfo.ZoneInfo('Europe/Berlin')
+
+
+def _when(value, tz):
+    """(local datetime or date, is a date) from Nextcloud's ISO text; a time
+    without offset is floating local time."""
+    text = str(value or '').strip()
+    if not text:
+        return None, False
+    try:
+        if len(text) == 10:
+            return datetime.date.fromisoformat(text), True
+        moment = datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        return None, False
+    return (moment.astimezone(tz) if moment.tzinfo else moment.replace(tzinfo=tz)), False
+
+
+def _day(value):
+    return f"{_WEEKDAYS[value.weekday()]} {value.day}.{value.month}.{value.year}"
+
+
+def _holiday_kept(title, calendar, region):
+    """Holidays only where they apply: nationwide or in ``region``."""
+    if 'feiertag' not in calendar.lower() and 'holiday' not in calendar.lower():
+        return True, title
+    match = _REGIONS.search(title)
+    if not match:
+        return True, title
+    names = {t.strip().lower() for t in match.group(1).split(',')}
+    wanted = _REGION_NAMES.get(region.upper(), (region.lower(),))
+    return bool(names & set(wanted)), title[:match.start()].strip()
+
+
+def tidy_events(text, tz=None, region=None):
+    """Nextcloud's event JSON as a short, sorted list in local time: date with
+    weekday, "11:00 bis 11:45" or "ganztägig", title, calendar, place.
+    Anything that is not such a result comes back unchanged."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    if isinstance(data, dict) and isinstance(data.get('events'), list):
+        events = data['events']
+    elif isinstance(data, dict) and (data.get('start_datetime') or data.get('start')):
+        events = [data]                        # nc_calendar_get_event
+    else:
+        return text
+    tz = tz or zone()
+    region = region or os.environ.get('SERVITOR_HOLIDAY_REGION', 'BY')
+    rows = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        start, dated = _when(event.get('start') or event.get('start_datetime'), tz)
+        if start is None:
+            continue
+        end, _ = _when(event.get('end') or event.get('end_datetime'), tz)
+        title = ' '.join(str(event.get('summary') or event.get('title') or 'ohne Titel').split())
+        calendar = str(event.get('calendar_display_name') or event.get('calendar_name') or '')
+        kept, title = _holiday_kept(title, calendar, region)
+        if not kept:
+            continue
+        row = dict(datum=_day(start), titel=title[:120])
+        if dated or event.get('all_day'):
+            day = start if dated else start.date()
+            last = (end - datetime.timedelta(days=1)) if isinstance(end, datetime.date) \
+                and not isinstance(end, datetime.datetime) else None
+            row['zeit'] = 'ganztägig' if not last or last <= day else f'ganztägig bis {_day(last)}'
+            key = (day, '')
+        else:
+            row['zeit'] = f'{start:%H:%M}'
+            if isinstance(end, datetime.datetime):
+                row['zeit'] += (f' bis {end:%H:%M}' if end.date() == start.date()
+                                else f' bis {_day(end)} {end:%H:%M}')
+            key = (start.date(), f'{start:%H:%M}')
+        if calendar:
+            row['kalender'] = calendar
+        place = str(event.get('location') or '').strip().splitlines()
+        if place:
+            row['ort'] = place[0][:80]
+        note = ' '.join(str(event.get('description') or '').split())
+        if note and 'feiertag' not in calendar.lower():
+            row['notiz'] = note[:160]
+        rows.append((key, row))
+    rows.sort(key=lambda item: item[0])
+    out = dict(zeitzone=str(tz), anzahl=len(rows), termine=[r for _, r in rows],
+               hinweis="Uhrzeiten in Ortszeit. Eine Uhrzeit im Titel kann veraltet sein, "
+                       "es gilt 'zeit'.")
+    text = json.dumps(out, ensure_ascii=False)
+    while len(text) > MAX_RESULT_CHARS - 200 and out['termine']:
+        out['termine'] = out['termine'][:-1]       # whole JSON, the latest go first
+        out['weitere_termine_danach'] = len(rows) - len(out['termine'])
+        text = json.dumps(out, ensure_ascii=False)
+    return text
+
+
+def _calendars(client):
+    try:
+        data = json.loads(client.call('nc_calendar_list_calendars', {}))
+    except (MCPError, ValueError):
+        return []
+    return [c for c in data.get('calendars') or [] if isinstance(c, dict) and c.get('name')]
+
+
+def _writable(calendar):
+    name = calendar['name']
+    return not (calendar.get('read_only') or name.startswith(('contact_birthdays', 'app-generated'))
+                or '_shared_by_' in name or 'feiertag' in str(calendar.get('display_name')).lower())
+
+
+def resolve_calendar(client, args, tz=None):
+    """Arguments for a new event or task: a real calendar (the named one, its
+    display name, else SERVITOR_NEXTCLOUD_CALENDAR or the first own one) and
+    a time zone for local times. Adds '_display' for the spoken question."""
+    args = dict(args)
+    calendars = _calendars(client)
+    wanted = str(args.get('calendar_name') or '').strip().lower()
+    default = os.environ.get('SERVITOR_NEXTCLOUD_CALENDAR', 'privat').strip().lower()
+    chosen = (next((c for c in calendars if wanted and wanted in
+                    (c['name'].lower(), str(c.get('display_name') or '').lower())), None)
+              or next((c for c in calendars if c['name'].lower() == default), None)
+              or next((c for c in calendars if _writable(c)), None))
+    if chosen:
+        args['calendar_name'] = chosen['name']
+        args['_display'] = chosen.get('display_name') or chosen['name']
+    start = str(args.get('start_datetime') or '')
+    if (len(start) > 10 and not re.search(r'(Z|[+-]\d\d:?\d\d)$', start)
+            and not args.get('timezone')):
+        args['timezone'] = str(tz or zone())
+    return args
+
 _TOPIC = re.compile(
     r'\b(kalender\w*|termin\w*|verabredung\w*|meeting\w*|besprechung\w*|'
     r'aufgabe\w*|todo\w*|to-do\w*|erledig\w*|'
@@ -77,7 +238,15 @@ TOOL_HINT = (
     "Einkaufsliste, Dateisuche) über Werkzeuge. Nutze sie nur, wenn die Frage das braucht, "
     "und erfinde keine Einträge. Schreibende Werkzeuge (Termin, Aufgabe, Notiz, Einkaufsliste) "
     "führen nichts sofort aus: Rufe sie mit vollständigen Angaben auf, der Bediener bestätigt "
-    "danach. Löschen, Mails und Freigaben kannst du nicht. Antworte danach kurz und sprechbar.")
+    "danach. Löschen, Mails und Freigaben kannst du nicht. Termine stehen in mehreren "
+    "Kalendern: ohne genannten Kalender alle durchsuchen. Termine kommen aufbereitet "
+    "(datum, zeit in Ortszeit, titel, kalender, ort): nenne sie nach Datum und sag bei jedem, "
+    "in welchem Kalender er steht (etwa „im Kalender Privat“). Gleiche Termine, die sich "
+    "wiederholen, fasse zusammen („montags 11 Uhr, sechsmal bis 14.12.“); sprich Titel kurz, "
+    "ohne Kurskürzel und Altersangaben. Neue Termine: Kalender nur angeben, wenn der Bediener "
+    "einen nennt. Meldet ein Werkzeug einen Fehler, "
+    "sag, dass die Abfrage nicht geklappt hat, und behaupte nie, es gäbe keine Einträge. "
+    "Antworte danach kurz und sprechbar.")
 
 UNAVAILABLE = "Nextcloud ist gerade nicht erreichbar."
 CANCELLED = "Abgebrochen, nichts eingetragen."
@@ -248,18 +417,22 @@ class Proposal:
 
     def __init__(self, name, arguments):
         self.name = name
-        self.arguments = dict(arguments or {})
+        arguments = dict(arguments or {})
+        self.display = arguments.pop('_display', None) or arguments.get('calendar_name')
+        self.arguments = arguments
 
     def question(self):
         args = self.arguments
         kind = WRITE_TOOLS.get(self.name, 'Eintrag')
         if self.name == 'nc_calendar_create_event':
             when = _spoken_time(args.get('start_datetime'))
-            place = f" in {args['calendar_name']}" if args.get('calendar_name') else ''
+            place = (f" im Kalender {self.display.replace('&', ' und ')}" if self.display else '')
             what = f"„{args.get('title', 'ohne Titel')}“{' am ' + when if when else ''}"
             return f"Soll ich den Termin {what}{place} eintragen? Sag ja oder nein."
         if self.name == 'nc_calendar_create_todo':
-            return f"Soll ich die Aufgabe „{args.get('summary', '')}“ anlegen? Sag ja oder nein."
+            place = (f" im Kalender {self.display.replace('&', ' und ')}" if self.display else '')
+            return (f"Soll ich die Aufgabe „{args.get('summary', '')}“{place} anlegen? "
+                    "Sag ja oder nein.")
         if self.name == 'nc_notes_create_note':
             return f"Soll ich die Notiz „{args.get('title', '')}“ anlegen? Sag ja oder nein."
         if self.name == 'nc_shopping_list_add_items':
@@ -325,16 +498,24 @@ def run(messages, chat, client, max_rounds=MAX_ROUNDS, local=()):
                 try:
                     result = local[name].call(args)
                 except Exception as exc:  # noqa: BLE001 - the model hears it failed
-                    result = f'Fehler: {type(exc).__name__}'
+                    result = f'Fehler, keine Daten erhalten: {type(exc).__name__}'
             elif client is not None and name in WRITE_TOOLS and args is not None:
+                if name in CALENDAR_WRITES:
+                    args = resolve_calendar(client, args)
                 return 'propose', Proposal(name, args)
             elif client is None or name not in READ_TOOLS or args is None:
                 result = 'Nicht erlaubt.' if args is not None else 'Ungültige Argumente.'
             else:
                 try:
-                    result = client.call(name, {**args, **FORCED_ARGS.get(name, {})})
+                    result = client.call(name, _arguments_for(name, args))
+                    if name in EVENT_TOOLS:
+                        result = tidy_events(result)
                 except MCPError as exc:
-                    result = f'Fehler: {exc}'
+                    result = f'Fehler, keine Daten erhalten: {exc}'
+            # Name and outcome only: arguments and results are the operator's data.
+            print(json.dumps(dict(event='tool_call', tool=name[:60],
+                                  ok=not result.startswith(('Fehler', 'Nicht erlaubt',
+                                                            'Ungültige')))), flush=True)
             messages.append({'role': 'tool', 'tool_call_id': call.get('id', ''),
                              'content': result[:MAX_RESULT_CHARS]})
     raise MCPError('too many tool rounds')
