@@ -181,6 +181,26 @@ class LoopTests(unittest.TestCase):
             nc.run([], chat, FakeClient(tools=[TOOLS[3]]))
 
 
+class CalendarArgumentTests(unittest.TestCase):
+    def test_events_without_a_calendar_search_all_calendars(self):
+        # The server refuses list_events without a name unless all calendars are
+        # searched; the model then said "keine Termine" (web test 20.10.2026).
+        client = FakeClient()
+        calls = [tool_call('nc_calendar_list_events',
+                           {'start_date': '2026-10-20', 'end_date': '2027-01-20'}, 'c1'),
+                 tool_call('nc_calendar_list_events',
+                           {'calendar_name': 'privat', 'start_date': '2026-10-20'}, 'c2')]
+        replies = iter([{'content': '', 'tool_calls': calls}, {'content': 'Annika feiert.'}])
+        nc.run([], lambda messages, specs: next(replies), client)
+        self.assertEqual(client.calls, [
+            ('nc_calendar_list_events', {'start_date': '2026-10-20', 'end_date': '2027-01-20',
+                                         'search_all_calendars': True}),
+            ('nc_calendar_list_events', {'calendar_name': 'privat',
+                                         'start_date': '2026-10-20'})])
+        self.assertIn('alle durchsuchen', nc.TOOL_HINT)
+        self.assertIn('nie, es gäbe keine Einträge', nc.TOOL_HINT)
+
+
 class LocalToolTests(unittest.TestCase):
     class Tool:
         name = 'kuma_status'
@@ -219,7 +239,7 @@ class LocalToolTests(unittest.TestCase):
                           'nc_contacts_search_contacts', 'kuma_status'})
         seen = []
         nc.run([], self.chat_calling('kuma_status', seen), None, local=[self.Tool(fail=True)])
-        self.assertEqual(seen[1][0][-1]['content'], 'Fehler: ValueError')
+        self.assertEqual(seen[1][0][-1]['content'], 'Fehler, keine Daten erhalten: ValueError')
         seen = []   # without a client no Nextcloud tool runs, not even a write
         nc.run([], self.chat_calling('nc_calendar_create_event', seen), None,
                local=[self.Tool()])

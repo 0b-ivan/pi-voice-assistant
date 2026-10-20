@@ -57,6 +57,16 @@ WRITE_TOOLS = {
 # Arguments the model must not choose (large or private payloads).
 FORCED_ARGS = {'nc_contacts_search_contacts': {'include_photos': False}}
 
+
+def _arguments_for(name, args):
+    """The arguments sent to the server: forced ones, and for events without a
+    calendar name all calendars (the server refuses an empty name, and the
+    model then answered "keine Termine", web test 20.10.2026)."""
+    args = {**args, **FORCED_ARGS.get(name, {})}
+    if name == 'nc_calendar_list_events' and not args.get('calendar_name'):
+        args['search_all_calendars'] = True
+    return args
+
 _TOPIC = re.compile(
     r'\b(kalender\w*|termin\w*|verabredung\w*|meeting\w*|besprechung\w*|'
     r'aufgabe\w*|todo\w*|to-do\w*|erledig\w*|'
@@ -77,7 +87,10 @@ TOOL_HINT = (
     "Einkaufsliste, Dateisuche) über Werkzeuge. Nutze sie nur, wenn die Frage das braucht, "
     "und erfinde keine Einträge. Schreibende Werkzeuge (Termin, Aufgabe, Notiz, Einkaufsliste) "
     "führen nichts sofort aus: Rufe sie mit vollständigen Angaben auf, der Bediener bestätigt "
-    "danach. Löschen, Mails und Freigaben kannst du nicht. Antworte danach kurz und sprechbar.")
+    "danach. Löschen, Mails und Freigaben kannst du nicht. Termine stehen in mehreren "
+    "Kalendern: ohne genannten Kalender alle durchsuchen. Meldet ein Werkzeug einen Fehler, "
+    "sag, dass die Abfrage nicht geklappt hat, und behaupte nie, es gäbe keine Einträge. "
+    "Antworte danach kurz und sprechbar.")
 
 UNAVAILABLE = "Nextcloud ist gerade nicht erreichbar."
 CANCELLED = "Abgebrochen, nichts eingetragen."
@@ -325,16 +338,20 @@ def run(messages, chat, client, max_rounds=MAX_ROUNDS, local=()):
                 try:
                     result = local[name].call(args)
                 except Exception as exc:  # noqa: BLE001 - the model hears it failed
-                    result = f'Fehler: {type(exc).__name__}'
+                    result = f'Fehler, keine Daten erhalten: {type(exc).__name__}'
             elif client is not None and name in WRITE_TOOLS and args is not None:
                 return 'propose', Proposal(name, args)
             elif client is None or name not in READ_TOOLS or args is None:
                 result = 'Nicht erlaubt.' if args is not None else 'Ungültige Argumente.'
             else:
                 try:
-                    result = client.call(name, {**args, **FORCED_ARGS.get(name, {})})
+                    result = client.call(name, _arguments_for(name, args))
                 except MCPError as exc:
-                    result = f'Fehler: {exc}'
+                    result = f'Fehler, keine Daten erhalten: {exc}'
+            # Name and outcome only: arguments and results are the operator's data.
+            print(json.dumps(dict(event='tool_call', tool=name[:60],
+                                  ok=not result.startswith(('Fehler', 'Nicht erlaubt',
+                                                            'Ungültige')))), flush=True)
             messages.append({'role': 'tool', 'tool_call_id': call.get('id', ''),
                              'content': result[:MAX_RESULT_CHARS]})
     raise MCPError('too many tool rounds')
