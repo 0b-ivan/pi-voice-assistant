@@ -75,6 +75,8 @@ def _arguments_for(name, args):
 EVENT_TOOLS = frozenset({'nc_calendar_list_events', 'nc_calendar_get_upcoming_events',
                          'nc_calendar_get_event'})
 CALENDAR_WRITES = frozenset({'nc_calendar_create_event', 'nc_calendar_create_todo'})
+CALENDAR_READS = frozenset({'nc_calendar_list_events', 'nc_calendar_get_upcoming_events',
+                            'nc_calendar_list_todos'})
 _WEEKDAYS = ('Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So')
 # "Reformationstag  (BB, MVP, SN)", "Bußtag  (Saxony)": regional holidays.
 _REGIONS = re.compile(r'\s*\(([^()]*)\)\s*$')
@@ -195,6 +197,29 @@ def _writable(calendar):
     name = calendar['name']
     return not (calendar.get('read_only') or name.startswith(('contact_birthdays', 'app-generated'))
                 or '_shared_by_' in name or 'feiertag' in str(calendar.get('display_name')).lower())
+
+
+def read_calendar(client, name, args):
+    """Arguments of a reading calendar tool with a real calendar name: the
+    server answers an unknown name ("Privat" for privat, "personal") with an
+    empty list and success, which the model read as "keine Termine"
+    (20.10.2026). A display name is mapped, an unknown one searches all."""
+    wanted = str(args.get('calendar_name') or '').strip()
+    if not wanted:
+        return args
+    calendars = _calendars(client)
+    if not calendars:
+        return args
+    match = next((c for c in calendars if wanted.lower() in
+                  (c['name'].lower(), str(c.get('display_name') or '').lower())), None)
+    args = dict(args)
+    if match:
+        args['calendar_name'] = match['name']
+    elif name == 'nc_calendar_list_events':
+        args.pop('calendar_name')            # _arguments_for then searches all calendars
+    elif name == 'nc_calendar_get_upcoming_events':
+        args['calendar_name'] = ''           # the server's own "all calendars"
+    return args
 
 
 def resolve_calendar(client, args, tz=None):
@@ -507,6 +532,8 @@ def run(messages, chat, client, max_rounds=MAX_ROUNDS, local=()):
                 result = 'Nicht erlaubt.' if args is not None else 'Ungültige Argumente.'
             else:
                 try:
+                    if name in CALENDAR_READS:
+                        args = read_calendar(client, name, args)
                     result = client.call(name, _arguments_for(name, args))
                     if name in EVENT_TOOLS:
                         result = tidy_events(result)

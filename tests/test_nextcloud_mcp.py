@@ -196,7 +196,7 @@ class CalendarArgumentTests(unittest.TestCase):
                            {'calendar_name': 'privat', 'start_date': '2026-10-20'}, 'c2')]
         replies = iter([{'content': '', 'tool_calls': calls}, {'content': 'Annika feiert.'}])
         nc.run([], lambda messages, specs: next(replies), client)
-        self.assertEqual(client.calls, [
+        self.assertEqual([c for c in client.calls if c[0] != 'nc_calendar_list_calendars'], [
             ('nc_calendar_list_events', {'start_date': '2026-10-20', 'end_date': '2027-01-20',
                                          'search_all_calendars': True}),
             ('nc_calendar_list_events', {'calendar_name': 'privat',
@@ -294,6 +294,21 @@ class CalendarChoiceTests(unittest.TestCase):
             chosen = nc.resolve_calendar(client, {'title': 'T', 'start_datetime': '2026-10-24'})
         self.assertEqual(chosen['calendar_name'], 'lucaivan')      # first own calendar
         self.assertNotIn('timezone', chosen)                       # all day
+
+    def test_reading_with_a_display_or_unknown_name(self):
+        client = self.Client()
+        self.assertEqual(nc.read_calendar(client, 'nc_calendar_list_events',
+                                          {'calendar_name': 'Privat'})['calendar_name'], 'privat')
+        self.assertEqual(nc.read_calendar(client, 'nc_calendar_list_events',
+                                          {'calendar_name': 'Luca&Ivan'})['calendar_name'],
+                         'lucaivan')
+        unknown = nc.read_calendar(client, 'nc_calendar_list_events',
+                                   {'calendar_name': 'personal', 'start_date': '2026-10-26'})
+        self.assertEqual(nc._arguments_for('nc_calendar_list_events', unknown),
+                         {'start_date': '2026-10-26', 'search_all_calendars': True})
+        self.assertEqual(nc.read_calendar(client, 'nc_calendar_get_upcoming_events',
+                                          {'calendar_name': 'personal'})['calendar_name'], '')
+        self.assertEqual(nc.read_calendar(client, 'nc_calendar_list_events', {}), {})
 
     def test_a_proposed_event_gets_a_real_calendar(self):
         client = self.Client()
