@@ -74,6 +74,8 @@ def _arguments_for(name, args):
 
 EVENT_TOOLS = frozenset({'nc_calendar_list_events', 'nc_calendar_get_upcoming_events',
                          'nc_calendar_get_event'})
+_LOGGED_ARGS = ('calendar_name', 'start_date', 'end_date', 'days_ahead',
+                'search_all_calendars', 'limit')
 CALENDAR_WRITES = frozenset({'nc_calendar_create_event', 'nc_calendar_create_todo'})
 CALENDAR_READS = frozenset({'nc_calendar_list_events', 'nc_calendar_get_upcoming_events',
                             'nc_calendar_list_todos'})
@@ -81,6 +83,28 @@ _WEEKDAYS = ('Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So')
 # "Reformationstag  (BB, MVP, SN)", "Bußtag  (Saxony)": regional holidays.
 _REGIONS = re.compile(r'\s*\(([^()]*)\)\s*$')
 _REGION_NAMES = {'BY': ('by', 'bayern', 'bavaria')}
+
+
+_DAYS_LONG = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag')
+
+
+def date_hint(now=None):
+    """Today and the week bounds for the model: it counted "nächste Woche"
+    from today and skipped all-day entries (web test 20.10.2026)."""
+    now = now or datetime.datetime.now(zone())
+    today = now.date()
+    monday = today - datetime.timedelta(days=today.weekday())
+
+    def day(value):
+        return f"{_WEEKDAYS[value.weekday()]} {value.day}.{value.month}.{value.year}"
+
+    week = lambda start: f"{day(start)} bis {day(start + datetime.timedelta(days=6))}"
+    return (f"Heute ist {_DAYS_LONG[today.weekday()]}, {today.day}.{today.month}.{today.year}. "
+            f"Diese Woche: {week(monday)}. Nächste Woche: "
+            f"{week(monday + datetime.timedelta(days=7))}. Für Zeiträume "
+            "nc_calendar_list_events mit start_date und end_date (end_date zählt mit) "
+            "verwenden. Nenne alle Einträge im gefragten Zeitraum und keine außerhalb; "
+            "ganztägige Einträge (Feiern, Geburtstage, Feiertage) gehören dazu.")
 
 
 def zone():
@@ -578,8 +602,9 @@ def run(messages, chat, client, max_rounds=MAX_ROUNDS, local=()):
                         result = tidy_events(result)
                 except MCPError as exc:
                     result = f'Fehler, keine Daten erhalten: {exc}'
-            # Name and outcome only: arguments and results are the operator's data.
-            print(json.dumps(dict(event='tool_call', tool=name[:60],
+            # Name, range and outcome only: titles and results are the operator's data.
+            shown = {k: str(v)[:40] for k, v in (args or {}).items() if k in _LOGGED_ARGS}
+            print(json.dumps(dict(event='tool_call', tool=name[:60], args=shown,
                                   ok=not result.startswith(('Fehler', 'Nicht erlaubt',
                                                             'Ungültige')))), flush=True)
             messages.append({'role': 'tool', 'tool_call_id': call.get('id', ''),

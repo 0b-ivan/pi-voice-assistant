@@ -536,7 +536,8 @@ def generate_nextcloud_reply(prompt, client, lore=None, memory=NO_MEMORY, model=
         history = history_messages(memory)
     system = system_prompt(lore, memory, persona, mood, query=prompt)
     local = list(local)
-    hints = ([nextcloud_mcp.TOOL_HINT] if client is not None else []) + [t.hint for t in local]
+    hints = ([nextcloud_mcp.TOOL_HINT, nextcloud_mcp.date_hint()] if client is not None
+             else []) + [t.hint for t in local]
     messages = [{"role": "system", "content": '\n\n'.join([system, *hints])},
                 *history, {"role": "user", "content": prompt}]
 

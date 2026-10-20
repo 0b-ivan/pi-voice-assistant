@@ -300,6 +300,31 @@ class AgendaEventTests(unittest.TestCase):
                          , 'Termine heute. 11 Uhr: Musikwiege.')
 
 
+class DateHintTests(unittest.TestCase):
+    def test_week_bounds_and_all_day_entries(self):
+        tz = zoneinfo.ZoneInfo('Europe/Berlin')
+        hint = nc.date_hint(datetime.datetime(2026, 10, 20, 21, 20, tzinfo=tz))
+        self.assertIn('Heute ist Dienstag, 20.10.2026.', hint)
+        self.assertIn('Diese Woche: Mo 19.10.2026 bis So 25.10.2026.', hint)
+        self.assertIn('Nächste Woche: Mo 26.10.2026 bis So 1.11.2026.', hint)
+        self.assertIn('ganztägige Einträge', hint)
+        sunday = nc.date_hint(datetime.datetime(2026, 10, 25, 9, tzinfo=tz))
+        self.assertIn('Nächste Woche: Mo 26.10.2026', sunday)
+
+    def test_the_journal_names_the_range_but_no_titles(self):
+        import contextlib
+        import io
+        client, out = FakeClient(), io.StringIO()
+        replies = iter([{'content': '', 'tool_calls': [tool_call(
+            'nc_calendar_list_events', {'start_date': '2026-10-26', 'end_date': '2026-11-01',
+                                        'title_contains': 'Zahnarzt'})]}, {'content': 'ok'}])
+        with contextlib.redirect_stdout(out):
+            nc.run([], lambda m, s: next(replies), client)
+        line = json.loads(out.getvalue().strip().splitlines()[-1])
+        self.assertEqual(line['args'], {'start_date': '2026-10-26', 'end_date': '2026-11-01'})
+        self.assertNotIn('Zahnarzt', out.getvalue())
+
+
 class CalendarChoiceTests(unittest.TestCase):
     CALENDARS = json.dumps({'calendars': [
         {'name': 'contact_birthdays', 'display_name': 'Geburtstage'},
