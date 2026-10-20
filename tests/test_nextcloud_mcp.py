@@ -1,3 +1,4 @@
+import datetime
 import http.server
 import json
 import os
@@ -264,6 +265,39 @@ class TidyEventTests(unittest.TestCase):
         text = nc.tidy_events(json.dumps({'events': many}), self.TZ)
         self.assertLessEqual(len(text), nc.MAX_RESULT_CHARS)
         self.assertGreater(json.loads(text)['weitere_termine_danach'], 0)
+
+
+class AgendaEventTests(unittest.TestCase):
+    def test_events_for_the_briefing_in_the_pi_format(self):
+        tz = zoneinfo.ZoneInfo('Europe/Berlin')
+        reply = json.dumps({'events': [
+            dict(summary='Musikwiege', start='2026-10-26T10:00:00+00:00',
+                 end='2026-10-26T10:45:00+00:00', calendar_display_name='Luca&Ivan'),
+            dict(summary='Einweihungsparty  Annika', start='2026-10-31', end='2026-11-01',
+                 all_day=True, calendar_display_name='Privat'),
+            dict(summary='Reformationstag  (BB, SN)', start='2026-10-31', end='2026-11-01',
+                 all_day=True, calendar_display_name='Feiertage')]})
+
+        class Client(FakeClient):
+            def call(self, name, args):
+                self.calls.append((name, args))
+                return reply
+
+        client = Client()
+        start = datetime.datetime(2026, 10, 26, tzinfo=tz)
+        events = nc.agenda_events(client, start, tz=tz)
+        self.assertEqual(client.calls[0][1], {'start_date': '2026-10-26', 'end_date': '2026-10-28',
+                                              'limit': 100, 'search_all_calendars': True})
+        self.assertEqual(events[0], dict(summary='Musikwiege', all_day=False,
+                                         start=datetime.datetime(2026, 10, 26, 11, tzinfo=tz),
+                                         end=datetime.datetime(2026, 10, 26, 11, 45, tzinfo=tz)))
+        self.assertEqual(events[1], dict(summary='Einweihungsparty Annika', all_day=True,
+                                         start=datetime.date(2026, 10, 31),
+                                         end=datetime.date(2026, 11, 1)))
+        self.assertEqual(len(events), 2)                         # no Reformationstag in BY
+        import agenda
+        self.assertEqual(agenda.sentence(agenda.upcoming(events, start.replace(hour=7)))
+                         , 'Termine heute. 11 Uhr: Musikwiege.')
 
 
 class CalendarChoiceTests(unittest.TestCase):

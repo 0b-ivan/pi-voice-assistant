@@ -68,6 +68,12 @@ class FakePipeline:
             (text, [t.name for t in local], nextcloud)]
         return self.nextcloud_result
 
+    agenda_result = None   # events for nextcloud_agenda (the browser's briefing)
+
+    def nextcloud_agenda(self, now):
+        self.agenda_asked = getattr(self, 'agenda_asked', 0) + 1
+        return self.agenda_result
+
     def nextcloud_call(self, proposal):
         self.nextcloud_written = getattr(self, 'nextcloud_written', []) + [proposal.name]
         return proposal.done_text()
@@ -1050,6 +1056,24 @@ class IntentServerTest(ServerTest):
         self.web_ask('Leg eine Aufgabe Müll rausbringen an')
         self.assertEqual(self.web_ask('ja')['text'], 'Aufgabe angelegt.')
         self.assertEqual(self.pipeline.nextcloud_written, ['nc_calendar_create_todo'])
+
+    def test_the_web_litany_reads_the_calendar_from_nextcloud(self):
+        import datetime
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo('Europe/Berlin')
+        fixed = datetime.datetime(2026, 10, 26, 7, 5, tzinfo=tz)
+        self.pipeline.agenda_result = [
+            dict(summary='Musikwiege', start=fixed.replace(hour=11, minute=0), end=None,
+                 all_day=False),
+            dict(summary='Zahnarzt', start=fixed.replace(day=27, hour=9, minute=30), end=None,
+                 all_day=False)]
+        with unittest.mock.patch.object(ss.Service, 'now', lambda self: fixed):
+            text = self.web_ask('Morgenbericht')['text']
+        self.assertIn('Termine heute. 11 Uhr: Musikwiege.', text)
+        self.assertIn('Zahnarzt', text)
+        self.assertEqual(self.pipeline.agenda_asked, 1)
+        self.device_turn('morgenbericht', {})          # the Pi brings its own calendar
+        self.assertEqual(self.pipeline.agenda_asked, 1)
 
     def test_kuma_tool_down_falls_back_to_the_fixed_answer(self):
         self.pipeline.fail_llm = True

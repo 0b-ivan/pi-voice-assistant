@@ -185,6 +185,45 @@ def tidy_events(text, tz=None, region=None):
     return text
 
 
+def agenda_events(client, start, days=2, tz=None, region=None):
+    """Appointments from ``start`` (local midnight) for ``days`` days in the
+    format of agenda.decode_header (summary, start, end, all_day), for the
+    briefing of a client without the Pi's calendar (the browser)."""
+    tz = tz or zone()
+    region = region or os.environ.get('SERVITOR_HOLIDAY_REGION', 'BY')
+    end = start + datetime.timedelta(days=days)
+    raw = client.call('nc_calendar_list_events', _arguments_for('nc_calendar_list_events', {
+        'start_date': start.date().isoformat(), 'end_date': end.date().isoformat(),
+        'limit': 100}))
+    try:
+        events = json.loads(raw).get('events') or []
+    except (ValueError, AttributeError) as exc:
+        raise MCPError('unexpected calendar reply') from exc
+    out = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        first, dated = _when(event.get('start'), tz)
+        last, _ = _when(event.get('end'), tz)
+        if first is None:
+            continue
+        calendar = str(event.get('calendar_display_name') or event.get('calendar_name') or '')
+        title = ' '.join(str(event.get('summary') or '').split())
+        kept, title = _holiday_kept(title, calendar, region)
+        if not kept:
+            continue
+        all_day = dated or bool(event.get('all_day'))
+        if all_day:
+            first = first if dated else first.date()
+            last = last if isinstance(last, datetime.date) and not isinstance(
+                last, datetime.datetime) else None
+        elif not isinstance(last, datetime.datetime):
+            last = None
+        out.append(dict(summary=title[:80] or 'Termin ohne Titel', start=first, end=last,
+                        all_day=all_day))
+    return out
+
+
 def _calendars(client):
     try:
         data = json.loads(client.call('nc_calendar_list_calendars', {}))

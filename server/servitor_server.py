@@ -271,6 +271,8 @@ class RealPipeline:
         # Operator's Nextcloud through the MCP server (docs/nextcloud.md); None: off.
         url = nextcloud_mcp.configured_url()
         self.nextcloud = nextcloud_mcp.Client(url) if url else None
+        self.nextcloud_down = False     # last call failed: the next success is logged
+        self.agenda_cache = None        # (monotonic time, day, events) for the browser
 
     def load(self):
         import transcribe
@@ -388,11 +390,43 @@ class RealPipeline:
         from llm import generate_nextcloud_reply
         try:
             # Always the configured model: the FREI model offers no tool calls.
-            return generate_nextcloud_reply(text, client, lore=lore, memory=memory,
-                                            persona=persona, mood=mood, local=local)
+            result = generate_nextcloud_reply(text, client, lore=lore, memory=memory,
+                                              persona=persona, mood=mood, local=local)
         except Exception as exc:  # noqa: BLE001 - never worse than without tools
-            print(json.dumps(dict(event='nextcloud_failed', reason=str(exc)[:200])), flush=True)
+            self._nextcloud_result(exc)
             return None
+        self._nextcloud_result(None)
+        return result
+
+    def _nextcloud_result(self, error):
+        """Journal lines for logwatch: every failure, and the first success
+        after one (its recovery proof)."""
+        if error is not None:
+            self.nextcloud_down = True
+            print(json.dumps(dict(event='nextcloud_failed', reason=str(error)[:200])),
+                  flush=True)
+        elif self.nextcloud_down:
+            self.nextcloud_down = False
+            print(json.dumps(dict(event='nextcloud_ready')), flush=True)
+
+    def nextcloud_agenda(self, now):
+        """Today's and tomorrow's appointments from Nextcloud, for a client
+        without the Pi's calendar (the browser's briefing); None when off or
+        failing. Kept five minutes, like the Pi's own calendar."""
+        if self.nextcloud is None:
+            return None
+        start, _ = agenda.day_bounds(now)
+        cached = self.agenda_cache
+        if cached and cached[1] == start and self.clock() - cached[0] < agenda.CACHE_SECONDS:
+            return cached[2]
+        try:
+            events = nextcloud_mcp.agenda_events(self.nextcloud, start, tz=now.tzinfo)
+        except Exception as exc:  # noqa: BLE001 - the briefing goes on without
+            self._nextcloud_result(exc)
+            return None
+        self._nextcloud_result(None)
+        self.agenda_cache = (self.clock(), start, events)
+        return events
 
     def nextcloud_enabled(self):
         return self.nextcloud is not None
@@ -1420,6 +1454,12 @@ class Service:
                     # Nextcloud (docs/nextcloud.md).
                     intent, calendar_handed_over = None, True
                 watch_turn = self._watch_turn(memory_copy, web_operator)
+                fetch_agenda = getattr(self.pipeline, 'nextcloud_agenda', None)
+                if (intent == 'briefing' and web_operator and appointments is None
+                        and fetch_agenda is not None):
+                    # The browser brings no calendar: the litany reads Nextcloud.
+                    appointments = appointments_tomorrow = timed('agenda', fetch_agenda,
+                                                                 self.now())
                 watch_handed_over = False
                 if intent == 'watch' and watch_turn and systemwache.detail(text):
                     # "Wie lange war Vault gestern down?": more than the fixed

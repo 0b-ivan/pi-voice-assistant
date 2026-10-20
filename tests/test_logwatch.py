@@ -160,6 +160,29 @@ class WatchTests(unittest.TestCase):
         self.assertNotIn('resolved', watch.result)
         self.assertIn('derzeit ein Problem', logwatch.selftest_text(watch.snapshot_fields('server_log'), now=moment))
 
+    def test_nextcloud_failures_reach_the_briefing_until_it_answers_again(self):
+        # 20.10.2026: Nextcloud throttled the home address, three turns failed.
+        now = 1791702000.0
+        def entry(event, at, **fields):
+            return logwatch.parse_entry(line(json.dumps(dict(event=event, **fields)),
+                                            systemd_unit='servitor-voice.service', at=at))
+        entries = [entry('nextcloud_failed', now - 300 + i, reason='MCP unreachable: timed out')
+                   for i in range(3)]
+        watch = logwatch.LogWatch(logwatch.SERVER_RULES, logwatch.SERVER_UNITS,
+                                 reader=lambda since, units: (entries, False), clock=lambda: now)
+        watch.check()
+        moment = datetime.datetime.fromtimestamp(now)
+        text = logwatch.briefing_sentence(watch.snapshot_fields('server_log'), now=moment)
+        self.assertIn('Meine Nextcloud war wiederholt nicht erreichbar', text)
+        self.assertIn('Heimadresse', logwatch.selftest_text(watch.snapshot_fields('server_log'),
+                                                            now=moment))
+        entries.append(entry('nextcloud_ready', now - 30))
+        self.assertEqual(watch.check()['resolved'], {'nextcloud': now - 30})
+        self.assertIsNone(logwatch.briefing_sentence(watch.snapshot_fields('server_log'),
+                                                     now=moment))
+        one = [entry('nextcloud_failed', now - 60)]                 # a single hiccup
+        self.assertEqual(logwatch.analyse(one, logwatch.SERVER_RULES, logwatch.SERVER_UNITS), {})
+
     def test_voice_ready_does_not_claim_that_failed_local_model_recovered(self):
         now = 1791702000.0
         entries = [logwatch.parse_entry(line(json.dumps(dict(event=name)),
