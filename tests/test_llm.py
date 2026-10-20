@@ -98,6 +98,42 @@ class LLMTests(unittest.TestCase):
             "Bearer test-key",
         )
 
+    def test_nextcloud_reply_sends_tools_and_returns_the_spoken_answer(self):
+        class Client:
+            calls = []
+
+            def tools(self):
+                return [{"name": "nc_calendar_list_events", "description": "List.",
+                         "inputSchema": {"type": "object", "properties": {}}},
+                        {"name": "nc_mail_send_message", "description": "Mail."}]
+
+            def call(self, name, args):
+                self.calls.append(name)
+                return "Zahnarzt Freitag 10 Uhr"
+
+        first = FakeResponse({"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "nc_calendar_list_events", "arguments": "{}"}}]}}]})
+        second = FakeResponse({"choices": [{"message": {"content": "- Freitag: **Zahnarzt**."}}]})
+        client = Client()
+        with (
+            patch.dict("os.environ", self.base_env(), clear=True),
+            patch("llm.urllib.request.urlopen", side_effect=[first, second]) as urlopen,
+        ):
+            (kind, text), model = llm.generate_nextcloud_reply("Was steht Freitag an?", client)
+
+        self.assertEqual((kind, text, model), ("answer", "Freitag: Zahnarzt.", "openai/gpt-5.4-mini"))
+        self.assertEqual(client.calls, ["nc_calendar_list_events"])
+        sent = [json.loads(c.args[0].data.decode("utf-8")) for c in urlopen.call_args_list]
+        self.assertEqual([t["function"]["name"] for t in sent[0]["tools"]],
+                         ["nc_calendar_list_events"])          # mail is never offered
+        self.assertEqual(sent[0]["tool_choice"], "auto")
+        self.assertEqual(sent[0]["max_completion_tokens"], 400)
+        self.assertIn("Werkzeuge", sent[0]["messages"][0]["content"])
+        self.assertEqual(sent[1]["messages"][-1],
+                         {"role": "tool", "tool_call_id": "c1",
+                          "content": "Zahnarzt Freitag 10 Uhr"})
+
     def test_http_error_is_recoverable_and_does_not_echo_key(self):
         body = io.BytesIO(
             json.dumps({"error": {"message": "provider unavailable"}}).encode()

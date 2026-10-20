@@ -56,6 +56,19 @@ class FakePipeline:
             self.block.wait(5)
         return f'Antwort auf {text}{getattr(self, "suffix", "")}', 'test/model'
 
+    nextcloud_result = None   # ((kind, value), model) for nextcloud_reply, None: no tools
+
+    def nextcloud_enabled(self):
+        return self.nextcloud_result is not None
+
+    def nextcloud_reply(self, text, lore=None, mode=None, memory=None, persona=None, mood=None):
+        self.nextcloud_asked = getattr(self, 'nextcloud_asked', 0) + 1
+        return self.nextcloud_result
+
+    def nextcloud_call(self, proposal):
+        self.nextcloud_written = getattr(self, 'nextcloud_written', []) + [proposal.name]
+        return proposal.done_text()
+
     def _wav(self, prefix, rate):
         fd, name = tempfile.mkstemp(prefix=prefix, suffix='.wav', dir=self.workdir)
         os.close(fd)
@@ -1115,6 +1128,81 @@ class IntentServerTest(ServerTest):
             text, device = self.device_turn('wlan aus', {'devctl': 'on', 'wlan': 'on',
                                                          'memory': 'on'}, guest)
             self.assertEqual(device, [{'event': 'device', 'op': 'wlan_off'}])  # harmless
+
+    def test_nextcloud_write_needs_the_operators_yes(self):
+        import nextcloud_mcp
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        who = ['Ivan']
+        proposal = nextcloud_mcp.Proposal('nc_calendar_create_event',
+                                          {'title': 'Zahnarzt', 'start_datetime': '2026-10-21T10:00'})
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, c, emit, voice=None:
+                                        dict(c, speaker=who[0])):
+            self.pipeline.nextcloud_result = (('propose', proposal), 'test/model')
+            text, _ = self.device_turn('trag morgen um zehn den zahnarzt in den kalender ein',
+                                       {'memory': 'on'}, copy)
+            self.assertEqual(text, proposal.question())
+            self.assertEqual(getattr(self.pipeline, 'nextcloud_written', []), [])
+            who[0] = 'unknown'                     # short "ja" below the voice threshold
+            text, _ = self.device_turn('ja', {'memory': 'on'}, copy)
+            self.assertEqual(text, nextcloud_mcp.VOICE_UNSURE)
+            who[0] = 'Ivan'
+            text, _ = self.device_turn('ja bitte eintragen', {'memory': 'on'}, copy)
+            self.assertEqual(text, 'Termin eingetragen.')
+            self.assertEqual(self.pipeline.nextcloud_written, ['nc_calendar_create_event'])
+            text, _ = self.device_turn('ja', {'memory': 'on'}, copy)   # ran once, nothing open
+            self.assertNotEqual(text, 'Termin eingetragen.')
+            self.assertEqual(self.pipeline.nextcloud_written, ['nc_calendar_create_event'])
+
+    def test_nextcloud_proposal_is_dropped_by_no_or_another_question(self):
+        import nextcloud_mcp
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        proposal = nextcloud_mcp.Proposal('nc_calendar_create_todo', {'summary': 'Müll'})
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, c, emit, voice=None:
+                                        dict(c, speaker='Ivan')):
+            self.pipeline.nextcloud_result = (('propose', proposal), 'test/model')
+            self.device_turn('leg eine aufgabe müll rausbringen an', {'memory': 'on'}, copy)
+            text, _ = self.device_turn('nein', {'memory': 'on'}, copy)
+            self.assertEqual(text, nextcloud_mcp.CANCELLED)
+            self.device_turn('leg eine aufgabe müll rausbringen an', {'memory': 'on'}, copy)
+            self.device_turn('wie hoch ist der eiffelturm', {'memory': 'on'}, copy)
+            text, _ = self.device_turn('ja', {'memory': 'on'}, copy)
+            self.assertNotEqual(text, 'Aufgabe angelegt.')
+            self.assertEqual(getattr(self.pipeline, 'nextcloud_written', []), [])
+
+    def test_nextcloud_tools_only_for_the_recognized_operator(self):
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        self.pipeline.nextcloud_result = (('answer', 'Morgen: Zahnarzt.'), 'test/model')
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, c, emit, voice=None:
+                                        dict(c, speaker='unknown')):
+            self.device_turn('was steht in meinem kalender nächste woche', {'memory': 'on'}, copy)
+        self.assertEqual(getattr(self.pipeline, 'nextcloud_asked', 0), 0)
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, c, emit, voice=None:
+                                        dict(c, speaker='Ivan')):
+            text, _ = self.device_turn('was steht in meinem kalender nächste woche',
+                                       {'memory': 'on'}, copy)
+            self.assertEqual(text, 'Morgen: Zahnarzt.')
+            self.device_turn('wie hoch ist der eiffelturm', {'memory': 'on'}, copy)
+        self.assertEqual(self.pipeline.nextcloud_asked, 1)   # no tools off topic
+
+    def test_a_handed_over_calendar_question_never_falls_back_to_guessing(self):
+        import nextcloud_mcp
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        self.pipeline.nextcloud_result = (('answer', 'unused'), 'test/model')
+        self.pipeline.nextcloud_reply = lambda *args, **kwargs: None   # MCP or OpenRouter down
+        with unittest.mock.patch.object(ss.Service, '_identify',
+                                        lambda self, audio, c, emit, voice=None:
+                                        dict(c, speaker='Ivan')):
+            text, _ = self.device_turn('was steht in meinem kalender nächste woche',
+                                       {'memory': 'on'}, copy)
+        self.assertEqual(text, nextcloud_mcp.UNAVAILABLE)
 
     def test_weather_answer_asks_the_pi_to_show_the_day(self):
         import datetime
