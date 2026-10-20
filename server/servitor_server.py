@@ -299,8 +299,12 @@ class RealPipeline:
         self.synthesize('Bereit.').unlink()
         if os.environ.get('SERVITOR_LOCAL_LLM') == '1':
             # Page the GGUF in and cache the system prompt; never fatal.
-            from llm import LLMError, generate_local_reply
+            from llm import LLMError, generate_local_reply, local_llm_busy
             try:
+                if local_llm_busy():
+                    # Nextcloud's assistant is using it: alive, just not free.
+                    print(json.dumps(dict(event='local_llm_busy')), flush=True)
+                    return
                 generate_local_reply('Bereit?')
             except LLMError as exc:
                 print(json.dumps(dict(event='local_llm_warmup_failed', error=str(exc))),

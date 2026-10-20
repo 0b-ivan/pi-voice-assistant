@@ -98,6 +98,24 @@ class LLMTests(unittest.TestCase):
             "Bearer test-key",
         )
 
+    def test_local_llm_busy_reads_the_slots(self):
+        urls = []
+
+        def opener(payload):
+            def open_(url, timeout):
+                urls.append(url)
+                if isinstance(payload, Exception):
+                    raise payload
+                return FakeResponse(payload)
+            return open_
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(llm.local_llm_busy(opener=opener([{"id": 0, "is_processing": True}])))
+            self.assertFalse(llm.local_llm_busy(opener=opener([{"id": 0, "is_processing": False}])))
+            self.assertIsNone(llm.local_llm_busy(opener=opener(urllib.error.URLError("down"))))
+            self.assertIsNone(llm.local_llm_busy(opener=opener({"error": "x"})))
+        self.assertEqual(urls[0], "http://127.0.0.1:8766/slots")
+
     def test_tool_reply_with_the_watch_only(self):
         import systemwache
 

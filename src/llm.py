@@ -629,6 +629,22 @@ def rephrase(text, lore=None, persona=None, timeout=None):
     return answer if same_facts(text, answer, persona) else None
 
 
+def local_llm_busy(timeout=2.0, opener=None):
+    """True while llama-server works on a request (its /slots), False when
+    idle, None when unknown. The same server answers Nextcloud's assistant;
+    a long request there must not look like a dead model (CT 107, 20.10.2026)."""
+    url = os.environ.get("LOCAL_LLM_URL", DEFAULT_LOCAL_LLM_URL).strip() or DEFAULT_LOCAL_LLM_URL
+    base = url.split('/v1/', 1)[0]
+    try:
+        with (opener or urllib.request.urlopen)(f"{base}/slots", timeout=timeout) as response:
+            slots = json.loads(response.read())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(slots, list):
+        return None
+    return any(isinstance(slot, dict) and slot.get('is_processing') for slot in slots)
+
+
 def local_model_name():
     name = os.environ.get("LOCAL_LLM_MODEL_NAME", "").strip()
     return f"local/{name or 'llama.cpp'}"
