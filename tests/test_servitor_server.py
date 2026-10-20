@@ -1039,7 +1039,7 @@ class IntentServerTest(ServerTest):
         import nextcloud_mcp
         proposal = nextcloud_mcp.Proposal('nc_calendar_create_todo', {'summary': 'Müll'})
         self.pipeline.nextcloud_result = (('answer', 'Freitag: Zahnarzt.'), 'test/model')
-        answer = self.web_ask('Was steht heute im Kalender?')   # no Pi agenda in the browser
+        answer = self.web_ask('hi! was steht im Kalender?')   # no Pi agenda in the browser
         self.assertEqual(answer['text'], 'Freitag: Zahnarzt.')
         self.assertEqual(self.pipeline.tools_asked[-1][2], True)
         self.pipeline.nextcloud_result = (('propose', proposal), 'test/model')
