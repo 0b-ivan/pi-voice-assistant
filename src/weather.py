@@ -393,3 +393,28 @@ def day_sentence(data, offset, lore='off'):
     text = (f"{day_label(offset, day['date'])}: {_degrees(day['low'])} bis "
             f"{_degrees(day['high'])} Grad" + (f", {sky}" if sky else '') + '.')
     return ' '.join([text] + _rain(day.get('rain'), lore))
+
+
+def card(data, day=0, today=None, now=None):
+    """The weather card for the browser (the Pi draws its own screen): the
+    chosen day with pictogram kind and label, plus up to five days. Only
+    numbers and fixed words, nothing from the weather service as text."""
+    import weather_icons
+    current = view(data, today, now)
+    if current is None:
+        return None
+    days = current['days'][:DAYS]
+    day = max(0, min(int(day or 0), len(days) - 1))
+
+    def entry(item, code):
+        kind = weather_icons.kind(code)
+        date = datetime.date.fromisoformat(item['date'])
+        return dict(date=item['date'], weekday=WEEKDAYS[date.weekday()][:2], kind=kind,
+                    label=weather_icons.LABELS[kind], high=_number(item.get('high')),
+                    low=_number(item.get('low')), rain=_number(item.get('rain')))
+
+    chosen = entry(days[day], current['code'] if day == 0 else days[day].get('code'))
+    chosen['title'] = 'Heute' if day == 0 else day_label(day, days[day]['date'])
+    if day == 0 and current.get('now') is not None:
+        chosen['now'] = _number(current['now'])
+    return dict(day=day, chosen=chosen, days=[entry(d, d.get('code')) for d in days])

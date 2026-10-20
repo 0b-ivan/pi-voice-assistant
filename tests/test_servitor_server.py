@@ -1355,6 +1355,32 @@ class IntentServerTest(ServerTest):
                                  else [dict(event='show', screen='weather', day=day)])
         self.assertIn('fünf Tage', reply)
 
+    def test_the_browser_gets_the_weather_card_along(self):
+        import datetime
+        today = datetime.date(2026, 10, 10)
+        days = [dict(date=(today + datetime.timedelta(days=i)).isoformat(), code=code,
+                     high=9 + i, low=4, rain=80 if code == 61 else 10)
+                for i, code in enumerate((0, 61, 3, 71, 95, 45))]
+        self.service.weather = unittest.mock.Mock()
+        self.service.weather.get.return_value = dict(now=7, code=0, days=days)
+        fixed = datetime.datetime(2026, 10, 10, 7, 5)
+        with unittest.mock.patch.object(ss.Service, 'now', return_value=fixed):
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1],
+                                              timeout=10)
+            conn.request('POST', '/v1/ask', body=json.dumps(
+                {'text': 'Wie wird das Wetter morgen?'}).encode(),
+                headers={'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Client': 'web',
+                         'X-Servitor-Browser': 'a' * 32})
+            events = self.events(conn.getresponse().read())
+        show = next(e for e in events if e['event'] == 'show')
+        card = show['weather']
+        self.assertEqual((show['day'], card['day']), (1, 1))
+        self.assertEqual(card['chosen'], dict(date='2026-10-11', weekday='So', kind='rain',
+                                              label='REGEN', high=10, low=4, rain=80,
+                                              title='Morgen'))
+        self.assertEqual([d['kind'] for d in card['days']],
+                         ['clear', 'rain', 'cloudy', 'snow', 'thunder'])
+
     def test_server_clock_uses_configured_timezone(self):
         self.assertEqual(str(self.service.now().tzinfo), 'Europe/Berlin')
 

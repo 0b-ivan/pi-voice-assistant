@@ -594,3 +594,46 @@ button.secondary { background: none; color: var(--text); border-color: var(--edg
   .dial-side .hw-row { flex-direction: column; align-items: center; gap: 16px; }
   .dial-side .hw-volume { width: 100%; max-width: none; }
 }
+
+/* Weather card (app.js addWeather): the Pi's AUSPEX screen, its colours
+   (weather_icons.py): amber sun, grey clouds, cyan water. */
+.log li.weather { border-left-color: var(--amber); width: min(100%, 26rem); }
+.log li.weather::before { content: none; }   /* .wx-head names it */
+.wx-head { font-size: .66rem; letter-spacing: .2em; color: var(--amber); margin-bottom: 4px; }
+.wx-main { display: flex; align-items: center; gap: 14px; }
+.wx-title { font-size: .72rem; letter-spacing: .15em; color: var(--muted); }
+.wx-big { font-size: 2.2rem; line-height: 1.05; color: #fff; }
+.wx-small { font-size: .85rem; color: var(--muted); }
+.wx-label { font-size: .85rem; letter-spacing: .12em; color: var(--amber); }
+.wx-rain { color: #50aaff; }
+.wx-days { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
+           list-style: none; margin: 8px 0 0; padding: 6px 0 0; border-top: 1px solid #414141; }
+.wx-days li { display: flex; flex-direction: column; align-items: center; gap: 2px;
+              padding: 3px 0; border: 1px solid transparent; font-size: .72rem;
+              color: #fff; background: none; box-shadow: none; backdrop-filter: none;
+              -webkit-backdrop-filter: none; max-width: none; }
+.wx-days li::before { content: none; }
+.wx-days li span:first-child { color: var(--muted); letter-spacing: .1em; font-size: .62rem; }
+.wx-days li.on { border-color: var(--amber); }
+.wx-days li.on span:first-child { color: var(--amber); }
+.wx-icon { flex: none; overflow: visible; }
+.wx-core { fill: #ffb000; stroke: #ffd660; stroke-width: .8; }
+.wx-ray { stroke: #ffb000; stroke-width: 1.4; stroke-linecap: round; }
+.wx-cloud { fill: #969ca8; }
+.wx-cloud.wx-dark { fill: #5c626e; }
+.wx-drop { stroke: #50aaff; stroke-width: 1.4; stroke-linecap: round; }
+.wx-flake { fill: #e8eef8; }
+.wx-fog { stroke: #80868e; stroke-width: 1.4; stroke-linecap: round; }
+.wx-bolt { fill: #ffe83c; }
+/* Like the Pi: rays pulse, clouds drift, rain and snow fall, lightning flashes. */
+.wx-ray-b { animation: wx-pulse 1s steps(2) infinite; }
+.wx-cloud { animation: wx-drift 4s ease-in-out infinite alternate; }
+.wx-drop, .wx-flake { animation: wx-fall 1s linear infinite; }
+.wx-bolt { animation: wx-flash 2.4s steps(1) infinite; }
+@keyframes wx-pulse { 50% { opacity: .25; } }
+@keyframes wx-drift { to { transform: translateX(1px); } }
+@keyframes wx-fall { from { transform: translateY(-2px); opacity: 0; } 30% { opacity: 1; }
+                     to { transform: translateY(3px); opacity: 0; } }
+@keyframes wx-flash { 0%, 80% { opacity: 1; } 85% { opacity: .2; } 90% { opacity: 1; } }
+body[data-effects="off"] .wx-icon *, body[data-effects="off"] .wx-icon { animation: none; }
+@media (prefers-reduced-motion: reduce) { .wx-icon, .wx-icon * { animation: none !important; } }

@@ -1523,8 +1523,14 @@ class Service:
                                else intents.briefing_day(self.now()))
                         snapshot['weather_day'] = day
                         if day is not None:
-                            # The Pi shows its stored forecast with the answer.
-                            emit(dict(event='show', screen='weather', day=day))
+                            # The Pi shows its stored forecast with the answer; the
+                            # browser has none and gets the card's numbers along.
+                            show = dict(event='show', screen='weather', day=day)
+                            card = (weather.card(snapshot['weather'], day, self.now().date())
+                                    if is_browser and snapshot['weather'] else None)
+                            if card:
+                                show['weather'] = card
+                            emit(show)
                     if intent in ('briefing', 'selftest') and self.logwatch is not None:
                         snapshot.update(self.logwatch.snapshot_fields('server_log'))
                         if intent == 'selftest' and not is_browser:

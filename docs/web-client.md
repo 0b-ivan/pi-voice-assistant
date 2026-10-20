@@ -317,6 +317,10 @@ Er schickt weder `memory` noch `devctl` noch `trip` im Status, daher:
 - Akku-, Temperatur- und Netzfragen antworten „nicht verfügbar“ – es gibt kein
   Gerät, das sie messen könnte.
 
+Wetterfragen und Morgen-/Abendbericht zeigen im Chat eine Wetterkarte wie die
+AUSPEX-Anzeige des Pi: Piktogramm, Temperatur, fünf Tage (`show` mit `weather`,
+nur für den Browser; Zahlen und feste Wörter aus `weather.card`).
+
 Uhrzeit, Datum, Wetter, „wer bist du“, freie Fragen an
 das LLM und Geschichten funktionieren wie am Pi.
 
