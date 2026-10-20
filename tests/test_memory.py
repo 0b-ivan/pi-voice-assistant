@@ -93,6 +93,12 @@ class CommandTests(unittest.TestCase):
 
 
 class HeaderAndPromptTests(unittest.TestCase):
+    def test_web_operator_prompt_names_the_operator_without_learning(self):
+        text = memory.prompt_section(dict(history=[], speaker='Ivan', channel='web'))
+        self.assertIn('Ivan, der Bediener, angemeldet im Web-Client', text)
+        self.assertNotIn(memory.LEARN_INSTRUCTION, text)
+        self.assertIn('keine MERKE', text)
+
     def test_header_round_trip_drops_junk(self):
         copy = dict(facts=["a fact", 3, ""], directives=["d" * 500], history=[dict(q="q", a="a"), "x"],
                     total_facts=-5, extra="ignored")

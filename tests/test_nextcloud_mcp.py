@@ -181,6 +181,53 @@ class LoopTests(unittest.TestCase):
             nc.run([], chat, FakeClient(tools=[TOOLS[3]]))
 
 
+class LocalToolTests(unittest.TestCase):
+    class Tool:
+        name = 'kuma_status'
+        spec = {'type': 'function', 'function': {'name': 'kuma_status', 'parameters': {}}}
+
+        def __init__(self, fail=False):
+            self.fail, self.calls = fail, []
+
+        def call(self, args):
+            self.calls.append(args)
+            if self.fail:
+                raise ValueError('broken')
+            return '{"dienste": []}'
+
+    def chat_calling(self, name, seen):
+        def chat(messages, specs):
+            seen.append((messages, specs))
+            if len(seen) == 1:
+                return {'content': '', 'tool_calls': [tool_call(name, {'stunden': 24})]}
+            return {'content': 'Alles erreichbar.'}
+        return chat
+
+    def test_local_tools_run_without_a_nextcloud_client(self):
+        tool, seen = self.Tool(), []
+        self.assertEqual(nc.run([], self.chat_calling('kuma_status', seen), None, local=[tool]),
+                         ('answer', 'Alles erreichbar.'))
+        self.assertEqual(tool.calls, [{'stunden': 24}])
+        self.assertEqual([s['function']['name'] for s in seen[0][1]], ['kuma_status'])
+        self.assertEqual(seen[1][0][-1]['content'], '{"dienste": []}')
+
+    def test_local_tools_next_to_nextcloud_and_failures(self):
+        client, seen = FakeClient(), []
+        nc.run([], self.chat_calling('kuma_status', seen), client, local=[self.Tool()])
+        self.assertEqual({s['function']['name'] for s in seen[0][1]},
+                         {'nc_calendar_list_events', 'nc_calendar_create_event',
+                          'nc_contacts_search_contacts', 'kuma_status'})
+        seen = []
+        nc.run([], self.chat_calling('kuma_status', seen), None, local=[self.Tool(fail=True)])
+        self.assertEqual(seen[1][0][-1]['content'], 'Fehler: ValueError')
+        seen = []   # without a client no Nextcloud tool runs, not even a write
+        nc.run([], self.chat_calling('nc_calendar_create_event', seen), None,
+               local=[self.Tool()])
+        self.assertEqual(seen[1][0][-1]['content'], 'Nicht erlaubt.')
+        with self.assertRaises(nc.MCPError):
+            nc.run([], self.chat_calling('kuma_status', []), None)
+
+
 class ConsentTests(unittest.TestCase):
     def test_topic_gate(self):
         for text in ('was steht morgen in meinem kalender', 'trag einen termin ein',

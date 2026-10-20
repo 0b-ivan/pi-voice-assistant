@@ -191,3 +191,5 @@ Nach diesen Entscheidungen wird der [Umsetzungsauftrag](CLAUDE_AUFTRAG.md) neu g
   - `GET /v1/status` (nur mit Token) enthält zusätzlich `watch` samt der letzten Fehlermeldungen.
 - **Fremddaten:** Monitornamen werden auf einen einfachen Zeichensatz gekürzt. Fehlermeldungen aus Uptime Kuma stehen nur im Journal und in `/v1/status`, nie in einer Ansage oder einem Prompt.
 - **Noch offen:** `/metrics` mit API-Schlüssel (Entscheidung 2), Webhook, Wachziele im Web-Client, Hosts per SSH, Korrelation mit Host-Ereignissen.
+
+**20.10.2026: Werkzeug `kuma_status` für das Modell** ([Nextcloud über MCP, Abschnitt Systemwache](../../nextcloud.md#systemwache-uptime-kuma-als-werkzeug)). Detailfragen und frei formulierte Fragen nach Diensten beantwortet das Modell mit diesem Werkzeug, für den erkannten Bediener am Pi und den angemeldeten Web-Client. Damit gehen Dienstnamen, Zustände, Zeiten und Verfügbarkeit an OpenRouter. Kumas Fehlermeldungen und Adressen gehen weiterhin nie dorthin. Allgemeine Fragen bleiben bei der festen Antwort.

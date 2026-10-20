@@ -300,11 +300,18 @@ Antworten kommen als Ogg/Opus, wenn der Browser es abspielen kann, sonst WAV.
 
 ## Was der Web-Client nicht kann (absichtlich)
 
-Der Browser ist ein **Gast**. Er schickt weder `memory` noch `devctl` noch
-`trip` im Status, daher:
+Seit 20.10.2026 gilt ein **angemeldeter** Browser (Kennwort-Sitzung oder Token)
+als **Bediener**: Name aus `SERVITOR_WEB_OPERATOR` (Standard `Ivan`, `off`
+macht den Browser wieder zum Gast). Damit bekommt er die Nextcloud-Werkzeuge
+(Kalender immer über Nextcloud, Eintragen nach „ja“ aus derselben
+Browser-Sitzung) und das Systemwache-Werkzeug ([Nextcloud über MCP](nextcloud.md)).
+Später soll das eine Gruppe in Authentik entscheiden statt das Kennwort.
 
-- kein **persönliches Pi-Gedächtnis** (Fakten und Direktiven bleiben auf dem USB-Stick),
-  keine Stimmerkennung, keine Termine aus Nextcloud,
+Er schickt weder `memory` noch `devctl` noch `trip` im Status, daher:
+
+- kein **persönliches Pi-Gedächtnis** (Fakten und Direktiven bleiben auf dem USB-Stick,
+  das Modell schreibt im Web keine MERKE-Zeilen), keine Stimmerkennung, keine Termine
+  vom Pi (Kalenderfragen gehen an Nextcloud),
 - keine Gerätesteuerung (WLAN, Neustart, Herunterfahren) und kein Wartungsmodus,
 - keine Fahrtauskunft (die fragt der Pi selbst ab),
 - Akku-, Temperatur- und Netzfragen antworten „nicht verfügbar“ – es gibt kein
@@ -318,7 +325,7 @@ das LLM und Geschichten funktionieren wie am Pi.
 Der Web-Client hält einen temporären Gesprächsverlauf **nur im RAM von CT 107**.
 Die Selektion der letzten und zum Thema passenden Runden benutzt die bereits
 vorhandene `src/conversation.py`, aber nicht deren personenbezogene
-Stick-Speicherung. Eine Browser-Anmeldung entspricht **keiner erkannten Stimme**.
+Stick-Speicherung. Eine Browser-Anmeldung gilt als Bediener (siehe oben), ersetzt aber keine erkannte Stimme am Pi: Gedächtnis und Gerätesteuerung bleiben dort.
 
 - `POST /v1/web/conversation` erzeugt eine zufällige Gesprächs-ID; „Neues
   Gespräch“ beendet die alte Konversation samt noch offener Diagnoseaufträge.

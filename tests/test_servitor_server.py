@@ -61,8 +61,11 @@ class FakePipeline:
     def nextcloud_enabled(self):
         return self.nextcloud_result is not None
 
-    def nextcloud_reply(self, text, lore=None, mode=None, memory=None, persona=None, mood=None):
+    def nextcloud_reply(self, text, lore=None, mode=None, memory=None, persona=None, mood=None,
+                        local=(), nextcloud=True):
         self.nextcloud_asked = getattr(self, 'nextcloud_asked', 0) + 1
+        self.tools_asked = getattr(self, 'tools_asked', []) + [
+            (text, [t.name for t in local], nextcloud)]
         return self.nextcloud_result
 
     def nextcloud_call(self, proposal):
@@ -979,6 +982,107 @@ class IntentServerTest(ServerTest):
             self.assertIn('Von 8 überwachten Diensten ist einer ausgefallen: vault.obivan.org',
                           answer['text'])
             self.assertIn('Systemwache: vault.obivan.org ist seit', reply('guten morgen')['text'])
+
+    def kuma_watch(self, directory):
+        import systemwache
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_systemwache import FakeKuma
+        kuma = FakeKuma()
+        watch = systemwache.KumaWatch('https://u', ['cloud', 'vault'], directory=directory,
+                                      fetch=kuma)
+        watch.poll()
+        kuma.beat(16, systemwache.DOWN, slug='vault')
+        watch.poll()
+        watch.poll()
+        self.service.watch = watch
+        return watch
+
+    def web_ask(self, text, browser='a' * 32):
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)
+        conn.request('POST', '/v1/ask', body=json.dumps({'text': text}).encode(),
+                     headers={'Authorization': f'Bearer {TOKEN}', 'X-Servitor-Client': 'web',
+                              'X-Servitor-Browser': browser})
+        events = self.events(conn.getresponse().read())
+        conn.close()
+        return next(e for e in events if e['event'] == 'reply')
+
+    def test_kuma_details_go_to_the_model_with_the_watch_tool_in_the_web(self):
+        self.pipeline.fail_llm = True
+        self.pipeline.nextcloud_result = (('answer', 'Vault war gestern 12 Minuten weg.'),
+                                          'test/model')
+        with tempfile.TemporaryDirectory() as directory:
+            self.kuma_watch(directory)
+            answer = self.web_ask('Wie lange war Vault gestern down?')
+            self.assertEqual(answer['text'], 'Vault war gestern 12 Minuten weg.')
+            # The Systemwache tool only: Nextcloud stays with the operator's Pi voice.
+            self.assertEqual(self.pipeline.tools_asked,
+                             [('Wie lange war Vault gestern down?', ['kuma_status'], False)])
+            self.web_ask('Hatte Vaultwarden heute Ärger?')                # free wording
+            self.assertEqual(self.pipeline.tools_asked[-1][1], ['kuma_status'])
+            answer = self.web_ask('Was ist bei Uptime Kuma los?')        # the fixed answer
+            self.assertTrue(answer['model'].startswith('local/intent'))
+            self.assertEqual(len(self.pipeline.tools_asked), 2)
+            self.pipeline.fail_llm = False
+            self.web_ask('Wie hoch ist der Eiffelturm?')
+            self.assertEqual(len(self.pipeline.tools_asked), 2)          # no tools off topic
+
+    def test_the_signed_in_web_client_is_the_operator(self):
+        self.web_ask('Wie hoch ist der Eiffelturm?')
+        self.assertEqual(self.pipeline.memory, dict(history=[], speaker='Ivan', channel='web'))
+        with unittest.mock.patch.dict(os.environ, {'SERVITOR_WEB_OPERATOR': 'off'}):
+            self.web_ask('Wie hoch ist der Eiffelturm?')
+        self.assertNotIsInstance(self.pipeline.memory, dict)   # no operator, no memory
+        self.assertIsNone(ss.web_operator_name({'SERVITOR_WEB_OPERATOR': 'off'}))
+        self.assertEqual(ss.web_operator_name({}), 'Ivan')
+
+    def test_web_operator_gets_nextcloud_and_confirms_in_the_same_browser(self):
+        import nextcloud_mcp
+        proposal = nextcloud_mcp.Proposal('nc_calendar_create_todo', {'summary': 'Müll'})
+        self.pipeline.nextcloud_result = (('answer', 'Freitag: Zahnarzt.'), 'test/model')
+        answer = self.web_ask('hi! was steht im Kalender?')   # no Pi agenda in the browser
+        self.assertEqual(answer['text'], 'Freitag: Zahnarzt.')
+        self.assertEqual(self.pipeline.tools_asked[-1][2], True)
+        self.pipeline.nextcloud_result = (('propose', proposal), 'test/model')
+        self.assertEqual(self.web_ask('Leg eine Aufgabe Müll rausbringen an')['text'],
+                         proposal.question())
+        self.assertEqual(self.web_ask('ja', browser='b' * 32)['text'], nextcloud_mcp.CANCELLED)
+        self.assertEqual(getattr(self.pipeline, 'nextcloud_written', []), [])
+        self.web_ask('Leg eine Aufgabe Müll rausbringen an')
+        self.assertEqual(self.web_ask('ja')['text'], 'Aufgabe angelegt.')
+        self.assertEqual(self.pipeline.nextcloud_written, ['nc_calendar_create_todo'])
+
+    def test_kuma_tool_down_falls_back_to_the_fixed_answer(self):
+        self.pipeline.fail_llm = True
+        self.pipeline.nextcloud_result = None          # OpenRouter or the tool path failed
+        with tempfile.TemporaryDirectory() as directory:
+            self.kuma_watch(directory)
+            answer = self.web_ask('Wie lange war Vault gestern down?')
+        self.assertEqual(answer['model'], 'local/intent')
+        self.assertIn('ausgefallen: vault.obivan.org seit', answer['text'])
+
+    def test_kuma_tool_needs_the_operator_or_the_signed_in_web(self):
+        self.pipeline.fail_llm = True
+        self.pipeline.nextcloud_result = (('answer', 'unused'), 'test/model')
+        copy = dict(facts=[], directives=[], history=[],
+                    voiceprints=[dict(name='Ivan', print='AAAA')])
+        with tempfile.TemporaryDirectory() as directory:
+            self.kuma_watch(directory)
+            text, _ = self.device_turn('wie lange war vault gestern down', {})  # no memory
+            self.assertIn('vault.obivan.org', text)
+            with unittest.mock.patch.object(ss.Service, '_identify',
+                                            lambda self, audio, c, emit, voice=None:
+                                            dict(c, speaker='unknown')):
+                text, _ = self.device_turn('wie lange war vault gestern down',
+                                           {'memory': 'on'}, copy)
+            self.assertIn('Bediener vorbehalten', text)
+            self.assertEqual(getattr(self.pipeline, 'tools_asked', []), [])
+            with unittest.mock.patch.object(ss.Service, '_identify',
+                                            lambda self, audio, c, emit, voice=None:
+                                            dict(c, speaker='Ivan')):
+                text, _ = self.device_turn('wie lange war vault gestern down',
+                                           {'memory': 'on'}, copy)
+            self.assertEqual(text, 'unused')
+            self.assertEqual(self.pipeline.tools_asked[-1][1:], (['kuma_status'], False))
 
     def request_with_status(self, status):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=10)

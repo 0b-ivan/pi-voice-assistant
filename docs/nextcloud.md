@@ -14,7 +14,7 @@ Bediener: „Ja, bitte eintragen.“ → Termin angelegt → „Termin eingetrag
 Alle Bedingungen müssen erfüllt sein, sonst antwortet Proximus wie bisher ohne Werkzeuge (kein Umweg, keine zusätzliche Wartezeit):
 
 - `SERVITOR_NEXTCLOUD_MCP_URL` ist auf CT 107 gesetzt.
-- Die Stimme wurde als **Bediener** erkannt (Gäste, unbekannte Stimmen, Web-Client und getippte Fragen bekommen keine Werkzeuge).
+- Die Stimme wurde am Pi als **Bediener** erkannt, oder der Web-Client ist angemeldet (Kennwort oder Token, gilt als Bediener `SERVITOR_WEB_OPERATOR`, Standard Ivan). Gäste, unbekannte Stimmen und am Pi getippte Fragen bekommen keine Werkzeuge. Im Web bestätigt nur dieselbe Browser-Sitzung eine Rückfrage, und Kalenderfragen gehen dort immer an Nextcloud (der Browser hat keine Termine vom Pi).
 - Die Frage handelt von Kalender, Terminen, Aufgaben, Kontakten, Deck, Notizen, Einkaufsliste oder Dateien (`nextcloud_mcp.wants`); feste Absichten wie „Was steht heute an?“ beantwortet weiterhin das Regelwerk mit den Terminen vom Pi.
 - Sprachkern nicht LOKAL, OpenRouter nicht in der Abkühlpause nach einem Fehler. Das lokale Modell bekommt nie Werkzeuge.
 
@@ -48,3 +48,18 @@ Das Modell kann nichts selbst ausführen: Der erste schreibende Werkzeugaufruf b
 3. `systemctl restart servitor-voice.service`; prüfen mit „Was steht nächste Woche im Kalender?“ (Journal ohne `nextcloud_failed`).
 
 Nextcloud-Fragen nutzen immer das eingestellte Standardmodell (`OPENROUTER_LLM_MODEL`, das muss Werkzeugaufrufe beherrschen; `mistralai/mistral-medium-3-5` kann es, geprüft 20.10.2026), auch bei Sprachkern FREI: Das FREI-Modell kennt keine Werkzeuge. OpenRouter sieht dabei Frage und Werkzeugergebnisse (Termine, Kontakte) als Text.
+
+## Systemwache (Uptime Kuma) als Werkzeug
+
+Stand 20.10.2026. Derselbe Werkzeugweg kennt ein zweites, nur lesendes Werkzeug ohne MCP: `kuma_status` ([`src/systemwache.py`](../src/systemwache.py), `StatusTool`). Es liefert dem Modell den Zustand, den die [Systemwache](concepts/proximus-systemwache/KONZEPT.md) auf CT 107 ohnehin jede Minute von den Kuma-Statusseiten holt: je Dienst erreichbar, ausgefallen oder in Wartung und seit wann, Verfügbarkeit der letzten 24 Stunden, Ereignisse bis 7 Tage zurück (Ausfälle, Wiederkehr mit Dauer, Wartung, Zertifikate, Statusseite nicht abrufbar). Kumas Fehlermeldungen und Adressen gibt es nie an das Modell weiter, Dienstnamen nur bereinigt.
+
+```text
+„Was ist bei Uptime Kuma los?“             → feste Antwort der Systemwache, wie bisher
+„Wie lange war Vault gestern down?“         → Modell + kuma_status
+„Hatte Vaultwarden heute Ärger?“            → Modell + kuma_status (Name eines überwachten Dienstes)
+```
+
+- **Wer:** wie oben, erkannter Bediener am Pi oder angemeldeter Web-Client (gesprochen oder getippt). Unbekannte Stimmen bekommen weiter „Zugriff verweigert“.
+- **Wann:** Allgemeine Fragen beantwortet die feste Absicht `watch`. Fragt man nach mehr („wann“, „wie lange“, „wie oft“, „gestern“, „Woche“, „Verfügbarkeit“, „Zertifikat“, „zuletzt“ – `systemwache.detail`) oder frei formuliert nach Ausfällen, Störungen oder einem überwachten Dienst (`systemwache.wants`), geht die Frage mit dem Werkzeug an das Modell.
+- **Ausfall:** Klappt der Werkzeugweg nicht (OpenRouter weg, Sprachkern LOKAL), kommt die feste Antwort der Systemwache, nie ein geratener Zustand.
+- **Voraussetzung:** nur `SERVITOR_KUMA_URL` und `SERVITOR_KUMA_PAGES`; `SERVITOR_NEXTCLOUD_MCP_URL` ist dafür nicht nötig. Sichtbar ist, was auf den eingestellten Statusseiten steht.
