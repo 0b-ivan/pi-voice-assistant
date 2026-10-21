@@ -897,6 +897,9 @@ function setOption(name, value) {
 // Billy's is bone (header, call unit, browser icon).
 function renderSigil() {
   const servitor = state.persona !== 'mensch';
+  // The HUD's data rows show what the switches are set to.
+  $('hud-persona').textContent = servitor ? 'SERVITOR' : 'BILLY';
+  $('hud-core').textContent = ({ auto: 'AUTO', free: 'FREI', local: 'LOKAL' })[state.llm_mode] || '–';
   for (const use of document.querySelectorAll('.persona-sigil use')) {
     use.setAttribute('href', servitor ? '#skull-bionic' : '#skull-cog');
   }
@@ -1191,6 +1194,8 @@ async function health() {
   Object.assign(Vox.live, { link, latency });
   pill.dataset.state = link;
   pill.textContent = link === 'ok' ? `Signal ${latency} ms` : link === 'loading' ? 'Sprachkern startet' : 'Kein Träger';
+  $('hud-signal').textContent = link === 'ok' ? `${latency} MS` : link === 'loading' ? 'STARTET' : 'KEIN TRÄGER';
+  $('hud-signal').dataset.state = link;
   $('lamp-link').dataset.on = link === 'ok' && Vox.connected ? 'yes' : 'no';
   return link;
 }
@@ -1377,6 +1382,13 @@ Vox.start({ scopes: [$('scope'), $('dial-scope')], needles: [...document.querySe
 buildHardware();
 renderHardware();
 renderSigil();
+// The HUD's status bar: date and time of the operator's clock.
+const hudClock = () => {
+  const now = new Date();
+  $('hud-clock').textContent = `DAT ${now.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} · ${now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
+};
+hudClock();
+setInterval(hudClock, 15000);
 $('dial-form').dataset.known = state.token ? 'yes' : 'no';
 dialLine(state.token ? 'Kennung hinterlegt. Bereit zum Anruf.' : 'Kennwort eingeben, dann anrufen.');
 checkSession().then(({ ok }) => {

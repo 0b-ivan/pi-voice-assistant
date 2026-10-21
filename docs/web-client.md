@@ -260,6 +260,24 @@ S-Meter mit Skala 1–9: roter Bereich links für schwaches Signal, rechts
 stark. Im Ruhezustand zeigt es die Signalstärke aus der gemessenen Laufzeit
 zu `/health`, beim Senden und Empfangen den Sprachpegel.
 
+### Monitor im Stil von „Secret Level“ (Warhammer 40K)
+
+Angelehnt an die Bildschirme aus der Warhammer-Episode von *Secret Level*:
+
+- **Gehäuse:** schweres Eisen mit abgeschrägten Ecken, Fase um das Glas,
+  Nieten, oben der Schädel der gewählten Persona, unten ein grüner
+  Leuchtschlitz (beim Senden rot).
+- **HUD im Glas:** feiner Rahmen mit Eckmarken, Beschriftungen in Pixelschrift
+  (Pixelify Sans, SIL OFL, `web/fonts/`).
+- **Schritt als Banner:** in Ruhe umrahmtes Feld („KANAL OFFEN“), sonst ein
+  greller, ausgefranster Banner – rot beim Senden, bernstein beim Denken,
+  grün bei eingehender Antwort. Ersetzt die Schrittanzeige in der Kopfzeile.
+- **Datenzeilen** (Desktop): KANAL, SIGNAL (gemessene Laufzeit), PERSONA,
+  SPRACHKERN – echte Werte, keine Dekoration.
+- **Statuszeile** unten: `VOX · CT 107` und Datum/Uhrzeit.
+- **Kerzenlicht:** warmes, flackerndes Licht aus den Ecken des Raums (ruht bei
+  ausgeschalteten Vox-Effekten und bei „Bewegung reduzieren“).
+
 ### Schrift, Symbole, Litaneien
 
 - **Schrift:** Beschriftungen auf Gehäuse, Knöpfen und im Protokoll in

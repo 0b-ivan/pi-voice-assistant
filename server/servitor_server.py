@@ -129,6 +129,8 @@ WEB_FILES = {
     '/web/fonts/schola-regular.woff2': ('fonts/schola-regular.woff2', 'font/woff2'),
     '/web/fonts/schola-bold.woff2': ('fonts/schola-bold.woff2', 'font/woff2'),
     '/web/fonts/share-tech-mono.woff2': ('fonts/share-tech-mono.woff2', 'font/woff2'),
+    '/web/fonts/pixelify-sans-400.woff2': ('fonts/pixelify-sans-400.woff2', 'font/woff2'),
+    '/web/fonts/pixelify-sans-700.woff2': ('fonts/pixelify-sans-700.woff2', 'font/woff2'),
 }
 WEB_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
            "media-src 'self' blob: data:; connect-src 'self'; worker-src 'self'; "

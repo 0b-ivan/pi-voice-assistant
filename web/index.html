@@ -13,6 +13,7 @@
   <script src="/web/app.js" defer></script>
 </head>
 <body data-effects="on" data-connected="no">
+  <div class="candlelight" aria-hidden="true"></div>
   <!-- Sigils of the Cult Mechanicus, drawn for this project (web/mechanicus.svg and
        web/mechanicus-servitor.svg are the same skulls as files for the icon).
        Coloured with currentColor. #skull-bionic (half machine) belongs to the
@@ -134,10 +135,21 @@
   </header>
 
   <div class="deck">
+  <!-- The monitor: a heavy chamfered iron bezel (skull ornament on top, lit
+       slot below) around a phosphor screen laid out like a HUD. -->
+  <div class="bezel">
+  <svg class="bezel-skull persona-sigil" aria-hidden="true"><use href="#skull-bionic"/></svg>
   <main id="chat" class="chat crt" data-state="idle">
     <div class="backdrop" aria-hidden="true"></div>
+    <div class="hud-frame" aria-hidden="true"></div>
     <canvas id="scope" class="scope" aria-hidden="true"></canvas>
-    <p id="readout" class="readout" data-state="idle" aria-hidden="true">KANAL OFFEN</p>
+    <p id="readout" class="readout banner" data-state="idle" aria-hidden="true">KANAL OFFEN</p>
+    <dl class="hud-data" aria-label="Verbindungsdaten">
+      <dt>KANAL</dt><dd>107</dd>
+      <dt>SIGNAL</dt><dd id="hud-signal">–</dd>
+      <dt>PERSONA</dt><dd id="hud-persona">–</dd>
+      <dt>SPRACHKERN</dt><dd id="hud-core">–</dd>
+    </dl>
     <ol id="journal" class="journal" aria-hidden="true"></ol>
     <ol id="log" class="log" aria-live="polite"></ol>
     <div class="hint">
@@ -145,8 +157,11 @@
       <p>Zum Sprechen die Sendetaste halten, zum Schreiben das Eingabefeld nutzen.</p>
       <p id="hint-litany" class="litany">Der Maschinengeist lauscht.</p>
     </div>
+    <p class="hud-status" aria-hidden="true"><span>VOX · CT 107</span><span id="hud-clock"></span></p>
     <div class="scanlines" aria-hidden="true"></div>
   </main>
+  <span class="bezel-slot" aria-hidden="true"></span>
+  </div>
 
   <!-- Desktop: the operating panel beside the monitor, like a field radio. -->
   <aside class="panel plate" aria-label="Bedienteil">
