@@ -271,7 +271,9 @@ class RealPipeline:
         # Operator's Nextcloud through the MCP server (docs/nextcloud.md); None: off.
         url = nextcloud_mcp.configured_url()
         self.nextcloud = nextcloud_mcp.Client(url) if url else None
-        self.nextcloud_down = False     # last call failed: the next success is logged
+        # True at start: the first success after a restart is logged too, logwatch
+        # needs it to close failures from before the restart.
+        self.nextcloud_down = True
         self.agenda_cache = None        # (monotonic time, day, events) for the browser
 
     def load(self):
@@ -297,8 +299,12 @@ class RealPipeline:
         self.synthesize('Bereit.').unlink()
         if os.environ.get('SERVITOR_LOCAL_LLM') == '1':
             # Page the GGUF in and cache the system prompt; never fatal.
-            from llm import LLMError, generate_local_reply
+            from llm import LLMError, generate_local_reply, local_llm_busy
             try:
+                if local_llm_busy():
+                    # Nextcloud's assistant is using it: alive, just not free.
+                    print(json.dumps(dict(event='local_llm_busy')), flush=True)
+                    return
                 generate_local_reply('Bereit?')
             except LLMError as exc:
                 print(json.dumps(dict(event='local_llm_warmup_failed', error=str(exc))),
