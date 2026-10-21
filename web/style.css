@@ -80,7 +80,7 @@ button, input, select { font: inherit; color: inherit; }
   padding: 8px calc(var(--gutter) + 12px); padding-top: max(8px, env(safe-area-inset-top));
 }
 .sigil {
-  flex: none; width: 26px; height: 26px; color: var(--brass);
+  flex: none; width: 34px; height: 34px; color: var(--brass);
   filter: drop-shadow(0 1px 0 #ffffff22) drop-shadow(0 -1px 0 #000c);
 }
 .cogitator { display: none; flex: none; width: 22px; height: 22px; color: var(--amber); opacity: .25; }

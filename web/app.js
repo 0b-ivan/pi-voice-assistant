@@ -890,6 +890,17 @@ function setOption(name, value) {
     Vox.setVolume(state.volume / 10);
   }
   renderHardware();
+  renderSigil();
+}
+
+// The persona shows in the sigil: the Servitor's skull is half machine,
+// Billy's is bone (header, call unit, browser icon).
+function renderSigil() {
+  const servitor = state.persona !== 'mensch';
+  for (const use of document.querySelectorAll('.persona-sigil use')) {
+    use.setAttribute('href', servitor ? '#skull-bionic' : '#skull-cog');
+  }
+  $('favicon').href = servitor ? '/web/mechanicus-servitor.svg' : '/web/mechanicus.svg';
 }
 
 function element(tag, className, text) {
@@ -1365,6 +1376,7 @@ Vox.setVolume(state.volume / 10);
 Vox.start({ scopes: [$('scope'), $('dial-scope')], needles: [...document.querySelectorAll('.gauge-needle')] });
 buildHardware();
 renderHardware();
+renderSigil();
 $('dial-form').dataset.known = state.token ? 'yes' : 'no';
 dialLine(state.token ? 'Kennung hinterlegt. Bereit zum Anruf.' : 'Kennwort eingeben, dann anrufen.');
 checkSession().then(({ ok }) => {

@@ -269,7 +269,9 @@ zu `/health`, beim Senden und Empfangen den Sprachpegel.
   verkleinert, je ca. 19 KB. Der Fernschreibertext bleibt Monospace.
 - **Symbole** (selbst gezeichnete SVGs nach den Transferbögen):
   Schädel im Zahnrad (Kopfzeile, Anruf-Gerät, Browser-Symbol
-  `web/mechanicus.svg`), Zahnrad mit drei Sechsecken (Wasserzeichen im
+  `web/mechanicus.svg`; mit Persona „Servitor“ der Schädel mit bionischer
+  Maschinenhälfte, `web/mechanicus-servitor.svg`, er wechselt mit dem
+  Persona-Wahlschalter), Zahnrad mit drei Sechsecken (Wasserzeichen im
   Anruf-Bildschirm), Zahnrad mit Dürers magischem Quadrat (dreht sich in der
   Kopfzeile, solange der Server arbeitet, und steht über dem leeren Protokoll).
 - **Litaneien:** Die Wählsequenz folgt der Litanei der Zündung („Die Seele

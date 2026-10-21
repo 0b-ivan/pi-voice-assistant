@@ -871,6 +871,16 @@ class ServerTest(unittest.TestCase):
                                      '/v1/login', '/v1/logout', '/v1/session'))
         self.assertIn("addModule('/web/capture-worklet.js')", script)
 
+    def test_persona_sigils_exist_for_both_personas(self):
+        html = (ss.WEB / 'index.html').read_text()
+        script = (ss.WEB / 'app.js').read_text()
+        for sigil in ('skull-bionic', 'skull-cog'):
+            self.assertIn(f'<symbol id="{sigil}"', html)
+            self.assertIn(f"'#{sigil}'", script)
+        for icon in ('/web/mechanicus.svg', '/web/mechanicus-servitor.svg'):
+            self.assertIn(icon, ss.WEB_FILES)
+            self.assertIn(icon, script)
+
     def test_speak_requires_string_text(self):
         for payload in ({'text': None}, {'text': ['a']}, {'text': 5}):
             with self.subTest(payload=payload):
