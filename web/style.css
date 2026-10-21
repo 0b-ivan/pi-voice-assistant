@@ -8,6 +8,14 @@
   font-family: "Schola"; font-weight: 400; font-style: normal; font-display: swap;
   src: url("/web/fonts/schola-regular.woff2") format("woff2");
 }
+@font-face {   /* HUD lettering: Pixelify Sans, SIL Open Font License */
+  font-family: "Pixelify Sans"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/web/fonts/pixelify-sans-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pixelify Sans"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("/web/fonts/pixelify-sans-700.woff2") format("woff2");
+}
 @font-face {   /* teleprinter: Share Tech Mono, SIL Open Font License */
   font-family: "Share Tech Mono"; font-weight: 400; font-style: normal; font-display: swap;
   src: url("/web/fonts/share-tech-mono.woff2") format("woff2");
@@ -80,7 +88,7 @@ button, input, select { font: inherit; color: inherit; }
   padding: 8px calc(var(--gutter) + 12px); padding-top: max(8px, env(safe-area-inset-top));
 }
 .sigil {
-  flex: none; width: 26px; height: 26px; color: var(--brass);
+  flex: none; width: 34px; height: 34px; color: var(--brass);
   filter: drop-shadow(0 1px 0 #ffffff22) drop-shadow(0 -1px 0 #000c);
 }
 .cogitator { display: none; flex: none; width: 22px; height: 22px; color: var(--amber); opacity: .25; }
@@ -637,3 +645,138 @@ button.secondary { background: none; color: var(--text); border-color: var(--edg
 @keyframes wx-flash { 0%, 80% { opacity: 1; } 85% { opacity: .2; } 90% { opacity: 1; } }
 body[data-effects="off"] .wx-icon *, body[data-effects="off"] .wx-icon { animation: none; }
 @media (prefers-reduced-motion: reduce) { .wx-icon, .wx-icon * { animation: none !important; } }
+
+/* === Secret-Level look: candlelit room, chamfered iron monitor, HUD screen ===== */
+:root { --pixel: "Pixelify Sans", var(--mono); --chamfer: 18px; }
+
+/* Warm, flickering candlelight from the corners of the room. */
+.candlelight {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 45% 60% at 0% 100%, #ff9a3a30, transparent 70%),
+    radial-gradient(ellipse 45% 60% at 100% 100%, #ff9a3a30, transparent 70%),
+    radial-gradient(ellipse 35% 45% at 0% 0%, #ff8a2a1c, transparent 70%),
+    radial-gradient(ellipse 35% 45% at 100% 0%, #ff8a2a1c, transparent 70%);
+  animation: candle 3.4s infinite;
+}
+@keyframes candle { 0%, 100% { opacity: .85; } 18% { opacity: 1; } 33% { opacity: .72; } 58% { opacity: .95; } 79% { opacity: .8; } }
+body[data-effects="off"] .candlelight { animation: none; }
+.deck { position: relative; z-index: 1; }
+.plate { box-shadow: inset 0 1px 0 #ffb0602a, inset 0 -1px 0 #0008; }
+.dial {
+  background:
+    radial-gradient(ellipse 45% 60% at 0% 100%, #ff9a3a2a, transparent 70%),
+    radial-gradient(ellipse 45% 60% at 100% 100%, #ff9a3a2a, transparent 70%),
+    radial-gradient(ellipse at 50% 30%, #1d2119, #070806 75%);
+}
+
+/* The monitor bezel: heavy iron with chamfered corners, a bevel ring, rivets,
+   the persona's skull on top and a lit slot below. */
+.bezel {
+  position: relative; flex: 1; min-width: 0; min-height: 0; display: flex;
+  margin: 12px calc(var(--gutter) + 2px) 10px; padding: 30px 14px 22px;
+  background:
+    radial-gradient(circle at 26px 26px, #8a8670 0 2px, #000a 2.6px, transparent 3.6px),
+    radial-gradient(circle at calc(100% - 26px) 26px, #8a8670 0 2px, #000a 2.6px, transparent 3.6px),
+    radial-gradient(circle at 26px calc(100% - 26px), #8a8670 0 2px, #000a 2.6px, transparent 3.6px),
+    radial-gradient(circle at calc(100% - 26px) calc(100% - 26px), #8a8670 0 2px, #000a 2.6px, transparent 3.6px),
+    linear-gradient(180deg, #55543f, #34331f 45%, #1c1b12);
+  clip-path: polygon(var(--chamfer) 0, calc(100% - var(--chamfer)) 0, 100% var(--chamfer),
+                     100% calc(100% - var(--chamfer)), calc(100% - var(--chamfer)) 100%,
+                     var(--chamfer) 100%, 0 calc(100% - var(--chamfer)), 0 var(--chamfer));
+}
+.bezel::before {   /* bevel ring around the glass */
+  content: ""; position: absolute; inset: 22px 8px 14px; z-index: 0; border-radius: 14px;
+  background: linear-gradient(180deg, #0c0c08, #2a291d);
+  box-shadow: inset 0 2px 3px #000, 0 1px 0 #ffffff14;
+}
+.deck .bezel .chat {
+  position: relative; z-index: 1; flex: 1; min-width: 0; margin: 0; border-radius: 12px;
+  box-shadow: inset 0 0 70px #000e, inset 0 0 12px #8dff6a22, 0 0 0 3px #080906;
+}
+.bezel-skull {
+  position: absolute; z-index: 2; top: 2px; left: 50%; width: 34px; height: 34px; margin-left: -17px;
+  color: #b8a46a; filter: drop-shadow(0 2px 2px #000c) drop-shadow(0 0 1px #000);
+}
+.bezel-slot {
+  position: absolute; z-index: 2; bottom: 6px; left: 50%; width: 64px; height: 8px; margin-left: -32px;
+  border-radius: 3px; background: linear-gradient(180deg, #c9ffb0, var(--phosphor) 40%, #2f6b1f);
+  box-shadow: 0 0 10px #8dff6aaa, inset 0 0 2px #000;
+}
+body[data-state="listen"] .bezel-slot { background: linear-gradient(180deg, #ffd0c8, var(--red) 40%, #6b1410); box-shadow: 0 0 12px #ff3b2faa; }
+
+/* HUD: a thin frame with corner ticks inside the glass. */
+.hud-frame {
+  position: absolute; inset: 7px; z-index: 0; pointer-events: none; border: 1px solid #8dff6a26;
+  --tick: #8dff6a99;
+  background:
+    linear-gradient(var(--tick), var(--tick)) left top / 18px 2px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) left top / 2px 18px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) right top / 18px 2px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) right top / 2px 18px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) left bottom / 18px 2px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) left bottom / 2px 18px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) right bottom / 18px 2px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) right bottom / 2px 18px no-repeat;
+}
+
+/* The step as a banner: framed label at rest, a torn, glaring band while
+   something happens (red sending, amber thinking, green incoming). */
+.bar .stage { display: none; }
+.bar .spacer { display: block; flex: 1; }
+.chat .readout.banner {
+  display: block; left: 50%; right: auto; transform: translateX(-50%); z-index: 2;
+  top: calc(var(--scope) + 6px); padding: 3px 18px 2px; white-space: nowrap; max-width: calc(100% - 40px);
+  overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--pixel); font-weight: 400; font-size: .82rem; letter-spacing: .14em;
+  color: var(--phosphor); border: 1px solid #8dff6a66; text-shadow: 0 0 6px #8dff6a88;
+}
+.chat .readout.banner:not([data-state="idle"]) {
+  border: 0; padding: 5px 26px 4px; font-weight: 700; font-size: .95rem; letter-spacing: .1em;
+  color: #081205; text-shadow: none; background: var(--phosphor);
+  clip-path: polygon(0 22%, 3% 0, 28% 9%, 52% 0, 77% 7%, 97% 0, 100% 34%, 99% 68%, 100% 100%,
+                     72% 92%, 44% 100%, 15% 93%, 2% 100%, 0 70%);
+  filter: drop-shadow(0 0 10px #8dff6a88);
+}
+.chat .readout.banner[data-state="listen"] { background: var(--red); color: #1c0503; filter: drop-shadow(0 0 10px #ff3b2f88); }
+.chat .readout.banner[data-state="work"] { background: var(--amber); color: #1c1003; filter: drop-shadow(0 0 10px #ffb34788); }
+
+/* Data rows (desktop): label right-aligned, value beside it. */
+.hud-data { display: none; }
+.hud-status {
+  position: absolute; z-index: 2; left: 16px; right: 16px; bottom: 9px; margin: 0;
+  display: flex; justify-content: space-between; gap: 12px; padding-top: 3px;
+  border-top: 1px solid #8dff6a30; font-family: var(--pixel); font-size: .68rem; letter-spacing: .12em;
+  color: var(--phosphor-dim); pointer-events: none;
+}
+.hud-status span:last-child { color: var(--amber); text-shadow: 0 0 6px #ffb34766; }
+.chat .log, .chat .journal { top: calc(var(--scope) + 40px); bottom: 26px; }
+.chat .hint { bottom: 38px; }
+
+/* Pixel lettering for the HUD labels of the transcript. */
+.log li::before, .log li.system { font-family: var(--pixel); letter-spacing: .14em; }
+.dial-head { font-family: var(--pixel); font-weight: 700; }
+
+@media (min-width: 900px) {
+  :root { --chamfer: 30px; }
+  .bezel { margin: 16px 18px 16px var(--gutter); padding: 36px 20px 26px; }
+  .bezel::before { inset: 28px 12px 18px; }
+  .bezel-skull { width: 42px; height: 42px; margin-left: -21px; top: 0; }
+  .bezel-slot { bottom: 8px; width: 90px; height: 9px; margin-left: -45px; }
+  .deck .panel { margin-left: 0; }
+  .chat .readout.banner { font-size: .95rem; }
+  .chat .readout.banner:not([data-state="idle"]) { font-size: 1.15rem; padding: 6px 34px 5px; }
+  .hud-data {
+    display: grid; grid-template-columns: auto auto; gap: 2px 10px; position: absolute; z-index: 2;
+    right: 26px; top: calc(var(--scope) + 10px); margin: 0; padding: 5px 4px;
+    border-top: 1px solid #8dff6a55; border-bottom: 1px solid #8dff6a55;
+    font-family: var(--pixel); font-size: .8rem; letter-spacing: .08em;
+    color: var(--phosphor); text-shadow: 0 0 5px #8dff6a77;
+  }
+  .hud-data dt { text-align: right; font-weight: 700; }
+  .hud-data dd { margin: 0; opacity: .85; }
+  .hud-data dd[data-state="down"] { color: var(--red); }
+  .hud-data dd[data-state="loading"] { color: var(--amber); }
+  .chat .log { top: calc(var(--scope) + 44px); }
+  .chat .journal { top: calc(var(--scope) + 108px); }
+}
