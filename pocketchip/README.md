@@ -1,7 +1,7 @@
 # Proximus OS — PocketCHIP-System-MVP
 
 Eigenes Debian-13-armhf-Systemprofil mit nativer Home-Shell und lokalen Modulen.
-**Entwicklungsstand 0.1: QEMU-Ziel, kein flashbares PocketCHIP-Image.**
+**Entwicklungsstand 0.1: Beide ARM-QEMU-Software-Bootprüfungen bestanden; kein flashbares PocketCHIP-Image.**
 [Architektur und Basisentscheidung](docs/ARCHITEKTUR.md) ·
 [Quellen](docs/QUELLEN.md) · [Prüfprotokoll](docs/VALIDIERUNG.md)
 
@@ -53,7 +53,8 @@ reguläre Image-Dateien und verweigert das Überschreiben eines vorhandenen Buil
 ```sh
 docker build -t proximus-builder -f pocketchip/image/Containerfile .
 docker run --rm --privileged -v "$PWD:/src" proximus-builder pocketchip/image/container-build.sh
-docker run --rm -v "$PWD:/src" proximus-builder python3 pocketchip/image/boot-test.py
+docker run --rm -v "$PWD:/src" proximus-builder python3 pocketchip/image/boot-test.py smoke
+docker run --rm -v "$PWD:/src" proximus-builder python3 pocketchip/image/boot-test.py xorg-smoke
 ```
 
 Auf Docker Desktop empfiehlt sich ein benanntes Volume an `/src/pocketchip/build`
@@ -61,12 +62,12 @@ für das Linux-rootfs (Unix-Gerätedateien/Rechte). Alle folgenden Container mü
 **dasselbe** Volume einbinden. Beispielzusatz für jeden Aufruf:
 `--mount type=volume,src=proximus-os-build,dst=/src/pocketchip/build`.
 
-Artefakte: `pocketchip/build/{zImage,initrd.img,rootfs.ext4,packages.tsv,SHA256SUMS,boot.log}`.
+Artefakte: `pocketchip/build/{zImage,initrd.img,rootfs.ext4,packages.tsv,SHA256SUMS,boot.log,xorg-boot.log}`.
 Paketmetadaten werden kryptografisch durch Debian geprüft; Versionen stehen im
 Manifest. Der Builder nutzt aktuelle Trixie-Pakete, ist daher noch **kein**
 bitidentischer Snapshot-Build. Binärrelease erst nach Quellpaketarchivierung.
 
-Interaktiv: Der Emulator zeigt die native Xorg-Sitzung auf VNC. Docker muss auf
+Interaktiv (experimentell, **nicht abgenommen**): Der Emulator soll die native Xorg-Sitzung über VNC anzeigen. Beim letzten normalen Grafikversuch fehlten jedoch die DRM-/Framebuffer-Geräte im ARM-Gast; der erfolgreiche CI-Test verwendet ausdrücklich den Xorg-Dummy-Softwarebildschirm. Docker muss auf
 Loopback veröffentlichen und QEMU im Container auf dessen Interface lauschen:
 
 ```sh
@@ -82,10 +83,14 @@ Das Image bootet im Snapshot-Modus ohne Netzwerk. Änderungen gehen beim Beenden
 verloren; persistente VM-Daten benötigen später ein separates Datenlaufwerk.
 
 Die QEMU-CPU ist Cortex-A15 ARMv7, ein Kern, 512 MiB; **kein** PocketCHIP/R8-
-Emulator. Der Smoke-Boot startet systemd und testet die Shell als normalen
-Benutzer in Xvfb 480×272. Er verlangt beide Marker `PROXIMUS_GUI_OK` und
-`PROXIMUS_BOOT_OK` und ein reguläres Ende des Emulators. Kernel, Initramfs und
-rootfs sind real, NAND-/FEL-/PMIC-Unterstützung wird dadurch nicht geprüft.
+Emulator. Der erste Smoke-Boot startet systemd und testet die Shell als normalen
+Benutzer in Xvfb 480×272 (Marker `PROXIMUS_GUI_OK` und `PROXIMUS_BOOT_OK`).
+Der zweite startet eine echte Xorg-/startx-/Tk-Sitzung auf einem **softwarebasierten**
+480×272-Dummy-Display (Marker `PROXIMUS_XORG_BOOT_OK`). Beide bestanden in
+[CI #40205557988](https://github.com/0b-ivan/pi-voice-assistant/actions/runs/40205557988)
+auf Commit `cc14127`. Ein regulärer interaktiver DRM-/VNC-Start wurde damit nicht
+validiert. Kernel, Initramfs und rootfs sind real, NAND-/FEL-/PMIC-Unterstützung
+wird dadurch nicht geprüft.
 
 ## Echter Textkanal auf CT107 (separat, optional)
 
