@@ -1,6 +1,7 @@
 [Unit]
 Description=Proximus OS native local session (QEMU development profile)
-After=systemd-user-sessions.service
+After=systemd-user-sessions.service systemd-logind.service
+Wants=systemd-logind.service
 Conflicts=getty@tty1.service
 
 [Service]
@@ -9,9 +10,11 @@ PAMName=login
 WorkingDirectory=/home/proximus
 Environment=HOME=/home/proximus
 TTYPath=/dev/tty1
-StandardInput=tty
-StandardOutput=journal
+StandardInput=tty-force
+StandardOutput=tty
 StandardError=journal
+TTYReset=yes
+TTYVHangup=yes
 UtmpIdentifier=tty1
 ExecStart=/usr/bin/startx /opt/proximus/xinitrc -- :0 vt1 -keeptty -nolisten tcp
 Restart=on-failure
