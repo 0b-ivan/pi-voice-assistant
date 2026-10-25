@@ -4,8 +4,9 @@ cd "$(dirname "$0")/.."
 mode=${1:-interactive}
 case "$mode" in
     smoke) extra='systemd.unit=proximus-smoke.service'; display='none' ;;
+    xorg-smoke) extra='systemd.unit=proximus-xorg-smoke.service proximus.xorg_smoke=1'; display='none' ;;
     interactive) extra=''; display='vnc=127.0.0.1:0' ;;
-    *) echo 'Usage: run-qemu.sh [interactive|smoke]' >&2; exit 2 ;;
+    *) echo 'Usage: run-qemu.sh [interactive|smoke|xorg-smoke]' >&2; exit 2 ;;
 esac
 # Snapshot mode: never writes the base disk. No exposed SSH port or physical USB.
 exec qemu-system-arm -M virt -cpu cortex-a15 -smp 1 -m 512 -accel tcg \
