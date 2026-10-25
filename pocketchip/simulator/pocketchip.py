@@ -22,7 +22,7 @@ KEY_ROWS = (
 def inject_key(shell, key):
     """Send a key to the focused Tk widget without OS-wide event injection."""
     window = shell.root
-    focused = window.focus_get()
+    focused = getattr(shell, "_sim_focus", None) or window.focus_get()\n    if focused is not None and not focused.winfo_exists():\n        focused = None
     if key == "HOME":
         shell.show_home()
         return
