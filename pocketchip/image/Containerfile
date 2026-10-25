@@ -1,0 +1,9 @@
+FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    mmdebstrap qemu-user-static binfmt-support qemu-system-arm qemu-utils \
+    e2fsprogs ca-certificates debian-archive-keyring python3 python3-tk \
+    python3-pil xvfb xauth fonts-dejavu-core shellcheck \
+    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends arch-test python3-numpy python3-qrcode \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src

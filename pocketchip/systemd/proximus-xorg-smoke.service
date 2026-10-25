@@ -1,0 +1,11 @@
+[Unit]
+Description=Proximus Xorg graphical boot acceptance (QEMU only)
+After=local-fs.target systemd-user-sessions.service
+Conflicts=proximus-smoke.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/proximus/xorg-smoke.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=150

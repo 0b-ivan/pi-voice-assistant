@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+export PYTHONPATH=/opt/proximus
+if grep -q 'proximus.xorg_smoke=1' /proc/cmdline; then
+    # The test service creates a private, user-owned directory on tmpfs.
+    # Capture Tk errors independently of xinit/startx journal forwarding.
+    log=/run/proximus-smoke/console.log
+    printf 'PROXIMUS_XINITRC_STARTED\n' > "$log"
+    xset s 300 300 >> "$log" 2>&1
+    xset -dpms >> "$log" 2>&1 || true
+    if python3 -m proximus_os.shell --smoke >> "$log" 2>&1; then
+        if grep -q '^PROXIMUS_GUI_OK ' "$log"; then
+            printf 'PROXIMUS_GUI_OK via xorg\n' > /run/proximus-smoke/gui.ok
+            exit 0
+        fi
+    fi
+    printf 'PROXIMUS_TK_SMOKE_FAILED\n' >> "$log"
+    exit 1
+fi
+xset s 300 300
+xset -dpms || true
+exec python3 -m proximus_os.shell --fullscreen
