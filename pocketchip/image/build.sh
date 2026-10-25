@@ -36,6 +36,9 @@ chroot "$root" passwd -l root
 chroot "$root" passwd -l proximus
 ln -sf /usr/share/zoneinfo/Europe/Berlin "$root/etc/localtime"
 printf 'proximus-qemu\n' > "$root/etc/hostname"
+# startx/xauth uses the local hostname for X11 display cookies. This offline
+# guest has no DNS service, so ensure that its hostname resolves locally.
+printf '127.0.0.1 localhost\n127.0.1.1 proximus-qemu\n::1 localhost ip6-localhost ip6-loopback\n' > "$root/etc/hosts"
 printf '/dev/vda / ext4 defaults,noatime 0 1\n' > "$root/etc/fstab"
 printf 'virtio_mmio\nvirtio_blk\nvirtio_gpu\nvirtio_input\next4\n' >> "$root/etc/initramfs-tools/modules"
 chroot "$root" update-initramfs -u -k all
