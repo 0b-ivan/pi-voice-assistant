@@ -1,11 +1,13 @@
 #!/bin/sh
 # Real Xorg boot acceptance on QEMU virt. Does not touch hardware.
 set -eu
+install -d -m 0700 -o proximus -g proximus /run/proximus-smoke
 systemctl start proximus-session.service
 i=0
-while [ "$i" -lt 45 ]; do
-    if journalctl -b -u proximus-session.service --no-pager -o cat | grep -q 'PROXIMUS_GUI_OK'; then
-        if ! systemctl is-failed --quiet proximus-session.service; then
+while [ "$i" -lt 110 ]; do
+    if [ -f /run/proximus-smoke/gui.ok ]; then
+        if grep -q '^PROXIMUS_GUI_OK ' /run/proximus-smoke/console.log; then
+            cat /run/proximus-smoke/console.log
             printf 'PROXIMUS_XORG_BOOT_OK armhf Xorg Tk 480x272\n'
             poweroff -f
             exit 0
@@ -19,6 +21,12 @@ while [ "$i" -lt 45 ]; do
 done
 systemctl stop proximus-session.service || true
 sleep 2
+printf "\n===== Xinit / Tk =====\n"
+if [ -f /run/proximus-smoke/console.log ]; then
+    cat /run/proximus-smoke/console.log || true
+else
+    printf "xinitrc never reached the GUI test\n"
+fi
 systemctl status proximus-session.service --no-pager || true
 journalctl -b -u proximus-session.service --no-pager -n 120 || true
 # Xorg normally writes its detailed errors to a user-local file rather than
