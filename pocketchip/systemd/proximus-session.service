@@ -18,7 +18,7 @@ StandardError=journal
 TTYReset=yes
 TTYVHangup=yes
 UtmpIdentifier=tty1
-ExecStart=/usr/bin/startx /opt/proximus/xinitrc -- :0 vt1 -keeptty -nolisten tcp
+ExecStart=/opt/proximus/start-session.sh
 Restart=on-failure
 RestartSec=3
 
