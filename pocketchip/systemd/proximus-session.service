@@ -3,6 +3,8 @@ Description=Proximus OS native local session (QEMU development profile)
 After=systemd-user-sessions.service systemd-logind.service
 Wants=systemd-logind.service
 Conflicts=getty@tty1.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 User=proximus
@@ -19,8 +21,6 @@ UtmpIdentifier=tty1
 ExecStart=/usr/bin/startx /opt/proximus/xinitrc -- :0 vt1 -keeptty -nolisten tcp
 Restart=on-failure
 RestartSec=3
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
 [Install]
 WantedBy=multi-user.target
