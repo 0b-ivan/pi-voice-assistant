@@ -3,4 +3,7 @@ set -eu
 xset s 300 300
 xset -dpms || true
 export PYTHONPATH=/opt/proximus
+if grep -q 'proximus.xorg_smoke=1' /proc/cmdline; then
+    exec python3 -m proximus_os.shell --smoke
+fi
 exec python3 -m proximus_os.shell --fullscreen
