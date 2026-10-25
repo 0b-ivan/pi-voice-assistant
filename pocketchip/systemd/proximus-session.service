@@ -11,7 +11,7 @@ WorkingDirectory=/home/proximus
 Environment=HOME=/home/proximus
 TTYPath=/dev/tty1
 StandardInput=tty-force
-StandardOutput=tty
+StandardOutput=journal
 StandardError=journal
 TTYReset=yes
 TTYVHangup=yes
