@@ -23,6 +23,26 @@ Werkzeuge zeigt echte verfügbare Systemwerte, fehlende Akkuwerte als unbekannt.
 Homelab prüft den eigenen CT-Textdienst; Proxmox-/Kuma-Dashboards sind spätere
 Erweiterungen. Einstellungen öffnet auf Wunsch nmtui in einem lokalen Terminal.
 
+## PocketCHIP Desktop-Simulator (kein Board-Emulator)
+
+Auf einem Linux-Desktop mit Tk/X11 (unter macOS mit einer funktionierenden Tk-Installation):
+
+```sh
+PYTHONPATH=pocketchip python3 -m simulator.pocketchip
+```
+
+Ein Fenster zeigt die **echte** native Proximus-Shell mit 480×272 Pixeln. Mausklicks
+entsprechen Touch-Aktionen. Das zweite Fenster enthält eine anklickbare Tastatur
+und HOME/ESC/SPACE/BACKSPACE/ENTER. Zur Texteingabe zuerst das Eingabefeld der
+Shell anklicken. Standardmäßig benutzt der Simulator ein temporäres lokales Archiv
+und **keine** CT107-Verbindung; mit `--config` und `--data` können Testpfade
+explizit angegeben werden. Nicht für ein echtes Gerät oder NAND-Flash geeignet.
+
+Es werden **keine** Allwinner-R8-, NAND-, WLAN-, Akku-, PMIC-, Displaycontroller-
+oder echten Touchcontroller-Zustände emuliert. Das Werkzeuge-Modul zeigt bei
+Verfügbarkeit Hostwerte; diese sind keine PocketCHIP-Messwerte. ARM-Boot- und
+Board-Tests müssen getrennt erfolgen.
+
 ## ARM-System bauen und booten
 
 Docker unter Linux oder Docker Desktop; die Buildumgebung benötigt für
