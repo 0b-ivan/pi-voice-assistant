@@ -3,7 +3,7 @@
 set -eu
 systemctl start proximus-session.service
 i=0
-while [ "$i" -lt 100 ]; do
+while [ "$i" -lt 45 ]; do
     if journalctl -b -u proximus-session.service --no-pager -o cat | grep -q 'PROXIMUS_GUI_OK'; then
         if ! systemctl is-failed --quiet proximus-session.service; then
             printf 'PROXIMUS_XORG_BOOT_OK armhf Xorg Tk 480x272\n'
@@ -17,6 +17,8 @@ while [ "$i" -lt 100 ]; do
     sleep 1
     i=$((i + 1))
 done
+systemctl stop proximus-session.service || true
+sleep 2
 systemctl status proximus-session.service --no-pager || true
 journalctl -b -u proximus-session.service --no-pager -n 120 || true
 # Xorg normally writes its detailed errors to a user-local file rather than
@@ -34,10 +36,15 @@ for log in \
 done
 printf '\n===== Local hostname lookup =====\n'
 getent hosts "$(hostname)" || true
+printf '\n===== Kernel graphics and console =====\n'
+cat /proc/fb 2>/dev/null || true
+cat /proc/consoles 2>/dev/null || true
+journalctl -b -k --no-pager | grep -Ei 'drm|virtio.gpu|fbcon|tty1|vt:' | tail -n 80 || true
 printf '\n===== Logind sessions =====\n'
 loginctl list-sessions --no-pager || true
 printf '\n===== Display devices =====\n'
 ls -l /dev/tty1 /dev/dri/card* /dev/fb* 2>/dev/null || true
+sync
 printf 'PROXIMUS_XORG_BOOT_FAILED\n' >&2
 poweroff -f
 exit 1
