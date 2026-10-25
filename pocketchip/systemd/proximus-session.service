@@ -19,6 +19,8 @@ UtmpIdentifier=tty1
 ExecStart=/usr/bin/startx /opt/proximus/xinitrc -- :0 vt1 -keeptty -nolisten tcp
 Restart=on-failure
 RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Install]
 WantedBy=multi-user.target
