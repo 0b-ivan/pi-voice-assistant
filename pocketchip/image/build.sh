@@ -10,7 +10,7 @@ if [ -L build ] || [ -e build/rootfs ] || [ -e build/rootfs.ext4 ]; then
 fi
 # Debian validates repository metadata using its archive keyring; never --allow-unauthenticated.
 mmdebstrap --architectures=armhf --variant=minbase \
-    --include=systemd-sysv,linux-image-armmp,initramfs-tools,python3,python3-tk,python3-pil,xvfb,xauth,xinit,xserver-xorg-core,xserver-xorg-input-libinput,xserver-xorg-video-fbdev,x11-xserver-utils,fonts-dejavu-core,network-manager,xterm,dbus-user-session,libpam-systemd,ca-certificates,iproute2 \
+    --include=systemd-sysv,linux-image-armmp,initramfs-tools,python3,python3-tk,python3-pil,xvfb,xauth,xinit,xserver-xorg-core,xserver-xorg-input-libinput,xserver-xorg-video-fbdev,xserver-xorg-video-dummy,x11-xserver-utils,fonts-dejavu-core,network-manager,xterm,dbus-user-session,libpam-systemd,ca-certificates,iproute2 \
     trixie build/rootfs \
     'deb https://deb.debian.org/debian trixie main' \
     'deb https://deb.debian.org/debian trixie-updates main' \
@@ -27,6 +27,7 @@ cp image/xorg-smoke.sh "$root/opt/proximus/xorg-smoke.sh"
 chmod 755 "$root/opt/proximus/xorg-smoke.sh"
 cp systemd/proximus-session.service "$root/etc/systemd/system/"
 cp image/xinitrc "$root/opt/proximus/xinitrc"
+cp image/xorg-dummy.conf "$root/etc/X11/xorg-dummy.conf"
 cp config/journald.conf "$root/etc/systemd/journald.conf.d/proximus.conf"
 cp config/client.json.example "$root/etc/proximus/client.json.example"
 chmod 755 "$root/opt/proximus/guest-smoke.sh"
