@@ -1,0 +1,56 @@
+name: Proximus OS
+on:
+  push:
+    paths: ['pocketchip/**', '.github/workflows/proximus-os.yml']
+  pull_request:
+    paths: ['pocketchip/**', '.github/workflows/proximus-os.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-and-protocol:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb xauth shellcheck
+      - name: Offline, security, HTTP and GUI integration
+        run: xvfb-run -a -s '-screen 0 480x272x24' env PYTHONPATH=pocketchip python3 -m unittest discover -s pocketchip/tests -v
+      - name: Shell scripts
+        run: shellcheck pocketchip/image/*.sh pocketchip/image/xinitrc
+      - name: Boot scripts contain no device writer
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path('pocketchip/image').glob('*'):
+              if path.is_file():
+                  text = path.read_text()
+                  assert 'of=/dev/' not in text, path
+                  assert 'flash_erase' not in text, path
+          PY
+  armhf-system-boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated Debian toolchain
+        run: docker build -t proximus-builder -f pocketchip/image/Containerfile .
+      - name: Build ARMv7 Debian system (regular files only)
+        run: docker run --rm --privileged -v "$PWD:/src" proximus-builder pocketchip/image/container-build.sh
+      - name: Boot systemd and native shell with 512 MiB in QEMU
+        run: docker run --rm -v "$PWD:/src" proximus-builder python3 pocketchip/image/boot-test.py
+      - name: Image and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proximus-os-qemu-armhf
+          path: |
+            pocketchip/build/boot.log
+            pocketchip/build/packages.tsv
+            pocketchip/build/SHA256SUMS
+            pocketchip/build/zImage
+            pocketchip/build/initrd.img
+            pocketchip/build/rootfs.ext4
+          retention-days: 7
+          if-no-files-found: warn

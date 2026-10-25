@@ -1,0 +1,12 @@
+[Unit]
+Description=Proximus OS ARM guest boot acceptance
+After=local-fs.target systemd-user-sessions.service
+Conflicts=proximus-session.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/proximus/guest-smoke.sh
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/ttyAMA0
+TimeoutStartSec=180

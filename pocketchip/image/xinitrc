@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+xset s 300 300
+xset -dpms || true
+export PYTHONPATH=/opt/proximus
+exec python3 -m proximus_os.shell --fullscreen
